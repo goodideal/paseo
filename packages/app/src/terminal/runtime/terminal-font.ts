@@ -17,6 +17,8 @@ export const DEFAULT_TERMINAL_FONT_FAMILY = [
   "Monaco",
   "Consolas",
   "'Liberation Mono'",
+  "'PingFang SC'",
+  "'Microsoft YaHei'",
   "monospace",
 ].join(", ");
 

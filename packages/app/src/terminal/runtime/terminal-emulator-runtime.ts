@@ -559,6 +559,7 @@ export class TerminalEmulatorRuntime {
         imageAddon = new ImageAddon();
         terminal.loadAddon(imageAddon);
         registerProtocolQuerySuppression();
+        this.remeasureCharSize();
         this.fitAndEmitResize?.({ forceRefresh: true, shouldClaim: false });
       } catch {
         disposeWebglRenderer();
@@ -590,6 +591,8 @@ export class TerminalEmulatorRuntime {
         return;
       }
 
+      const charSizeChanged = this.remeasureCharSize();
+
       try {
         currentFitAddon.fit();
       } catch {
@@ -602,6 +605,7 @@ export class TerminalEmulatorRuntime {
       if (
         !forceRefresh &&
         !forceClaim &&
+        !charSizeChanged &&
         previous &&
         previous.rows === nextRows &&
         previous.cols === nextCols
@@ -670,14 +674,39 @@ export class TerminalEmulatorRuntime {
       }, delayMs),
     );
 
-    const fontSet = document.fonts;
-    const fontReadyHandler = () => {
+    const fontSet = typeof document !== "undefined" ? document.fonts : undefined;
+    const resolvedFamily = resolveTerminalFontFamily(input.fontFamily);
+    const resolvedSize = resolveTerminalFontSize(input.fontSize);
+
+    const triggerFontRemeasure = () => {
+      this.remeasureCharSize();
       fitAndEmitResize({ forceRefresh: true, shouldClaim: false });
+      return;
+    };
+
+    if (fontSet && typeof fontSet.load === "function") {
+      void fontSet
+        .load(`${resolvedSize}px ${resolvedFamily}`)
+        .then(triggerFontRemeasure)
+        .catch(() => {});
+      for (const part of resolvedFamily.split(",")) {
+        const trimmedFamily = part.trim();
+        if (trimmedFamily && trimmedFamily !== "monospace") {
+          void fontSet
+            .load(`${resolvedSize}px ${trimmedFamily}`)
+            .then(triggerFontRemeasure)
+            .catch(() => {});
+        }
+      }
+    }
+
+    const fontReadyHandler = () => {
+      triggerFontRemeasure();
     };
     fontSet?.addEventListener?.("loadingdone", fontReadyHandler);
     void fontSet?.ready
-      .then(() => {
-        fitAndEmitResize({ forceRefresh: true, shouldClaim: false });
+      ?.then(() => {
+        triggerFontRemeasure();
         return;
       })
       .catch(() => {
@@ -864,16 +893,31 @@ export class TerminalEmulatorRuntime {
       return;
     }
 
+    const nextFamily = resolveTerminalFontFamily(input.fontFamily);
+    const nextSize = resolveTerminalFontSize(input.fontSize);
+
     try {
-      terminal.options.fontFamily = resolveTerminalFontFamily(input.fontFamily);
-      terminal.options.fontSize = resolveTerminalFontSize(input.fontSize);
+      terminal.options.fontFamily = nextFamily;
+      terminal.options.fontSize = nextSize;
     } catch {
       // ignore
       return;
     }
 
+    this.remeasureCharSize();
     this.fitAndEmitResize?.({ forceRefresh: true, shouldClaim: false });
     this.refreshVisibleRows();
+
+    if (typeof document !== "undefined" && document.fonts?.load) {
+      void document.fonts
+        .load(`${nextSize}px ${nextFamily}`)
+        .then(() => {
+          this.remeasureCharSize();
+          this.fitAndEmitResize?.({ forceRefresh: true, shouldClaim: false });
+          return;
+        })
+        .catch(() => {});
+    }
   }
 
   focus(input?: { forceRefocus?: boolean }): void {
@@ -885,6 +929,38 @@ export class TerminalEmulatorRuntime {
       terminal.blur();
     }
     terminal.focus();
+  }
+
+  remeasureCharSize(): boolean {
+    const terminal = this.terminal;
+    if (!terminal) {
+      return false;
+    }
+
+    try {
+      const core = (
+        terminal as unknown as {
+          _core?: {
+            _charSizeService?: {
+              width: number;
+              height: number;
+              measure: () => void;
+            };
+          };
+        }
+      )._core;
+      const charSizeService = core?._charSizeService;
+      if (charSizeService && typeof charSizeService.measure === "function") {
+        const prevWidth = charSizeService.width;
+        const prevHeight = charSizeService.height;
+        charSizeService.measure();
+        return charSizeService.width !== prevWidth || charSizeService.height !== prevHeight;
+      }
+    } catch {
+      // ignore
+    }
+
+    return false;
   }
 
   blur(): void {

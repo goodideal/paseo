@@ -696,4 +696,82 @@ describe("terminal-emulator-runtime", () => {
 
     expect(fitAndEmitResize).not.toHaveBeenCalled();
   });
+  it("remeasures character dimensions when charSizeService is present", () => {
+    const runtime = new TerminalEmulatorRuntime();
+    expect(runtime.remeasureCharSize()).toBe(false);
+
+    const measure = vi.fn();
+    const charSizeService = {
+      width: 10,
+      height: 20,
+      measure,
+    };
+
+    const terminal = {
+      write: () => {},
+      reset: () => {},
+      focus: () => {},
+      refresh: () => {},
+      options: {},
+      _core: {
+        _charSizeService: charSizeService,
+      },
+    };
+    (runtime as unknown as { terminal: unknown }).terminal = terminal;
+
+    // No dimension change after measure
+    expect(runtime.remeasureCharSize()).toBe(false);
+    expect(measure).toHaveBeenCalledTimes(1);
+
+    // Simulate font resolution: charSizeService.width changes from 10 to 7
+    measure.mockImplementation(() => {
+      charSizeService.width = 7;
+    });
+
+    expect(runtime.remeasureCharSize()).toBe(true);
+    expect(measure).toHaveBeenCalledTimes(2);
+    expect(charSizeService.width).toBe(7);
+  });
+
+  it("triggers font loading and remeasurement on setFont", async () => {
+    const runtime = new TerminalEmulatorRuntime();
+    const refresh = vi.fn();
+    const fitAndEmitResize = vi.fn();
+    const measure = vi.fn();
+    const charSizeService = {
+      width: 10,
+      height: 20,
+      measure,
+    };
+    const terminal: StubTerminal = {
+      write: () => {},
+      reset: () => {},
+      focus: () => {},
+      refresh,
+      options: { fontFamily: "before", fontSize: 13 },
+      rows: 12,
+      cols: 40,
+    };
+    (terminal as unknown as { _core: unknown })._core = {
+      _charSizeService: charSizeService,
+    };
+    (runtime as unknown as { terminal: StubTerminal }).terminal = terminal;
+    (runtime as unknown as RuntimeFitProbe).fitAndEmitResize = fitAndEmitResize;
+
+    const load = vi.fn().mockResolvedValue([]);
+    (globalThis as unknown as { document?: { fonts?: { load: typeof load } } }).document = {
+      fonts: { load },
+    };
+
+    runtime.setFont({ fontFamily: "Sarasa Mono SC", fontSize: 14 });
+
+    expect(measure).toHaveBeenCalled();
+    expect(load).toHaveBeenCalledWith("14px Sarasa Mono SC");
+
+    await Promise.resolve();
+    expect(fitAndEmitResize).toHaveBeenCalledWith({
+      forceRefresh: true,
+      shouldClaim: false,
+    });
+  });
 });
