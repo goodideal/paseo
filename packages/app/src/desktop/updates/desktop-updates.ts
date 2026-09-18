@@ -162,7 +162,7 @@ export function normalizeVersionForComparison(version: string | null | undefined
     return null;
   }
 
-  return value.replace(/^v/i, "");
+  return value.replace(/^v/i, "").replace(/-custom(?:\.\d+)?$/, "");
 }
 
 export function isVersionMismatch(

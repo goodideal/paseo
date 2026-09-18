@@ -18,6 +18,7 @@ describe("desktop-updates helpers", () => {
 
     expect(normalizeVersionForComparison(" v0.1.15 ")).toBe("0.1.15");
     expect(normalizeVersionForComparison("0.1.15")).toBe("0.1.15");
+    expect(normalizeVersionForComparison("0.1.15-custom")).toBe("0.1.15");
     expect(normalizeVersionForComparison(null)).toBeNull();
   });
 
@@ -25,6 +26,7 @@ describe("desktop-updates helpers", () => {
     const { isVersionMismatch } = await loadModuleForPlatform("web");
 
     expect(isVersionMismatch("v0.1.15", "0.1.15")).toBe(false);
+    expect(isVersionMismatch("v0.1.15-custom", "0.1.15")).toBe(false);
     expect(isVersionMismatch("0.1.15", "0.1.16")).toBe(true);
     expect(isVersionMismatch("0.1.15", null)).toBe(false);
   });

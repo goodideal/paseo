@@ -699,7 +699,10 @@ function HostVersionRow({
   const normalizedHost = normalizeVersion(daemonVersion);
   const normalizedClient = normalizeVersion(clientVersion);
   const isMismatch =
-    normalizedHost !== null && normalizedClient !== null && normalizedHost !== normalizedClient;
+    normalizedHost !== null &&
+    normalizedClient !== null &&
+    normalizedHost.replace(/-custom(?:\.\d+)?$/, "") !==
+      normalizedClient.replace(/-custom(?:\.\d+)?$/, "");
 
   let valueText: string;
   if (!isConnected) {

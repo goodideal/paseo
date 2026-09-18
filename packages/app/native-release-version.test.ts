@@ -15,6 +15,19 @@ describe("native release version", () => {
     });
   });
 
+  it("supports custom prerelease suffix", () => {
+    expect(getNativeReleaseVersion("0.9.0-beta.1-custom")).toEqual({
+      appVersion: "0.9.0",
+      androidVersionCode: 9000,
+      iosBuildNumber: "9000001",
+    });
+    expect(getNativeReleaseVersion("0.9.0-custom")).toEqual({
+      appVersion: "0.9.0",
+      androidVersionCode: 9000,
+      iosBuildNumber: "9000999",
+    });
+  });
+
   it("gives each beta a unique iOS build slot under the stable app version", () => {
     expect(getNativeReleaseVersion("0.2.6-beta.2")).toEqual({
       appVersion: "0.2.6",
