@@ -1470,7 +1470,7 @@ export class VoiceAssistantWebSocketServer {
       orchestrationSkills: this.orchestrationSkills,
       mcpBaseUrl: this.mcpBaseUrl,
       stt: () => this.speech?.resolveStt() ?? null,
-      sttLanguage: this.speech?.resolveSttLanguage() ?? "en",
+      sttLanguage: this.speech?.resolveSttLanguage() ?? "auto",
       tts: () => this.speech?.resolveTts() ?? null,
       terminalManager: this.terminalManager,
       providerSnapshotManager: this.providerSnapshotManager,
@@ -1510,7 +1510,7 @@ export class VoiceAssistantWebSocketServer {
           ? {
               finalTimeoutMs: this.dictation?.finalTimeoutMs,
               stt: () => this.speech?.resolveDictationStt() ?? null,
-              sttLanguage: this.speech?.resolveDictationSttLanguage() ?? "en",
+              sttLanguage: this.speech?.resolveDictationSttLanguage() ?? "auto",
               getSpeechReadiness: () => this.speech!.getReadiness(),
             }
           : undefined,

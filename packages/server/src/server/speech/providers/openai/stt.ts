@@ -46,6 +46,41 @@ function isLogprobTokenArray(value: unknown): value is LogprobToken[] {
   return Array.isArray(value) && value.every((entry) => isLogprobToken(entry));
 }
 
+function resolveTargetLanguage(language: string | undefined): string | undefined {
+  if (!language || language === "auto" || language === "bilingual") {
+    return undefined;
+  }
+  return language;
+}
+
+function evaluateLogprobConfidence(
+  logprobs: LogprobToken[] | undefined,
+  confidenceThreshold: number,
+  logger: pino.Logger,
+  text: string,
+): { avgLogprob: number | undefined; isLowConfidence: boolean } {
+  if (!logprobs || logprobs.length === 0) {
+    return { avgLogprob: undefined, isLowConfidence: false };
+  }
+  const totalLogprob = logprobs.reduce((sum, token) => sum + token.logprob, 0);
+  const avgLogprob = totalLogprob / logprobs.length;
+  const isLowConfidence = avgLogprob < confidenceThreshold;
+
+  if (isLowConfidence) {
+    logger.debug(
+      {
+        avgLogprob,
+        threshold: confidenceThreshold,
+        text,
+        tokenLogprobs: logprobs.map((t) => `${t.token}:${t.logprob.toFixed(2)}`).join(", "),
+      },
+      "Low confidence transcription detected",
+    );
+  }
+
+  return { avgLogprob, isLowConfidence };
+}
+
 export class OpenAISTT implements SpeechToTextProvider {
   private readonly openaiClient: OpenAI;
   private readonly config: STTConfig;
@@ -143,7 +178,7 @@ export class OpenAISTT implements SpeechToTextProvider {
             const result = await transcribeAudio(
               wav,
               "audio/wav",
-              params.language ?? "en",
+              params.language,
               logger,
               params.prompt,
             );
@@ -184,7 +219,7 @@ export class OpenAISTT implements SpeechToTextProvider {
   private async transcribeAudioInternal(
     audioBuffer: Buffer,
     format: string,
-    language: string,
+    language: string | undefined,
     logger: pino.Logger,
     prompt?: string,
   ): Promise<TranscriptionResult> {
@@ -203,9 +238,11 @@ export class OpenAISTT implements SpeechToTextProvider {
         modelToUse === "gpt-4o-transcribe" || modelToUse === "gpt-4o-mini-transcribe";
       const includeLogprobs: ["logprobs"] = ["logprobs"];
 
+      const targetLanguage = resolveTargetLanguage(language);
+
       const response = await this.openaiClient.audio.transcriptions.create({
         file: await import("fs").then((fs) => fs.createReadStream(tempFilePath!)),
-        language,
+        ...(targetLanguage ? { language: targetLanguage } : {}),
         model: modelToUse,
         ...(prompt ? { prompt } : {}),
         ...(supportsLogprobs ? { include: includeLogprobs } : {}),
@@ -215,30 +252,17 @@ export class OpenAISTT implements SpeechToTextProvider {
       const duration = Date.now() - startTime;
       const confidenceThreshold = this.config.confidenceThreshold ?? -3.0;
 
-      let avgLogprob: number | undefined;
-      let isLowConfidence = false;
       const logprobs =
         supportsLogprobs && isObject(response) && isLogprobTokenArray(response.logprobs)
           ? response.logprobs
           : undefined;
 
-      if (logprobs && logprobs.length > 0) {
-        const totalLogprob = logprobs.reduce((sum, token) => sum + token.logprob, 0);
-        avgLogprob = totalLogprob / logprobs.length;
-        isLowConfidence = avgLogprob < confidenceThreshold;
-
-        if (isLowConfidence) {
-          logger.debug(
-            {
-              avgLogprob,
-              threshold: confidenceThreshold,
-              text: response.text,
-              tokenLogprobs: logprobs.map((t) => `${t.token}:${t.logprob.toFixed(2)}`).join(", "),
-            },
-            "Low confidence transcription detected",
-          );
-        }
-      }
+      const { avgLogprob, isLowConfidence } = evaluateLogprobConfidence(
+        logprobs,
+        confidenceThreshold,
+        logger,
+        response.text,
+      );
 
       logger.debug({ duration, text: response.text, avgLogprob }, "Transcription complete");
 

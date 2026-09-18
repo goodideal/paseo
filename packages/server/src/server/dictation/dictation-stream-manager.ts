@@ -152,7 +152,7 @@ export class DictationStreamManager {
     this.emit = params.emit;
     this.sessionId = params.sessionId;
     this.resolveStt = toResolver(params.stt);
-    this.language = params.language ?? "en";
+    this.language = params.language ?? "auto";
     this.finalTimeoutMs = params.finalTimeoutMs ?? DEFAULT_DICTATION_FINAL_TIMEOUT_MS;
     this.autoCommitSeconds =
       params.autoCommitSeconds ??
@@ -185,9 +185,12 @@ export class DictationStreamManager {
       return;
     }
 
-    const transcriptionPrompt =
-      process.env.PASEO_DICTATION_TRANSCRIPTION_PROMPT ??
-      "Transcribe only what the speaker says. Do not add words. Preserve punctuation and casing. If the audio is silence or non-speech noise, return an empty transcript.";
+    const defaultPrompt =
+      this.language === "auto" || this.language === "zh" || this.language === "bilingual"
+        ? "这是一段中英文混合的编程语音指令，支持简体中文与英语，包含代码和编程专业术语。Transcribe speech accurately in the original language without translation."
+        : "Transcribe only what the speaker says. Do not add words. Preserve punctuation and casing. If the audio is silence or non-speech noise, return an empty transcript.";
+
+    const transcriptionPrompt = process.env.PASEO_DICTATION_TRANSCRIPTION_PROMPT ?? defaultPrompt;
 
     let stt: ReturnType<SpeechToTextProvider["createSession"]>;
     try {

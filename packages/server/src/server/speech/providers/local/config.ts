@@ -35,7 +35,7 @@ export interface ResolvedLocalSpeechConfig {
 export type { LocalSpeechModelId, LocalSttModelId, LocalTtsModelId };
 
 const DEFAULT_LOCAL_MODELS_SUBDIR = path.join("models", "local-speech");
-const DEFAULT_STT_LANGUAGE = "en";
+const DEFAULT_STT_LANGUAGE = "auto";
 
 export interface LocalSpeechSttLanguageConfig {
   dictation: string;
