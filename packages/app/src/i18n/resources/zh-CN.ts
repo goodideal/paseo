@@ -2126,6 +2126,16 @@ export const zhCN: TranslationResources = {
           auto: "系统",
         },
       },
+      terminalAppearance: {
+        title: "终端配色",
+        description: "设置内置终端的显示配色方案",
+        accessibilityLabel: "终端配色：{{value}}",
+        options: {
+          "follow-theme": "跟随应用主题",
+          pureBlack: "始终纯黑",
+          dark: "始终深色",
+        },
+      },
       detailLevel: {
         title: "详细程度",
       },

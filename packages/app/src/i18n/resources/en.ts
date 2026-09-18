@@ -2270,6 +2270,16 @@ export const en = {
           auto: "System",
         },
       },
+      terminalAppearance: {
+        title: "Terminal appearance",
+        description: "Set the color scheme for the built-in terminal",
+        accessibilityLabel: "Terminal appearance: {{value}}",
+        options: {
+          "follow-theme": "Follow app theme",
+          pureBlack: "Pure black",
+          dark: "Dark",
+        },
+      },
       detailLevel: {
         title: "Detail level",
       },
@@ -2829,4 +2839,14 @@ type WidenStringLeaves<T> = {
   [K in keyof T]: T[K] extends string ? string : WidenStringLeaves<T[K]>;
 };
 
-export type TranslationResources = WidenStringLeaves<typeof en>;
+type BaseTranslation = WidenStringLeaves<typeof en>;
+
+export type TranslationResources = {
+  [K in keyof BaseTranslation]: K extends "settings"
+    ? Omit<BaseTranslation["settings"], "appearance"> & {
+        appearance: Omit<BaseTranslation["settings"]["appearance"], "terminalAppearance"> & {
+          terminalAppearance?: BaseTranslation["settings"]["appearance"]["terminalAppearance"];
+        };
+      }
+    : BaseTranslation[K];
+};

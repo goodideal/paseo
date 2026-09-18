@@ -3,7 +3,7 @@ import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { ChevronDown, Monitor, Moon, Sun } from "lucide-react-native";
+import { ChevronDown, Monitor, Moon, Sun, Terminal } from "lucide-react-native";
 import {
   SYNTAX_THEME_OPTIONS,
   type SyntaxThemeId,
@@ -58,6 +58,7 @@ const ThemedSun = withUnistyles(Sun);
 const ThemedMoon = withUnistyles(Moon);
 const ThemedMonitor = withUnistyles(Monitor);
 const ThemedChevronDown = withUnistyles(ChevronDown);
+const ThemedTerminal = withUnistyles(Terminal);
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
@@ -218,6 +219,107 @@ function ThemeRow({
               option={option}
               selected={selectedPluginTheme?.id === option.id}
               onSelect={onSelectPluginTheme}
+            />
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Terminal appearance picker
+// ---------------------------------------------------------------------------
+
+const TERMINAL_APPEARANCE_OPTIONS: readonly AppSettings["terminalAppearance"][] = [
+  "follow-theme",
+  "pureBlack",
+  "dark",
+];
+
+function getTerminalAppearanceLabel(
+  t: TFunction,
+  value: AppSettings["terminalAppearance"],
+): string {
+  return t(`settings.appearance.terminalAppearance.options.${value}`);
+}
+
+interface TerminalAppearanceLeadingProps {
+  value: AppSettings["terminalAppearance"];
+}
+
+function TerminalAppearanceLeading({ value }: TerminalAppearanceLeadingProps) {
+  switch (value) {
+    case "pureBlack":
+      return <ThemeSwatch color="#000000" />;
+    case "dark":
+      return <ThemeSwatch color="#181B1A" />;
+    case "follow-theme":
+    default:
+      return <ThemedTerminal size={ICON_SIZE.md} uniProps={mutedColorMapping} />;
+  }
+}
+
+interface TerminalAppearanceMenuItemProps {
+  option: AppSettings["terminalAppearance"];
+  selected: boolean;
+  onChange: (value: AppSettings["terminalAppearance"]) => void;
+}
+
+function TerminalAppearanceMenuItem({
+  option,
+  selected,
+  onChange,
+}: TerminalAppearanceMenuItemProps) {
+  const { t } = useTranslation();
+  const handleSelect = useCallback(() => {
+    onChange(option);
+  }, [onChange, option]);
+  const leading = useMemo(() => <TerminalAppearanceLeading value={option} />, [option]);
+  return (
+    <DropdownMenuItem selected={selected} onSelect={handleSelect} leading={leading}>
+      {getTerminalAppearanceLabel(t, option)}
+    </DropdownMenuItem>
+  );
+}
+
+interface TerminalAppearanceRowProps {
+  value: AppSettings["terminalAppearance"];
+  onChange: (value: AppSettings["terminalAppearance"]) => void;
+}
+
+function TerminalAppearanceRow({ value, onChange }: TerminalAppearanceRowProps) {
+  const { t } = useTranslation();
+  const selectedLabel = getTerminalAppearanceLabel(t, value);
+  const leading = useMemo(() => <TerminalAppearanceLeading value={value} />, [value]);
+  return (
+    <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>
+          {t("settings.appearance.terminalAppearance.title")}
+        </Text>
+        <Text style={settingsStyles.rowHint}>
+          {t("settings.appearance.terminalAppearance.description")}
+        </Text>
+      </View>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          style={dropdownTriggerStyle}
+          accessibilityLabel={t("settings.appearance.terminalAppearance.accessibilityLabel", {
+            value: selectedLabel,
+          })}
+        >
+          {leading}
+          <Text style={styles.triggerText}>{selectedLabel}</Text>
+          <ThemedChevronDown size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side="bottom" align="end" width={200}>
+          {TERMINAL_APPEARANCE_OPTIONS.map((option) => (
+            <TerminalAppearanceMenuItem
+              key={option}
+              option={option}
+              selected={value === option}
+              onChange={onChange}
             />
           ))}
         </DropdownMenuContent>
@@ -549,6 +651,13 @@ export function AppearanceSection() {
     [selectPluginTheme],
   );
 
+  const handleTerminalAppearanceChange = useCallback(
+    (terminalAppearance: AppSettings["terminalAppearance"]) => {
+      void updateSettings({ terminalAppearance });
+    },
+    [updateSettings],
+  );
+
   const handleSyntaxThemeChange = useCallback(
     (syntaxTheme: SyntaxThemeId) => {
       void updateSettings({ syntaxTheme });
@@ -677,6 +786,10 @@ export function AppearanceSection() {
             selectedPluginTheme={selectedPluginTheme}
             onChange={handleThemeChange}
             onSelectPluginTheme={handlePluginThemeChange}
+          />
+          <TerminalAppearanceRow
+            value={settings.terminalAppearance}
+            onChange={handleTerminalAppearanceChange}
           />
         </View>
       </SettingsSection>

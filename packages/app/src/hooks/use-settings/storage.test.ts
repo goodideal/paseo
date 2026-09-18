@@ -177,6 +177,38 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.workspaceTitleSource).toBe("title");
   });
 
+  it("defaults terminal appearance to follow-theme when storage is empty", async () => {
+    const deps = makeDeps();
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.terminalAppearance).toBe("follow-theme");
+  });
+
+  it("loads and persists a pureBlack terminal appearance preference", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ terminalAppearance: "pureBlack" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.terminalAppearance).toBe("pureBlack");
+  });
+
+  it("falls back to follow-theme when terminal appearance preference is invalid", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ terminalAppearance: "invalid-value" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.terminalAppearance).toBe("follow-theme");
+  });
+
   it("enables the chat outline by default", async () => {
     const deps = makeDeps();
 
