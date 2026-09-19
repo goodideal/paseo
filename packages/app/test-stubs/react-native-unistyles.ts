@@ -1,3 +1,4 @@
+import React from "react";
 const testTheme = {
   colorScheme: "light",
   colors: {
@@ -23,6 +24,7 @@ const testTheme = {
     borderAccent: "#a1a1aa",
     palette: {
       amber: { 500: "#f59e0b" },
+      zinc: { 600: "#52525b" },
       blue: { 300: "#93c5fd" },
       green: { 500: "#22c55e" },
       red: { 300: "#fca5a5" },
@@ -86,7 +88,16 @@ export const StyleSheet = {
     isStyleFactory(styles) ? styles(testTheme) : styles,
 };
 
-export const withUnistyles = <T>(Component: T): T => Component;
+export const withUnistyles = <P extends object>(
+  Component: React.ComponentType<P>,
+  mapping?: (theme: typeof testTheme) => Partial<P>,
+): React.ComponentType<P> => {
+  if (typeof mapping !== "function") return Component;
+  return (props: P) => {
+    const extra = mapping(testTheme);
+    return React.createElement(Component, { ...extra, ...props });
+  };
+};
 
 export const useUnistyles = () => ({
   theme: testTheme,
