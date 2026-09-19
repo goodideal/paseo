@@ -14,12 +14,17 @@ export function ReviewPanel() {
   const [activeTask, setActiveTask] = useState<GiteaWorkflowTask | null>(null);
   const [showFeedback, setShowFeedback] = useState(false);
   const [statusMsg, setStatusMsg] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const refreshTasks = useCallback(async () => {
     try {
       const res = await listTasks({});
       if (res.tasks.length > 0) {
-        setActiveTask(res.tasks[0]);
+        setActiveTask((prev) => {
+          if (!prev) return res.tasks[0];
+          const match = res.tasks.find((t) => t.id === prev.id);
+          return match ?? res.tasks[0];
+        });
       }
     } catch (e) {
       console.error(e);
@@ -28,10 +33,15 @@ export function ReviewPanel() {
 
   useEffect(() => {
     void refreshTasks();
+    const timer = setInterval(() => {
+      void refreshTasks();
+    }, 5000);
+    return () => clearInterval(timer);
   }, [refreshTasks]);
 
   const handleApprove = useCallback(async () => {
-    if (!activeTask) return;
+    if (!activeTask || isSubmitting) return;
+    setIsSubmitting(true);
     setStatusMsg("Approving and creating Gitea PR...");
     try {
       const res = await approveTask({ taskId: activeTask.id });
@@ -43,12 +53,15 @@ export function ReviewPanel() {
       }
     } catch (e) {
       setStatusMsg(`Error: ${(e as Error).message}`);
+    } finally {
+      setIsSubmitting(false);
     }
-  }, [activeTask, approveTask, refreshTasks]);
+  }, [activeTask, approveTask, isSubmitting, refreshTasks]);
 
   const handleReject = useCallback(
     async (feedback: string) => {
-      if (!activeTask) return;
+      if (!activeTask || isSubmitting) return;
+      setIsSubmitting(true);
       setStatusMsg("Sending feedback back to Agent...");
       try {
         const res = await rejectTask({ taskId: activeTask.id, feedback });
@@ -56,12 +69,16 @@ export function ReviewPanel() {
           setShowFeedback(false);
           setStatusMsg("Feedback submitted; agent will iterate.");
           void refreshTasks();
+        } else {
+          setStatusMsg(`Rejection failed: ${res.error ?? "Unknown error"}`);
         }
       } catch (e) {
         setStatusMsg(`Error: ${(e as Error).message}`);
+      } finally {
+        setIsSubmitting(false);
       }
     },
-    [activeTask, refreshTasks, rejectTask],
+    [activeTask, isSubmitting, refreshTasks, rejectTask],
   );
 
   const toggleFeedback = useCallback(() => {
@@ -103,10 +120,20 @@ export function ReviewPanel() {
       {statusMsg ? <Text style={styles.statusBanner}>{statusMsg}</Text> : null}
 
       <View style={styles.actionBar}>
-        <Pressable style={styles.approveBtn} onPress={handleApprove}>
-          <Text style={styles.actionBtnText}>Approve & Create PR</Text>
+        <Pressable
+          style={isSubmitting ? styles.disabledBtn : styles.approveBtn}
+          onPress={handleApprove}
+          disabled={isSubmitting}
+        >
+          <Text style={styles.actionBtnText}>
+            {isSubmitting ? "Processing..." : "Approve & Create PR"}
+          </Text>
         </Pressable>
-        <Pressable style={styles.rejectBtn} onPress={toggleFeedback}>
+        <Pressable
+          style={isSubmitting ? styles.disabledBtn : styles.rejectBtn}
+          onPress={toggleFeedback}
+          disabled={isSubmitting}
+        >
           <Text style={styles.actionBtnText}>Request Changes</Text>
         </Pressable>
       </View>
@@ -175,6 +202,13 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     alignItems: "center",
     backgroundColor: "#dc2626",
+  },
+  disabledBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 6,
+    alignItems: "center",
+    backgroundColor: "#4b5563",
   },
   actionBtnText: {
     color: "#ffffff",

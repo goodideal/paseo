@@ -1,10 +1,12 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { GiteaWorkflowTask } from "../shared/types.js";
+import { GiteaWorkflowTaskSchema, type GiteaWorkflowTask } from "../shared/types.js";
 
 export class TaskStore {
   private memoryCache: Map<string, GiteaWorkflowTask> = new Map();
   private initialized = false;
+  private writeLock: Promise<void> = Promise.resolve();
 
   constructor(private readonly storageFilePath: string) {}
 
@@ -12,22 +14,40 @@ export class TaskStore {
     if (this.initialized) return;
     try {
       const content = await readFile(this.storageFilePath, "utf8");
-      const records = JSON.parse(content) as GiteaWorkflowTask[];
-      for (const task of records) {
-        this.memoryCache.set(task.id, task);
+      const parsed: unknown = JSON.parse(content);
+      const validation = GiteaWorkflowTaskSchema.array().safeParse(parsed);
+      if (validation.success) {
+        for (const task of validation.data) {
+          this.memoryCache.set(task.id, task);
+        }
+      } else {
+        console.error("[TaskStore] Invalid task records schema:", validation.error.format());
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw error;
+        console.error("[TaskStore] Failed to read storage file:", error);
       }
     }
     this.initialized = true;
   }
 
   private async flush(): Promise<void> {
-    await mkdir(dirname(this.storageFilePath), { recursive: true });
-    const data = JSON.stringify(Array.from(this.memoryCache.values()), null, 2);
-    await writeFile(this.storageFilePath, data, "utf8");
+    // Chain onto writeLock to serialize concurrent writes and prevent race conditions
+    this.writeLock = this.writeLock.then(async () => {
+      const dir = dirname(this.storageFilePath);
+      await mkdir(dir, { recursive: true });
+      const tempPath = `${this.storageFilePath}.${randomUUID()}.tmp`;
+      const data = JSON.stringify(Array.from(this.memoryCache.values()), null, 2);
+      try {
+        await writeFile(tempPath, data, "utf8");
+        await rename(tempPath, this.storageFilePath);
+      } catch (err) {
+        await unlink(tempPath).catch(() => {});
+        throw err;
+      }
+      return undefined;
+    });
+    return this.writeLock;
   }
 
   async getTask(id: string): Promise<GiteaWorkflowTask | null> {

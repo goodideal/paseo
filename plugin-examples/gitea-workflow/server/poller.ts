@@ -32,6 +32,7 @@ export class IssuePoller {
       for (const issue of readyIssues) {
         await this.orchestrator.enqueueIssue(issue);
       }
+      await this.orchestrator.processQueue();
     } catch (err) {
       console.error("[GiteaWorkflow Poller Error]", err);
     } finally {

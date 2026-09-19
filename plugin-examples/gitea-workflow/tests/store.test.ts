@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -73,5 +73,46 @@ describe("TaskStore", () => {
     const updated = await store.getTask("task-2");
     expect(updated?.state).toBe("coding");
     expect(updated?.agentId).toBe("agent-99");
+  });
+
+  it("handles concurrent updates without data corruption", async () => {
+    const task: GiteaWorkflowTask = {
+      id: "task-concurrent",
+      issueNumber: 3,
+      issueTitle: "Concurrency test",
+      issueUrl: "http://example.com/3",
+      issueBody: "Concurrent updates",
+      repoOwner: "owner",
+      repoName: "repo",
+      branchName: "agent/issue-3",
+      workspaceId: null,
+      agentId: null,
+      state: "queued",
+      screenshots: [],
+      diffSummary: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    await store.saveTask(task);
+
+    // Fire multiple concurrent updates simultaneously
+    await Promise.all([
+      store.updateTask("task-concurrent", { agentId: "agent-1" }),
+      store.updateTask("task-concurrent", { state: "coding" }),
+      store.updateTask("task-concurrent", { branchName: "agent/issue-3-updated" }),
+    ]);
+
+    const freshStore = new TaskStore(storePath);
+    const reloaded = await freshStore.getTask("task-concurrent");
+    expect(reloaded).toBeDefined();
+    expect(reloaded?.branchName).toBe("agent/issue-3-updated");
+  });
+
+  it("handles corrupt JSON files gracefully without throwing", async () => {
+    await writeFile(storePath, "{ broken json ...", "utf8");
+    const brokenStore = new TaskStore(storePath);
+    const tasks = await brokenStore.listTasks();
+    expect(tasks).toEqual([]);
   });
 });

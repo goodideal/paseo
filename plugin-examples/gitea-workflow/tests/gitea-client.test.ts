@@ -58,7 +58,7 @@ describe("GiteaClient", () => {
     globalThis.fetch = originalFetch;
   });
 
-  it("fetches ready issues", async () => {
+  it("fetches ready issues with pagination parameters", async () => {
     const client = new GiteaClient({
       giteaUrl: "http://gitea.local",
       giteaToken: "test-token",
@@ -71,10 +71,14 @@ describe("GiteaClient", () => {
       maxConcurrentWorktrees: 3,
     });
 
-    const issues = await client.fetchReadyIssues();
+    const issues = await client.fetchReadyIssues({ page: 2, limit: 20 });
     expect(issues).toHaveLength(1);
     expect(issues[0].number).toBe(42);
     expect(issues[0].title).toBe("Add dark mode toggle");
+
+    const req = capturedRequests.find((r) => r.url.includes("/issues?state=open"));
+    expect(req?.url).toContain("page=2");
+    expect(req?.url).toContain("limit=20");
   });
 
   it("claims issue by updating labels and posting comment", async () => {
@@ -94,6 +98,36 @@ describe("GiteaClient", () => {
     const commentReq = capturedRequests.find((r) => r.url.includes("/comments"));
     expect(commentReq).toBeDefined();
     expect(commentReq?.body?.body).toContain("Paseo Agent");
+  });
+
+  it("throws when claim label addition fails", async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
+        const urlStr = url.toString();
+        const method = init?.method ?? "GET";
+        if (urlStr.includes("/labels") && method === "DELETE") {
+          return new Response("{}", { status: 200 });
+        }
+        if (urlStr.includes("/labels") && method === "POST") {
+          return new Response("Forbidden", { status: 403, statusText: "Forbidden" });
+        }
+        return new Response("{}", { status: 200 });
+      });
+
+    const client = new GiteaClient({
+      giteaUrl: "http://gitea.local",
+      giteaToken: "invalid-token",
+      repoOwner: "owner",
+      repoName: "repo",
+      listenLabel: "agent-ready",
+      inProgressLabel: "agent-in-progress",
+      reviewedLabel: "agent-reviewed",
+      pollIntervalSeconds: 60,
+      maxConcurrentWorktrees: 3,
+    });
+
+    await expect(client.claimIssue(42)).rejects.toThrow("Failed to add label");
   });
 
   it("creates a pull request", async () => {

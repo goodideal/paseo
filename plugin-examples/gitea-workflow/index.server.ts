@@ -35,6 +35,7 @@ export default function contribute(server: PluginServerContext) {
     gitea,
     projectPath: process.cwd(),
     projectName: defaultSettings.repoName,
+    maxConcurrentWorktrees: defaultSettings.maxConcurrentWorktrees,
   });
 
   const poller = new IssuePoller(gitea, orchestrator, defaultSettings.pollIntervalSeconds * 1000);
