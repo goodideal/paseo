@@ -90,6 +90,14 @@ import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { AutocompletePopover } from "@/components/ui/autocomplete-popover";
 import type { AutocompleteOption } from "@/components/ui/autocomplete";
 import { useAgentAutocomplete } from "@/hooks/use-agent-autocomplete";
+import { QuickPromptBar, QuickPromptsModal } from "./quick-prompts";
+import {
+  useQuickPromptsStore,
+  type QuickPromptAgentStatus,
+  type QuickPromptItem,
+} from "@/stores/quick-prompts-store";
+import { evaluateQuickPrompts } from "@/utils/quick-prompt-matcher";
+import type { StreamItem } from "@/types/stream";
 import { usePluginClientSlashCommands } from "@/plugins/client-slash-commands";
 import {
   executePluginClientSlashCommand,
@@ -264,6 +272,17 @@ function buildRealtimeVoiceButtonStyle(
   return [styles.realtimeVoiceButton, reserveStyle, hoveredStyle, disabledStyle].filter(
     (value): value is object => Boolean(value),
   );
+}
+
+function findLatestAssistantText(streamTail?: readonly StreamItem[]): string | null {
+  if (!streamTail) return null;
+  for (let i = streamTail.length - 1; i >= 0; i--) {
+    const item = streamTail[i];
+    if (item.kind === "assistant_message" && item.text) {
+      return item.text;
+    }
+  }
+  return null;
 }
 
 function buildAgentStateSelector(serverId: string, agentId: string) {
@@ -1283,7 +1302,7 @@ function ComposerContentImpl({
   placeholder,
 }: ComposerContentProps) {
   const mode = resolveComposerInputMode(inputMode);
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const buttonIconSize = resolveComposerButtonIconSize();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
@@ -1310,6 +1329,32 @@ function ComposerContentImpl({
   const queuedMessages = queuedMessagesRaw ?? EMPTY_ARRAY;
 
   const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
+
+  const streamTail = useSessionStore((state) =>
+    state.sessions[serverId]?.agentStreamTail?.get(agentId),
+  );
+  const lastAssistantText = useMemo(() => findLatestAssistantText(streamTail), [streamTail]);
+  const allQuickPrompts = useQuickPromptsStore((state) => state.items);
+  const activeQuickPrompts = useMemo(
+    () =>
+      evaluateQuickPrompts({
+        items: allQuickPrompts,
+        lastAssistantText,
+        agentStatus: (agentState.status as QuickPromptAgentStatus) ?? null,
+        locale: i18n.language,
+      }),
+    [allQuickPrompts, lastAssistantText, agentState.status, i18n.language],
+  );
+
+  const [isQuickPromptsModalOpen, setIsQuickPromptsModalOpen] = useState(false);
+
+  const handleOpenQuickPromptsManage = useCallback(() => {
+    setIsQuickPromptsModalOpen(true);
+  }, []);
+
+  const handleCloseQuickPromptsManage = useCallback(() => {
+    setIsQuickPromptsModalOpen(false);
+  }, []);
 
   const isCompactFormFactor = useIsCompactFormFactor();
   const isCompactLayout = resolveCompactLayout(isCompactLayoutOverride, isCompactFormFactor);
@@ -1743,6 +1788,27 @@ function ComposerContentImpl({
       runPluginClientSlashCommand,
       sendMessageWithContent,
     ],
+  );
+
+  const handleSelectQuickPrompt = useCallback(
+    (item: QuickPromptItem) => {
+      handleSubmit({
+        text: item.content,
+        attachments: [],
+        cwd,
+      });
+    },
+    [cwd, handleSubmit],
+  );
+
+  const handleSelectQuickPromptForEdit = useCallback(
+    (item: QuickPromptItem) => {
+      const current = textSource.getSnapshot();
+      const nextText = current.trim().length > 0 ? `${current}\n${item.content}` : item.content;
+      replaceUserInput(nextText, { start: nextText.length, end: nextText.length });
+      messageInputRef.current?.focus();
+    },
+    [replaceUserInput, textSource],
   );
 
   const handlePickImage = useCallback(async () => {
@@ -2421,6 +2487,14 @@ function ComposerContentImpl({
             {queueList}
             {sendErrorNode}
 
+            <QuickPromptBar
+              items={activeQuickPrompts}
+              onSelectPrompt={handleSelectQuickPrompt}
+              onSelectForEdit={handleSelectQuickPromptForEdit}
+              onOpenManage={handleOpenQuickPromptsManage}
+              isSubmitDisabled={isSubmitDisabled}
+            />
+
             <View ref={messageInputContainerRef} style={styles.messageInputContainer}>
               <ComposerAutocompleteBinding
                 text={textSource}
@@ -2512,6 +2586,10 @@ function ComposerContentImpl({
           </View>
         </View>
       </View>
+      <QuickPromptsModal
+        visible={isQuickPromptsModalOpen}
+        onClose={handleCloseQuickPromptsManage}
+      />
     </>
   );
 }

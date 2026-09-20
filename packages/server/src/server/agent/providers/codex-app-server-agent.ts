@@ -2022,11 +2022,103 @@ async function loadCodexThreadHistoryTimeline(params: {
   return { timeline, subAgentRoutes };
 }
 
-function readCodexThread(client: CodexAppServerClientLike, threadId: string): Promise<unknown> {
-  return client.request("thread/read", {
+const MAX_PAGINATED_TURNS_PAGES = 1000;
+
+const CodexThreadTurnsListResponseSchema = z
+  .object({
+    data: z.array(z.unknown()).default([]),
+    nextCursor: z.string().nullable().optional(),
+  })
+  .passthrough();
+
+function isPaginatedThreadReadError(error: unknown): boolean {
+  let message = "";
+  if (typeof error === "string") {
+    message = error;
+  } else if (typeof error === "object" && error !== null && "message" in error) {
+    message = String((error as { message: unknown }).message);
+  }
+  return (
+    message.includes("paginated threads do not support thread/read") ||
+    message.includes("Full-history hydration is deprecated for paginated threads") ||
+    message.includes("paginated threads require thread/turns/list")
+  );
+}
+
+async function fetchAllCodexPaginatedTurns(
+  client: CodexAppServerClientLike,
+  threadId: string,
+): Promise<unknown[]> {
+  const turns: unknown[] = [];
+  let cursor: string | null | undefined = undefined;
+  const visitedCursors = new Set<string>();
+  let pageCount = 0;
+
+  while (pageCount++ < MAX_PAGINATED_TURNS_PAGES) {
+    const response = await client.request("thread/turns/list", {
+      threadId,
+      itemsView: "full",
+      sortDirection: "asc",
+      ...(cursor ? { cursor } : {}),
+    });
+    const parsed = CodexThreadTurnsListResponseSchema.safeParse(response);
+    if (!parsed.success) {
+      break;
+    }
+    turns.push(...parsed.data.data);
+    const nextCursor = parsed.data.nextCursor;
+    if (!nextCursor || visitedCursors.has(nextCursor)) {
+      break;
+    }
+    visitedCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+
+  return turns;
+}
+
+async function readCodexPaginatedThread(
+  client: CodexAppServerClientLike,
+  threadId: string,
+): Promise<unknown> {
+  const metadataResponse = await client.request("thread/read", {
     threadId,
-    includeTurns: true,
+    includeTurns: false,
   });
+  const turns = await fetchAllCodexPaginatedTurns(client, threadId);
+
+  if (isRecord(metadataResponse) && isRecord(metadataResponse.thread)) {
+    return {
+      ...metadataResponse,
+      thread: {
+        ...metadataResponse.thread,
+        turns,
+      },
+    };
+  }
+
+  return {
+    thread: {
+      turns,
+    },
+  };
+}
+
+export async function readCodexThread(
+  client: CodexAppServerClientLike,
+  threadId: string,
+): Promise<unknown> {
+  try {
+    return await client.request("thread/read", {
+      threadId,
+      includeTurns: true,
+    });
+  } catch (error) {
+    if (!isPaginatedThreadReadError(error)) {
+      throw error;
+    }
+    return await readCodexPaginatedThread(client, threadId);
+  }
 }
 
 export async function forkCodexThread(

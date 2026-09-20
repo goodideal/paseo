@@ -184,6 +184,46 @@ export const en = {
       archiveAgent: "Archive the current agent",
       freshDraft: "Archive this agent and start a fresh draft",
     },
+    quickPrompts: {
+      bar: {
+        accessibilityHint: "Click to send, long press to edit in composer",
+        manageAccessibility: "Manage quick prompts and rules",
+      },
+      aiSuggestions: {
+        title: "Suggest quick replies with AI",
+        hint: "When no explicit options exist, use AI to suggest next actions.",
+      },
+      modal: {
+        title: "Quick Prompts & Rules",
+        newPrompt: "New Quick Prompt",
+        resetToDefaults: "Reset to Defaults",
+        fixedBadge: "Fixed",
+        ruleBadge: "Dynamic Rule",
+        edit: "Edit",
+        delete: "Delete",
+        form: {
+          createTitle: "New Quick Prompt",
+          editTitle: "Edit Quick Prompt",
+          label: "Display Label",
+          labelPlaceholder: "e.g. Continue, Fix Error",
+          content: "Prompt Content",
+          contentPlaceholder: "The full prompt to send or insert into the composer...",
+          shortcut: "Slash Command Shortcut (optional)",
+          shortcutPlaceholder: "e.g. continue (type /continue to invoke)",
+          triggerType: "Trigger Type",
+          triggerFixed: "Fixed (always visible)",
+          triggerRule: "Dynamic Rule (conditional)",
+          keywords: "Keywords matched in last assistant message (comma-separated)",
+          keywordsPlaceholder: "e.g. error, failed, exception",
+          regex: "Regular expression matched in last assistant message (optional)",
+          regexPlaceholder: "e.g. (y/n)|proceed\\?",
+          errorLabelRequired: "Label is required",
+          errorContentRequired: "Prompt content is required",
+          save: "Save",
+          cancel: "Cancel",
+        },
+      },
+    },
     github: {
       searching: "Searching...",
       noResults: "No results found.",
@@ -2027,6 +2067,11 @@ export const en = {
       title: "Editor",
       vimKeybindings: "Vim keybindings",
       vimHint: "Applies to source files on web and desktop.",
+      quickPrompts: {
+        title: "Quick Prompts & Commands",
+        hint: "Customize fixed prompt chips, dynamic reply rules, and slash command autocompletions",
+        manage: "Manage",
+      },
     },
     notifications: {
       title: "Notifications",
@@ -2845,12 +2890,4 @@ type WidenStringLeaves<T> = {
 
 type BaseTranslation = WidenStringLeaves<typeof en>;
 
-export type TranslationResources = {
-  [K in keyof BaseTranslation]: K extends "settings"
-    ? Omit<BaseTranslation["settings"], "appearance"> & {
-        appearance: Omit<BaseTranslation["settings"]["appearance"], "terminalAppearance"> & {
-          terminalAppearance?: BaseTranslation["settings"]["appearance"]["terminalAppearance"];
-        };
-      }
-    : BaseTranslation[K];
-};
+export type TranslationResources = BaseTranslation;

@@ -71,6 +71,7 @@ CLAUDE.local.md
 **/.tanstack/
 
 # Local agent/tooling artifacts (do not commit)
+.serena/
 PLAN.md
 .valknut/
 valknut-report.html/

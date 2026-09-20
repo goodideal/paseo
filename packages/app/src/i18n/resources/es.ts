@@ -10,7 +10,6 @@ export const es: TranslationResources = {
     failed: "Error",
     retry: "Reintentar",
     chatPosition: "{{current}} de {{total}} en el mensaje",
-
     title: "Buscar",
     placeholder: "Buscar en el panel",
     close: "Cerrar búsqueda",
@@ -189,6 +188,46 @@ export const es: TranslationResources = {
     clientCommands: {
       archiveAgent: "Archivar el agente actual",
       freshDraft: "Archive este agente y comience un nuevo borrador",
+    },
+    quickPrompts: {
+      bar: {
+        accessibilityHint: "Tocar para enviar, mantener presionado para editar",
+        manageAccessibility: "Administrar frases rápidas y reglas",
+      },
+      aiSuggestions: {
+        title: "Sugerir respuestas rápidas con IA",
+        hint: "Cuando no haya opciones explícitas, usa IA para sugerir las siguientes acciones.",
+      },
+      modal: {
+        title: "Frases rápidas y reglas",
+        newPrompt: "Nueva frase rápida",
+        resetToDefaults: "Restablecer valores predeterminados",
+        fixedBadge: "Fijo",
+        ruleBadge: "Regla dinámica",
+        edit: "Editar",
+        delete: "Eliminar",
+        form: {
+          createTitle: "Nueva frase rápida",
+          editTitle: "Editar frase rápida",
+          label: "Etiqueta",
+          labelPlaceholder: "p. ej. Continuar, Reparar error",
+          content: "Contenido del prompt",
+          contentPlaceholder: "Prompt completo a enviar o insertar...",
+          shortcut: "Atajo de comando de barra (opcional)",
+          shortcutPlaceholder: "p. ej. continue (escriba /continue para usar)",
+          triggerType: "Tipo de activación",
+          triggerFixed: "Fijo (siempre visible)",
+          triggerRule: "Regla dinámica (condicional)",
+          keywords: "Palabras clave en última respuesta (separadas por comas)",
+          keywordsPlaceholder: "p. ej. error, failed, exception",
+          regex: "Expresión regular en última respuesta (opcional)",
+          regexPlaceholder: "p. ej. (y/n)|proceed\\?",
+          errorLabelRequired: "La etiqueta es obligatoria",
+          errorContentRequired: "El contenido del prompt es obligatorio",
+          save: "Guardar",
+          cancel: "Cancelar",
+        },
+      },
     },
     github: {
       searching: "Búsqueda...",
@@ -2015,6 +2054,11 @@ export const es: TranslationResources = {
       title: "Editor",
       vimKeybindings: "Atajos de Vim",
       vimHint: "Se aplica a archivos fuente en web y escritorio.",
+      quickPrompts: {
+        title: "Frases rápidas y comandos",
+        hint: "Personalizar accesos directos fijos, reglas dinámicas y autocompletado con barra",
+        manage: "Administrar",
+      },
     },
     notifications: {
       title: "Notificaciones",
@@ -2207,11 +2251,12 @@ export const es: TranslationResources = {
         },
       },
       terminalAppearance: {
-        title: "Apariencia de terminal",
-        description: "Establecer la combinación de colores para el terminal integrado",
-        accessibilityLabel: "Apariencia de terminal: {{value}}",
+        title: "Apariencia de la terminal",
+        description: "Configurar el esquema de color para la terminal integrada",
+        accessibilityLabel: "Apariencia de la terminal: {{value}}",
         options: {
-          "follow-theme": "Seguir el tema de la aplicación",
+          "follow-theme": "Seguir tema de la app",
+
           pureBlack: "Negro puro",
           dark: "Oscuro",
         },

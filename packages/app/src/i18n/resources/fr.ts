@@ -10,7 +10,6 @@ export const fr: TranslationResources = {
     failed: "Échec",
     retry: "Réessayer",
     chatPosition: "{{current}} sur {{total}} dans le message",
-
     title: "Rechercher",
     placeholder: "Rechercher dans le panneau",
     close: "Fermer la recherche",
@@ -191,6 +190,46 @@ export const fr: TranslationResources = {
     clientCommands: {
       archiveAgent: "Archiver l'agent actuel",
       freshDraft: "Archivez cet agent et démarrez un nouveau brouillon",
+    },
+    quickPrompts: {
+      bar: {
+        accessibilityHint: "Cliquer pour envoyer, appui long pour insérer dans l'éditeur",
+        manageAccessibility: "Gérer les invites rapides et les règles",
+      },
+      aiSuggestions: {
+        title: "Suggérer des réponses rapides avec l'IA",
+        hint: "En l'absence d'options explicites, utiliser l'IA pour suggérer les actions suivantes.",
+      },
+      modal: {
+        title: "Invites rapides et règles",
+        newPrompt: "Nouvelle invite rapide",
+        resetToDefaults: "Rétablir les valeurs par défaut",
+        fixedBadge: "Fixe",
+        ruleBadge: "Règle dynamique",
+        edit: "Modifier",
+        delete: "Supprimer",
+        form: {
+          createTitle: "Nouvelle invite rapide",
+          editTitle: "Modifier l'invite rapide",
+          label: "Libellé",
+          labelPlaceholder: "ex. Continuer, Corriger l'erreur",
+          content: "Contenu de l'invite",
+          contentPlaceholder: "Invite complète à envoyer ou insérer...",
+          shortcut: "Raccourci de commande slash (facultatif)",
+          shortcutPlaceholder: "ex. continue (taper /continue pour appeler)",
+          triggerType: "Type de déclenchement",
+          triggerFixed: "Fixe (toujours visible)",
+          triggerRule: "Règle dynamique (conditionnelle)",
+          keywords: "Mots-clés dans la dernière réponse (séparés par des virgules)",
+          keywordsPlaceholder: "ex. error, failed, exception",
+          regex: "Expression régulière dans la dernière réponse (facultatif)",
+          regexPlaceholder: "ex. (y/n)|proceed\\?",
+          errorLabelRequired: "Le libellé est requis",
+          errorContentRequired: "Le contenu de l'invite est requis",
+          save: "Enregistrer",
+          cancel: "Annuler",
+        },
+      },
     },
     github: {
       searching: "Recherche...",
@@ -2020,6 +2059,11 @@ export const fr: TranslationResources = {
       title: "Éditeur",
       vimKeybindings: "Raccourcis Vim",
       vimHint: "S’applique aux fichiers source sur le web et le bureau.",
+      quickPrompts: {
+        title: "Invites rapides et commandes",
+        hint: "Personnaliser les puces fixes, les règles de réponse dynamique et l'autocomplétion slash",
+        manage: "Gérer",
+      },
     },
     notifications: {
       title: "Notifications",
@@ -2212,7 +2256,8 @@ export const fr: TranslationResources = {
       },
       terminalAppearance: {
         title: "Apparence du terminal",
-        description: "Définir le thème de couleur pour le terminal intégré",
+        description: "Définir le thème de couleur du terminal intégré",
+
         accessibilityLabel: "Apparence du terminal : {{value}}",
         options: {
           "follow-theme": "Suivre le thème de l'application",
