@@ -90,12 +90,8 @@ import { AutocompletePopover } from "@/components/ui/autocomplete-popover";
 import type { AutocompleteOption } from "@/components/ui/autocomplete";
 import { useAgentAutocomplete } from "@/hooks/use-agent-autocomplete";
 import { QuickPromptBar, QuickPromptsModal } from "./quick-prompts";
-import {
-  useQuickPromptsStore,
-  type QuickPromptAgentStatus,
-  type QuickPromptItem,
-} from "@/stores/quick-prompts-store";
-import { evaluateQuickPrompts } from "@/utils/quick-prompt-matcher";
+import { useEffectiveQuickPrompts } from "@/hooks/use-quick-prompts";
+import type { QuickPromptAgentStatus, QuickPromptItem } from "@getpaseo/protocol/quick-prompts";
 import type { StreamItem } from "@/types/stream";
 import { usePluginClientSlashCommands } from "@/plugins/client-slash-commands";
 import {
@@ -1333,17 +1329,13 @@ function ComposerContentImpl({
     state.sessions[serverId]?.agentStreamTail?.get(agentId),
   );
   const lastAssistantText = useMemo(() => findLatestAssistantText(streamTail), [streamTail]);
-  const allQuickPrompts = useQuickPromptsStore((state) => state.items);
-  const activeQuickPrompts = useMemo(
-    () =>
-      evaluateQuickPrompts({
-        items: allQuickPrompts,
-        lastAssistantText,
-        agentStatus: (agentState.status as QuickPromptAgentStatus) ?? null,
-        locale: i18n.language,
-      }),
-    [allQuickPrompts, lastAssistantText, agentState.status, i18n.language],
-  );
+  const { effectiveItems: activeQuickPrompts } = useEffectiveQuickPrompts({
+    serverId,
+    workspaceId,
+    lastAssistantText,
+    agentStatus: (agentState.status as QuickPromptAgentStatus) ?? null,
+    locale: i18n.language,
+  });
 
   const [isQuickPromptsModalOpen, setIsQuickPromptsModalOpen] = useState(false);
 
@@ -2419,6 +2411,7 @@ function ComposerContentImpl({
       canExecuteClientSlashCommand: buildOutgoingAttachments(attachments).length === 0,
       onClientSlashCommand: runClientSlashCommand,
       pluginClientSlashCommands,
+      quickPrompts: activeQuickPrompts,
     }),
     [
       replaceUserInput,
@@ -2429,6 +2422,7 @@ function ComposerContentImpl({
       attachments,
       runClientSlashCommand,
       pluginClientSlashCommands,
+      activeQuickPrompts,
     ],
   );
   const messageInputContainerRef = useRef<View>(null);
@@ -2587,6 +2581,8 @@ function ComposerContentImpl({
       <QuickPromptsModal
         visible={isQuickPromptsModalOpen}
         onClose={handleCloseQuickPromptsManage}
+        serverId={serverId}
+        workspaceId={workspaceId}
       />
     </>
   );

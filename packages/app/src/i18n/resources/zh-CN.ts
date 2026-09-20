@@ -195,7 +195,22 @@ export const zhCN: TranslationResources = {
       },
       modal: {
         title: "常用语与快捷指令",
+        tabProject: "当前项目",
+        tabGlobal: "全局常用语",
+        projectScope: "项目专属",
+        globalScope: "全局继承",
+        globalNotice: "此处配置为全局生效，修改将同步应用至本机所有工程。",
+        projectNotice:
+          "管理当前项目的专属常用语。继承的全局项可在此项目单独停用，或前往全局标签编辑。",
+        globalReadOnlyHint:
+          "全局常用语：可在此单独开启/禁用；如需修改内容，请前往「全局常用语」标签。",
         newPrompt: "新建常用语",
+        newProjectPrompt: "新建项目专属常用语",
+        newGlobalPrompt: "新建全局常用语",
+        editProjectPrompt: "编辑项目专属常用语",
+        editGlobalPrompt: "编辑全局常用语",
+        jumpToGlobal: "前往全局编辑",
+        emptyProjectItems: "暂无项目专属常用语，当前已继承有效全局常用语。",
         resetToDefaults: "恢复默认",
         fixedBadge: "常驻",
         ruleBadge: "动态规则",

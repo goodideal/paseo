@@ -8,6 +8,7 @@ import {
 } from "./connection/index.js";
 import { CreationClient } from "./creation/index.js";
 import type { CreationSnapshot } from "@getpaseo/protocol/messages";
+import type { QuickPromptItem } from "@getpaseo/protocol/quick-prompts";
 import type { z } from "zod";
 import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
 import type { ClientCapability } from "@getpaseo/protocol/client-capabilities";
@@ -5116,6 +5117,75 @@ export class DaemonClient {
         expectedRevision: input.expectedRevision,
       },
       responseType: "write_project_config_response",
+    });
+  }
+
+  async quickPromptsGlobalGet(requestId?: string): Promise<{ items: QuickPromptItem[] }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "quick_prompts.global.get.request",
+      },
+      responseType: "quick_prompts.global.get.response",
+    });
+  }
+
+  async quickPromptsGlobalSet(
+    items: QuickPromptItem[],
+    requestId?: string,
+  ): Promise<{ items: QuickPromptItem[]; success: boolean }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "quick_prompts.global.set.request",
+        items,
+      },
+      responseType: "quick_prompts.global.set.response",
+    });
+  }
+
+  async quickPromptsProjectGet(
+    projectId: string,
+    requestId?: string,
+  ): Promise<{
+    projectId: string;
+    items: QuickPromptItem[];
+    disabledGlobalIds: string[];
+    order?: string[];
+  }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "quick_prompts.project.get.request",
+        projectId,
+      },
+      responseType: "quick_prompts.project.get.response",
+    });
+  }
+
+  async quickPromptsProjectSet(input: {
+    projectId: string;
+    items: QuickPromptItem[];
+    disabledGlobalIds: string[];
+    order?: string[];
+    requestId?: string;
+  }): Promise<{
+    projectId: string;
+    items: QuickPromptItem[];
+    disabledGlobalIds: string[];
+    order?: string[];
+    success: boolean;
+  }> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: input.requestId,
+      message: {
+        type: "quick_prompts.project.set.request",
+        projectId: input.projectId,
+        items: input.items,
+        disabledGlobalIds: input.disabledGlobalIds,
+        order: input.order,
+      },
+      responseType: "quick_prompts.project.set.response",
     });
   }
 

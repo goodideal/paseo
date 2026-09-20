@@ -80,7 +80,11 @@ export function EditorSection() {
         </View>
       </SettingsSection>
 
-      <QuickPromptsModal visible={quickPromptsOpen} onClose={handleCloseQuickPrompts} />
+      <QuickPromptsModal
+        visible={quickPromptsOpen}
+        onClose={handleCloseQuickPrompts}
+        initialTab="global"
+      />
     </>
   );
 }

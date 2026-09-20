@@ -1,3 +1,4 @@
+import { QuickPromptsSession } from "./quick-prompts/quick-prompts-session.js";
 import { searchTimeline } from "./agent/chat-search/index.js";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { BrowserAutomationHostCapabilitySchema } from "@getpaseo/protocol/browser-automation/capabilities";
@@ -754,6 +755,7 @@ export class Session {
     WorkspaceUpdatesSubscriptionState
   >();
   private readonly workspaceLabelService: WorkspaceLabelService | null;
+  private readonly quickPromptsSession: QuickPromptsSession;
   private readonly eventSubscriptions = new Map<
     string,
     { owner: OwnedSubscription; events: Set<SessionEventSubscription>; notifications: boolean }
@@ -887,6 +889,7 @@ export class Session {
     this.workspaceRegistry = workspaceRegistry;
     this.directorySync = resolveDirectorySync(directorySync);
     this.workspaceLabelService = resolveWorkspaceLabelService(workspaceLabelService);
+    this.quickPromptsSession = new QuickPromptsSession(paseoHome, (msg) => this.emit(msg));
     this.filesystem = filesystem ?? nodeSessionFileSystem;
     this.github = github ?? createGitHubService();
     this.renameCurrentBranch = renameCurrentBranch ?? renameCurrentBranchDefault;
@@ -2296,6 +2299,7 @@ export class Session {
     return (
       this.dispatchWorkspaceStateMessage(msg) ??
       this.dispatchWorkspaceLabelMessage(msg) ??
+      this.dispatchQuickPromptsMessage(msg) ??
       this.dispatchWorkspaceSetupMessage(msg) ??
       this.dispatchWorkspaceAndProjectMessage(msg)
     );
@@ -2909,6 +2913,25 @@ export class Session {
       return this.handleWorkspaceSetupRunRequest(msg);
     }
     return undefined;
+  }
+
+  private dispatchQuickPromptsMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "quick_prompts.global.get.request":
+        this.quickPromptsSession.handleGlobalGet(msg);
+        return Promise.resolve();
+      case "quick_prompts.global.set.request":
+        this.quickPromptsSession.handleGlobalSet(msg);
+        return Promise.resolve();
+      case "quick_prompts.project.get.request":
+        this.quickPromptsSession.handleProjectGet(msg);
+        return Promise.resolve();
+      case "quick_prompts.project.set.request":
+        this.quickPromptsSession.handleProjectSet(msg);
+        return Promise.resolve();
+      default:
+        return undefined;
+    }
   }
 
   private dispatchWorkspaceLabelMessage(msg: SessionInboundMessage): Promise<void> | undefined {
