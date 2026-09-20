@@ -1,25 +1,43 @@
 import React, { memo, useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, ScrollView, Text, View } from "react-native";
-import { Pencil, Plus, RotateCcw, Sparkles, Trash2 } from "lucide-react-native";
+import {
+  ExternalLink,
+  FolderGit2,
+  Globe,
+  Pencil,
+  Plus,
+  RotateCcw,
+  Sparkles,
+  Trash2,
+} from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { AdaptiveTextInput } from "@/components/adaptive-text-input";
 import { Button } from "@/components/ui/button";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Switch } from "@/components/ui/switch";
+import { SortableInlineList } from "@/components/sortable-inline-list";
+import type { DraggableListDragHandleProps, DraggableRenderItemInfo } from "@/components/draggable-list.types";
+import { GripVertical } from "lucide-react-native";
+import { useSessionStore } from "@/stores/session-store";
+import { useGlobalQuickPrompts, useProjectQuickPrompts } from "@/hooks/use-quick-prompts";
 import {
-  useQuickPromptsStore,
   type QuickPromptItem,
   type QuickPromptTriggerType,
-} from "@/stores/quick-prompts-store";
+} from "@getpaseo/protocol/quick-prompts";
+import { generateMessageId } from "@/types/stream";
 
 export interface QuickPromptsModalProps {
   visible: boolean;
   onClose: () => void;
+  serverId?: string | null;
+  workspaceId?: string | null;
+  initialTab?: "project" | "global";
 }
 
 type ModalViewMode = "list" | "edit" | "create";
+type ScopeTab = "project" | "global";
 
 interface PromptFormState {
   label: string;
@@ -39,39 +57,92 @@ const EMPTY_FORM: PromptFormState = {
   regex: "",
 };
 
-const QuickPromptItemCard = memo(function QuickPromptItemCard({
+function ScopeBadge({
+  isProjectScopedItem,
+  isInheritedGlobal,
+}: {
+  isProjectScopedItem?: boolean;
+  isInheritedGlobal?: boolean;
+}) {
+  const { t } = useTranslation();
+  if (isProjectScopedItem) {
+    return (
+      <View style={styles.badgeProject}>
+        <FolderGit2 size={10} color={styles.badgeProjectText.color} />
+        <Text style={styles.badgeProjectText}>{t("composer.quickPrompts.modal.projectScope")}</Text>
+      </View>
+    );
+  }
+  if (isInheritedGlobal) {
+    return (
+      <View style={styles.badgeGlobal}>
+        <Globe size={10} color={styles.badgeGlobalText.color} />
+        <Text style={styles.badgeGlobalText}>{t("composer.quickPrompts.modal.globalScope")}</Text>
+      </View>
+    );
+  }
+  return null;
+}
+
+interface QuickPromptCardProps {
+  item: QuickPromptItem;
+  isProjectScopedItem?: boolean;
+  isInheritedGlobal?: boolean;
+  isDisabledInProject?: boolean;
+  onToggle: (id: string) => void;
+  onEdit?: (item: QuickPromptItem) => void;
+  onDelete?: (id: string) => void;
+  onJumpToGlobal?: (item: QuickPromptItem) => void;
+  dragHandleProps?: DraggableListDragHandleProps;
+}
+
+const QuickPromptCard = memo(function QuickPromptCard({
   item,
+  isProjectScopedItem,
+  isInheritedGlobal,
+  isDisabledInProject,
   onToggle,
   onEdit,
   onDelete,
-}: {
-  item: QuickPromptItem;
-  onToggle: (id: string) => void;
-  onEdit: (item: QuickPromptItem) => void;
-  onDelete: (id: string) => void;
-}) {
+  onJumpToGlobal,
+  dragHandleProps,
+}: QuickPromptCardProps) {
   const { t } = useTranslation();
   const handleToggle = useCallback(() => onToggle(item.id), [item.id, onToggle]);
-  const handleEdit = useCallback(() => onEdit(item), [item, onEdit]);
-  const handleDelete = useCallback(() => onDelete(item.id), [item.id, onDelete]);
+  const handleEdit = useCallback(() => onEdit?.(item), [item, onEdit]);
+  const handleDelete = useCallback(() => onDelete?.(item.id), [item.id, onDelete]);
+  const handleJump = useCallback(() => onJumpToGlobal?.(item), [item, onJumpToGlobal]);
 
   const isRule = item.triggerType === "rule";
+  const switchValue = isInheritedGlobal ? !isDisabledInProject : item.enabled;
 
   return (
-    <View style={styles.itemCard} testID={`quick-prompt-item-${item.id}`}>
+    <View style={[styles.itemCard, dragHandleProps ? styles.itemCardDragging : undefined]} testID={`quick-prompt-item-${item.id}`}>
       <View style={styles.itemHeader}>
         <View style={styles.itemTitleRow}>
+          {dragHandleProps ? (
+            <View {...dragHandleProps} style={styles.dragHandle}>
+              <GripVertical size={14} color={styles.outlineIcon.color} />
+            </View>
+          ) : null}
           <Switch
-            value={item.enabled}
+            value={switchValue}
             onValueChange={handleToggle}
             testID={`quick-prompt-toggle-${item.id}`}
           />
           <Text style={styles.itemLabel}>{item.label}</Text>
+
+          <ScopeBadge
+            isProjectScopedItem={isProjectScopedItem}
+            isInheritedGlobal={isInheritedGlobal}
+          />
+
           {item.shortcut ? (
             <View style={styles.badgeShortcut}>
               <Text style={styles.badgeShortcutText}>/{item.shortcut}</Text>
             </View>
           ) : null}
+
           <View style={[styles.badgeTrigger, isRule && styles.badgeTriggerRule]}>
             {isRule ? <Sparkles size={10} color={styles.ruleIcon.color} /> : null}
             <Text style={[styles.badgeTriggerText, isRule && styles.badgeTriggerTextRule]}>
@@ -83,22 +154,42 @@ const QuickPromptItemCard = memo(function QuickPromptItemCard({
         </View>
 
         <View style={styles.itemActions}>
-          <Pressable
-            onPress={handleEdit}
-            style={styles.actionIconBtn}
-            accessibilityLabel={t("composer.quickPrompts.modal.edit")}
-            testID={`quick-prompt-edit-${item.id}`}
-          >
-            <Pencil size={14} color={styles.actionIcon.color} />
-          </Pressable>
-          <Pressable
-            onPress={handleDelete}
-            style={styles.actionIconBtn}
-            accessibilityLabel={t("composer.quickPrompts.modal.delete")}
-            testID={`quick-prompt-delete-${item.id}`}
-          >
-            <Trash2 size={14} color={styles.dangerIcon.color} />
-          </Pressable>
+          {isInheritedGlobal ? (
+            <Pressable
+              onPress={handleJump}
+              style={styles.actionJumpBtn}
+              accessibilityLabel={t("composer.quickPrompts.modal.jumpToGlobal")}
+              testID={`quick-prompt-jump-${item.id}`}
+            >
+              <Text style={styles.actionJumpText}>
+                {t("composer.quickPrompts.modal.jumpToGlobal")}
+              </Text>
+              <ExternalLink size={12} color={styles.actionJumpText.color} />
+            </Pressable>
+          ) : (
+            <>
+              {onEdit ? (
+                <Pressable
+                  onPress={handleEdit}
+                  style={styles.actionIconBtn}
+                  accessibilityLabel={t("composer.quickPrompts.modal.edit")}
+                  testID={`quick-prompt-edit-${item.id}`}
+                >
+                  <Pencil size={14} color={styles.actionIcon.color} />
+                </Pressable>
+              ) : null}
+              {onDelete ? (
+                <Pressable
+                  onPress={handleDelete}
+                  style={styles.actionIconBtn}
+                  accessibilityLabel={t("composer.quickPrompts.modal.delete")}
+                  testID={`quick-prompt-delete-${item.id}`}
+                >
+                  <Trash2 size={14} color={styles.dangerIcon.color} />
+                </Pressable>
+              ) : null}
+            </>
+          )}
         </View>
       </View>
 
@@ -109,17 +200,54 @@ const QuickPromptItemCard = memo(function QuickPromptItemCard({
   );
 });
 
-export function QuickPromptsModal({ visible, onClose }: QuickPromptsModalProps) {
+function resolveFormTitle(
+  mode: "create" | "edit",
+  scope: ScopeTab,
+  t: (key: string) => string,
+): string {
+  if (mode === "create") {
+    return scope === "project"
+      ? t("composer.quickPrompts.modal.newProjectPrompt")
+      : t("composer.quickPrompts.modal.newGlobalPrompt");
+  }
+  return scope === "project"
+    ? t("composer.quickPrompts.modal.editProjectPrompt")
+    : t("composer.quickPrompts.modal.editGlobalPrompt");
+}
+
+export function QuickPromptsModal({
+  visible,
+  onClose,
+  serverId: propServerId,
+  workspaceId,
+  initialTab,
+}: QuickPromptsModalProps) {
   const { t } = useTranslation();
-  const items = useQuickPromptsStore((state) => state.items);
-  const addItem = useQuickPromptsStore((state) => state.addItem);
-  const updateItem = useQuickPromptsStore((state) => state.updateItem);
-  const deleteItem = useQuickPromptsStore((state) => state.deleteItem);
-  const toggleItem = useQuickPromptsStore((state) => state.toggleItem);
-  const resetToDefaults = useQuickPromptsStore((state) => state.resetToDefaults);
+
+  const resolvedServerId = useSessionStore((state) => {
+    if (propServerId) return propServerId;
+    for (const key in state.sessions) {
+      if (Object.prototype.hasOwnProperty.call(state.sessions, key)) return key;
+    }
+    return "";
+  });
+
+  const projectId = useSessionStore((state) => {
+    if (!resolvedServerId || !workspaceId) return null;
+    return state.sessions[resolvedServerId]?.workspaces?.get(workspaceId)?.projectId ?? null;
+  });
+
+  const hasProjectScope = Boolean(projectId);
+  const [activeTab, setActiveTab] = useState<ScopeTab>(
+    initialTab ?? (hasProjectScope ? "project" : "global"),
+  );
+
+  const globalStore = useGlobalQuickPrompts(resolvedServerId);
+  const projectStore = useProjectQuickPrompts(resolvedServerId, projectId);
 
   const [mode, setMode] = useState<ModalViewMode>("list");
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [editingTargetScope, setEditingTargetScope] = useState<ScopeTab>("global");
   const [form, setForm] = useState<PromptFormState>(EMPTY_FORM);
   const [error, setError] = useState<string | null>(null);
 
@@ -137,6 +265,20 @@ export function QuickPromptsModal({ visible, onClose }: QuickPromptsModalProps) 
     [t],
   );
 
+  const scopeTabs = useMemo(
+    () => [
+      {
+        value: "project" as const,
+        label: t("composer.quickPrompts.modal.tabProject"),
+      },
+      {
+        value: "global" as const,
+        label: t("composer.quickPrompts.modal.tabGlobal"),
+      },
+    ],
+    [t],
+  );
+
   const handleClose = useCallback(() => {
     setMode("list");
     setEditingItemId(null);
@@ -148,76 +290,43 @@ export function QuickPromptsModal({ visible, onClose }: QuickPromptsModalProps) 
   const handleStartCreate = useCallback(() => {
     setForm(EMPTY_FORM);
     setEditingItemId(null);
+    setEditingTargetScope(activeTab);
     setError(null);
     setMode("create");
-  }, []);
+  }, [activeTab]);
 
-  const handleStartEdit = useCallback((item: QuickPromptItem) => {
+  const handleStartEdit = useCallback((item: QuickPromptItem, targetScope: ScopeTab) => {
+    setEditingItemId(item.id);
+    setEditingTargetScope(targetScope);
     setForm({
       label: item.label,
       content: item.content,
       shortcut: item.shortcut ?? "",
       triggerType: item.triggerType,
-      keywords: (item.ruleCondition?.keywords ?? []).join(", "),
+      keywords: item.ruleCondition?.keywords?.join(", ") ?? "",
       regex: item.ruleCondition?.regex ?? "",
     });
-    setEditingItemId(item.id);
     setError(null);
     setMode("edit");
   }, []);
 
-  const handleSave = useCallback(() => {
-    const trimmedLabel = form.label.trim();
-    const trimmedContent = form.content.trim();
+  const handleEditProjectItem = useCallback(
+    (item: QuickPromptItem) => handleStartEdit(item, "project"),
+    [handleStartEdit],
+  );
 
-    if (!trimmedLabel) {
-      setError(t("composer.quickPrompts.modal.form.errorLabelRequired"));
-      return;
-    }
-    if (!trimmedContent) {
-      setError(t("composer.quickPrompts.modal.form.errorContentRequired"));
-      return;
-    }
+  const handleEditGlobalItem = useCallback(
+    (item: QuickPromptItem) => handleStartEdit(item, "global"),
+    [handleStartEdit],
+  );
 
-    const shortcut = form.shortcut.trim().replace(/^\//, "") || undefined;
-    const keywords = form.keywords
-      .split(/[,，]/)
-      .map((k) => k.trim())
-      .filter((k) => k.length > 0);
-    const regex = form.regex.trim() || undefined;
-
-    const ruleCondition =
-      form.triggerType === "rule" && (keywords.length > 0 || regex)
-        ? {
-            ...(keywords.length > 0 ? { keywords } : {}),
-            ...(regex ? { regex } : {}),
-          }
-        : undefined;
-
-    if (mode === "create") {
-      addItem({
-        label: trimmedLabel,
-        content: trimmedContent,
-        shortcut,
-        triggerType: form.triggerType,
-        ruleCondition,
-        enabled: true,
-      });
-    } else if (mode === "edit" && editingItemId) {
-      updateItem(editingItemId, {
-        label: trimmedLabel,
-        content: trimmedContent,
-        shortcut,
-        triggerType: form.triggerType,
-        ruleCondition,
-      });
-    }
-
-    setMode("list");
-    setEditingItemId(null);
-    setForm(EMPTY_FORM);
-    setError(null);
-  }, [addItem, updateItem, editingItemId, form, mode, t]);
+  const handleJumpToGlobalAndEdit = useCallback(
+    (item: QuickPromptItem) => {
+      setActiveTab("global");
+      handleStartEdit(item, "global");
+    },
+    [handleStartEdit],
+  );
 
   const handleCancelEdit = useCallback(() => {
     setMode("list");
@@ -226,88 +335,372 @@ export function QuickPromptsModal({ visible, onClose }: QuickPromptsModalProps) 
     setError(null);
   }, []);
 
-  const handleLabelChange = useCallback((v: string) => {
-    setForm((prev) => ({ ...prev, label: v }));
+  const handleToggleGlobalItem = useCallback(
+    (id: string) => {
+      const updated = globalStore.items.map((i) =>
+        i.id === id ? { ...i, enabled: !i.enabled } : i,
+      );
+      void globalStore.setGlobalItems(updated);
+    },
+    [globalStore],
+  );
+
+  const handleToggleProjectItem = useCallback(
+    (id: string) => {
+      const updated = projectStore.items.map((i) =>
+        i.id === id ? { ...i, enabled: !i.enabled } : i,
+      );
+      void projectStore.setProjectConfig({
+        items: updated,
+        disabledGlobalIds: projectStore.disabledGlobalIds,
+        order: projectStore.order,
+      });
+    },
+    [projectStore],
+  );
+
+  const handleToggleInheritedGlobalInProject = useCallback(
+    (id: string) => {
+      const isCurrentlyDisabled = projectStore.disabledGlobalIds.includes(id);
+      const nextDisabled = isCurrentlyDisabled
+        ? projectStore.disabledGlobalIds.filter((d) => d !== id)
+        : [...projectStore.disabledGlobalIds, id];
+
+      void projectStore.setProjectConfig({
+        items: projectStore.items,
+        disabledGlobalIds: nextDisabled,
+        order: projectStore.order,
+      });
+    },
+    [projectStore],
+  );
+
+  const handleDeleteGlobalItem = useCallback(
+    (id: string) => {
+      const updated = globalStore.items.filter((i) => i.id !== id);
+      void globalStore.setGlobalItems(updated);
+    },
+    [globalStore],
+  );
+
+  const handleDeleteProjectItem = useCallback(
+    (id: string) => {
+      const updated = projectStore.items.filter((i) => i.id !== id);
+      void projectStore.setProjectConfig({
+        items: updated,
+        disabledGlobalIds: projectStore.disabledGlobalIds,
+        order: projectStore.order,
+      });
+    },
+    [projectStore],
+  );
+
+  const handleSave = useCallback(() => {
+    if (!form.label.trim()) {
+      setError(t("composer.quickPrompts.modal.form.errorLabelRequired"));
+      return;
+    }
+    if (!form.content.trim()) {
+      setError(t("composer.quickPrompts.modal.form.errorContentRequired"));
+      return;
+    }
+
+    const keywords =
+      form.triggerType === "rule" && form.keywords.trim()
+        ? form.keywords
+            .split(",")
+            .map((k) => k.trim())
+            .filter(Boolean)
+        : undefined;
+
+    const regex = form.triggerType === "rule" && form.regex.trim() ? form.regex.trim() : undefined;
+
+    const ruleCondition =
+      keywords || regex
+        ? {
+            keywords,
+            regex,
+          }
+        : undefined;
+
+    const shortcut = form.shortcut.trim().replace(/^\//, "") || undefined;
+
+    if (editingTargetScope === "project") {
+      if (mode === "create") {
+        const newItem: QuickPromptItem = {
+          id: `qp_prj_${generateMessageId()}`,
+          label: form.label.trim(),
+          content: form.content.trim(),
+          shortcut,
+          triggerType: form.triggerType,
+          ruleCondition,
+          enabled: true,
+          createdAt: Date.now(),
+          order: projectStore.items.length,
+        };
+        void projectStore.setProjectConfig({
+          items: [...projectStore.items, newItem],
+          disabledGlobalIds: projectStore.disabledGlobalIds,
+          order: projectStore.order,
+        });
+      } else if (editingItemId) {
+        const updated = projectStore.items.map((item) =>
+          item.id === editingItemId
+            ? {
+                ...item,
+                label: form.label.trim(),
+                content: form.content.trim(),
+                shortcut,
+                triggerType: form.triggerType,
+                ruleCondition,
+              }
+            : item,
+        );
+        void projectStore.setProjectConfig({
+          items: updated,
+          disabledGlobalIds: projectStore.disabledGlobalIds,
+          order: projectStore.order,
+        });
+      }
+    } else {
+      if (mode === "create") {
+        const newItem: QuickPromptItem = {
+          id: `qp_glb_${generateMessageId()}`,
+          label: form.label.trim(),
+          content: form.content.trim(),
+          shortcut,
+          triggerType: form.triggerType,
+          ruleCondition,
+          enabled: true,
+          createdAt: Date.now(),
+          order: globalStore.items.length,
+        };
+        void globalStore.setGlobalItems([...globalStore.items, newItem]);
+      } else if (editingItemId) {
+        const updated = globalStore.items.map((item) =>
+          item.id === editingItemId
+            ? {
+                ...item,
+                label: form.label.trim(),
+                content: form.content.trim(),
+                shortcut,
+                triggerType: form.triggerType,
+                ruleCondition,
+              }
+            : item,
+        );
+        void globalStore.setGlobalItems(updated);
+      }
+    }
+
+    setMode("list");
+    setEditingItemId(null);
+    setForm(EMPTY_FORM);
+    setError(null);
+  }, [form, editingTargetScope, mode, editingItemId, t, projectStore, globalStore]);
+
+  const handleLabelChange = useCallback((text: string) => {
+    setForm((f) => ({ ...f, label: text }));
     setError(null);
   }, []);
 
-  const handleContentChange = useCallback((v: string) => {
-    setForm((prev) => ({ ...prev, content: v }));
+  const handleContentChange = useCallback((text: string) => {
+    setForm((f) => ({ ...f, content: text }));
     setError(null);
   }, []);
 
-  const handleShortcutChange = useCallback((v: string) => {
-    setForm((prev) => ({ ...prev, shortcut: v }));
+  const handleShortcutChange = useCallback((text: string) => {
+    setForm((f) => ({ ...f, shortcut: text }));
   }, []);
 
-  const handleTriggerTypeChange = useCallback((tVal: QuickPromptTriggerType) => {
-    setForm((prev) => ({ ...prev, triggerType: tVal }));
+  const handleTriggerTypeChange = useCallback((value: QuickPromptTriggerType) => {
+    setForm((f) => ({ ...f, triggerType: value }));
   }, []);
 
-  const handleKeywordsChange = useCallback((v: string) => {
-    setForm((prev) => ({ ...prev, keywords: v }));
+  const handleKeywordsChange = useCallback((text: string) => {
+    setForm((f) => ({ ...f, keywords: text }));
   }, []);
 
-  const handleRegexChange = useCallback((v: string) => {
-    setForm((prev) => ({ ...prev, regex: v }));
+  const handleRegexChange = useCallback((text: string) => {
+    setForm((f) => ({ ...f, regex: text }));
   }, []);
 
-  const sheetTitle = useMemo(() => {
-    if (mode === "create") {
-      return t("composer.quickPrompts.modal.form.createTitle");
-    }
-    if (mode === "edit") {
-      return t("composer.quickPrompts.modal.form.editTitle");
-    }
-    return t("composer.quickPrompts.modal.title");
-  }, [mode, t]);
+  const formTitle = useMemo(
+    () => resolveFormTitle(mode === "create" ? "create" : "edit", editingTargetScope, t),
+    [mode, editingTargetScope, t],
+  );
 
-  const sheetHeader = useMemo(() => ({ title: sheetTitle }), [sheetTitle]);
+  const keyExtractor = useCallback((i: QuickPromptItem) => i.id, []);
+
+  const handleProjectDragEnd = useCallback(
+    (data: QuickPromptItem[]) => {
+      const newOrder = data.map((i) => i.id);
+      void projectStore.setProjectConfig({
+        items: projectStore.items,
+        disabledGlobalIds: projectStore.disabledGlobalIds,
+        order: newOrder,
+      });
+    },
+    [projectStore],
+  );
+
+  const renderProjectItem = useCallback(
+    ({ item, dragHandleProps }: DraggableRenderItemInfo<QuickPromptItem>) => (
+      <QuickPromptCard
+        item={item}
+        isProjectScopedItem
+        onToggle={handleToggleProjectItem}
+        onEdit={handleEditProjectItem}
+        onDelete={handleDeleteProjectItem}
+        dragHandleProps={dragHandleProps}
+      />
+    ),
+    [handleToggleProjectItem, handleEditProjectItem, handleDeleteProjectItem],
+  );
+
+  const handleGlobalDragEnd = useCallback(
+    (data: QuickPromptItem[]) => {
+      const idMap = new Map(data.map((i, index) => [i.id, index]));
+      const updated = globalStore.items
+        .map((i) => ({ ...i, order: idMap.get(i.id) ?? i.order }))
+        .sort((a, b) => a.order - b.order);
+      void globalStore.setGlobalItems(updated);
+    },
+    [globalStore],
+  );
+
+  const renderGlobalItem = useCallback(
+    ({ item, dragHandleProps }: DraggableRenderItemInfo<QuickPromptItem>) => (
+      <QuickPromptCard
+        item={item}
+        onToggle={handleToggleGlobalItem}
+        onEdit={handleEditGlobalItem}
+        onDelete={handleDeleteGlobalItem}
+        dragHandleProps={dragHandleProps}
+      />
+    ),
+    [handleToggleGlobalItem, handleEditGlobalItem, handleDeleteGlobalItem],
+  );
+
+  const modalHeader = useMemo(() => ({ title: t("composer.quickPrompts.modal.title") }), [t]);
 
   return (
-    <AdaptiveModalSheet visible={visible} onClose={handleClose} header={sheetHeader}>
+    <AdaptiveModalSheet visible={visible} onClose={handleClose} header={modalHeader}>
       <View style={styles.container}>
         {mode === "list" ? (
           <View style={styles.listContainer}>
+            {hasProjectScope ? (
+              <View style={styles.tabBarWrapper}>
+                <SegmentedControl value={activeTab} onChange={setActiveTab} options={scopeTabs} />
+              </View>
+            ) : null}
+
             <View style={styles.topActions}>
-              <Button
-                variant="default"
-                size="sm"
-                onPress={handleStartCreate}
-                testID="quick-prompt-create-button"
-              >
-                <Plus size={14} color="white" />
-                <Text style={styles.buttonTextWhite}>
-                  {t("composer.quickPrompts.modal.newPrompt")}
+              <View style={styles.scopeNoticeBox}>
+                <Text style={styles.scopeNoticeText}>
+                  {activeTab === "project"
+                    ? t("composer.quickPrompts.modal.projectNotice")
+                    : t("composer.quickPrompts.modal.globalNotice")}
                 </Text>
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onPress={resetToDefaults}
-                testID="quick-prompt-reset-button"
-              >
-                <RotateCcw size={13} color={styles.outlineIcon.color} />
-                <Text style={styles.buttonText}>
-                  {t("composer.quickPrompts.modal.resetToDefaults")}
-                </Text>
-              </Button>
+              </View>
+
+              <View style={styles.actionButtonsRow}>
+                {activeTab === "global" ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onPress={globalStore.resetToDefaults}
+                    testID="quick-prompt-reset-button"
+                  >
+                    <RotateCcw size={14} color={styles.outlineIcon.color} />
+                    <Text style={styles.buttonText}>
+                      {t("composer.quickPrompts.modal.resetToDefaults")}
+                    </Text>
+                  </Button>
+                ) : null}
+
+                <Button
+                  variant="default"
+                  size="sm"
+                  onPress={handleStartCreate}
+                  testID="quick-prompt-create-button"
+                >
+                  <Plus size={14} color="white" />
+                  <Text style={styles.buttonTextWhite}>
+                    {activeTab === "project"
+                      ? t("composer.quickPrompts.modal.newProjectPrompt")
+                      : t("composer.quickPrompts.modal.newGlobalPrompt")}
+                  </Text>
+                </Button>
+              </View>
             </View>
 
-            <ScrollView style={styles.itemList} showsVerticalScrollIndicator={false}>
-              {items.map((item) => (
-                <QuickPromptItemCard
-                  key={item.id}
-                  item={item}
-                  onToggle={toggleItem}
-                  onEdit={handleStartEdit}
-                  onDelete={deleteItem}
+            <ScrollView
+              style={styles.itemList}
+              contentContainerStyle={styles.scrollInner}
+              showsVerticalScrollIndicator
+            >
+              {activeTab === "project" ? (
+                <>
+                  <View style={styles.sectionHeader}>
+                    <Text style={styles.sectionTitle}>
+                      {t("composer.quickPrompts.modal.projectScope")} ({projectStore.items.length})
+                    </Text>
+                  </View>
+
+                  {projectStore.items.length === 0 ? (
+                    <View style={styles.emptyCard}>
+                      <Text style={styles.emptyText}>
+                        {t("composer.quickPrompts.modal.emptyProjectItems")}
+                      </Text>
+                    </View>
+                  ) : (
+                    <SortableInlineList
+                      data={projectStore.items}
+                      keyExtractor={keyExtractor}
+                      useDragHandle
+                      onDragEnd={handleProjectDragEnd}
+                      renderItem={renderProjectItem}
+                    />
+                  )}
+
+                  <View style={[styles.sectionHeader, styles.sectionHeaderSpaced]}>
+                    <Text style={styles.sectionTitle}>
+                      {t("composer.quickPrompts.modal.globalScope")} ({globalStore.items.length})
+                    </Text>
+                    <Text style={styles.sectionSubtitle}>
+                      {t("composer.quickPrompts.modal.globalReadOnlyHint")}
+                    </Text>
+                  </View>
+
+                  {globalStore.items.map((item) => (
+                    <QuickPromptCard
+                      key={item.id}
+                      item={item}
+                      isInheritedGlobal
+                      isDisabledInProject={projectStore.disabledGlobalIds.includes(item.id)}
+                      onToggle={handleToggleInheritedGlobalInProject}
+                      onJumpToGlobal={handleJumpToGlobalAndEdit}
+                    />
+                  ))}
+                </>
+              ) : (
+                <SortableInlineList
+                  data={globalStore.items}
+                  keyExtractor={keyExtractor}
+                  useDragHandle
+                  onDragEnd={handleGlobalDragEnd}
+                  renderItem={renderGlobalItem}
                 />
-              ))}
+              )}
             </ScrollView>
           </View>
         ) : (
-          <ScrollView style={styles.formContainer} showsVerticalScrollIndicator={false}>
+          <ScrollView style={styles.formContainer} keyboardShouldPersistTaps="handled">
+            <View style={styles.formHeader}>
+              <Text style={styles.formTitle}>{formTitle}</Text>
+            </View>
+
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
             <View style={styles.formField}>
@@ -328,6 +721,7 @@ export function QuickPromptsModal({ visible, onClose }: QuickPromptsModalProps) 
                 onChangeText={handleContentChange}
                 placeholder={t("composer.quickPrompts.modal.form.contentPlaceholder")}
                 multiline
+                numberOfLines={3}
                 style={[styles.textInput, styles.textAreaInput]}
                 testID="quick-prompt-form-content"
               />
@@ -351,9 +745,9 @@ export function QuickPromptsModal({ visible, onClose }: QuickPromptsModalProps) 
               <Text style={styles.fieldLabel}>
                 {t("composer.quickPrompts.modal.form.triggerType")}
               </Text>
-              <SegmentedControl<QuickPromptTriggerType>
+              <SegmentedControl
                 value={form.triggerType}
-                onValueChange={handleTriggerTypeChange}
+                onChange={handleTriggerTypeChange}
                 options={triggerTypeOptions}
                 testID="quick-prompt-form-trigger"
               />
@@ -412,16 +806,36 @@ export function QuickPromptsModal({ visible, onClose }: QuickPromptsModalProps) 
 
 const styles = StyleSheet.create((theme) => ({
   container: {
-    maxHeight: 520,
+    maxHeight: 560,
     paddingBottom: theme.spacing[2],
   },
   listContainer: {
-    gap: theme.spacing[3],
+    gap: theme.spacing[2.5],
+  },
+  tabBarWrapper: {
+    marginBottom: theme.spacing[1],
   },
   topActions: {
+    flexDirection: "column",
+    gap: theme.spacing[2],
+  },
+  scopeNoticeBox: {
+    backgroundColor: theme.colors.surface1,
+    paddingHorizontal: theme.spacing[2.5],
+    paddingVertical: theme.spacing[1.5],
+    borderRadius: theme.borderRadius.md,
+    borderLeftWidth: 3,
+    borderLeftColor: theme.colors.accent,
+  },
+  scopeNoticeText: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+    lineHeight: 16,
+  },
+  actionButtonsRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    justifyContent: "flex-end",
     gap: theme.spacing[2],
   },
   buttonTextWhite: {
@@ -440,7 +854,45 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
   },
   itemList: {
-    maxHeight: 440,
+    maxHeight: 400,
+  },
+  scrollInner: {
+    paddingBottom: theme.spacing[3],
+  },
+  sectionHeader: {
+    marginTop: theme.spacing[1],
+    marginBottom: theme.spacing[1.5],
+    gap: 2,
+  },
+  sectionHeaderSpaced: {
+    marginTop: theme.spacing[3],
+    paddingTop: theme.spacing[2],
+    borderTopWidth: theme.borderWidth[1],
+    borderTopColor: theme.colors.border,
+  },
+  sectionTitle: {
+    fontSize: theme.fontSize.xs,
+    fontWeight: "700",
+    color: theme.colors.foregroundMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  sectionSubtitle: {
+    fontSize: 11,
+    color: theme.colors.foregroundMuted,
+  },
+  emptyCard: {
+    padding: theme.spacing[3],
+    backgroundColor: theme.colors.surface1,
+    borderRadius: theme.borderRadius.md,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: theme.spacing[2],
+  },
+  emptyText: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+    textAlign: "center",
   },
   itemCard: {
     backgroundColor: theme.colors.surface2,
@@ -461,11 +913,41 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
     flex: 1,
+    flexWrap: "wrap",
   },
   itemLabel: {
     fontSize: theme.fontSize.sm,
     fontWeight: "600",
     color: theme.colors.foreground,
+  },
+  badgeProject: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: theme.colors.surface3,
+    paddingHorizontal: theme.spacing[1.5],
+    paddingVertical: 2,
+    borderRadius: theme.borderRadius.sm,
+    borderWidth: 1,
+    borderColor: theme.colors.borderAccent,
+  },
+  badgeProjectText: {
+    fontSize: 10,
+    fontWeight: "600",
+    color: theme.colors.accent,
+  },
+  badgeGlobal: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: theme.colors.surface3,
+    paddingHorizontal: theme.spacing[1.5],
+    paddingVertical: 2,
+    borderRadius: theme.borderRadius.sm,
+  },
+  badgeGlobalText: {
+    fontSize: 10,
+    color: theme.colors.foregroundMuted,
   },
   badgeShortcut: {
     backgroundColor: theme.colors.surface3,
@@ -474,7 +956,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.sm,
   },
   badgeShortcutText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: 10,
     color: theme.colors.foregroundMuted,
     fontFamily: theme.fontFamily.mono,
   },
@@ -507,6 +989,19 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[1],
   },
+  actionJumpBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: 4,
+    borderRadius: theme.borderRadius.sm,
+    backgroundColor: theme.colors.surface3,
+  },
+  actionJumpText: {
+    fontSize: 11,
+    color: theme.colors.accent,
+  },
   actionIconBtn: {
     padding: theme.spacing[1],
     borderRadius: theme.borderRadius.sm,
@@ -520,10 +1015,18 @@ const styles = StyleSheet.create((theme) => ({
   itemContentPreview: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
-    lineHeight: 16,
+    lineHeight: 18,
   },
   formContainer: {
-    maxHeight: 460,
+    maxHeight: 480,
+  },
+  formHeader: {
+    marginBottom: theme.spacing[2.5],
+  },
+  formTitle: {
+    fontSize: theme.fontSize.base,
+    fontWeight: "600",
+    color: theme.colors.foreground,
   },
   formField: {
     marginBottom: theme.spacing[3],

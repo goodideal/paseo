@@ -25,6 +25,17 @@ import { AgentProviderSchema } from "./provider-manifest.js";
 import { ProviderPaseoToolsPolicySchema } from "./provider-config.js";
 import { TOOL_CALL_ICON_NAMES } from "./agent-types.js";
 import { WORKSPACE_LABEL_COLORS } from "./workspace-labels.js";
+import { QuickPromptItemSchema } from "./quick-prompts.js";
+export {
+  QuickPromptItemSchema,
+  type QuickPromptItem,
+  type QuickPromptTriggerType,
+  type QuickPromptAgentStatus,
+  type QuickPromptRuleCondition,
+  type GlobalQuickPromptsRecord,
+  type ProjectQuickPromptsRecord,
+  DEFAULT_QUICK_PROMPT_ITEMS,
+} from "./quick-prompts.js";
 import {
   ChatCreateRequestSchema,
   ChatListRequestSchema,
@@ -1034,6 +1045,32 @@ export const WorkspaceRecoveryRestoreRequestSchema = z.object({
   type: z.literal("workspace.recovery.restore.request"),
   workspaceId: z.string(),
   requestId: z.string(),
+});
+
+export const QuickPromptsGlobalGetRequestSchema = z.object({
+  type: z.literal("quick_prompts.global.get.request"),
+  requestId: z.string(),
+});
+
+export const QuickPromptsGlobalSetRequestSchema = z.object({
+  type: z.literal("quick_prompts.global.set.request"),
+  requestId: z.string(),
+  items: z.array(QuickPromptItemSchema),
+});
+
+export const QuickPromptsProjectGetRequestSchema = z.object({
+  type: z.literal("quick_prompts.project.get.request"),
+  requestId: z.string(),
+  projectId: z.string(),
+});
+
+export const QuickPromptsProjectSetRequestSchema = z.object({
+  type: z.literal("quick_prompts.project.set.request"),
+  requestId: z.string(),
+  projectId: z.string(),
+  items: z.array(QuickPromptItemSchema),
+  disabledGlobalIds: z.array(z.string()),
+  order: z.array(z.string()).optional(),
 });
 
 export const SetVoiceModeMessageSchema = z.object({
@@ -3183,6 +3220,10 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceLabelDeleteInspectRequestSchema,
   WorkspaceRecoveryInspectRequestSchema,
   WorkspaceRecoveryRestoreRequestSchema,
+  QuickPromptsGlobalGetRequestSchema,
+  QuickPromptsGlobalSetRequestSchema,
+  QuickPromptsProjectGetRequestSchema,
+  QuickPromptsProjectSetRequestSchema,
   SetVoiceModeMessageSchema,
   SendAgentMessageRequestSchema,
   WaitForFinishRequestSchema,
@@ -4290,6 +4331,52 @@ export const WorkspaceLabelDeleteInspectResponseSchema = z.object({
     requestId: z.string(),
     affectedWorkspaceCount: z.number().int().nonnegative(),
   }),
+});
+
+export const QuickPromptsGlobalGetResponseSchema = z.object({
+  type: z.literal("quick_prompts.global.get.response"),
+  payload: z.object({
+    requestId: z.string(),
+    items: z.array(QuickPromptItemSchema),
+  }),
+});
+
+export const QuickPromptsGlobalSetResponseSchema = z.object({
+  type: z.literal("quick_prompts.global.set.response"),
+  payload: z.object({
+    requestId: z.string(),
+    items: z.array(QuickPromptItemSchema),
+    success: z.boolean(),
+  }),
+});
+
+export const QuickPromptsProjectGetResponseSchema = z.object({
+  type: z.literal("quick_prompts.project.get.response"),
+  payload: z.object({
+    requestId: z.string(),
+    projectId: z.string(),
+    items: z.array(QuickPromptItemSchema),
+    disabledGlobalIds: z.array(z.string()),
+    order: z.array(z.string()).optional(),
+  }),
+});
+
+export const QuickPromptsProjectSetResponseSchema = z.object({
+  type: z.literal("quick_prompts.project.set.response"),
+  payload: z.object({
+    requestId: z.string(),
+    projectId: z.string(),
+    items: z.array(QuickPromptItemSchema),
+    disabledGlobalIds: z.array(z.string()),
+    order: z.array(z.string()).optional(),
+    success: z.boolean(),
+  }),
+});
+
+export const QuickPromptsChangedEventSchema = z.object({
+  type: z.literal("quick_prompts.changed"),
+  scope: z.enum(["global", "project"]),
+  projectId: z.string().optional(),
 });
 
 export const ProjectUpdateMessageSchema = z.object({
@@ -6939,6 +7026,11 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   LoopStopResponseSchema,
   DaemonUpdateProgressMessageSchema,
   DaemonUpdateResponseSchema,
+  QuickPromptsGlobalGetResponseSchema,
+  QuickPromptsGlobalSetResponseSchema,
+  QuickPromptsProjectGetResponseSchema,
+  QuickPromptsProjectSetResponseSchema,
+  QuickPromptsChangedEventSchema,
 ]);
 
 export type SessionOutboundMessage = z.infer<typeof SessionOutboundMessageSchema>;
@@ -7192,6 +7284,15 @@ export type WorkspaceTitleSetRequest = z.infer<typeof WorkspaceTitleSetRequestSc
 export type WorkspacePinSetRequest = z.infer<typeof WorkspacePinSetRequestSchema>;
 export type WorkspaceRecoveryInspectRequest = z.infer<typeof WorkspaceRecoveryInspectRequestSchema>;
 export type WorkspaceRecoveryRestoreRequest = z.infer<typeof WorkspaceRecoveryRestoreRequestSchema>;
+export type QuickPromptsGlobalGetRequest = z.infer<typeof QuickPromptsGlobalGetRequestSchema>;
+export type QuickPromptsGlobalSetRequest = z.infer<typeof QuickPromptsGlobalSetRequestSchema>;
+export type QuickPromptsProjectGetRequest = z.infer<typeof QuickPromptsProjectGetRequestSchema>;
+export type QuickPromptsProjectSetRequest = z.infer<typeof QuickPromptsProjectSetRequestSchema>;
+export type QuickPromptsGlobalGetResponse = z.infer<typeof QuickPromptsGlobalGetResponseSchema>;
+export type QuickPromptsGlobalSetResponse = z.infer<typeof QuickPromptsGlobalSetResponseSchema>;
+export type QuickPromptsProjectGetResponse = z.infer<typeof QuickPromptsProjectGetResponseSchema>;
+export type QuickPromptsProjectSetResponse = z.infer<typeof QuickPromptsProjectSetResponseSchema>;
+export type QuickPromptsChangedEvent = z.infer<typeof QuickPromptsChangedEventSchema>;
 export type SetAgentModeRequestMessage = z.infer<typeof SetAgentModeRequestMessageSchema>;
 export type SetAgentModelRequestMessage = z.infer<typeof SetAgentModelRequestMessageSchema>;
 export type SetAgentThinkingRequestMessage = z.infer<typeof SetAgentThinkingRequestMessageSchema>;
