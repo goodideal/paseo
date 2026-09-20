@@ -8,43 +8,48 @@ import {
   rejectTaskRpc,
 } from "./shared/contracts.js";
 import { TaskStore } from "./server/store.js";
-import { GiteaClient } from "./server/gitea-client.js";
+import { GiteaClientPool } from "./server/client-pool.js";
+import { ProjectGiteaResolver } from "./server/resolver.js";
 import { WorktreeOrchestrator } from "./server/orchestrator.js";
-import { IssuePoller } from "./server/poller.js";
-import type { GiteaSettings } from "./shared/types.js";
+import { MultiProjectPoller } from "./server/poller.js";
 
 export default function contribute(server: PluginServerContext) {
   const storePath = join(tmpdir(), "paseo-gitea-workflow", "tasks.json");
   const store = new TaskStore(storePath);
+  const clientPool = new GiteaClientPool();
+  const resolver = new ProjectGiteaResolver();
 
-  const defaultSettings: GiteaSettings = {
-    giteaUrl: process.env.GITEA_URL ?? "https://gitea.example.com",
-    giteaToken: process.env.GITEA_TOKEN ?? "mock-token",
-    repoOwner: process.env.GITEA_OWNER ?? "owner",
-    repoName: process.env.GITEA_REPO ?? "repo",
-    listenLabel: "agent-ready",
-    inProgressLabel: "agent-in-progress",
-    reviewedLabel: "agent-reviewed",
-    pollIntervalSeconds: 60,
-    maxConcurrentWorktrees: 3,
-  };
-
-  const gitea = new GiteaClient(defaultSettings);
   const orchestrator = new WorktreeOrchestrator({
     store,
-    gitea,
-    projectPath: process.cwd(),
-    projectName: defaultSettings.repoName,
-    maxConcurrentWorktrees: defaultSettings.maxConcurrentWorktrees,
+    clientPool,
+    maxConcurrentWorktrees: 3,
   });
 
-  const poller = new IssuePoller(gitea, orchestrator, defaultSettings.pollIntervalSeconds * 1000);
-  if (process.env.GITEA_TOKEN) {
-    poller.start();
-  }
+  let poller: MultiProjectPoller | null = null;
 
-  server.handle(listTasksRpc, async () => {
-    const tasks = await store.listTasks();
+  server.handle(listTasksRpc, async ({ projectId, workspaceId }, context) => {
+    let resolvedProjectId = projectId;
+    if (!resolvedProjectId && workspaceId) {
+      try {
+        const wsRef = context.paseo.workspaces.ref(workspaceId);
+        const ws = wsRef.current();
+        if (ws?.projectId) {
+          resolvedProjectId = ws.projectId;
+        }
+      } catch {
+        // ignore workspace ref lookup error
+      }
+    }
+
+    if (!poller && context.paseo?.projects) {
+      poller = new MultiProjectPoller(resolver, orchestrator, context.paseo.projects, 60_000);
+      poller.start();
+    }
+
+    const tasks = await store.listTasks({
+      projectId: resolvedProjectId,
+      workspaceId,
+    });
     return { tasks };
   });
 
@@ -62,6 +67,6 @@ export default function contribute(server: PluginServerContext) {
   });
 
   return () => {
-    poller.stop();
+    poller?.stop();
   };
 }

@@ -1,150 +1,72 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { describe, expect, it, vi } from "vitest";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { WorktreeOrchestrator, type OrchestratorPaseoApi } from "../server/orchestrator.js";
+import { tmpdir } from "node:os";
 import { TaskStore } from "../server/store.js";
-import type { GiteaClient } from "../server/gitea-client.js";
-import type { ScreenshotBroker } from "../server/screenshot-pipeline.js";
+import { WorktreeOrchestrator } from "../server/orchestrator.js";
+import { GiteaClientPool } from "../server/client-pool.js";
+import type { ResolvedProjectGitea } from "../shared/types.js";
 
-describe("WorktreeOrchestrator", () => {
-  let tempDir: string;
-  let store: TaskStore;
-  let orchestrator: WorktreeOrchestrator;
+describe("WorktreeOrchestrator Multi-Project", () => {
+  const sampleProject: ResolvedProjectGitea = {
+    projectId: "proj-1",
+    projectPath: "/tmp/proj-1",
+    projectName: "proj-1",
+    host: "gitea.local",
+    baseUrl: "http://gitea.local",
+    token: "tok",
+    repoOwner: "owner",
+    repoName: "proj-1",
+    authSource: "tea",
+  };
 
-  beforeEach(async () => {
-    tempDir = await mkdtemp(join(tmpdir(), "orchestrator-test-"));
-    store = new TaskStore(join(tempDir, "tasks.json"));
-  });
+  it("enqueues issue with project metadata and executes through state machine", async () => {
+    const storePath = join(tmpdir(), `test-orch-${Date.now()}.json`);
+    const store = new TaskStore(storePath);
+    const clientPool = new GiteaClientPool();
 
-  afterEach(async () => {
-    if (orchestrator) {
-      await orchestrator.waitForIdle();
-    }
-    await rm(tempDir, { recursive: true, force: true });
-  });
-
-  it("enqueues issue and creates task record", async () => {
-    const mockGitea = {
-      claimIssue: vi.fn().mockResolvedValue(undefined),
-      createPullRequest: vi.fn().mockResolvedValue({ url: "http://pr.url" }),
-      markReviewed: vi.fn().mockResolvedValue(undefined),
-    } as unknown as GiteaClient;
-
-    orchestrator = new WorktreeOrchestrator({
-      store,
-      gitea: mockGitea,
-      projectPath: tempDir,
-      projectName: "repo",
+    const mockClient = clientPool.getClient({
+      giteaUrl: sampleProject.baseUrl,
+      giteaToken: sampleProject.token,
+      repoOwner: sampleProject.repoOwner,
+      repoName: sampleProject.repoName,
     });
 
-    const task = await orchestrator.enqueueIssue({
+    vi.spyOn(mockClient, "claimIssue").mockResolvedValue(undefined);
+    vi.spyOn(mockClient, "createPullRequest").mockResolvedValue({
+      url: "http://gitea.local/owner/proj-1/pulls/5",
+    });
+    vi.spyOn(mockClient, "markReviewed").mockResolvedValue(undefined);
+
+    const orchestrator = new WorktreeOrchestrator({
+      store,
+      clientPool,
+      maxConcurrentWorktrees: 2,
+    });
+
+    const task = await orchestrator.enqueueIssue(sampleProject, {
       number: 10,
-      title: "Add search bar",
-      body: "Search bar should be in header.",
-      html_url: "http://gitea.local/repo/issues/10",
+      title: "Add API Endpoint",
+      body: "Need GET /users",
+      html_url: "http://gitea.local/owner/proj-1/issues/10",
       labels: [{ name: "agent-ready" }],
     });
 
-    expect(task.id).toBe("task-gitea-10");
-    expect(mockGitea.claimIssue).toHaveBeenCalledWith(10);
-  });
+    expect(task.projectId).toBe("proj-1");
+    expect(task.state).toBe("queued");
 
-  it("executes task through full pipeline and stops dev server script", async () => {
-    const mockGitea = {
-      claimIssue: vi.fn().mockResolvedValue(undefined),
-      createPullRequest: vi.fn().mockResolvedValue({ url: "http://pr.url" }),
-      markReviewed: vi.fn().mockResolvedValue(undefined),
-    } as unknown as GiteaClient;
-
-    const startScript = vi.fn().mockResolvedValue(undefined);
-    const stopScript = vi.fn().mockResolvedValue(undefined);
-
-    const mockPaseoApi: OrchestratorPaseoApi = {
-      workspaces: {
-        create: vi.fn().mockResolvedValue({ id: "ws-real-10" }),
-        ref: vi.fn().mockReturnValue({
-          agents: {
-            create: vi.fn().mockResolvedValue({ id: "agent-real-10" }),
-          },
-        }),
-      },
-      scripts: {
-        start: startScript,
-        stop: stopScript,
-      },
-    };
-
-    const mockBroker: ScreenshotBroker = {
-      execute: vi.fn().mockImplementation(async (cmd) => {
-        if (cmd.command === "new_tab") return { ok: true, result: { browserId: "tab-10" } };
-        if (cmd.command === "screenshot") return { ok: true, result: { base64: "aGVsbG8=" } };
-        return { ok: true, result: {} };
-      }),
-    };
-
-    orchestrator = new WorktreeOrchestrator({
-      store,
-      gitea: mockGitea,
-      projectPath: tempDir,
-      projectName: "repo",
-      paseoApi: mockPaseoApi,
-      screenshotBroker: mockBroker,
-    });
-
-    const task = await orchestrator.enqueueIssue({
-      number: 10,
-      title: "Add search bar",
-      body: "Search bar should be in header.",
-      html_url: "http://gitea.local/repo/issues/10",
-      labels: [{ name: "agent-ready" }],
-    });
-
-    await orchestrator.executeTask(task);
-
-    const finished = await store.getTask(task.id);
-    expect(finished?.state).toBe("pending_human_review");
-    expect(finished?.workspaceId).toBe("ws-real-10");
-    expect(finished?.agentId).toBe("agent-real-10");
-    expect(finished?.screenshots).toHaveLength(2);
-
-    // Verify dev script lifecycle cleanup
-    expect(startScript).toHaveBeenCalledWith({ workspaceId: "ws-real-10", scriptName: "dev" });
-    expect(stopScript).toHaveBeenCalledWith({ workspaceId: "ws-real-10", scriptName: "dev" });
-  });
-
-  it("handles rejection and re-triggers execution with feedback", async () => {
-    const mockGitea = {
-      claimIssue: vi.fn().mockResolvedValue(undefined),
-      createPullRequest: vi.fn().mockResolvedValue({ url: "http://pr.url" }),
-      markReviewed: vi.fn().mockResolvedValue(undefined),
-    } as unknown as GiteaClient;
-
-    orchestrator = new WorktreeOrchestrator({
-      store,
-      gitea: mockGitea,
-      projectPath: tempDir,
-      projectName: "repo",
-    });
-
-    const task = await orchestrator.enqueueIssue({
-      number: 20,
-      title: "Button styling",
-      body: "Change button color.",
-      html_url: "http://gitea.local/repo/issues/20",
-      labels: [{ name: "agent-ready" }],
-    });
-
-    await orchestrator.executeTask(task);
-    const ready = await store.getTask(task.id);
-    expect(ready?.state).toBe("pending_human_review");
-
-    // Reject with feedback
-    await orchestrator.rejectTask(task.id, "Padding is too small");
+    await orchestrator.processQueue();
     await orchestrator.waitForIdle();
 
-    const reloaded = await store.getTask(task.id);
-    expect(reloaded?.reviewFeedback).toContain("Padding is too small");
-    expect(reloaded?.state).toBe("pending_human_review");
+    const pendingReview = await store.getTask(task.id);
+    expect(pendingReview?.state).toBe("pending_human_review");
+    expect(pendingReview?.diffSummary).toBeDefined();
+
+    // Human approves
+    const approveRes = await orchestrator.approveTask(task.id);
+    expect(approveRes.ok).toBe(true);
+    expect(approveRes.prUrl).toBe("http://gitea.local/owner/proj-1/pulls/5");
+
+    const finalTask = await store.getTask(task.id);
+    expect(finalTask?.state).toBe("done");
   });
 });

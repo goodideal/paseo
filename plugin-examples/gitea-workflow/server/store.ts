@@ -32,7 +32,6 @@ export class TaskStore {
   }
 
   private async flush(): Promise<void> {
-    // Chain onto writeLock to serialize concurrent writes and prevent race conditions
     this.writeLock = this.writeLock.then(async () => {
       const dir = dirname(this.storageFilePath);
       await mkdir(dir, { recursive: true });
@@ -55,9 +54,19 @@ export class TaskStore {
     return this.memoryCache.get(id) ?? null;
   }
 
-  async listTasks(): Promise<GiteaWorkflowTask[]> {
+  async listTasks(filter?: {
+    projectId?: string;
+    workspaceId?: string;
+  }): Promise<GiteaWorkflowTask[]> {
     await this.ensureLoaded();
-    return Array.from(this.memoryCache.values());
+    let tasks = Array.from(this.memoryCache.values());
+    if (filter?.projectId) {
+      tasks = tasks.filter((t) => t.projectId === filter.projectId);
+    }
+    if (filter?.workspaceId) {
+      tasks = tasks.filter((t) => t.workspaceId === filter.workspaceId);
+    }
+    return tasks;
   }
 
   async saveTask(task: GiteaWorkflowTask): Promise<void> {

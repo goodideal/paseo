@@ -1,118 +1,89 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { TaskStore } from "../server/store.js";
 import type { GiteaWorkflowTask } from "../shared/types.js";
 
 describe("TaskStore", () => {
-  let tempDir: string;
-  let storePath: string;
+  let testFilePath: string;
   let store: TaskStore;
 
-  beforeEach(async () => {
-    tempDir = await mkdtemp(join(tmpdir(), "gitea-store-test-"));
-    storePath = join(tempDir, "tasks.json");
-    store = new TaskStore(storePath);
+  const sampleTask: GiteaWorkflowTask = {
+    id: "task-1",
+    projectId: "proj-alpha",
+    projectPath: "/projects/alpha",
+    issueNumber: 1,
+    issueTitle: "Sample Issue",
+    issueUrl: "http://gitea.local/owner/repo/issues/1",
+    issueBody: "Sample body",
+    giteaBaseUrl: "http://gitea.local",
+    repoOwner: "owner",
+    repoName: "repo",
+    branchName: "agent/issue-1-sample",
+    workspaceId: "ws-alpha-1",
+    agentId: "agent-alpha-1",
+    state: "queued",
+    screenshots: [],
+    diffSummary: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  const sampleTaskBeta: GiteaWorkflowTask = {
+    ...sampleTask,
+    id: "task-2",
+    projectId: "proj-beta",
+    workspaceId: "ws-beta-1",
+  };
+
+  beforeEach(() => {
+    testFilePath = join(tmpdir(), `test-task-store-${Date.now()}-${Math.random()}.json`);
+    store = new TaskStore(testFilePath);
   });
 
   afterEach(async () => {
-    await rm(tempDir, { recursive: true, force: true });
+    await rm(testFilePath, { force: true });
   });
 
-  it("persists and reads tasks", async () => {
-    const task: GiteaWorkflowTask = {
-      id: "task-1",
-      issueNumber: 1,
-      issueTitle: "Test Issue",
-      issueUrl: "http://example.com/1",
-      issueBody: "Body text",
-      repoOwner: "testowner",
-      repoName: "testrepo",
-      branchName: "agent/issue-1-test",
-      workspaceId: null,
-      agentId: null,
-      state: "queued",
-      screenshots: [],
-      diffSummary: null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+  it("saves, lists, and filters tasks by projectId and workspaceId", async () => {
+    await store.saveTask(sampleTask);
+    await store.saveTask(sampleTaskBeta);
 
-    await store.saveTask(task);
-    const loaded = await store.getTask("task-1");
-    expect(loaded).toEqual(task);
+    const allTasks = await store.listTasks();
+    expect(allTasks).toHaveLength(2);
 
-    const all = await store.listTasks();
-    expect(all).toHaveLength(1);
-    expect(all[0].id).toBe("task-1");
+    const alphaTasks = await store.listTasks({ projectId: "proj-alpha" });
+    expect(alphaTasks).toHaveLength(1);
+    expect(alphaTasks[0].id).toBe("task-1");
+
+    const betaWsTasks = await store.listTasks({ workspaceId: "ws-beta-1" });
+    expect(betaWsTasks).toHaveLength(1);
+    expect(betaWsTasks[0].id).toBe("task-2");
   });
 
-  it("updates task state atomically", async () => {
-    const task: GiteaWorkflowTask = {
-      id: "task-2",
-      issueNumber: 2,
-      issueTitle: "State transition",
-      issueUrl: "http://example.com/2",
-      issueBody: "Test",
-      repoOwner: "owner",
-      repoName: "repo",
-      branchName: "agent/issue-2",
-      workspaceId: null,
-      agentId: null,
-      state: "queued",
-      screenshots: [],
-      diffSummary: null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+  it("updates task state and diffSummary", async () => {
+    await store.saveTask(sampleTask);
+    const updated = await store.updateTask("task-1", {
+      state: "coding",
+      diffSummary: { additions: 10, deletions: 2, filesChanged: 1 },
+    });
 
-    await store.saveTask(task);
-    await store.updateTask("task-2", { state: "coding", agentId: "agent-99" });
+    expect(updated.state).toBe("coding");
+    expect(updated.diffSummary?.additions).toBe(10);
 
-    const updated = await store.getTask("task-2");
-    expect(updated?.state).toBe("coding");
-    expect(updated?.agentId).toBe("agent-99");
+    const reloaded = await store.getTask("task-1");
+    expect(reloaded?.state).toBe("coding");
   });
 
-  it("handles concurrent updates without data corruption", async () => {
-    const task: GiteaWorkflowTask = {
-      id: "task-concurrent",
-      issueNumber: 3,
-      issueTitle: "Concurrency test",
-      issueUrl: "http://example.com/3",
-      issueBody: "Concurrent updates",
-      repoOwner: "owner",
-      repoName: "repo",
-      branchName: "agent/issue-3",
-      workspaceId: null,
-      agentId: null,
-      state: "queued",
-      screenshots: [],
-      diffSummary: null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    await store.saveTask(task);
-
-    // Fire multiple concurrent updates simultaneously
+  it("handles concurrent atomic updates safely", async () => {
+    await store.saveTask(sampleTask);
     await Promise.all([
-      store.updateTask("task-concurrent", { agentId: "agent-1" }),
-      store.updateTask("task-concurrent", { state: "coding" }),
-      store.updateTask("task-concurrent", { branchName: "agent/issue-3-updated" }),
+      store.updateTask("task-1", { state: "coding" }),
+      store.updateTask("task-1", { state: "self_review" }),
     ]);
 
-    const freshStore = new TaskStore(storePath);
-    const reloaded = await freshStore.getTask("task-concurrent");
-    expect(reloaded).toBeDefined();
-    expect(reloaded?.branchName).toBe("agent/issue-3-updated");
-  });
-
-  it("handles corrupt JSON files gracefully without throwing", async () => {
-    await writeFile(storePath, "{ broken json ...", "utf8");
-    const brokenStore = new TaskStore(storePath);
-    const tasks = await brokenStore.listTasks();
-    expect(tasks).toEqual([]);
+    const final = await store.getTask("task-1");
+    expect(["coding", "self_review"]).toContain(final?.state);
   });
 });

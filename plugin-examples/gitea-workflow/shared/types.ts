@@ -29,10 +29,14 @@ export type ScreenshotMetadata = z.infer<typeof ScreenshotMetadataSchema>;
 
 export const GiteaWorkflowTaskSchema = z.object({
   id: z.string(),
+  projectId: z.string().default("default-project"),
+  projectPath: z.string().default(""),
   issueNumber: z.number().int(),
   issueTitle: z.string(),
   issueUrl: z.string(),
   issueBody: z.string(),
+  giteaBaseUrl: z.string().default(""),
+  giteaToken: z.string().optional(),
   repoOwner: z.string(),
   repoName: z.string(),
   branchName: z.string(),
@@ -57,11 +61,21 @@ export const GiteaWorkflowTaskSchema = z.object({
 
 export type GiteaWorkflowTask = z.infer<typeof GiteaWorkflowTaskSchema>;
 
+export const ResolvedProjectGiteaSchema = z.object({
+  projectId: z.string(),
+  projectPath: z.string(),
+  projectName: z.string(),
+  host: z.string(),
+  baseUrl: z.string().url(),
+  token: z.string(),
+  repoOwner: z.string(),
+  repoName: z.string(),
+  authSource: z.enum(["tea", "env", "anonymous"]),
+});
+
+export type ResolvedProjectGitea = z.infer<typeof ResolvedProjectGiteaSchema>;
+
 export const GiteaSettingsSchema = z.object({
-  giteaUrl: z.string().url(),
-  giteaToken: z.string().min(1),
-  repoOwner: z.string().min(1),
-  repoName: z.string().min(1),
   listenLabel: z.string().default("agent-ready"),
   inProgressLabel: z.string().default("agent-in-progress"),
   reviewedLabel: z.string().default("agent-reviewed"),

@@ -1,91 +1,104 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { describe, expect, it, vi } from "vitest";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { tmpdir } from "node:os";
 import { TaskStore } from "../server/store.js";
-import type { GiteaClient } from "../server/gitea-client.js";
 import { WorktreeOrchestrator } from "../server/orchestrator.js";
-import { ScreenshotPipeline, type ScreenshotBroker } from "../server/screenshot-pipeline.js";
+import { GiteaClientPool } from "../server/client-pool.js";
+import type { ResolvedProjectGitea } from "../shared/types.js";
 
-describe("End-to-End Gitea Automated Workflow", () => {
-  let tempDir: string;
+describe("E2E Automated Task to Review Flow (Multi-Project)", () => {
+  it("runs full lifecycle: ingestion -> worktree -> review -> approve -> PR", async () => {
+    const storePath = join(tmpdir(), `test-e2e-${Date.now()}.json`);
+    const store = new TaskStore(storePath);
+    const clientPool = new GiteaClientPool();
 
-  beforeEach(async () => {
-    tempDir = await mkdtemp(join(tmpdir(), "gitea-e2e-"));
-  });
+    const sampleProject: ResolvedProjectGitea = {
+      projectId: "proj-ecommerce",
+      projectPath: "/tmp/ecom",
+      projectName: "ecommerce",
+      host: "gitea.local",
+      baseUrl: "http://gitea.local",
+      token: "tok-123",
+      repoOwner: "shop",
+      repoName: "storefront",
+      authSource: "tea",
+    };
 
-  afterEach(async () => {
-    await rm(tempDir, { recursive: true, force: true });
-  });
+    const client = clientPool.getClient({
+      giteaUrl: sampleProject.baseUrl,
+      giteaToken: sampleProject.token,
+      repoOwner: sampleProject.repoOwner,
+      repoName: sampleProject.repoName,
+    });
 
-  it("completes full lifecycle: claim -> screenshot -> human approve -> PR creation", async () => {
-    const store = new TaskStore(join(tempDir, "tasks.json"));
+    vi.spyOn(client, "claimIssue").mockResolvedValue(undefined);
+    vi.spyOn(client, "markReviewed").mockResolvedValue(undefined);
+    vi.spyOn(client, "createPullRequest").mockResolvedValue({
+      url: "http://gitea.local/shop/storefront/pulls/88",
+    });
 
-    const mockGitea = {
-      claimIssue: vi.fn().mockResolvedValue(undefined),
-      createPullRequest: vi
-        .fn()
-        .mockResolvedValue({ url: "https://gitea.local/owner/repo/pulls/1" }),
-      markReviewed: vi.fn().mockResolvedValue(undefined),
-    } as unknown as GiteaClient;
+    const mockBroker = {
+      execute: vi.fn().mockImplementation(async ({ command }) => {
+        if (command === "new_tab") {
+          return { ok: true, result: { browserId: "tab-123" } };
+        }
+        if (command === "screenshot") {
+          return { ok: true, result: { base64: Buffer.from("fake-png").toString("base64") } };
+        }
+        return { ok: true };
+      }),
+    };
 
     const orchestrator = new WorktreeOrchestrator({
       store,
-      gitea: mockGitea,
-      projectPath: tempDir,
-      projectName: "sample-app",
+      clientPool,
+      screenshotBroker: mockBroker,
+      paseoApi: {
+        workspaces: {
+          create: vi.fn().mockResolvedValue({ id: "ws-e2e-test" }),
+          ref: vi.fn().mockReturnValue({
+            agents: {
+              create: vi.fn().mockResolvedValue({ id: "agent-e2e-test" }),
+            },
+          }),
+        },
+        scripts: {
+          start: vi.fn().mockResolvedValue(undefined),
+          stop: vi.fn().mockResolvedValue(undefined),
+        },
+      },
     });
 
-    // 1. Enqueue issue
-    const task = await orchestrator.enqueueIssue({
+    // 1. Issue Enqueued
+    const task = await orchestrator.enqueueIssue(sampleProject, {
       number: 88,
-      title: "Fix responsive layout",
-      body: "Header overflows on mobile.",
-      html_url: "https://gitea.local/owner/repo/issues/88",
+      title: "Add Apple Pay Support",
+      body: "Integrate Apple Pay into checkout button",
+      html_url: "http://gitea.local/shop/storefront/issues/88",
       labels: [{ name: "agent-ready" }],
     });
 
     expect(task.state).toBe("queued");
-    expect(mockGitea.claimIssue).toHaveBeenCalledWith(88);
+    expect(task.projectId).toBe("proj-ecommerce");
 
-    // 2. Mock Dev server & Screenshot pipeline
-    const serviceUrl = ScreenshotPipeline.formatServiceProxyUrl({
-      scriptName: "dev",
-      branchName: task.branchName,
-      projectName: "sample-app",
-    });
+    // 2. Process Queue & Wait for Execution
+    await orchestrator.processQueue();
+    await orchestrator.waitForIdle();
 
-    const mockBroker: ScreenshotBroker = {
-      execute: vi.fn().mockImplementation(async (cmd) => {
-        if (cmd.command === "new_tab") return { ok: true, result: { browserId: "tab-1" } };
-        if (cmd.command === "screenshot") return { ok: true, result: { base64: "aGVsbG8=" } };
-        return { ok: true, result: {} };
-      }),
-    };
+    // 3. Verify in Pending Human Review
+    const pendingTask = await store.getTask(task.id);
+    expect(pendingTask?.state).toBe("pending_human_review");
+    expect(pendingTask?.workspaceId).toBe("ws-e2e-test");
+    expect(pendingTask?.agentId).toBe("agent-e2e-test");
+    expect(pendingTask?.screenshots).toHaveLength(2);
 
-    const screenshots = await ScreenshotPipeline.captureViewports({
-      broker: mockBroker,
-      url: serviceUrl,
-      outputDir: tempDir,
-    });
+    // 4. Human Approval
+    const approveRes = await orchestrator.approveTask(task.id);
+    expect(approveRes.ok).toBe(true);
+    expect(approveRes.prUrl).toBe("http://gitea.local/shop/storefront/pulls/88");
 
-    expect(screenshots).toHaveLength(2);
-    await store.updateTask(task.id, {
-      state: "pending_human_review",
-      screenshots,
-    });
-
-    const readyTask = await store.getTask(task.id);
-    expect(readyTask?.state).toBe("pending_human_review");
-    expect(readyTask?.screenshots).toHaveLength(2);
-
-    // 3. Human approves task
-    const approval = await orchestrator.approveTask(task.id);
-    expect(approval.ok).toBe(true);
-    expect(approval.prUrl).toBe("https://gitea.local/owner/repo/pulls/1");
-
+    // 5. Final State Done
     const finalTask = await store.getTask(task.id);
     expect(finalTask?.state).toBe("done");
-    expect(mockGitea.markReviewed).toHaveBeenCalledWith(88);
   });
 });

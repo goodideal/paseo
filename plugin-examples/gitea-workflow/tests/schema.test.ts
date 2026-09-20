@@ -1,15 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { GiteaWorkflowTaskSchema, GiteaSettingsSchema } from "../shared/types.js";
+import {
+  GiteaWorkflowTaskSchema,
+  GiteaSettingsSchema,
+  ResolvedProjectGiteaSchema,
+} from "../shared/types.js";
 import { listTasksRpc, approveTaskRpc, rejectTaskRpc } from "../shared/contracts.js";
 
 describe("Gitea Workflow Schemas and RPCs", () => {
-  it("validates a valid task record", () => {
+  it("validates a valid task record with project scoping", () => {
     const validTask = {
-      id: "task-gitea-101",
+      id: "task-proj1-gitea-101",
+      projectId: "proj-1",
+      projectPath: "/path/to/proj1",
       issueNumber: 101,
       issueTitle: "Fix navigation header alignment",
       issueUrl: "https://gitea.example.com/org/repo/issues/101",
       issueBody: "Header is overlapping on mobile viewports.",
+      giteaBaseUrl: "https://gitea.example.com",
+      giteaToken: "tok-101",
       repoOwner: "org",
       repoName: "repo",
       branchName: "agent/issue-101-fix-header",
@@ -35,17 +43,30 @@ describe("Gitea Workflow Schemas and RPCs", () => {
     };
 
     const parsed = GiteaWorkflowTaskSchema.parse(validTask);
-    expect(parsed.id).toBe("task-gitea-101");
+    expect(parsed.id).toBe("task-proj1-gitea-101");
+    expect(parsed.projectId).toBe("proj-1");
     expect(parsed.state).toBe("pending_human_review");
   });
 
-  it("validates plugin settings with defaults", () => {
-    const settings = GiteaSettingsSchema.parse({
-      giteaUrl: "https://gitea.mycompany.com",
-      giteaToken: "secret-token",
-      repoOwner: "mycompany",
-      repoName: "frontend",
+  it("validates resolved project schema", () => {
+    const resolved = ResolvedProjectGiteaSchema.parse({
+      projectId: "proj-1",
+      projectPath: "/workspace/my-app",
+      projectName: "my-app",
+      host: "gitea.internal",
+      baseUrl: "https://gitea.internal:8443",
+      token: "secret-token",
+      repoOwner: "team",
+      repoName: "my-app",
+      authSource: "tea",
     });
+
+    expect(resolved.authSource).toBe("tea");
+    expect(resolved.baseUrl).toBe("https://gitea.internal:8443");
+  });
+
+  it("validates plugin settings with defaults without requiring static git urls", () => {
+    const settings = GiteaSettingsSchema.parse({});
 
     expect(settings.listenLabel).toBe("agent-ready");
     expect(settings.inProgressLabel).toBe("agent-in-progress");

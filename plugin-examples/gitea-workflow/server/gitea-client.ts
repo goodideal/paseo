@@ -1,5 +1,3 @@
-import type { GiteaSettings } from "../shared/types.js";
-
 export interface GiteaIssueDto {
   number: number;
   title: string;
@@ -13,15 +11,38 @@ export interface FetchIssuesOptions {
   limit?: number;
 }
 
+export interface GiteaClientConfig {
+  giteaUrl: string;
+  giteaToken: string;
+  repoOwner: string;
+  repoName: string;
+  listenLabel?: string;
+  inProgressLabel?: string;
+  reviewedLabel?: string;
+  pollIntervalSeconds?: number;
+  maxConcurrentWorktrees?: number;
+}
+
 export class GiteaClient {
-  constructor(private readonly config: GiteaSettings) {}
+  private readonly listenLabel: string;
+  private readonly inProgressLabel: string;
+  private readonly reviewedLabel: string;
+
+  constructor(private readonly config: GiteaClientConfig) {
+    this.listenLabel = config.listenLabel ?? "agent-ready";
+    this.inProgressLabel = config.inProgressLabel ?? "agent-in-progress";
+    this.reviewedLabel = config.reviewedLabel ?? "agent-reviewed";
+  }
 
   private get headers(): Record<string, string> {
-    return {
-      Authorization: `token ${this.config.giteaToken}`,
+    const headers: Record<string, string> = {
       "Content-Type": "application/json",
       Accept: "application/json",
     };
+    if (this.config.giteaToken) {
+      headers.Authorization = `token ${this.config.giteaToken}`;
+    }
+    return headers;
   }
 
   private url(endpoint: string): string {
@@ -34,7 +55,7 @@ export class GiteaClient {
     const limit = options?.limit ?? 50;
     const res = await fetch(
       this.url(
-        `/issues?state=open&labels=${encodeURIComponent(this.config.listenLabel)}&page=${page}&limit=${limit}`,
+        `/issues?state=open&labels=${encodeURIComponent(this.listenLabel)}&page=${page}&limit=${limit}`,
       ),
       { headers: this.headers },
     );
@@ -47,12 +68,12 @@ export class GiteaClient {
   async claimIssue(issueNumber: number): Promise<void> {
     // 1. Remove listen label (ignore 404 if already removed, but throw on auth/server errors)
     const deleteRes = await fetch(
-      this.url(`/issues/${issueNumber}/labels/${encodeURIComponent(this.config.listenLabel)}`),
+      this.url(`/issues/${issueNumber}/labels/${encodeURIComponent(this.listenLabel)}`),
       { method: "DELETE", headers: this.headers },
     );
     if (!deleteRes.ok && deleteRes.status !== 404) {
       throw new Error(
-        `Failed to remove label ${this.config.listenLabel}: ${deleteRes.status} ${deleteRes.statusText}`,
+        `Failed to remove label ${this.listenLabel}: ${deleteRes.status} ${deleteRes.statusText}`,
       );
     }
 
@@ -60,11 +81,11 @@ export class GiteaClient {
     const addLabelRes = await fetch(this.url(`/issues/${issueNumber}/labels`), {
       method: "POST",
       headers: this.headers,
-      body: JSON.stringify({ labels: [this.config.inProgressLabel] }),
+      body: JSON.stringify({ labels: [this.inProgressLabel] }),
     });
     if (!addLabelRes.ok) {
       throw new Error(
-        `Failed to add label ${this.config.inProgressLabel}: ${addLabelRes.status} ${addLabelRes.statusText}`,
+        `Failed to add label ${this.inProgressLabel}: ${addLabelRes.status} ${addLabelRes.statusText}`,
       );
     }
 
@@ -85,23 +106,23 @@ export class GiteaClient {
 
   async markReviewed(issueNumber: number): Promise<void> {
     const deleteRes = await fetch(
-      this.url(`/issues/${issueNumber}/labels/${encodeURIComponent(this.config.inProgressLabel)}`),
+      this.url(`/issues/${issueNumber}/labels/${encodeURIComponent(this.inProgressLabel)}`),
       { method: "DELETE", headers: this.headers },
     );
     if (!deleteRes.ok && deleteRes.status !== 404) {
       throw new Error(
-        `Failed to remove label ${this.config.inProgressLabel}: ${deleteRes.status} ${deleteRes.statusText}`,
+        `Failed to remove label ${this.inProgressLabel}: ${deleteRes.status} ${deleteRes.statusText}`,
       );
     }
 
     const addLabelRes = await fetch(this.url(`/issues/${issueNumber}/labels`), {
       method: "POST",
       headers: this.headers,
-      body: JSON.stringify({ labels: [this.config.reviewedLabel] }),
+      body: JSON.stringify({ labels: [this.reviewedLabel] }),
     });
     if (!addLabelRes.ok) {
       throw new Error(
-        `Failed to add label ${this.config.reviewedLabel}: ${addLabelRes.status} ${addLabelRes.statusText}`,
+        `Failed to add label ${this.reviewedLabel}: ${addLabelRes.status} ${addLabelRes.statusText}`,
       );
     }
   }

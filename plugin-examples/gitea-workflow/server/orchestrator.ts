@@ -1,6 +1,11 @@
-import type { GiteaWorkflowTask, ScreenshotMetadata } from "../shared/types.js";
+import type {
+  GiteaWorkflowTask,
+  ScreenshotMetadata,
+  ResolvedProjectGitea,
+} from "../shared/types.js";
 import type { TaskStore } from "./store.js";
 import type { GiteaClient, GiteaIssueDto } from "./gitea-client.js";
+import type { GiteaClientPool } from "./client-pool.js";
 import { ScreenshotPipeline, type ScreenshotBroker } from "./screenshot-pipeline.js";
 
 export interface OrchestratorPaseoApi {
@@ -29,9 +34,7 @@ export interface OrchestratorPaseoApi {
 
 export interface OrchestratorOptions {
   store: TaskStore;
-  gitea: GiteaClient;
-  projectPath: string;
-  projectName: string;
+  clientPool: GiteaClientPool;
   maxConcurrentWorktrees?: number;
   paseoApi?: OrchestratorPaseoApi;
   screenshotBroker?: ScreenshotBroker;
@@ -59,16 +62,37 @@ export class WorktreeOrchestrator {
     }
   }
 
-  async enqueueIssue(issue: GiteaIssueDto): Promise<GiteaWorkflowTask> {
+  getClientForProject(project: {
+    baseUrl: string;
+    token: string;
+    repoOwner: string;
+    repoName: string;
+  }): GiteaClient {
+    return this.options.clientPool.getClient({
+      giteaUrl: project.baseUrl,
+      giteaToken: project.token,
+      repoOwner: project.repoOwner,
+      repoName: project.repoName,
+    });
+  }
+
+  async enqueueIssue(
+    project: ResolvedProjectGitea,
+    issue: GiteaIssueDto,
+  ): Promise<GiteaWorkflowTask> {
     const branchName = `agent/issue-${issue.number}-${this.slugify(issue.title)}`;
     const task: GiteaWorkflowTask = {
-      id: `task-gitea-${issue.number}`,
+      id: `task-${project.projectId}-gitea-${issue.number}`,
+      projectId: project.projectId,
+      projectPath: project.projectPath,
       issueNumber: issue.number,
       issueTitle: issue.title,
       issueUrl: issue.html_url,
       issueBody: issue.body,
-      repoOwner: "",
-      repoName: this.options.projectName,
+      giteaBaseUrl: project.baseUrl,
+      giteaToken: project.token,
+      repoOwner: project.repoOwner,
+      repoName: project.repoName,
       branchName,
       workspaceId: null,
       agentId: null,
@@ -79,7 +103,8 @@ export class WorktreeOrchestrator {
       updatedAt: new Date().toISOString(),
     };
 
-    await this.options.gitea.claimIssue(issue.number);
+    const client = this.getClientForProject(project);
+    await client.claimIssue(issue.number);
     await this.options.store.saveTask(task);
     return task;
   }
@@ -115,7 +140,7 @@ export class WorktreeOrchestrator {
       try {
         const ws = await this.options.paseoApi.workspaces.create({
           isolation: "worktree",
-          path: this.options.projectPath,
+          path: task.projectPath || process.cwd(),
           branchName: task.branchName,
           baseBranch: "main",
           title: `#${task.issueNumber} ${task.issueTitle}`,
@@ -159,7 +184,7 @@ export class WorktreeOrchestrator {
     const serviceUrl = ScreenshotPipeline.formatServiceProxyUrl({
       scriptName: "dev",
       branchName: task.branchName,
-      projectName: this.options.projectName,
+      projectName: task.repoName,
     });
 
     try {
@@ -175,7 +200,7 @@ export class WorktreeOrchestrator {
       return await ScreenshotPipeline.captureViewports({
         broker: this.options.screenshotBroker,
         url: serviceUrl,
-        outputDir: this.options.projectPath,
+        outputDir: task.projectPath || process.cwd(),
       });
     } catch (err) {
       console.warn("[Orchestrator] Screenshot capture failed:", err);
@@ -235,14 +260,21 @@ export class WorktreeOrchestrator {
     try {
       await this.options.store.updateTask(taskId, { state: "pr_creating" });
 
-      const pr = await this.options.gitea.createPullRequest({
+      const client = this.getClientForProject({
+        baseUrl: task.giteaBaseUrl,
+        token: task.giteaToken ?? process.env.GITEA_TOKEN ?? "",
+        repoOwner: task.repoOwner,
+        repoName: task.repoName,
+      });
+
+      const pr = await client.createPullRequest({
         title: `[Agent] #${task.issueNumber} ${task.issueTitle}`,
         body: `Resolves #${task.issueNumber}\n\n### Changes\nAutomated implementation reviewed and approved in Paseo.`,
         headBranch: task.branchName,
         baseBranch: "main",
       });
 
-      await this.options.gitea.markReviewed(task.issueNumber);
+      await client.markReviewed(task.issueNumber);
       await this.options.store.updateTask(taskId, {
         state: "done",
         prUrl: pr.url,

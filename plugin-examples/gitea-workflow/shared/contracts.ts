@@ -5,6 +5,7 @@ import { GiteaWorkflowTaskSchema } from "./types.js";
 export const listTasksRpc = defineRpc({
   name: "gitea.tasks.list",
   input: z.object({
+    projectId: z.string().optional(),
     workspaceId: z.string().optional(),
   }),
   output: z.object({
