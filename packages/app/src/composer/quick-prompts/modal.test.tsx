@@ -84,7 +84,7 @@ describe("QuickPromptsModal", () => {
       .getState()
       .initializeSession(
         "server-1",
-        mockClient as unknown as import("@getpaseo/client").DaemonClient,
+        mockClient as unknown as import("@getpaseo/client/internal/daemon-client").DaemonClient,
       );
     useSessionStore.getState().setWorkspaces(
       "server-1",

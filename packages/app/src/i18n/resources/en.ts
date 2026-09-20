@@ -2905,4 +2905,57 @@ type WidenStringLeaves<T> = {
 
 type BaseTranslation = WidenStringLeaves<typeof en>;
 
-export type TranslationResources = BaseTranslation;
+export type TranslationResources = {
+  [K in keyof BaseTranslation]: K extends "settings"
+    ? Omit<BaseTranslation["settings"], "appearance"> & {
+        appearance: Omit<BaseTranslation["settings"]["appearance"], "terminalAppearance"> & {
+          terminalAppearance?: BaseTranslation["settings"]["appearance"]["terminalAppearance"];
+        };
+      }
+    : K extends "common"
+      ? Omit<
+          BaseTranslation["common"],
+          "audioBriefPlay" | "audioBriefStop" | "audioBriefLoading" | "audioBriefTitle"
+        > & {
+          audioBriefPlay?: string;
+          audioBriefStop?: string;
+          audioBriefLoading?: string;
+          audioBriefTitle?: string;
+        }
+      : K extends "composer"
+        ? Omit<BaseTranslation["composer"], "quickPrompts"> & {
+            quickPrompts: Omit<BaseTranslation["composer"]["quickPrompts"], "modal"> & {
+              modal: Omit<
+                BaseTranslation["composer"]["quickPrompts"]["modal"],
+                | "tabProject"
+                | "tabGlobal"
+                | "projectScope"
+                | "globalScope"
+                | "globalNotice"
+                | "projectNotice"
+                | "globalReadOnlyHint"
+                | "newProjectPrompt"
+                | "newGlobalPrompt"
+                | "editProjectPrompt"
+                | "editGlobalPrompt"
+                | "jumpToGlobal"
+                | "emptyProjectItems"
+              > & {
+                tabProject?: string;
+                tabGlobal?: string;
+                projectScope?: string;
+                globalScope?: string;
+                globalNotice?: string;
+                projectNotice?: string;
+                globalReadOnlyHint?: string;
+                newProjectPrompt?: string;
+                newGlobalPrompt?: string;
+                editProjectPrompt?: string;
+                editGlobalPrompt?: string;
+                jumpToGlobal?: string;
+                emptyProjectItems?: string;
+              };
+            };
+          }
+        : BaseTranslation[K];
+};

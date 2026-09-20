@@ -18,7 +18,10 @@ import { Button } from "@/components/ui/button";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Switch } from "@/components/ui/switch";
 import { SortableInlineList } from "@/components/sortable-inline-list";
-import type { DraggableListDragHandleProps, DraggableRenderItemInfo } from "@/components/draggable-list.types";
+import type {
+  DraggableListDragHandleProps,
+  DraggableRenderItemInfo,
+} from "@/components/draggable-list.types";
 import { GripVertical } from "lucide-react-native";
 import { useSessionStore } from "@/stores/session-store";
 import { useGlobalQuickPrompts, useProjectQuickPrompts } from "@/hooks/use-quick-prompts";
@@ -117,7 +120,10 @@ const QuickPromptCard = memo(function QuickPromptCard({
   const switchValue = isInheritedGlobal ? !isDisabledInProject : item.enabled;
 
   return (
-    <View style={[styles.itemCard, dragHandleProps ? styles.itemCardDragging : undefined]} testID={`quick-prompt-item-${item.id}`}>
+    <View
+      style={[styles.itemCard, dragHandleProps ? styles.itemCardDragging : undefined]}
+      testID={`quick-prompt-item-${item.id}`}
+    >
       <View style={styles.itemHeader}>
         <View style={styles.itemTitleRow}>
           {dragHandleProps ? (
@@ -591,7 +597,11 @@ export function QuickPromptsModal({
           <View style={styles.listContainer}>
             {hasProjectScope ? (
               <View style={styles.tabBarWrapper}>
-                <SegmentedControl value={activeTab} onChange={setActiveTab} options={scopeTabs} />
+                <SegmentedControl
+                  value={activeTab}
+                  onValueChange={setActiveTab}
+                  options={scopeTabs}
+                />
               </View>
             ) : null}
 
@@ -747,7 +757,7 @@ export function QuickPromptsModal({
               </Text>
               <SegmentedControl
                 value={form.triggerType}
-                onChange={handleTriggerTypeChange}
+                onValueChange={handleTriggerTypeChange}
                 options={triggerTypeOptions}
                 testID="quick-prompt-form-trigger"
               />
@@ -810,7 +820,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: theme.spacing[2],
   },
   listContainer: {
-    gap: theme.spacing[2.5],
+    gap: 10,
   },
   tabBarWrapper: {
     marginBottom: theme.spacing[1],
@@ -821,14 +831,14 @@ const styles = StyleSheet.create((theme) => ({
   },
   scopeNoticeBox: {
     backgroundColor: theme.colors.surface1,
-    paddingHorizontal: theme.spacing[2.5],
+    paddingHorizontal: 10,
     paddingVertical: theme.spacing[1.5],
     borderRadius: theme.borderRadius.md,
     borderLeftWidth: 3,
     borderLeftColor: theme.colors.accent,
   },
   scopeNoticeText: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     lineHeight: 16,
   },
@@ -871,7 +881,7 @@ const styles = StyleSheet.create((theme) => ({
     borderTopColor: theme.colors.border,
   },
   sectionTitle: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: "700",
     color: theme.colors.foregroundMuted,
     textTransform: "uppercase",
@@ -890,9 +900,18 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.spacing[2],
   },
   emptyText: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     textAlign: "center",
+  },
+  itemCardDragging: {
+    opacity: 0.8,
+    borderColor: theme.colors.accent,
+  },
+  dragHandle: {
+    padding: theme.spacing[1],
+    justifyContent: "center",
+    alignItems: "center",
   },
   itemCard: {
     backgroundColor: theme.colors.surface2,
@@ -1021,7 +1040,7 @@ const styles = StyleSheet.create((theme) => ({
     maxHeight: 480,
   },
   formHeader: {
-    marginBottom: theme.spacing[2.5],
+    marginBottom: 10,
   },
   formTitle: {
     fontSize: theme.fontSize.base,
