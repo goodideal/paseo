@@ -170,6 +170,8 @@ import {
   createWorkspaceGitObserverService,
   type WorkspaceGitObserverService,
 } from "./session/workspace-git-observer/workspace-git-observer-service.js";
+import { toResolver } from "./speech/provider-resolver.js";
+import { AudioBriefService } from "./agent/audio-brief-service.js";
 import {
   createAgentStructuredTextGeneration,
   createGitMetadataGenerator,
@@ -779,6 +781,7 @@ export class Session {
   private readonly voiceSessions: VoiceSessions;
   private readonly checkoutSession: CheckoutSession;
   private readonly scheduleSession: ScheduleSession;
+  private readonly audioBriefService: AudioBriefService;
   private readonly providerCatalogSession: ProviderCatalogSession;
   private readonly workspaceFilesSession: WorkspaceFilesSession;
   private readonly agentConfigSession: AgentConfigSession;
@@ -917,6 +920,12 @@ export class Session {
         await this.workspaceProvisioning.ensureWorkspaceRecordUnarchived(workspace);
       },
     });
+    const structuredTextGeneration = createAgentStructuredTextGeneration({
+      agentManager: this.agentManager,
+      providerSnapshotManager,
+      readDaemonConfig: () => this.readStructuredGenerationDaemonConfig(),
+      getFocusedSelection: (cwd) => this.getFocusedAgentSelectionForCwd(cwd),
+    });
     this.checkoutSession = new CheckoutSession({
       host: {
         emit: (msg) => this.emit(msg),
@@ -931,12 +940,7 @@ export class Session {
       checkoutDiffManager,
       gitMetadataGenerator: createGitMetadataGenerator({
         workspaceGitService: this.workspaceGitService,
-        generation: createAgentStructuredTextGeneration({
-          agentManager: this.agentManager,
-          providerSnapshotManager,
-          readDaemonConfig: () => this.readStructuredGenerationDaemonConfig(),
-          getFocusedSelection: (cwd) => this.getFocusedAgentSelectionForCwd(cwd),
-        }),
+        generation: structuredTextGeneration,
       }),
       paseoHome: this.paseoHome,
       worktreesRoot: this.worktreesRoot,
@@ -947,6 +951,12 @@ export class Session {
       emitWorkspaceUpdateForCwd: (cwd) => this.emitWorkspaceUpdateForCwd(cwd),
       emitStatusUpdate: (cwd, snapshot) => this.checkoutSession.emitStatusUpdate(cwd, snapshot),
       onBranchChanged,
+      logger: this.sessionLogger,
+    });
+    this.audioBriefService = new AudioBriefService({
+      paseoHome: this.paseoHome,
+      generation: structuredTextGeneration,
+      tts: toResolver(tts),
       logger: this.sessionLogger,
     });
     this.scheduleSession = new ScheduleSession({
@@ -2665,6 +2675,8 @@ export class Session {
       }
       case "agent.fork_context.request":
         return this.handleAgentForkContextRequest(msg);
+      case "agent.message.synthesize_brief.request":
+        return this.handleAgentMessageSynthesizeBriefRequest(msg);
       default:
         return undefined;
     }
@@ -7981,6 +7993,58 @@ export class Session {
         },
         source,
       );
+    }
+  }
+
+  private async handleAgentMessageSynthesizeBriefRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.message.synthesize_brief.request" }>,
+  ): Promise<void> {
+    try {
+      const snapshot = await ensureAgentLoaded(msg.agentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      });
+
+      const brief = await this.audioBriefService.synthesizeBrief({
+        agentId: msg.agentId,
+        turnId: msg.turnId,
+        text: msg.text,
+        cwd: snapshot.cwd,
+        forceRefresh: msg.forceRefresh,
+      });
+
+      this.emit({
+        type: "agent.message.synthesize_brief.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          turnId: msg.turnId,
+          briefText: brief.briefText,
+          audioBase64: brief.audioBase64,
+          mimeType: brief.mimeType,
+          durationMs: brief.durationMs,
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, agentId: msg.agentId, turnId: msg.turnId },
+        "Failed to handle agent.message.synthesize_brief.request",
+      );
+      this.emit({
+        type: "agent.message.synthesize_brief.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          turnId: msg.turnId,
+          briefText: "",
+          audioBase64: undefined,
+          mimeType: undefined,
+          durationMs: undefined,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
     }
   }
 

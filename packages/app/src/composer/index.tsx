@@ -48,6 +48,7 @@ import {
   type DraftAgentControlsProps,
 } from "@/composer/agent-controls";
 import { ContextWindowMeter } from "@/components/context-window-meter";
+import { useAudioBriefStore } from "@/audio-brief/audio-brief-store";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import { selectAgentTurnPresentation, useSessionStore } from "@/stores/session-store";
 import { useFilePicker } from "@/hooks/use-file-picker";
@@ -1749,6 +1750,7 @@ function ComposerContentImpl({
 
   const handleSubmit = useCallback(
     (payload: MessagePayload) => {
+      useAudioBriefStore.getState().stopBrief();
       const outgoingAttachments = buildOutgoingAttachments(attachments);
       const clientSlashCommand = resolveClientSlashCommand({
         text: payload.text,

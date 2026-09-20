@@ -10,7 +10,6 @@ export const es: TranslationResources = {
     failed: "Error",
     retry: "Reintentar",
     chatPosition: "{{current}} de {{total}} en el mensaje",
-
     title: "Buscar",
     placeholder: "Buscar en el panel",
     close: "Cerrar búsqueda",
@@ -52,6 +51,10 @@ export const es: TranslationResources = {
       loading: "Cargando...",
       starting: "A partir de...",
       copied: "Copiado",
+      audioBriefPlay: "Reproducir resumen de audio",
+      audioBriefStop: "Detener resumen de audio",
+      audioBriefLoading: "Generando resumen de audio...",
+      audioBriefTitle: "Resumen de audio",
       copiedLabel: "Copiado{{label}}",
       downloadComplete: "Descarga completa",
       downloadFailed: "Descarga fallida",
@@ -2253,6 +2256,7 @@ export const es: TranslationResources = {
         accessibilityLabel: "Apariencia de la terminal: {{value}}",
         options: {
           "follow-theme": "Seguir tema de la app",
+
           pureBlack: "Negro puro",
           dark: "Oscuro",
         },

@@ -104,6 +104,7 @@ import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
 import { RewindMenu, type RewindMode } from "@/components/rewind/rewind-menu";
 import { useRewindAgentMutation } from "@/components/rewind/use-rewind-agent-mutation";
 import { AssistantForkMenu, type AssistantForkTarget } from "@/components/assistant-fork-menu";
+import { TurnAudioBriefButton, AudioBriefCard } from "@/components/turn-audio-brief-button";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import {
   markdownCopyDataSet,
@@ -582,9 +583,15 @@ interface AssistantTurnFooterProps {
   completedAt?: Date;
   durationMs?: number | null;
   onFork?: (target: AssistantForkTarget) => Promise<void> | void;
+  agentId?: string;
+  turnId?: string;
+  serverId?: string;
 }
 
 const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
+  wrapper: {
+    width: "100%",
+  },
   container: {
     flexDirection: "row",
     alignItems: "center",
@@ -626,6 +633,9 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   completedAt,
   durationMs,
   onFork,
+  agentId,
+  turnId,
+  serverId,
 }: AssistantTurnFooterProps) {
   const [hovered, setHovered] = useState(false);
   const [pressedReveal, setPressedReveal] = useState(false);
@@ -678,32 +688,46 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   const canFork = Boolean(onFork);
 
   return (
-    <View style={assistantTurnFooterStylesheet.container}>
-      <TurnCopyButton
-        getContent={getContent}
-        containerStyle={assistantTurnFooterStylesheet.copyButton}
-      />
-      {canFork ? <AssistantForkMenu onFork={handleFork} /> : null}
-      {primaryLabel ? (
-        <Pressable
-          onPress={handlePress}
-          onHoverIn={handleHoverIn}
-          onHoverOut={handleHoverOut}
-          accessibilityRole={canSwap ? "button" : undefined}
-          accessibilityLabel={canSwap ? `${durationLabel}, ended ${timestampLabel}` : primaryLabel}
-        >
-          <View style={assistantTurnFooterStylesheet.labelWrapper}>
-            {/* Sizer reserves space for whichever label is longer so the
+    <View style={assistantTurnFooterStylesheet.wrapper}>
+      {turnId ? <AudioBriefCard turnId={turnId} /> : null}
+      <View style={assistantTurnFooterStylesheet.container}>
+        <TurnCopyButton
+          getContent={getContent}
+          containerStyle={assistantTurnFooterStylesheet.copyButton}
+        />
+        {agentId && turnId ? (
+          <TurnAudioBriefButton
+            agentId={agentId}
+            turnId={turnId}
+            getContent={getContent}
+            serverId={serverId}
+            containerStyle={assistantTurnFooterStylesheet.copyButton}
+          />
+        ) : null}
+        {canFork ? <AssistantForkMenu onFork={handleFork} /> : null}
+        {primaryLabel ? (
+          <Pressable
+            onPress={handlePress}
+            onHoverIn={handleHoverIn}
+            onHoverOut={handleHoverOut}
+            accessibilityRole={canSwap ? "button" : undefined}
+            accessibilityLabel={
+              canSwap ? `${durationLabel}, ended ${timestampLabel}` : primaryLabel
+            }
+          >
+            <View style={assistantTurnFooterStylesheet.labelWrapper}>
+              {/* Sizer reserves space for whichever label is longer so the
                 container width is stable across hover transitions. */}
-            <Text style={assistantTurnFooterStylesheet.labelSizer} aria-hidden>
-              {primaryLabel.length >= timestampLabel.length ? primaryLabel : timestampLabel}
-            </Text>
-            <Text style={assistantTurnFooterStylesheet.labelOverlay}>
-              {showTimestamp ? timestampLabel : primaryLabel}
-            </Text>
-          </View>
-        </Pressable>
-      ) : null}
+              <Text style={assistantTurnFooterStylesheet.labelSizer} aria-hidden>
+                {primaryLabel.length >= timestampLabel.length ? primaryLabel : timestampLabel}
+              </Text>
+              <Text style={assistantTurnFooterStylesheet.labelOverlay}>
+                {showTimestamp ? timestampLabel : primaryLabel}
+              </Text>
+            </View>
+          </Pressable>
+        ) : null}
+      </View>
     </View>
   );
 });

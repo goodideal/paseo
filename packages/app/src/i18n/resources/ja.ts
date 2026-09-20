@@ -10,7 +10,6 @@ export const ja: TranslationResources = {
     failed: "失敗",
     retry: "再試行",
     chatPosition: "メッセージ内 {{current}} / {{total}}",
-
     title: "検索",
     placeholder: "ペイン内を検索",
     close: "検索を閉じる",
@@ -52,6 +51,10 @@ export const ja: TranslationResources = {
       loading: "読み込み中...",
       starting: "起動中...",
       copied: "コピーしました",
+      audioBriefPlay: "音声ブリーフを再生",
+      audioBriefStop: "音声ブリーフを停止",
+      audioBriefLoading: "音声ブリーフを生成中...",
+      audioBriefTitle: "音声ブリーフ",
       copiedLabel: "{{label}}をコピーしました",
       downloadComplete: "ダウンロード完了",
       downloadFailed: "ダウンロード失敗",
@@ -2217,6 +2220,7 @@ export const ja: TranslationResources = {
       terminalAppearance: {
         title: "ターミナルの外観",
         description: "内蔵ターミナルの配色を設定",
+
         accessibilityLabel: "ターミナルの外観: {{value}}",
         options: {
           "follow-theme": "アプリのテーマに従う",

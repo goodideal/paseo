@@ -9,7 +9,6 @@ export const ko: TranslationResources = {
     failed: "실패",
     retry: "다시 시도",
     chatPosition: "메시지 내 {{current}} / {{total}}",
-
     title: "찾기",
     placeholder: "패널에서 찾기",
     close: "찾기 닫기",
@@ -51,6 +50,10 @@ export const ko: TranslationResources = {
       loading: "불러오는 중...",
       starting: "시작 중...",
       copied: "복사됨",
+      audioBriefPlay: "음성 브리핑 재생",
+      audioBriefStop: "음성 브리핑 중지",
+      audioBriefLoading: "음성 브리핑 생성 중...",
+      audioBriefTitle: "음성 브리핑",
       copiedLabel: "{{label}} 복사됨",
       downloadComplete: "다운로드 완료",
       downloadFailed: "다운로드 실패",
