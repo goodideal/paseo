@@ -51,6 +51,10 @@ export const ar: TranslationResources = {
       loading: "تحميل...",
       starting: "جارٍ البدء...",
       copied: "منقول",
+      audioBriefPlay: "تشغيل الملخص الصوتي",
+      audioBriefStop: "إيقاف الملخص الصوتي",
+      audioBriefLoading: "جارٍ إنشاء الملخص الصوتي...",
+      audioBriefTitle: "ملخص صوتي",
       copiedLabel: "منسوخ{{label}}",
       downloadComplete: "اكتمل التنزيل",
       downloadFailed: "فشل التنزيل",
@@ -2148,6 +2152,16 @@ export const ar: TranslationResources = {
           ghostty: "شبحي",
           pureBlack: "أسود خالص",
           auto: "نظام",
+        },
+      },
+      terminalAppearance: {
+        title: "مظهر الطرفية",
+        description: "تعيين نظام ألوان الطرفية المدمجة",
+        accessibilityLabel: "مظهر الطرفية: {{value}}",
+        options: {
+          "follow-theme": "متابعة سمة التطبيق",
+          pureBlack: "أسود نقي",
+          dark: "داكن",
         },
       },
       detailLevel: {

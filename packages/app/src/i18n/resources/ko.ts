@@ -51,6 +51,10 @@ export const ko: TranslationResources = {
       loading: "불러오는 중...",
       starting: "시작 중...",
       copied: "복사됨",
+      audioBriefPlay: "음성 브리핑 재생",
+      audioBriefStop: "음성 브리핑 중지",
+      audioBriefLoading: "음성 브리핑 생성 중...",
+      audioBriefTitle: "음성 브리핑",
       copiedLabel: "{{label}} 복사됨",
       downloadComplete: "다운로드 완료",
       downloadFailed: "다운로드 실패",
@@ -2159,6 +2163,16 @@ export const ko: TranslationResources = {
           ghostty: "Ghostty",
           pureBlack: "순수 검정",
           auto: "시스템",
+        },
+      },
+      terminalAppearance: {
+        title: "터미널 모양",
+        description: "내장 터미널의 색 구성표 설정",
+        accessibilityLabel: "터미널 모양: {{value}}",
+        options: {
+          "follow-theme": "앱 테마 따르기",
+          pureBlack: "퓨어 블랙",
+          dark: "다크",
         },
       },
       detailLevel: {

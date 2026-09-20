@@ -42,6 +42,7 @@ import type {
   FileWriteResult,
   FetchAgentTimelineResponseMessage,
   AgentForkContextResponseMessage,
+  AgentMessageSynthesizeBriefResponse,
   GitSetupOptions,
   CheckoutStatusResponse,
   CheckoutCommit,
@@ -578,6 +579,7 @@ type ScheduleUpdatePayload = Extract<
 >["payload"];
 export type FetchAgentTimelinePayload = FetchAgentTimelineResponseMessage["payload"];
 export type AgentForkContextPayload = AgentForkContextResponseMessage["payload"];
+export type AgentMessageSynthesizeBriefPayload = AgentMessageSynthesizeBriefResponse["payload"];
 
 export type FetchAgentTimelineDirection = FetchAgentTimelinePayload["direction"];
 export type FetchAgentTimelineProjection = FetchAgentTimelinePayload["projection"];
@@ -3300,6 +3302,25 @@ export class DaemonClient {
     return subscribeTimeline(agentId, this.observeTimeline([agentId]), handler, (error) =>
       this.logger.error({ err: error }, "Timeline observation failed"),
     );
+  }
+
+  async synthesizeAgentMessageBrief(
+    agentId: string,
+    turnId: string,
+    text: string,
+    options: { forceRefresh?: boolean; requestId?: string } = {},
+  ): Promise<AgentMessageSynthesizeBriefPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"agent.message.synthesize_brief.response">({
+      requestId: options.requestId,
+      message: {
+        type: "agent.message.synthesize_brief.request",
+        agentId,
+        turnId,
+        text,
+        ...(options.forceRefresh !== undefined ? { forceRefresh: options.forceRefresh } : {}),
+      },
+      timeout: 60000,
+    });
   }
 
   async buildAgentForkContext(

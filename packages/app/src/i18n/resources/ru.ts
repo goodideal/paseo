@@ -52,6 +52,10 @@ export const ru: TranslationResources = {
       loading: "Загрузка...",
       starting: "Начало...",
       copied: "Скопировано",
+      audioBriefPlay: "Воспроизвести аудиосводку",
+      audioBriefStop: "Остановить аудиосводку",
+      audioBriefLoading: "Создание аудиосводки...",
+      audioBriefTitle: "Аудиосводка",
       copiedLabel: "Скопировано {{label}}",
       downloadComplete: "Загрузка завершена",
       downloadFailed: "Загрузка не удалась",
@@ -2186,6 +2190,16 @@ export const ru: TranslationResources = {
           ghostty: "Ghostty",
           pureBlack: "Абсолютно чёрная",
           auto: "Системная",
+        },
+      },
+      terminalAppearance: {
+        title: "Внешний вид терминала",
+        description: "Настройка цветовой схемы встроенного терминала",
+        accessibilityLabel: "Внешний вид терминала: {{value}}",
+        options: {
+          "follow-theme": "Следовать теме приложения",
+          pureBlack: "Чистый черный",
+          dark: "Темный",
         },
       },
       detailLevel: {

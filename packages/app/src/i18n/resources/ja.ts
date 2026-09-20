@@ -52,6 +52,10 @@ export const ja: TranslationResources = {
       loading: "読み込み中...",
       starting: "起動中...",
       copied: "コピーしました",
+      audioBriefPlay: "音声ブリーフを再生",
+      audioBriefStop: "音声ブリーフを停止",
+      audioBriefLoading: "音声ブリーフを生成中...",
+      audioBriefTitle: "音声ブリーフ",
       copiedLabel: "{{label}}をコピーしました",
       downloadComplete: "ダウンロード完了",
       downloadFailed: "ダウンロード失敗",
@@ -2167,6 +2171,16 @@ export const ja: TranslationResources = {
           ghostty: "Ghostty",
           pureBlack: "ピュアブラック",
           auto: "システム",
+        },
+      },
+      terminalAppearance: {
+        title: "ターミナルの外観",
+        description: "組み込みターミナルの配色を設定",
+        accessibilityLabel: "ターミナルの外観: {{value}}",
+        options: {
+          "follow-theme": "アプリのテーマに従う",
+          pureBlack: "ピュアブラック",
+          dark: "ダーク",
         },
       },
       detailLevel: {

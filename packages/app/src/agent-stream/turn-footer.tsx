@@ -50,6 +50,8 @@ export const TurnFooter = memo(function TurnFooter({
   supportsTimelineCursor,
   onForkAssistantTurn,
   onForkInFlightTurn,
+  agentId,
+  serverId,
 }: {
   isRunning: boolean;
   inFlightTurnStartedAt: Date | null;
@@ -58,6 +60,8 @@ export const TurnFooter = memo(function TurnFooter({
   supportsTimelineCursor: boolean;
   onForkAssistantTurn?: AssistantTurnForkHandler;
   onForkInFlightTurn?: InFlightTurnForkHandler;
+  agentId?: string;
+  serverId?: string;
 }) {
   if (isRunning) {
     return (
@@ -80,6 +84,8 @@ export const TurnFooter = memo(function TurnFooter({
       startIndex={host.startIndex}
       supportsTimelineCursor={supportsTimelineCursor}
       onForkAssistantTurn={onForkAssistantTurn}
+      agentId={agentId}
+      serverId={serverId}
     />
   );
 });
@@ -91,6 +97,8 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
   startIndex,
   supportsTimelineCursor,
   onForkAssistantTurn,
+  agentId,
+  serverId,
 }: {
   strategy: TurnContentStrategy;
   items: StreamItem[];
@@ -98,6 +106,8 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
   startIndex: number;
   supportsTimelineCursor: boolean;
   onForkAssistantTurn?: AssistantTurnForkHandler;
+  agentId?: string;
+  serverId?: string;
 }) {
   return (
     <TurnFooterRow>
@@ -108,6 +118,8 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
         startIndex={startIndex}
         supportsTimelineCursor={supportsTimelineCursor}
         onForkAssistantTurn={onForkAssistantTurn}
+        agentId={agentId}
+        serverId={serverId}
       />
     </TurnFooterRow>
   );
@@ -164,6 +176,8 @@ function CompletedTurnFooter({
   startIndex,
   supportsTimelineCursor,
   onForkAssistantTurn,
+  agentId,
+  serverId,
 }: {
   strategy: TurnContentStrategy;
   items: StreamItem[];
@@ -171,6 +185,8 @@ function CompletedTurnFooter({
   startIndex: number;
   supportsTimelineCursor: boolean;
   onForkAssistantTurn?: AssistantTurnForkHandler;
+  agentId?: string;
+  serverId?: string;
 }) {
   const getContent = useCallback(
     () =>
@@ -195,6 +211,9 @@ function CompletedTurnFooter({
     },
     [boundary, onForkAssistantTurn],
   );
+  const item = items[startIndex];
+  const turnId = item && "turnId" in item && item.turnId ? item.turnId : item?.id;
+
   return (
     <View style={stylesheet.turnFooterSlot}>
       <AssistantTurnFooter
@@ -202,6 +221,9 @@ function CompletedTurnFooter({
         completedAt={timing?.completedAt}
         durationMs={timing?.durationMs}
         onFork={boundary && onForkAssistantTurn ? handleFork : undefined}
+        agentId={agentId}
+        turnId={turnId}
+        serverId={serverId}
       />
     </View>
   );
@@ -223,9 +245,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     marginTop: theme.spacing[2] + 5,
   },
   turnFooterSlot: {
-    flexDirection: "row",
-    alignItems: "center",
-    alignSelf: "flex-start",
+    width: "100%",
+    alignSelf: "stretch",
     minHeight: 24,
     paddingBottom: TURN_FOOTER_BOTTOM_SPACING,
   },

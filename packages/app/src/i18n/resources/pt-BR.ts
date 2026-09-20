@@ -52,6 +52,10 @@ export const ptBR: TranslationResources = {
       loading: "Carregando...",
       starting: "Iniciando...",
       copied: "Copiado",
+      audioBriefPlay: "Reproduzir resumo de áudio",
+      audioBriefStop: "Parar resumo de áudio",
+      audioBriefLoading: "Gerando resumo de áudio...",
+      audioBriefTitle: "Resumo de áudio",
       copiedLabel: "{{label}} copiado",
       downloadComplete: "Download concluído",
       downloadFailed: "Falha no download",
@@ -2183,6 +2187,16 @@ export const ptBR: TranslationResources = {
           ghostty: "Ghostty",
           pureBlack: "Preto puro",
           auto: "Sistema",
+        },
+      },
+      terminalAppearance: {
+        title: "Aparência do terminal",
+        description: "Definir o esquema de cores para o terminal integrado",
+        accessibilityLabel: "Aparência do terminal: {{value}}",
+        options: {
+          "follow-theme": "Seguir tema do aplicativo",
+          pureBlack: "Preto puro",
+          dark: "Escuro",
         },
       },
       detailLevel: {

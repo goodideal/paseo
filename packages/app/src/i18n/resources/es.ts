@@ -52,6 +52,10 @@ export const es: TranslationResources = {
       loading: "Cargando...",
       starting: "A partir de...",
       copied: "Copiado",
+      audioBriefPlay: "Reproducir resumen de audio",
+      audioBriefStop: "Detener resumen de audio",
+      audioBriefLoading: "Generando resumen de audio...",
+      audioBriefTitle: "Resumen de audio",
       copiedLabel: "Copiado{{label}}",
       downloadComplete: "Descarga completa",
       downloadFailed: "Descarga fallida",
@@ -2200,6 +2204,16 @@ export const es: TranslationResources = {
           ghostty: "fantasmal",
           pureBlack: "Negro puro",
           auto: "Sistema",
+        },
+      },
+      terminalAppearance: {
+        title: "Apariencia de terminal",
+        description: "Establecer la combinación de colores para el terminal integrado",
+        accessibilityLabel: "Apariencia de terminal: {{value}}",
+        options: {
+          "follow-theme": "Seguir el tema de la aplicación",
+          pureBlack: "Negro puro",
+          dark: "Oscuro",
         },
       },
       detailLevel: {

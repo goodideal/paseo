@@ -106,6 +106,7 @@ import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useStreamHistoryWindow } from "./use-stream-history-window";
 import { PluginTimelineItemView, useInstalledTimelineTransform } from "@/plugins/timeline";
+import { useAudioBriefStore } from "@/audio-brief/audio-brief-store";
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -157,6 +158,8 @@ function renderStreamItemWithTurnFooter(input: {
   strategy: TurnContentStrategy;
   supportsTimelineCursor: boolean;
   onForkAssistantTurn?: AssistantTurnForkHandler;
+  agentId?: string;
+  serverId?: string;
 }): ReactNode {
   if (!input.content) {
     return null;
@@ -171,6 +174,8 @@ function renderStreamItemWithTurnFooter(input: {
       startIndex={footerHost.startIndex}
       supportsTimelineCursor={input.supportsTimelineCursor}
       onForkAssistantTurn={input.onForkAssistantTurn}
+      agentId={input.agentId}
+      serverId={input.serverId}
     />
   ) : null;
   const content = (
@@ -914,12 +919,16 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           strategy: streamRenderStrategy,
           supportsTimelineCursor: supportsAgentForkContextCursor,
           onForkAssistantTurn: readOnly ? undefined : handleForkAssistantTurn,
+          agentId,
+          serverId: resolvedServerId,
         });
       },
       [
+        agentId,
         handleForkAssistantTurn,
         readOnly,
         renderStreamItemContent,
+        resolvedServerId,
         streamRenderStrategy,
         supportsAgentForkContextCursor,
       ],
@@ -949,19 +958,29 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             supportsTimelineCursor={supportsAgentForkContextCursor}
             onForkAssistantTurn={readOnly ? undefined : handleForkAssistantTurn}
             onForkInFlightTurn={readOnly ? undefined : handleForkInFlightTurn}
+            agentId={agentId}
+            serverId={resolvedServerId}
           />
         ) : null,
       [
+        agentId,
         handleForkAssistantTurn,
         handleForkInFlightTurn,
         readOnly,
         isTurnActive,
         baseRenderModel.turnTiming.runningStartedAt,
         bottomTurnFooterHost,
+        resolvedServerId,
         streamRenderStrategy,
         supportsAgentForkContextCursor,
       ],
     );
+    useEffect(() => {
+      return () => {
+        useAudioBriefStore.getState().stopBrief();
+      };
+    }, [agentId]);
+
     const renderModel = useMemo<AgentStreamRenderModel>(() => {
       return {
         ...baseRenderModel,
