@@ -26,6 +26,7 @@ import {
   mapCodexPlanUpdateToTodo,
   mapCodexPlanToToolCall,
   normalizeCodexOutputSchema,
+  readCodexThread,
   toAgentUsage,
 } from "./codex-app-server-agent.js";
 
@@ -82,7 +83,7 @@ describe("Codex executable discovery", () => {
   });
 });
 
-import { CodexAppServerClient } from "./codex/app-server-transport.js";
+import { CodexAppServerClient, CodexAppServerRpcError } from "./codex/app-server-transport.js";
 import {
   createFakeCodexAppServer,
   type FakeCodexAppServer,
@@ -3962,6 +3963,130 @@ describe("Codex app-server provider", () => {
         },
       },
     ]);
+  });
+
+  test("loads Codex persisted history from paginated threads using thread/turns/list fallback", async () => {
+    const session = createSession();
+    const requests: Array<{ method: string; params: unknown }> = [];
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        requests.push({ method, params });
+        if (method === "thread/read") {
+          const readParams = params as { includeTurns?: boolean };
+          if (readParams?.includeTurns) {
+            throw new CodexAppServerRpcError(
+              "paginated threads do not support thread/read(includeTurns=true)",
+              -32600,
+              null,
+            );
+          }
+          return {
+            thread: {
+              id: "test-thread",
+              historyMode: "paginated",
+            },
+          };
+        }
+        if (method === "thread/turns/list") {
+          const listParams = params as { cursor?: string };
+          if (!listParams.cursor) {
+            return {
+              data: [
+                {
+                  id: "turn-1",
+                  items: [
+                    {
+                      type: "userMessage",
+                      id: "msg-1",
+                      content: [{ type: "text", text: "First turn message" }],
+                      timestamp: "2026-05-01T10:00:00.000Z",
+                    },
+                  ],
+                },
+              ],
+              nextCursor: "cursor-page-2",
+            };
+          }
+          if (listParams.cursor === "cursor-page-2") {
+            return {
+              data: [
+                {
+                  id: "turn-2",
+                  items: [
+                    {
+                      type: "agentMessage",
+                      id: "msg-2",
+                      text: "Second turn response",
+                      timestamp: "2026-05-01T10:00:02.000Z",
+                    },
+                  ],
+                },
+              ],
+              nextCursor: null,
+            };
+          }
+        }
+        return {};
+      }),
+    };
+
+    await asInternals(session).loadPersistedHistory(session.client);
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+
+    expect(requests).toEqual([
+      { method: "thread/read", params: { threadId: "test-thread", includeTurns: true } },
+      { method: "thread/read", params: { threadId: "test-thread", includeTurns: false } },
+      {
+        method: "thread/turns/list",
+        params: { threadId: "test-thread", itemsView: "full", sortDirection: "asc" },
+      },
+      {
+        method: "thread/turns/list",
+        params: {
+          threadId: "test-thread",
+          itemsView: "full",
+          sortDirection: "asc",
+          cursor: "cursor-page-2",
+        },
+      },
+    ]);
+    expect(history).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        timestamp: "2026-05-01T10:00:00.000Z",
+        item: {
+          type: "user_message",
+          text: "First turn message",
+          messageId: "msg-1",
+        },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        timestamp: "2026-05-01T10:00:02.000Z",
+        item: {
+          type: "assistant_message",
+          text: "Second turn response",
+          messageId: "msg-2",
+        },
+      },
+    ]);
+  });
+
+  test("readCodexThread re-throws unexpected errors that are not paginated thread errors", async () => {
+    const client = {
+      request: vi.fn(async () => {
+        throw new Error("network disconnect");
+      }),
+      notify: vi.fn(),
+      dispose: vi.fn(async () => {}),
+    };
+    await expect(readCodexThread(client, "thread-1")).rejects.toThrow("network disconnect");
   });
 
   test("retains native turn ids from persisted user messages", async () => {
