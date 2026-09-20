@@ -1,4 +1,5 @@
 import React, { memo, useCallback, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { Pencil, Plus, RotateCcw, Sparkles, Trash2 } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -49,6 +50,7 @@ const QuickPromptItemCard = memo(function QuickPromptItemCard({
   onEdit: (item: QuickPromptItem) => void;
   onDelete: (id: string) => void;
 }) {
+  const { t } = useTranslation();
   const handleToggle = useCallback(() => onToggle(item.id), [item.id, onToggle]);
   const handleEdit = useCallback(() => onEdit(item), [item, onEdit]);
   const handleDelete = useCallback(() => onDelete(item.id), [item.id, onDelete]);
@@ -73,7 +75,9 @@ const QuickPromptItemCard = memo(function QuickPromptItemCard({
           <View style={[styles.badgeTrigger, isRule && styles.badgeTriggerRule]}>
             {isRule ? <Sparkles size={10} color={styles.ruleIcon.color} /> : null}
             <Text style={[styles.badgeTriggerText, isRule && styles.badgeTriggerTextRule]}>
-              {item.triggerType === "fixed" ? "常驻" : "动态规则"}
+              {item.triggerType === "fixed"
+                ? t("composer.quickPrompts.modal.fixedBadge")
+                : t("composer.quickPrompts.modal.ruleBadge")}
             </Text>
           </View>
         </View>
@@ -82,7 +86,7 @@ const QuickPromptItemCard = memo(function QuickPromptItemCard({
           <Pressable
             onPress={handleEdit}
             style={styles.actionIconBtn}
-            accessibilityLabel="编辑"
+            accessibilityLabel={t("composer.quickPrompts.modal.edit")}
             testID={`quick-prompt-edit-${item.id}`}
           >
             <Pencil size={14} color={styles.actionIcon.color} />
@@ -90,7 +94,7 @@ const QuickPromptItemCard = memo(function QuickPromptItemCard({
           <Pressable
             onPress={handleDelete}
             style={styles.actionIconBtn}
-            accessibilityLabel="删除"
+            accessibilityLabel={t("composer.quickPrompts.modal.delete")}
             testID={`quick-prompt-delete-${item.id}`}
           >
             <Trash2 size={14} color={styles.dangerIcon.color} />
@@ -105,12 +109,8 @@ const QuickPromptItemCard = memo(function QuickPromptItemCard({
   );
 });
 
-const TRIGGER_TYPE_OPTIONS = [
-  { value: "fixed" as const, label: "常驻 (固定在气泡栏)" },
-  { value: "rule" as const, label: "动态规则 (条件触发)" },
-];
-
 export function QuickPromptsModal({ visible, onClose }: QuickPromptsModalProps) {
+  const { t } = useTranslation();
   const items = useQuickPromptsStore((state) => state.items);
   const addItem = useQuickPromptsStore((state) => state.addItem);
   const updateItem = useQuickPromptsStore((state) => state.updateItem);
@@ -122,6 +122,20 @@ export function QuickPromptsModal({ visible, onClose }: QuickPromptsModalProps) 
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [form, setForm] = useState<PromptFormState>(EMPTY_FORM);
   const [error, setError] = useState<string | null>(null);
+
+  const triggerTypeOptions = useMemo(
+    () => [
+      {
+        value: "fixed" as const,
+        label: t("composer.quickPrompts.modal.form.triggerFixed"),
+      },
+      {
+        value: "rule" as const,
+        label: t("composer.quickPrompts.modal.form.triggerRule"),
+      },
+    ],
+    [t],
+  );
 
   const handleClose = useCallback(() => {
     setMode("list");
@@ -157,11 +171,11 @@ export function QuickPromptsModal({ visible, onClose }: QuickPromptsModalProps) 
     const trimmedContent = form.content.trim();
 
     if (!trimmedLabel) {
-      setError("请输入常用语标签名称");
+      setError(t("composer.quickPrompts.modal.form.errorLabelRequired"));
       return;
     }
     if (!trimmedContent) {
-      setError("请输入完整提示词内容");
+      setError(t("composer.quickPrompts.modal.form.errorContentRequired"));
       return;
     }
 
@@ -203,7 +217,7 @@ export function QuickPromptsModal({ visible, onClose }: QuickPromptsModalProps) 
     setEditingItemId(null);
     setForm(EMPTY_FORM);
     setError(null);
-  }, [addItem, updateItem, editingItemId, form, mode]);
+  }, [addItem, updateItem, editingItemId, form, mode, t]);
 
   const handleCancelEdit = useCallback(() => {
     setMode("list");
@@ -226,8 +240,8 @@ export function QuickPromptsModal({ visible, onClose }: QuickPromptsModalProps) 
     setForm((prev) => ({ ...prev, shortcut: v }));
   }, []);
 
-  const handleTriggerTypeChange = useCallback((t: QuickPromptTriggerType) => {
-    setForm((prev) => ({ ...prev, triggerType: t }));
+  const handleTriggerTypeChange = useCallback((tVal: QuickPromptTriggerType) => {
+    setForm((prev) => ({ ...prev, triggerType: tVal }));
   }, []);
 
   const handleKeywordsChange = useCallback((v: string) => {
@@ -240,13 +254,13 @@ export function QuickPromptsModal({ visible, onClose }: QuickPromptsModalProps) 
 
   const sheetTitle = useMemo(() => {
     if (mode === "create") {
-      return "新建常用语";
+      return t("composer.quickPrompts.modal.form.createTitle");
     }
     if (mode === "edit") {
-      return "编辑常用语";
+      return t("composer.quickPrompts.modal.form.editTitle");
     }
-    return "常用语与快捷指令";
-  }, [mode]);
+    return t("composer.quickPrompts.modal.title");
+  }, [mode, t]);
 
   const sheetHeader = useMemo(() => ({ title: sheetTitle }), [sheetTitle]);
 
@@ -263,7 +277,9 @@ export function QuickPromptsModal({ visible, onClose }: QuickPromptsModalProps) 
                 testID="quick-prompt-create-button"
               >
                 <Plus size={14} color="white" />
-                <Text style={styles.buttonTextWhite}>新建常用语</Text>
+                <Text style={styles.buttonTextWhite}>
+                  {t("composer.quickPrompts.modal.newPrompt")}
+                </Text>
               </Button>
               <Button
                 variant="outline"
@@ -272,7 +288,9 @@ export function QuickPromptsModal({ visible, onClose }: QuickPromptsModalProps) 
                 testID="quick-prompt-reset-button"
               >
                 <RotateCcw size={13} color={styles.outlineIcon.color} />
-                <Text style={styles.buttonText}>恢复默认</Text>
+                <Text style={styles.buttonText}>
+                  {t("composer.quickPrompts.modal.resetToDefaults")}
+                </Text>
               </Button>
             </View>
 
@@ -293,22 +311,22 @@ export function QuickPromptsModal({ visible, onClose }: QuickPromptsModalProps) 
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
             <View style={styles.formField}>
-              <Text style={styles.fieldLabel}>常用语短名称（气泡展示文本）*</Text>
+              <Text style={styles.fieldLabel}>{t("composer.quickPrompts.modal.form.label")}</Text>
               <AdaptiveTextInput
                 initialValue={form.label}
                 onChangeText={handleLabelChange}
-                placeholder="例如：修复测试 / 代码审查"
+                placeholder={t("composer.quickPrompts.modal.form.labelPlaceholder")}
                 style={styles.textInput}
                 testID="quick-prompt-form-label"
               />
             </View>
 
             <View style={styles.formField}>
-              <Text style={styles.fieldLabel}>实际发送的完整提示词 (Prompt)*</Text>
+              <Text style={styles.fieldLabel}>{t("composer.quickPrompts.modal.form.content")}</Text>
               <AdaptiveTextInput
                 initialValue={form.content}
                 onChangeText={handleContentChange}
-                placeholder="例如：请分析上述报错信息，定位根本原因并完成修复..."
+                placeholder={t("composer.quickPrompts.modal.form.contentPlaceholder")}
                 multiline
                 style={[styles.textInput, styles.textAreaInput]}
                 testID="quick-prompt-form-content"
@@ -316,11 +334,13 @@ export function QuickPromptsModal({ visible, onClose }: QuickPromptsModalProps) 
             </View>
 
             <View style={styles.formField}>
-              <Text style={styles.fieldLabel}>可选斜杠指令（在输入框输入 / 时快速展开）</Text>
+              <Text style={styles.fieldLabel}>
+                {t("composer.quickPrompts.modal.form.shortcut")}
+              </Text>
               <AdaptiveTextInput
                 initialValue={form.shortcut}
                 onChangeText={handleShortcutChange}
-                placeholder="例如：fix（支持输入 /fix 联想替换）"
+                placeholder={t("composer.quickPrompts.modal.form.shortcutPlaceholder")}
                 autoCapitalize="none"
                 style={styles.textInput}
                 testID="quick-prompt-form-shortcut"
@@ -328,11 +348,13 @@ export function QuickPromptsModal({ visible, onClose }: QuickPromptsModalProps) 
             </View>
 
             <View style={styles.formField}>
-              <Text style={styles.fieldLabel}>触发显示类型</Text>
+              <Text style={styles.fieldLabel}>
+                {t("composer.quickPrompts.modal.form.triggerType")}
+              </Text>
               <SegmentedControl<QuickPromptTriggerType>
                 value={form.triggerType}
                 onValueChange={handleTriggerTypeChange}
-                options={TRIGGER_TYPE_OPTIONS}
+                options={triggerTypeOptions}
                 testID="quick-prompt-form-trigger"
               />
             </View>
@@ -340,22 +362,26 @@ export function QuickPromptsModal({ visible, onClose }: QuickPromptsModalProps) 
             {form.triggerType === "rule" ? (
               <View style={styles.ruleBox}>
                 <View style={styles.formField}>
-                  <Text style={styles.fieldLabel}>上一轮回复包含的关键词（逗号分隔）</Text>
+                  <Text style={styles.fieldLabel}>
+                    {t("composer.quickPrompts.modal.form.keywords")}
+                  </Text>
                   <AdaptiveTextInput
                     initialValue={form.keywords}
                     onChangeText={handleKeywordsChange}
-                    placeholder="例如：error, failed, 报错, 失败"
+                    placeholder={t("composer.quickPrompts.modal.form.keywordsPlaceholder")}
                     style={styles.textInput}
                     testID="quick-prompt-form-keywords"
                   />
                 </View>
 
                 <View style={styles.formField}>
-                  <Text style={styles.fieldLabel}>上一轮回复匹配的正规表达式（可选）</Text>
+                  <Text style={styles.fieldLabel}>
+                    {t("composer.quickPrompts.modal.form.regex")}
+                  </Text>
                   <AdaptiveTextInput
                     initialValue={form.regex}
                     onChangeText={handleRegexChange}
-                    placeholder="例如：(y/n)|请确认"
+                    placeholder={t("composer.quickPrompts.modal.form.regexPlaceholder")}
                     autoCapitalize="none"
                     style={styles.textInput}
                     testID="quick-prompt-form-regex"
@@ -366,7 +392,7 @@ export function QuickPromptsModal({ visible, onClose }: QuickPromptsModalProps) 
 
             <View style={styles.formActions}>
               <Button variant="secondary" size="sm" onPress={handleCancelEdit}>
-                取消
+                {t("composer.quickPrompts.modal.form.cancel")}
               </Button>
               <Button
                 variant="default"
@@ -374,7 +400,7 @@ export function QuickPromptsModal({ visible, onClose }: QuickPromptsModalProps) 
                 onPress={handleSave}
                 testID="quick-prompt-form-save"
               >
-                保存
+                {t("composer.quickPrompts.modal.form.save")}
               </Button>
             </View>
           </ScrollView>

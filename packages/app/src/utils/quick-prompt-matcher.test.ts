@@ -165,4 +165,47 @@ describe("quick-prompt-matcher", () => {
 
     expect(result.map(getId)).toEqual(["item-fix"]);
   });
+
+  it("prepends ephemeral options when agent is idle and options are detected", () => {
+    const items = [fixedItem];
+    const text = "Options:\n1. **Option A**: first\n2. **Option B**: second\nWhich one?";
+    const result = evaluateQuickPrompts({
+      items,
+      agentStatus: "idle",
+      lastAssistantText: text,
+      locale: "en",
+    });
+
+    expect(result).toHaveLength(3);
+    expect(result[0].id).toBe("ephemeral-opt-1");
+    expect(result[1].id).toBe("ephemeral-opt-2");
+    expect(result[2].id).toBe("item-continue");
+  });
+
+  it("does not extract ephemeral options when agent is running", () => {
+    const items = [fixedItem];
+    const text = "1. Option A\n2. Option B";
+    const result = evaluateQuickPrompts({
+      items,
+      agentStatus: "running",
+      lastAssistantText: text,
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe("item-continue");
+  });
+
+  it("respects disableEphemeral flag", () => {
+    const items = [fixedItem];
+    const text = "1. **Fast**: Quick\n2. **Slow**: Full";
+    const result = evaluateQuickPrompts({
+      items,
+      agentStatus: "idle",
+      lastAssistantText: text,
+      disableEphemeral: true,
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe("item-continue");
+  });
 });

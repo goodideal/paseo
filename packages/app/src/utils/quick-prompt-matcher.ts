@@ -1,3 +1,4 @@
+import { extractEphemeralOptions } from "./ephemeral-option-extractor";
 import type {
   QuickPromptAgentStatus,
   QuickPromptItem,
@@ -8,6 +9,8 @@ export interface EvaluateQuickPromptsInput {
   items: readonly QuickPromptItem[];
   lastAssistantText?: string | null;
   agentStatus?: QuickPromptAgentStatus | null;
+  locale?: string;
+  disableEphemeral?: boolean;
 }
 
 function matchesStatusCondition(
@@ -53,7 +56,7 @@ export function matchesQuickPromptRule(
     return false;
   }
 
-  if (item.triggerType === "fixed") {
+  if (item.triggerType === "fixed" || item.triggerType === "ephemeral") {
     return true;
   }
 
@@ -89,10 +92,15 @@ export function matchesQuickPromptRule(
 }
 
 export function evaluateQuickPrompts(input: EvaluateQuickPromptsInput): QuickPromptItem[] {
-  const { items, lastAssistantText, agentStatus } = input;
+  const { items, lastAssistantText, agentStatus, locale, disableEphemeral } = input;
   const context = { lastAssistantText, agentStatus };
 
-  return items
-    .filter((item) => matchesQuickPromptRule(item, context))
-    .sort((a, b) => a.order - b.order);
+  const matchedItems = items.filter((item) => matchesQuickPromptRule(item, context));
+
+  const ephemeralItems =
+    !disableEphemeral && agentStatus === "idle" && lastAssistantText
+      ? extractEphemeralOptions(lastAssistantText, locale)
+      : [];
+
+  return [...ephemeralItems, ...matchedItems].sort((a, b) => a.order - b.order);
 }

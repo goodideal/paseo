@@ -13,8 +13,8 @@ describe("QuickPromptBar", () => {
   const mockItems: QuickPromptItem[] = [
     {
       id: "item-1",
-      label: "继续",
-      content: "请继续执行下一步。",
+      label: "Continue",
+      content: "Please continue to the next step.",
       triggerType: "fixed",
       enabled: true,
       createdAt: 1,
@@ -22,8 +22,8 @@ describe("QuickPromptBar", () => {
     },
     {
       id: "item-2",
-      label: "修复测试",
-      content: "请修复报错",
+      label: "Fix Error",
+      content: "Please fix error",
       triggerType: "rule",
       enabled: true,
       createdAt: 2,
@@ -55,8 +55,8 @@ describe("QuickPromptBar", () => {
     );
 
     expect(getByTestId("quick-prompt-bar")).toBeDefined();
-    expect(getByText("继续")).toBeDefined();
-    expect(getByText("修复测试")).toBeDefined();
+    expect(getByText("Continue")).toBeDefined();
+    expect(getByText("Fix Error")).toBeDefined();
     expect(getByTestId("quick-prompt-manage-button")).toBeDefined();
   });
 
@@ -105,5 +105,71 @@ describe("QuickPromptBar", () => {
 
     fireEvent.click(getByTestId("quick-prompt-manage-button"));
     expect(onOpenManage).toHaveBeenCalledTimes(1);
+  });
+
+  it("triggers onSelectForEdit on long press", () => {
+    vi.useFakeTimers();
+    const onSelectForEdit = vi.fn();
+    const { getByTestId } = render(
+      <QuickPromptBar
+        items={mockItems}
+        onSelectPrompt={vi.fn()}
+        onSelectForEdit={onSelectForEdit}
+        onOpenManage={vi.fn()}
+      />,
+    );
+
+    const chip = getByTestId("quick-prompt-chip-item-1");
+    fireEvent.mouseDown(chip);
+    vi.advanceTimersByTime(400);
+    fireEvent.mouseUp(chip);
+
+    expect(onSelectForEdit).toHaveBeenCalledWith(mockItems[0]);
+    vi.useRealTimers();
+  });
+
+  it("triggers onSelectForEdit on context menu (right click)", () => {
+    const onSelectForEdit = vi.fn();
+    const { getByTestId } = render(
+      <QuickPromptBar
+        items={mockItems}
+        onSelectPrompt={vi.fn()}
+        onSelectForEdit={onSelectForEdit}
+        onOpenManage={vi.fn()}
+      />,
+    );
+
+    const chip = getByTestId("quick-prompt-chip-item-1");
+    fireEvent.contextMenu(chip);
+
+    expect(onSelectForEdit).toHaveBeenCalledWith(mockItems[0]);
+  });
+
+  it("renders ephemeral option chips with proper distinction", () => {
+    const ephemeralItems: QuickPromptItem[] = [
+      {
+        id: "ephemeral-opt-1",
+        label: "1. WebSocket",
+        content: "I choose Option 1.",
+        triggerType: "ephemeral",
+        enabled: true,
+        ephemeral: true,
+        createdAt: 1,
+        order: -100,
+      },
+      ...mockItems,
+    ];
+
+    const { getByText } = render(
+      <QuickPromptBar
+        items={ephemeralItems}
+        onSelectPrompt={vi.fn()}
+        onSelectForEdit={vi.fn()}
+        onOpenManage={vi.fn()}
+      />,
+    );
+
+    expect(getByText("1. WebSocket")).toBeDefined();
+    expect(getByText("Continue")).toBeDefined();
   });
 });

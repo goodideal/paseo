@@ -18,6 +18,11 @@ export function EditorSection() {
     [updateSettings],
   );
 
+  const handleAiSuggestionsChange = useCallback(
+    (aiQuickPromptSuggestions: boolean) => void updateSettings({ aiQuickPromptSuggestions }),
+    [updateSettings],
+  );
+
   const handleOpenQuickPrompts = useCallback(() => {
     setQuickPromptsOpen(true);
   }, []);
@@ -45,10 +50,23 @@ export function EditorSection() {
 
           <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
             <View style={settingsStyles.rowContent}>
-              <Text style={settingsStyles.rowTitle}>常用语与快捷指令</Text>
-              <Text style={settingsStyles.rowHint}>
-                自定义固定快捷短语、动态触发规则与输入框斜杠联想
+              <Text style={settingsStyles.rowTitle}>
+                {t("settings.editor.aiSuggestions.title")}
               </Text>
+              <Text style={settingsStyles.rowHint}>{t("settings.editor.aiSuggestions.hint")}</Text>
+            </View>
+            <Switch
+              value={settings.aiQuickPromptSuggestions}
+              onValueChange={handleAiSuggestionsChange}
+              accessibilityLabel={t("settings.editor.aiSuggestions.title")}
+              testID="ai-quick-prompt-suggestions-toggle"
+            />
+          </View>
+
+          <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+            <View style={settingsStyles.rowContent}>
+              <Text style={settingsStyles.rowTitle}>{t("settings.editor.quickPrompts.title")}</Text>
+              <Text style={settingsStyles.rowHint}>{t("settings.editor.quickPrompts.hint")}</Text>
             </View>
             <Button
               variant="secondary"
@@ -56,7 +74,7 @@ export function EditorSection() {
               onPress={handleOpenQuickPrompts}
               testID="manage-quick-prompts-button"
             >
-              管理
+              {t("settings.editor.quickPrompts.manage")}
             </Button>
           </View>
         </View>

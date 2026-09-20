@@ -58,33 +58,33 @@ Stored via Paseo's standard `createValidatedPersistStorage(AsyncStorage, QuickPr
 
 ### 2.3 Default Built-in Presets
 
-When initialized with empty storage, the store populates the following defaults:
+When initialized with empty storage, the store populates sensible English defaults for international developers:
 
-- **继续** (Fixed):
-  - Label: `继续`
-  - Content: `请继续执行下一步。`
+- **Continue** (Fixed):
+  - Label: `Continue`
+  - Content: `Please continue to the next step.`
   - Shortcut: `continue`
   - Trigger: `fixed`
-- **代码审查** (Fixed):
-  - Label: `代码审查`
-  - Content: `请对我刚才的代码改动进行审查，检查潜在的边界条件、类型安全和性能问题。`
+- **Review** (Fixed):
+  - Label: `Review`
+  - Content: `Please review my recent code changes for potential edge cases, type safety, and performance issues.`
   - Shortcut: `review`
   - Trigger: `fixed`
-- **修复报错** (Dynamic Rule):
-  - Label: `修复报错`
-  - Content: `请分析上述报错信息，定位根本原因并完成修复，同时重新执行验证。`
+- **Fix Error** (Dynamic Rule):
+  - Label: `Fix Error`
+  - Content: `Please analyze the error message above, identify the root cause, fix the issues, and re-run verification.`
   - Shortcut: `fix`
   - Trigger: `rule`, `keywords: ["error", "exception", "failed", "failure", "报错", "失败"]`
-- **运行测试** (Dynamic Rule):
-  - Label: `运行测试`
-  - Content: `请运行相关的单元测试并确认全部通过。`
+- **Run Tests** (Dynamic Rule):
+  - Label: `Run Tests`
+  - Content: `Please run the relevant unit tests and ensure they all pass.`
   - Shortcut: `test`
-  - Trigger: `rule`, `keywords: ["test", "vitest", "jest", "测试", "spec"]`
-- **同意执行** (Dynamic Rule):
-  - Label: `同意执行`
-  - Content: `确认，请按照方案执行。`
+  - Trigger: `rule`, `keywords: ["test", "vitest", "jest", "spec", "测试"]`
+- **Proceed** (Dynamic Rule):
+  - Label: `Proceed`
+  - Content: `Confirmed, please proceed with the proposed plan.`
   - Shortcut: `yes`
-  - Trigger: `rule`, `keywords: ["(y/n)", "确认", "是否继续", "请选择", "approve", "proceed?"]`
+  - Trigger: `rule`, `keywords: ["(y/n)", "proceed?", "approve", "confirm", "确认", "是否继续", "请选择"]`
 
 ---
 

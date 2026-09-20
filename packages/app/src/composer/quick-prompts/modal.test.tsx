@@ -23,8 +23,8 @@ describe("QuickPromptsModal", () => {
 
     expect(getByTestId("quick-prompt-create-button")).toBeDefined();
     expect(getByTestId("quick-prompt-reset-button")).toBeDefined();
-    expect(getByText("继续")).toBeDefined();
-    expect(getByText("修复报错")).toBeDefined();
+    expect(getByText("Continue")).toBeDefined();
+    expect(getByText("Fix Error")).toBeDefined();
   });
 
   it("toggles item enabled state when switch is clicked", () => {

@@ -1,4 +1,5 @@
 import React, { memo, useCallback, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { Plus, Sparkles } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -25,6 +26,7 @@ const QuickPromptChip = memo(function QuickPromptChip({
   onSelectForEdit,
   isSubmitDisabled,
 }: QuickPromptChipProps) {
+  const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
   const handleHoverIn = useCallback(() => setIsHovered(true), []);
   const handleHoverOut = useCallback(() => setIsHovered(false), []);
@@ -38,16 +40,26 @@ const QuickPromptChip = memo(function QuickPromptChip({
     onSelectForEdit(item);
   }, [item, onSelectForEdit]);
 
+  const handleContextMenu = useCallback(
+    (e: { preventDefault: () => void }) => {
+      e.preventDefault();
+      onSelectForEdit(item);
+    },
+    [item, onSelectForEdit],
+  );
+
+  const isEphemeral = item.triggerType === "ephemeral";
   const isRule = item.triggerType === "rule";
 
   const chipStyle = useCallback(
     ({ pressed }: { pressed: boolean }) => [
       styles.chip,
       isRule && styles.chipRule,
+      isEphemeral && styles.chipEphemeral,
       (isHovered || pressed) && styles.chipHovered,
       isSubmitDisabled && styles.chipSubmitDisabled,
     ],
-    [isHovered, isRule, isSubmitDisabled],
+    [isHovered, isRule, isEphemeral, isSubmitDisabled],
   );
 
   return (
@@ -55,21 +67,31 @@ const QuickPromptChip = memo(function QuickPromptChip({
       testID={`quick-prompt-chip-${item.id}`}
       accessibilityRole="button"
       accessibilityLabel={item.label}
-      accessibilityHint="单击直接发送，长按填入编辑框"
+      accessibilityHint={t("composer.quickPrompts.bar.accessibilityHint")}
       delayLongPress={350}
       onPress={handlePress}
       onLongPress={handleLongPress}
+      {...{ onContextMenu: handleContextMenu }}
       onHoverIn={handleHoverIn}
       onHoverOut={handleHoverOut}
       style={chipStyle}
     >
-      {isRule ? (
+      {isEphemeral && (
+        <View style={styles.iconWrapper}>
+          <Sparkles size={11} color={styles.ephemeralIcon.color} />
+        </View>
+      )}
+      {!isEphemeral && isRule && (
         <View style={styles.iconWrapper}>
           <Sparkles size={11} color={styles.sparkleIcon.color} />
         </View>
-      ) : null}
+      )}
       <Text
-        style={[styles.chipText, isRule && styles.chipTextRule]}
+        style={[
+          styles.chipText,
+          isRule && styles.chipTextRule,
+          isEphemeral && styles.chipTextEphemeral,
+        ]}
         numberOfLines={1}
         ellipsizeMode="tail"
       >
@@ -86,6 +108,7 @@ export const QuickPromptBar = memo(function QuickPromptBar({
   onOpenManage,
   isSubmitDisabled,
 }: QuickPromptBarProps) {
+  const { t } = useTranslation();
   const [isAddHovered, setIsAddHovered] = useState(false);
   const handleAddHoverIn = useCallback(() => setIsAddHovered(true), []);
   const handleAddHoverOut = useCallback(() => setIsAddHovered(false), []);
@@ -123,7 +146,7 @@ export const QuickPromptBar = memo(function QuickPromptBar({
         <Pressable
           testID="quick-prompt-manage-button"
           accessibilityRole="button"
-          accessibilityLabel="管理常用语与规则"
+          accessibilityLabel={t("composer.quickPrompts.bar.manageAccessibility")}
           onPress={onOpenManage}
           onHoverIn={handleAddHoverIn}
           onHoverOut={handleAddHoverOut}
@@ -157,6 +180,11 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface2,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.border,
+    userSelect: "none",
+  },
+  chipEphemeral: {
+    borderColor: theme.colors.accent,
+    backgroundColor: theme.colors.surface3 ?? theme.colors.surface2,
   },
   chipRule: {
     borderColor: theme.colors.borderAccent,
@@ -175,10 +203,18 @@ const styles = StyleSheet.create((theme) => ({
   sparkleIcon: {
     color: theme.colors.accent,
   },
+  ephemeralIcon: {
+    color: theme.colors.accent,
+  },
   chipText: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
     fontWeight: "500",
+    userSelect: "none",
+  },
+  chipTextEphemeral: {
+    color: theme.colors.accentBright ?? theme.colors.accent,
+    fontWeight: "600",
   },
   chipTextRule: {
     color: theme.colors.accentBright ?? theme.colors.accent,

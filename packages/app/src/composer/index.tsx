@@ -1301,7 +1301,7 @@ function ComposerContentImpl({
   placeholder,
 }: ComposerContentProps) {
   const mode = resolveComposerInputMode(inputMode);
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const buttonIconSize = resolveComposerButtonIconSize();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
@@ -1340,8 +1340,9 @@ function ComposerContentImpl({
         items: allQuickPrompts,
         lastAssistantText,
         agentStatus: (agentState.status as QuickPromptAgentStatus) ?? null,
+        locale: i18n.language,
       }),
-    [allQuickPrompts, lastAssistantText, agentState.status],
+    [allQuickPrompts, lastAssistantText, agentState.status, i18n.language],
   );
 
   const [isQuickPromptsModalOpen, setIsQuickPromptsModalOpen] = useState(false);
@@ -1802,10 +1803,10 @@ function ComposerContentImpl({
     (item: QuickPromptItem) => {
       const current = textSource.getSnapshot();
       const nextText = current.trim().length > 0 ? `${current}\n${item.content}` : item.content;
-      setUserInput(nextText);
+      replaceUserInput(nextText, { start: nextText.length, end: nextText.length });
       messageInputRef.current?.focus();
     },
-    [setUserInput, textSource],
+    [replaceUserInput, textSource],
   );
 
   const handlePickImage = useCallback(async () => {

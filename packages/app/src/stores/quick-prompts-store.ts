@@ -5,7 +5,7 @@ import { z } from "zod";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 import { generateMessageId } from "@/types/stream";
 
-export const QuickPromptTriggerTypeSchema = z.enum(["fixed", "rule"]);
+export const QuickPromptTriggerTypeSchema = z.enum(["fixed", "rule", "ephemeral"]);
 export type QuickPromptTriggerType = z.infer<typeof QuickPromptTriggerTypeSchema>;
 
 export const QuickPromptAgentStatusSchema = z.enum(["idle", "running", "error"]);
@@ -27,6 +27,7 @@ export const QuickPromptItemSchema = z.strictObject({
   ruleCondition: QuickPromptRuleConditionSchema.optional(),
   enabled: z.boolean(),
   builtIn: z.boolean().optional(),
+  ephemeral: z.boolean().optional(),
   createdAt: z.number(),
   order: z.number(),
 });
@@ -40,8 +41,8 @@ export type QuickPromptsPersistedState = z.infer<typeof QuickPromptsPersistedSta
 export const DEFAULT_QUICK_PROMPT_ITEMS: readonly QuickPromptItem[] = [
   {
     id: "builtin-continue",
-    label: "继续",
-    content: "请继续执行下一步。",
+    label: "Continue",
+    content: "Please continue to the next step.",
     shortcut: "continue",
     triggerType: "fixed",
     enabled: true,
@@ -51,8 +52,9 @@ export const DEFAULT_QUICK_PROMPT_ITEMS: readonly QuickPromptItem[] = [
   },
   {
     id: "builtin-review",
-    label: "代码审查",
-    content: "请对我刚才的代码改动进行审查，检查潜在的边界条件、类型安全和性能问题。",
+    label: "Review",
+    content:
+      "Please review my recent code changes for potential edge cases, type safety, and performance issues.",
     shortcut: "review",
     triggerType: "fixed",
     enabled: true,
@@ -62,8 +64,9 @@ export const DEFAULT_QUICK_PROMPT_ITEMS: readonly QuickPromptItem[] = [
   },
   {
     id: "builtin-fix",
-    label: "修复报错",
-    content: "请分析上述报错信息，定位根本原因并完成修复，同时重新执行验证。",
+    label: "Fix Error",
+    content:
+      "Please analyze the error message above, identify the root cause, fix the issues, and re-run verification.",
     shortcut: "fix",
     triggerType: "rule",
     ruleCondition: {
@@ -76,12 +79,12 @@ export const DEFAULT_QUICK_PROMPT_ITEMS: readonly QuickPromptItem[] = [
   },
   {
     id: "builtin-test",
-    label: "运行测试",
-    content: "请运行相关的单元测试并确认全部通过。",
+    label: "Run Tests",
+    content: "Please run the relevant unit tests and ensure they all pass.",
     shortcut: "test",
     triggerType: "rule",
     ruleCondition: {
-      keywords: ["test", "vitest", "jest", "测试", "spec"],
+      keywords: ["test", "vitest", "jest", "spec", "测试"],
     },
     enabled: true,
     builtIn: true,
@@ -90,12 +93,12 @@ export const DEFAULT_QUICK_PROMPT_ITEMS: readonly QuickPromptItem[] = [
   },
   {
     id: "builtin-approve",
-    label: "同意执行",
-    content: "确认，请按照方案执行。",
+    label: "Proceed",
+    content: "Confirmed, please proceed with the proposed plan.",
     shortcut: "yes",
     triggerType: "rule",
     ruleCondition: {
-      keywords: ["(y/n)", "确认", "是否继续", "请选择", "approve", "proceed?"],
+      keywords: ["(y/n)", "proceed?", "approve", "confirm", "确认", "是否继续", "请选择"],
     },
     enabled: true,
     builtIn: true,
