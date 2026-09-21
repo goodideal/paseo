@@ -26,9 +26,6 @@ import type { Theme } from "@/styles/theme";
 import invariant from "tiny-invariant";
 import { SidebarMenuToggle } from "@/components/headers/menu-header";
 import { ScreenHeader } from "@/components/headers/screen-header";
-import { ScreenTitle } from "@/components/headers/screen-title";
-import { HostBadge } from "@/hosts/host-badge";
-import { useHostBadges } from "@/hosts/use-host-badges";
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import {
@@ -193,10 +190,7 @@ import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
 import { buildHostRootRoute, buildSettingsHostRoute } from "@/utils/host-routes";
 import { useWorkspaceTerminals } from "@/screens/workspace/terminals/use-workspace-terminals";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
-import {
-  WorkspaceHeaderMenuDesktop,
-  WorkspaceHeaderMenuMobile,
-} from "@/screens/workspace/workspace-header-menu";
+import { WorkspaceHeaderTitleBar } from "./workspace-header-title-bar";
 import { PluginHeaderButtons } from "@/plugins";
 import {
   createWorkspaceFileTabTarget,
@@ -213,6 +207,10 @@ const EMPTY_UI_TABS: WorkspaceTab[] = [];
 const EMPTY_WORKSPACE_SCRIPTS: WorkspaceDescriptor["scripts"] = [];
 const EMPTY_PINNED_AGENT_IDS = new Set<string>();
 const EMPTY_SET = new Set<string>();
+
+function getIsWorktree(workspaceDescriptor: WorkspaceDescriptor | null | undefined): boolean {
+  return workspaceDescriptor?.workspaceKind === "worktree";
+}
 
 function getWorkspaceScripts(
   workspaceDescriptor: WorkspaceDescriptor | null | undefined,
@@ -902,169 +900,6 @@ function useCloseTabs(): UseCloseTabsResult {
   return { closingTabIds, closeTab };
 }
 
-/**
- * Which project the workspace belongs to, and which machine it runs on.
- *
- * Compact gets both, on their own line under the workspace name: this header is the only thing on
- * screen that says where the workspace lives, because the sidebar that normally carries the host
- * badge is closed. It still follows the host's own badge setting, so a purely local setup stays
- * quiet. A project name that only repeats the workspace name is dropped on wide, where the two sit
- * side by side, and kept on compact, where the line exists for the host anyway.
- */
-function WorkspaceHeaderProjectRow({
-  subtitle,
-  isSubtitleDistinct,
-  serverId,
-}: {
-  subtitle: string;
-  isSubtitleDistinct: boolean;
-  serverId: string;
-}) {
-  const isCompact = useIsCompactFormFactor();
-  const hostBadge = useHostBadges({ enabled: isCompact }).get(serverId) ?? null;
-  const showProject = isSubtitleDistinct || isCompact;
-  if (!showProject && !hostBadge) {
-    return null;
-  }
-  return (
-    <View style={styles.headerProjectRow}>
-      {showProject ? (
-        <Text
-          testID="workspace-header-subtitle"
-          style={styles.headerProjectTitle}
-          numberOfLines={1}
-        >
-          {subtitle}
-        </Text>
-      ) : null}
-      {showProject && hostBadge ? <Text style={styles.headerProjectSeparator}>·</Text> : null}
-      {hostBadge ? <HostBadge badge={hostBadge} /> : null}
-    </View>
-  );
-}
-
-interface WorkspaceHeaderTitleBarProps {
-  isLoading: boolean;
-  title: string;
-  subtitle: string;
-  isSubtitleDistinct: boolean;
-  currentBranchName: string | null;
-  normalizedServerId: string;
-  normalizedWorkspaceId: string;
-  workspaceScripts: WorkspaceDescriptor["scripts"];
-  liveTerminalIds: string[];
-  showWorkspaceSetup: boolean;
-  showCreateBrowserTab: boolean;
-  isMobile: boolean;
-  createTerminalDisabled: boolean;
-  importAgentDisabled: boolean;
-  copyPathDisabled: boolean;
-  onCreateDraftTab: () => void;
-  onCreateTerminal: () => void;
-  onCreateTerminalWithProfile: (profile: TerminalProfile) => void;
-  onCreateBrowser: () => void;
-  onOpenImportSheet: () => void;
-  onCopyWorkspacePath: () => void;
-  onCopyBranchName: () => void;
-  onOpenSetupTab: () => void;
-  onScriptTerminalStarted: (terminalId: string) => void;
-  onViewScriptTerminal: (terminalId: string) => void;
-  onOpenUrlInBrowserTab: (url: string) => void;
-}
-
-function WorkspaceHeaderTitleBar({
-  isLoading,
-  title,
-  subtitle,
-  isSubtitleDistinct,
-  currentBranchName,
-  normalizedServerId,
-  normalizedWorkspaceId,
-  workspaceScripts,
-  liveTerminalIds,
-  showWorkspaceSetup,
-  showCreateBrowserTab,
-  isMobile,
-  createTerminalDisabled,
-  importAgentDisabled,
-  copyPathDisabled,
-  onCreateDraftTab,
-  onCreateTerminal,
-  onCreateTerminalWithProfile,
-  onCreateBrowser,
-  onOpenImportSheet,
-  onCopyWorkspacePath,
-  onCopyBranchName,
-  onOpenSetupTab,
-  onScriptTerminalStarted,
-  onViewScriptTerminal,
-  onOpenUrlInBrowserTab,
-}: WorkspaceHeaderTitleBarProps) {
-  return (
-    <View style={styles.headerTitleContainer}>
-      {isLoading ? (
-        <View style={styles.headerTitleTextGroup}>
-          <View style={styles.headerTitleSkeleton} />
-        </View>
-      ) : (
-        <View style={styles.headerTitleTextGroup}>
-          <ScreenTitle testID="workspace-header-title">{title}</ScreenTitle>
-          <WorkspaceHeaderProjectRow
-            subtitle={subtitle}
-            isSubtitleDistinct={isSubtitleDistinct}
-            serverId={normalizedServerId}
-          />
-        </View>
-      )}
-      <View style={styles.compactHeaderMenuCluster}>
-        {isMobile ? (
-          <WorkspaceHeaderMenuMobile
-            normalizedServerId={normalizedServerId}
-            currentBranchName={currentBranchName}
-            showWorkspaceSetup={showWorkspaceSetup}
-            showCreateBrowserTab={showCreateBrowserTab}
-            createTerminalDisabled={createTerminalDisabled}
-            importAgentDisabled={importAgentDisabled}
-            copyPathDisabled={copyPathDisabled}
-            onCreateDraftTab={onCreateDraftTab}
-            onCreateTerminal={onCreateTerminal}
-            onCreateTerminalWithProfile={onCreateTerminalWithProfile}
-            onCreateBrowser={onCreateBrowser}
-            onOpenImportSheet={onOpenImportSheet}
-            onCopyWorkspacePath={onCopyWorkspacePath}
-            onCopyBranchName={onCopyBranchName}
-            onOpenSetupTab={onOpenSetupTab}
-          />
-        ) : (
-          <WorkspaceHeaderMenuDesktop
-            currentBranchName={currentBranchName}
-            showWorkspaceSetup={showWorkspaceSetup}
-            importAgentDisabled={importAgentDisabled}
-            copyPathDisabled={copyPathDisabled}
-            onOpenImportSheet={onOpenImportSheet}
-            onCopyWorkspacePath={onCopyWorkspacePath}
-            onCopyBranchName={onCopyBranchName}
-            onOpenSetupTab={onOpenSetupTab}
-          />
-        )}
-        {isMobile && workspaceScripts.length > 0 ? (
-          <WorkspaceScriptsButton
-            serverId={normalizedServerId}
-            workspaceId={normalizedWorkspaceId}
-            scripts={workspaceScripts}
-            liveTerminalIds={liveTerminalIds}
-            onScriptTerminalStarted={onScriptTerminalStarted}
-            onViewTerminal={onViewScriptTerminal}
-            onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
-            hideLabels
-            presentation="ghost"
-          />
-        ) : null}
-      </View>
-    </View>
-  );
-}
-
 type PaneDirection = "left" | "right" | "up" | "down";
 
 function parsePaneDirection(actionId: string): PaneDirection | null {
@@ -1562,6 +1397,7 @@ function WorkspaceScreenContent({
       .catch(() => undefined);
   }, [normalizedServerId, normalizedWorkspaceId, workspaceDescriptor]);
   const workspaceScripts = getWorkspaceScripts(workspaceDescriptor);
+  const isWorktree = getIsWorktree(workspaceDescriptor);
   const { handleRetryHost, handleManageHost, handleDismissMissingWorkspace } =
     useWorkspaceRouteActions(normalizedServerId);
 
@@ -3890,6 +3726,7 @@ function WorkspaceScreenContent({
                 title={workspaceHeaderTitle}
                 subtitle={workspaceHeaderSubtitle}
                 isSubtitleDistinct={isWorkspaceHeaderSubtitleDistinct}
+                isWorktree={isWorktree}
                 currentBranchName={currentBranchName}
                 normalizedServerId={normalizedServerId}
                 normalizedWorkspaceId={normalizedWorkspaceId}
@@ -3946,6 +3783,7 @@ function WorkspaceScreenContent({
       workspaceHeaderSubtitle,
       workspaceHeaderTitle,
       isWorkspaceHeaderSubtitleDistinct,
+      isWorktree,
       workspaceScripts,
     ],
   );
@@ -4156,72 +3994,6 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minHeight: 0,
   },
-  headerTitleContainer: {
-    flex: 1,
-    flexShrink: 1,
-    minWidth: 0,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: {
-      xs: theme.spacing[1],
-      md: theme.spacing[2],
-    },
-    overflow: "hidden",
-  },
-  headerTitleTextGroup: {
-    minWidth: 0,
-    overflow: "hidden",
-    flexShrink: 1,
-    flexGrow: {
-      xs: 1,
-      md: 0,
-    },
-    flexDirection: {
-      xs: "column",
-      md: "row",
-    },
-    alignItems: {
-      xs: "stretch",
-      md: "center",
-    },
-    justifyContent: "flex-start",
-    gap: {
-      xs: 0,
-      md: theme.spacing[2],
-    },
-  },
-  // No width cap. A percentage cap resolves against the title group, whose own width comes from
-  // this row's content, so it clips the project name while there is still room beside it.
-  // `flexShrink` on both this row and the title already gives up space only when there is none.
-  headerProjectRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1.5],
-    minWidth: 0,
-    flexShrink: 1,
-  },
-  headerProjectTitle: {
-    color: theme.colors.foregroundMuted,
-    fontSize: {
-      xs: theme.fontSize.sm,
-      md: theme.fontSize.base,
-    },
-    flexShrink: 1,
-    minWidth: 0,
-  },
-  headerProjectSeparator: {
-    color: theme.colors.foregroundExtraMuted,
-    fontSize: theme.fontSize.sm,
-    flexShrink: 0,
-  },
-  headerTitleSkeleton: {
-    width: 220,
-    maxWidth: "100%",
-    height: 22,
-    borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.surface3,
-    opacity: 0.25,
-  },
   headerRight: {
     flexDirection: "row",
     alignItems: "center",
@@ -4234,14 +4006,6 @@ const styles = StyleSheet.create((theme) => ({
     marginRight: {
       xs: 0,
       md: -theme.spacing[2],
-    },
-  },
-  compactHeaderMenuCluster: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: {
-      xs: 0,
-      md: theme.spacing[2],
     },
   },
   newTabActions: {
