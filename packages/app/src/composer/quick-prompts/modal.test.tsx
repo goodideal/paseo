@@ -1,6 +1,6 @@
+// @vitest-environment jsdom
 import { i18n as testI18n } from "@/i18n/i18next";
 void testI18n;
-// @vitest-environment jsdom
 import React from "react";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -202,6 +202,50 @@ describe("QuickPromptsModal", () => {
           projectId: "prj_test",
           disabledGlobalIds: [], // toggled from disabled -> enabled
         }),
+      );
+    });
+  });
+
+  it("shows agent-profiles input in rule mode and saves agentProfiles on item", async () => {
+    const { findByTestId, findByText } = render(
+      <QueryClientProvider client={queryClient}>
+        <QuickPromptsModal visible={true} onClose={vi.fn()} serverId="server-1" />
+      </QueryClientProvider>,
+    );
+
+    const createBtn = await findByTestId("quick-prompt-create-button");
+    fireEvent.click(createBtn);
+
+    // Switch to rule mode
+    const ruleOption = await findByText("Dynamic Rule (conditional)");
+    fireEvent.click(ruleOption);
+
+    // Verify agent profiles input exists
+    const profilesInput = await findByTestId("quick-prompt-form-agent-profiles");
+    expect(profilesInput).toBeDefined();
+
+    // Fill in form
+    const labelInput = await findByTestId("quick-prompt-form-label");
+    const contentInput = await findByTestId("quick-prompt-form-content");
+
+    fireEvent.change(labelInput, { target: { value: "Review Profile Prompt" } });
+    fireEvent.change(contentInput, { target: { value: "Please review" } });
+    fireEvent.change(profilesInput, { target: { value: "expert-1, expert-2" } });
+
+    // Save
+    const saveBtn = await findByText("Save");
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => {
+      expect(mockClient.quickPromptsGlobalSet).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({
+            label: "Review Profile Prompt",
+            ruleCondition: expect.objectContaining({
+              agentProfiles: ["expert-1", "expert-2"],
+            }),
+          }),
+        ]),
       );
     });
   });

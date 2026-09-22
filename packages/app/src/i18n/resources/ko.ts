@@ -199,6 +199,22 @@ export const ko: TranslationResources = {
       modal: {
         title: "빠른 프롬프트 및 규칙",
         newPrompt: "새 빠른 프롬프트",
+        tabProject: "Current Project",
+        tabGlobal: "Global Prompts",
+        projectScope: "Project",
+        globalScope: "Global",
+        globalNotice: "Changes to global prompts apply across all projects on this machine.",
+        projectNotice:
+          "Customize prompts for this project. Global prompts can be disabled here or edited in the Global tab.",
+        globalReadOnlyHint:
+          "Global prompt: toggle to enable/disable for this project, or switch to Global tab to edit.",
+        newProjectPrompt: "New Project Prompt",
+        newGlobalPrompt: "New Global Prompt",
+        editProjectPrompt: "Edit Project Prompt",
+        editGlobalPrompt: "Edit Global Prompt",
+        jumpToGlobal: "Edit in Global tab",
+        emptyProjectItems: "No project-specific prompts yet. Inheriting active global prompts.",
+
         resetToDefaults: "기본값으로 초기화",
         fixedBadge: "고정",
         ruleBadge: "동적 규칙",

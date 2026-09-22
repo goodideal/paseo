@@ -49,6 +49,7 @@ interface PromptFormState {
   triggerType: QuickPromptTriggerType;
   keywords: string;
   regex: string;
+  agentProfiles: string;
 }
 
 const EMPTY_FORM: PromptFormState = {
@@ -58,6 +59,7 @@ const EMPTY_FORM: PromptFormState = {
   triggerType: "fixed",
   keywords: "",
   regex: "",
+  agentProfiles: "",
 };
 
 function ScopeBadge({
@@ -92,6 +94,7 @@ interface QuickPromptCardProps {
   isProjectScopedItem?: boolean;
   isInheritedGlobal?: boolean;
   isDisabledInProject?: boolean;
+  isActive?: boolean;
   onToggle: (id: string) => void;
   onEdit?: (item: QuickPromptItem) => void;
   onDelete?: (id: string) => void;
@@ -104,6 +107,7 @@ const QuickPromptCard = memo(function QuickPromptCard({
   isProjectScopedItem,
   isInheritedGlobal,
   isDisabledInProject,
+  isActive,
   onToggle,
   onEdit,
   onDelete,
@@ -121,13 +125,18 @@ const QuickPromptCard = memo(function QuickPromptCard({
 
   return (
     <View
-      style={[styles.itemCard, dragHandleProps ? styles.itemCardDragging : undefined]}
+      style={[styles.itemCard, isActive ? styles.itemCardDragging : undefined]}
       testID={`quick-prompt-item-${item.id}`}
     >
       <View style={styles.itemHeader}>
         <View style={styles.itemTitleRow}>
           {dragHandleProps ? (
-            <View {...dragHandleProps} style={styles.dragHandle}>
+            <View
+              {...(dragHandleProps.attributes as object | undefined)}
+              {...(dragHandleProps.listeners as object | undefined)}
+              ref={dragHandleProps.setActivatorNodeRef as unknown as React.Ref<View>}
+              style={styles.dragHandle}
+            >
               <GripVertical size={14} color={styles.outlineIcon.color} />
             </View>
           ) : null}
@@ -311,6 +320,7 @@ export function QuickPromptsModal({
       triggerType: item.triggerType,
       keywords: item.ruleCondition?.keywords?.join(", ") ?? "",
       regex: item.ruleCondition?.regex ?? "",
+      agentProfiles: item.ruleCondition?.agentProfiles?.join(", ") ?? "",
     });
     setError(null);
     setMode("edit");
@@ -419,13 +429,22 @@ export function QuickPromptsModal({
             .filter(Boolean)
         : undefined;
 
+    const agentProfiles =
+      form.triggerType === "rule" && form.agentProfiles.trim()
+        ? form.agentProfiles
+            .split(",")
+            .map((k) => k.trim())
+            .filter(Boolean)
+        : undefined;
+
     const regex = form.triggerType === "rule" && form.regex.trim() ? form.regex.trim() : undefined;
 
     const ruleCondition =
-      keywords || regex
+      keywords || regex || agentProfiles
         ? {
             keywords,
             regex,
+            agentProfiles,
           }
         : undefined;
 
@@ -523,6 +542,10 @@ export function QuickPromptsModal({
     setForm((f) => ({ ...f, triggerType: value }));
   }, []);
 
+  const handleAgentProfilesChange = useCallback((text: string) => {
+    setForm((prev) => ({ ...prev, agentProfiles: text }));
+  }, []);
+
   const handleKeywordsChange = useCallback((text: string) => {
     setForm((f) => ({ ...f, keywords: text }));
   }, []);
@@ -551,10 +574,11 @@ export function QuickPromptsModal({
   );
 
   const renderProjectItem = useCallback(
-    ({ item, dragHandleProps }: DraggableRenderItemInfo<QuickPromptItem>) => (
+    ({ item, isActive, dragHandleProps }: DraggableRenderItemInfo<QuickPromptItem>) => (
       <QuickPromptCard
         item={item}
         isProjectScopedItem
+        isActive={isActive}
         onToggle={handleToggleProjectItem}
         onEdit={handleEditProjectItem}
         onDelete={handleDeleteProjectItem}
@@ -576,9 +600,10 @@ export function QuickPromptsModal({
   );
 
   const renderGlobalItem = useCallback(
-    ({ item, dragHandleProps }: DraggableRenderItemInfo<QuickPromptItem>) => (
+    ({ item, isActive, dragHandleProps }: DraggableRenderItemInfo<QuickPromptItem>) => (
       <QuickPromptCard
         item={item}
+        isActive={isActive}
         onToggle={handleToggleGlobalItem}
         onEdit={handleEditGlobalItem}
         onDelete={handleDeleteGlobalItem}
@@ -765,6 +790,18 @@ export function QuickPromptsModal({
 
             {form.triggerType === "rule" ? (
               <View style={styles.ruleBox}>
+                <View style={styles.formField}>
+                  <Text style={styles.fieldLabel}>
+                    {t("composer.quickPrompts.modal.form.agentProfiles")}
+                  </Text>
+                  <AdaptiveTextInput
+                    initialValue={form.agentProfiles}
+                    onChangeText={handleAgentProfilesChange}
+                    placeholder={t("composer.quickPrompts.modal.form.agentProfilesPlaceholder")}
+                    style={styles.textInput}
+                    testID="quick-prompt-form-agent-profiles"
+                  />
+                </View>
                 <View style={styles.formField}>
                   <Text style={styles.fieldLabel}>
                     {t("composer.quickPrompts.modal.form.keywords")}

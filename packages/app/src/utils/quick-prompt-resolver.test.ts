@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { resolveEffectiveQuickPrompts } from "./quick-prompt-resolver";
+import {
+  resolveEffectiveQuickPrompts,
+  resolveActiveAgentProfileIds,
+} from "./quick-prompt-resolver";
 import type { QuickPromptItem } from "@getpaseo/protocol/quick-prompts";
 
 describe("quick-prompt-resolver", () => {
@@ -108,5 +111,91 @@ describe("quick-prompt-resolver", () => {
       agentStatus: "idle",
     });
     expect(match.map((i) => i.id)).toEqual(["project-rule", "global-1", "global-2"]);
+  });
+
+  describe("resolveActiveAgentProfileIds", () => {
+    const mockProfiles = [
+      {
+        id: "p1",
+        name: "Claude Code",
+        provider: "claude",
+        model: "claude-3-7-sonnet",
+        modeId: "plan",
+      },
+      {
+        id: "p2",
+        name: "Codex Fast",
+        provider: "codex",
+        model: "gpt-5",
+      },
+      {
+        id: "p3",
+        name: "General Reviewer",
+        provider: "codex",
+      },
+    ];
+
+    it("returns empty array when agent is null or undefined", () => {
+      expect(resolveActiveAgentProfileIds(null, mockProfiles)).toEqual([]);
+      expect(resolveActiveAgentProfileIds(undefined, mockProfiles)).toEqual([]);
+    });
+
+    it("matches by labels if present", () => {
+      const agent = {
+        labels: { profileId: "custom-profile", profile: "Custom Name" },
+      };
+      const result = resolveActiveAgentProfileIds(agent, mockProfiles);
+      expect(result).toContain("custom-profile");
+      expect(result).toContain("Custom Name");
+    });
+
+    it("matches profiles by provider, model, and mode", () => {
+      const agent = {
+        provider: "claude",
+        model: "claude-3-7-sonnet",
+        currentModeId: "plan",
+      };
+      const result = resolveActiveAgentProfileIds(agent, mockProfiles);
+      expect(result).toContain("p1");
+      expect(result).toContain("Claude Code");
+      expect(result).not.toContain("p2");
+    });
+
+    it("matches profiles where model/mode are optional or unspecified in profile", () => {
+      const agent = {
+        provider: "codex",
+        model: "any-model",
+      };
+      const result = resolveActiveAgentProfileIds(agent, mockProfiles);
+      expect(result).toContain("p3");
+      expect(result).toContain("General Reviewer");
+    });
+  });
+
+  it("filters effective quick prompts by agentProfileId", () => {
+    const profileItem: QuickPromptItem = {
+      id: "profile-prompt",
+      label: "Profile Only",
+      content: "Do profile work",
+      triggerType: "rule",
+      ruleCondition: {
+        agentProfiles: ["p1"],
+      },
+      enabled: true,
+      createdAt: 20,
+      order: 0,
+    };
+
+    const resultMatching = resolveEffectiveQuickPrompts({
+      globalItems: [...globalItems, profileItem],
+      agentProfileId: "p1",
+    });
+    expect(resultMatching.map((i) => i.id)).toContain("profile-prompt");
+
+    const resultNotMatching = resolveEffectiveQuickPrompts({
+      globalItems: [...globalItems, profileItem],
+      agentProfileId: "p2",
+    });
+    expect(resultNotMatching.map((i) => i.id)).not.toContain("profile-prompt");
   });
 });

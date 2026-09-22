@@ -10,6 +10,7 @@ export const QuickPromptRuleConditionSchema = z.object({
   keywords: z.array(z.string()).optional(),
   regex: z.string().optional(),
   agentStatuses: z.array(QuickPromptAgentStatusSchema).optional(),
+  agentProfiles: z.array(z.string()).optional(),
 });
 export type QuickPromptRuleCondition = z.infer<typeof QuickPromptRuleConditionSchema>;
 
