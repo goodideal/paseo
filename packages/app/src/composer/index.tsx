@@ -92,6 +92,8 @@ import type { AutocompleteOption } from "@/components/ui/autocomplete";
 import { useAgentAutocomplete } from "@/hooks/use-agent-autocomplete";
 import { QuickPromptBar, QuickPromptsModal } from "./quick-prompts";
 import { useEffectiveQuickPrompts } from "@/hooks/use-quick-prompts";
+import { useAgentProfiles } from "@/agent-profiles";
+import { resolveActiveAgentProfileIds } from "@/utils/quick-prompt-resolver";
 import type { QuickPromptAgentStatus, QuickPromptItem } from "@getpaseo/protocol/quick-prompts";
 import type { StreamItem } from "@/types/stream";
 import { usePluginClientSlashCommands } from "@/plugins/client-slash-commands";
@@ -283,14 +285,32 @@ function findLatestAssistantText(streamTail?: readonly StreamItem[]): string | n
 
 function buildAgentStateSelector(serverId: string, agentId: string) {
   return (state: ReturnType<typeof useSessionStore.getState>) => {
-    const agent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
+    const session = state.sessions[serverId];
+    const agent = session?.agents?.get(agentId);
+    if (!agent) {
+      return {
+        status: null,
+        contextWindowMaxTokens: null,
+        contextWindowUsedTokens: null,
+        totalCostUsd: null,
+        model: null,
+        provider: null,
+        currentModeId: null,
+        thinkingOptionId: null,
+        labels: null,
+      };
+    }
+    const lastUsage = agent.lastUsage;
     return {
-      status: agent?.status ?? null,
-      contextWindowMaxTokens: agent?.lastUsage?.contextWindowMaxTokens ?? null,
-      contextWindowUsedTokens: agent?.lastUsage?.contextWindowUsedTokens ?? null,
-      totalCostUsd: agent?.lastUsage?.totalCostUsd ?? null,
-      model: agent?.model ?? null,
-      provider: agent?.provider ?? null,
+      status: agent.status,
+      contextWindowMaxTokens: lastUsage?.contextWindowMaxTokens ?? null,
+      contextWindowUsedTokens: lastUsage?.contextWindowUsedTokens ?? null,
+      totalCostUsd: lastUsage?.totalCostUsd ?? null,
+      model: agent.model,
+      provider: agent.provider,
+      currentModeId: agent.currentModeId,
+      thinkingOptionId: agent.thinkingOptionId,
+      labels: agent.labels,
     };
   };
 }
@@ -1330,11 +1350,37 @@ function ComposerContentImpl({
     state.sessions[serverId]?.agentStreamTail?.get(agentId),
   );
   const lastAssistantText = useMemo(() => findLatestAssistantText(streamTail), [streamTail]);
+  const { profiles } = useAgentProfiles(serverId);
+  const activeAgentProfileIds = useMemo(() => {
+    return resolveActiveAgentProfileIds(
+      {
+        provider: agentState.provider ?? agentControls?.selectedProvider ?? null,
+        model: agentState.model ?? agentControls?.selectedModel ?? null,
+        currentModeId: agentState.currentModeId ?? agentControls?.selectedMode ?? null,
+        thinkingOptionId:
+          agentState.thinkingOptionId ?? agentControls?.selectedThinkingOptionId ?? null,
+        labels: agentState.labels,
+      },
+      profiles,
+    );
+  }, [
+    agentState.provider,
+    agentState.model,
+    agentState.currentModeId,
+    agentState.thinkingOptionId,
+    agentState.labels,
+    agentControls?.selectedProvider,
+    agentControls?.selectedModel,
+    agentControls?.selectedMode,
+    agentControls?.selectedThinkingOptionId,
+    profiles,
+  ]);
   const { effectiveItems: activeQuickPrompts } = useEffectiveQuickPrompts({
     serverId,
     workspaceId,
     lastAssistantText,
     agentStatus: (agentState.status as QuickPromptAgentStatus) ?? null,
+    agentProfileId: activeAgentProfileIds,
     locale: i18n.language,
   });
 

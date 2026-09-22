@@ -208,4 +208,112 @@ describe("quick-prompt-matcher", () => {
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe("item-continue");
   });
+
+  describe("agentProfiles condition", () => {
+    const profileItem: QuickPromptItem = {
+      id: "item-profile-only",
+      label: "前端专精",
+      content: "请优先使用 React 与 CSS 优化。",
+      triggerType: "rule",
+      ruleCondition: {
+        agentProfiles: ["frontend-expert", "ui-dev"],
+      },
+      enabled: true,
+      createdAt: 10,
+      order: 5,
+    };
+
+    const profileAndKeywordItem: QuickPromptItem = {
+      id: "item-profile-keyword",
+      label: "审核代码",
+      content: "请执行严格审核。",
+      triggerType: "rule",
+      ruleCondition: {
+        agentProfiles: ["reviewer"],
+        keywords: ["review", "pr"],
+      },
+      enabled: true,
+      createdAt: 11,
+      order: 6,
+    };
+
+    it("matches when agentProfileId matches condition (single string, case-insensitive)", () => {
+      expect(
+        matchesQuickPromptRule(profileItem, {
+          agentProfileId: "Frontend-Expert",
+        }),
+      ).toBe(true);
+      expect(
+        matchesQuickPromptRule(profileItem, {
+          agentProfileId: "UI-DEV",
+        }),
+      ).toBe(true);
+    });
+
+    it("matches when agentProfileId is an array of candidate IDs/names", () => {
+      expect(
+        matchesQuickPromptRule(profileItem, {
+          agentProfileId: ["other-profile", "frontend-expert"],
+        }),
+      ).toBe(true);
+    });
+
+    it("rejects when agentProfileId does not match", () => {
+      expect(
+        matchesQuickPromptRule(profileItem, {
+          agentProfileId: "backend-dev",
+        }),
+      ).toBe(false);
+    });
+
+    it("rejects when agentProfileId is missing or null", () => {
+      expect(matchesQuickPromptRule(profileItem, {})).toBe(false);
+      expect(matchesQuickPromptRule(profileItem, { agentProfileId: null })).toBe(false);
+    });
+
+    it("requires both profile AND keywords when both are specified", () => {
+      // Matches both
+      expect(
+        matchesQuickPromptRule(profileAndKeywordItem, {
+          agentProfileId: "reviewer",
+          lastAssistantText: "Please review this pull request.",
+        }),
+      ).toBe(true);
+
+      // Matches profile but not keywords
+      expect(
+        matchesQuickPromptRule(profileAndKeywordItem, {
+          agentProfileId: "reviewer",
+          lastAssistantText: "All good, no issues found.",
+        }),
+      ).toBe(false);
+
+      // Matches keywords but not profile
+      expect(
+        matchesQuickPromptRule(profileAndKeywordItem, {
+          agentProfileId: "coder",
+          lastAssistantText: "Please review this pull request.",
+        }),
+      ).toBe(false);
+    });
+
+    it("evaluates quick prompts with agentProfileId filter correctly", () => {
+      const items = [fixedItem, profileItem, profileAndKeywordItem];
+
+      // With frontend profile
+      const frontendResult = evaluateQuickPrompts({
+        items,
+        agentProfileId: "frontend-expert",
+      });
+      expect(frontendResult.map(getId)).toEqual(["item-continue", "item-profile-only"]);
+
+      // With reviewer profile and matching text
+      const reviewerResult = evaluateQuickPrompts({
+        items,
+        agentProfileId: "reviewer",
+        lastAssistantText: "Ready for review",
+      });
+      expect(reviewerResult.map(getId)).toEqual(["item-continue", "item-profile-keyword"]);
+    });
+  });
 });

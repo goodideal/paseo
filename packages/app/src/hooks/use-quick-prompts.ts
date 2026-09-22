@@ -180,12 +180,21 @@ export interface UseEffectiveQuickPromptsInput {
   workspaceId?: string | null;
   lastAssistantText?: string | null;
   agentStatus?: QuickPromptAgentStatus | null;
+  agentProfileId?: string | readonly string[] | null;
   locale?: string;
   disableEphemeral?: boolean;
 }
 
 export function useEffectiveQuickPrompts(input: UseEffectiveQuickPromptsInput) {
-  const { serverId, workspaceId, lastAssistantText, agentStatus, locale, disableEphemeral } = input;
+  const {
+    serverId,
+    workspaceId,
+    lastAssistantText,
+    agentStatus,
+    agentProfileId,
+    locale,
+    disableEphemeral,
+  } = input;
 
   const projectId = useSessionStore((state) => {
     if (!serverId || !workspaceId) return null;
@@ -203,6 +212,7 @@ export function useEffectiveQuickPrompts(input: UseEffectiveQuickPromptsInput) {
       disabledGlobalIds: projectId ? projectPrompts.disabledGlobalIds : null,
       lastAssistantText,
       agentStatus,
+      agentProfileId,
       locale,
       disableEphemeral,
     });
@@ -213,6 +223,7 @@ export function useEffectiveQuickPrompts(input: UseEffectiveQuickPromptsInput) {
     projectPrompts.disabledGlobalIds,
     lastAssistantText,
     agentStatus,
+    agentProfileId,
     locale,
     disableEphemeral,
   ]);

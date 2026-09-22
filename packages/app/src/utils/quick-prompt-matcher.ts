@@ -9,6 +9,7 @@ export interface EvaluateQuickPromptsInput {
   items: readonly QuickPromptItem[];
   lastAssistantText?: string | null;
   agentStatus?: QuickPromptAgentStatus | null;
+  agentProfileId?: string | readonly string[] | null;
   locale?: string;
   disableEphemeral?: boolean;
 }
@@ -21,6 +22,30 @@ function matchesStatusCondition(
     return true;
   }
   return Boolean(agentStatus && condition.agentStatuses.includes(agentStatus));
+}
+
+function matchesProfileCondition(
+  condition: QuickPromptRuleCondition,
+  agentProfileId?: string | readonly string[] | null,
+): boolean {
+  if (!condition.agentProfiles || condition.agentProfiles.length === 0) {
+    return true;
+  }
+  if (!agentProfileId) {
+    return false;
+  }
+  const candidateIds = (Array.isArray(agentProfileId) ? agentProfileId : [agentProfileId])
+    .map((c) => c.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (candidateIds.length === 0) {
+    return false;
+  }
+
+  return condition.agentProfiles.some((target) => {
+    const trimmedTarget = target.trim().toLowerCase();
+    return trimmedTarget.length > 0 && candidateIds.includes(trimmedTarget);
+  });
 }
 
 function matchesKeywordsCondition(
@@ -48,9 +73,34 @@ function matchesRegexCondition(condition: QuickPromptRuleCondition, rawText: str
   }
 }
 
+function hasAnyRuleCondition(condition: QuickPromptRuleCondition): boolean {
+  if (Array.isArray(condition.agentProfiles) && condition.agentProfiles.length > 0) return true;
+  if (Array.isArray(condition.agentStatuses) && condition.agentStatuses.length > 0) return true;
+  if (Array.isArray(condition.keywords) && condition.keywords.some((k) => k.trim().length > 0))
+    return true;
+  if (typeof condition.regex === "string" && condition.regex.trim().length > 0) return true;
+  return false;
+}
+
+function matchesTextCondition(condition: QuickPromptRuleCondition, rawText: string): boolean {
+  const hasKeywords =
+    Array.isArray(condition.keywords) && condition.keywords.some((k) => k.trim().length > 0);
+  const hasRegex = typeof condition.regex === "string" && condition.regex.trim().length > 0;
+  if (!hasKeywords && !hasRegex) {
+    return true;
+  }
+  const keywordMatched = hasKeywords && matchesKeywordsCondition(condition, rawText.toLowerCase());
+  const regexMatched = hasRegex && matchesRegexCondition(condition, rawText);
+  return keywordMatched || regexMatched;
+}
+
 export function matchesQuickPromptRule(
   item: QuickPromptItem,
-  context: { lastAssistantText?: string | null; agentStatus?: QuickPromptAgentStatus | null },
+  context: {
+    lastAssistantText?: string | null;
+    agentStatus?: QuickPromptAgentStatus | null;
+    agentProfileId?: string | readonly string[] | null;
+  },
 ): boolean {
   if (!item.enabled) {
     return false;
@@ -61,39 +111,24 @@ export function matchesQuickPromptRule(
   }
 
   const condition = item.ruleCondition;
-  if (!condition) {
+  if (!condition || !hasAnyRuleCondition(condition)) {
     return false;
   }
 
-  const hasStatus = Array.isArray(condition.agentStatuses) && condition.agentStatuses.length > 0;
-  const hasKeywords =
-    Array.isArray(condition.keywords) && condition.keywords.some((k) => k.trim().length > 0);
-  const hasRegex = typeof condition.regex === "string" && condition.regex.trim().length > 0;
-
-  if (!hasStatus && !hasKeywords && !hasRegex) {
+  if (!matchesProfileCondition(condition, context.agentProfileId)) {
     return false;
   }
 
-  if (hasStatus && !matchesStatusCondition(condition, context.agentStatus)) {
+  if (!matchesStatusCondition(condition, context.agentStatus)) {
     return false;
   }
 
-  if (!hasKeywords && !hasRegex) {
-    return hasStatus;
-  }
-
-  const rawText = context.lastAssistantText ?? "";
-  const normalizedText = rawText.toLowerCase();
-
-  const keywordMatched = hasKeywords && matchesKeywordsCondition(condition, normalizedText);
-  const regexMatched = hasRegex && matchesRegexCondition(condition, rawText);
-
-  return keywordMatched || regexMatched;
+  return matchesTextCondition(condition, context.lastAssistantText ?? "");
 }
 
 export function evaluateQuickPrompts(input: EvaluateQuickPromptsInput): QuickPromptItem[] {
-  const { items, lastAssistantText, agentStatus, locale, disableEphemeral } = input;
-  const context = { lastAssistantText, agentStatus };
+  const { items, lastAssistantText, agentStatus, agentProfileId, locale, disableEphemeral } = input;
+  const context = { lastAssistantText, agentStatus, agentProfileId };
 
   const matchedItems = items.filter((item) => matchesQuickPromptRule(item, context));
 

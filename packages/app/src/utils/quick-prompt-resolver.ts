@@ -7,8 +7,58 @@ export interface ResolveEffectiveQuickPromptsInput {
   disabledGlobalIds?: readonly string[] | null;
   lastAssistantText?: string | null;
   agentStatus?: QuickPromptAgentStatus | null;
+  agentProfileId?: string | readonly string[] | null;
   locale?: string;
   disableEphemeral?: boolean;
+}
+
+export interface AgentProfileMatchCandidate {
+  provider?: string | null;
+  model?: string | null;
+  currentModeId?: string | null;
+  thinkingOptionId?: string | null;
+  labels?: Record<string, string> | null;
+}
+
+export interface AgentProfileDefinition {
+  id: string;
+  name: string;
+  provider: string;
+  model?: string;
+  modeId?: string;
+  thinkingOptionId?: string;
+}
+
+export function resolveActiveAgentProfileIds(
+  agent: AgentProfileMatchCandidate | null | undefined,
+  profiles?: readonly AgentProfileDefinition[] | null,
+): string[] {
+  if (!agent) return [];
+  const matched = new Set<string>();
+
+  if (agent.labels) {
+    if (agent.labels.profileId) matched.add(agent.labels.profileId);
+    if (agent.labels.profile) matched.add(agent.labels.profile);
+  }
+
+  if (profiles && agent.provider) {
+    for (const p of profiles) {
+      if (p.provider !== agent.provider) continue;
+      if (p.model && p.model.trim() && p.model.trim() !== agent.model) continue;
+      if (p.modeId && p.modeId.trim() && p.modeId.trim() !== agent.currentModeId) continue;
+      if (
+        p.thinkingOptionId &&
+        p.thinkingOptionId.trim() &&
+        p.thinkingOptionId.trim() !== agent.thinkingOptionId
+      ) {
+        continue;
+      }
+      matched.add(p.id);
+      matched.add(p.name);
+    }
+  }
+
+  return Array.from(matched);
 }
 
 export function resolveEffectiveQuickPrompts(
@@ -31,6 +81,7 @@ export function resolveEffectiveQuickPrompts(
     items: combined,
     lastAssistantText: input.lastAssistantText,
     agentStatus: input.agentStatus,
+    agentProfileId: input.agentProfileId,
     locale: input.locale,
     disableEphemeral: input.disableEphemeral,
   });
