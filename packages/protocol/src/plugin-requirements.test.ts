@@ -18,6 +18,7 @@ describe.each(["daemon", "app"] as const)("plugin requirements on %s", (runtime)
     [">=0.8.0-beta.1", "0.8.0-beta.1"],
     [">=0.8.0-beta.1", "0.8.0"],
     ["^0.8.0 || ^0.9.0", "0.9.2+build.42"],
+    [">=0.8.0", "v0.9.0-beta.2 [m212346]"],
   ])("accepts %s on %s", (paseo, version) => {
     expect(() =>
       assertPluginCompatibility({ id: "test", requirements: { paseo }, version, runtime }),
