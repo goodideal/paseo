@@ -160,9 +160,6 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
         <View style={styles.workspaceContentColumn}>
           <View style={styles.workspaceTitleRow}>
             <View style={styles.workspaceTitleGroup}>
-              <Text style={workspaceBranchTextStyle} numberOfLines={1}>
-                {workspaceLabel}
-              </Text>
               {workspace.workspaceKind === "worktree" ? (
                 <View
                   style={styles.worktreeIconWrapper}
@@ -175,6 +172,9 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
                   />
                 </View>
               ) : null}
+              <Text style={workspaceBranchTextStyle} numberOfLines={1}>
+                {workspaceLabel}
+              </Text>
             </View>
             <View style={sidebarWorkspaceRowStyles.rowRight}>{children}</View>
           </View>

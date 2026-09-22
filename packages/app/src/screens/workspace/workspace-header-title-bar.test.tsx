@@ -96,8 +96,11 @@ describe("WorkspaceHeaderTitleBar worktree indicator", () => {
     const indicator = container?.querySelector(
       '[data-testid="workspace-header-worktree-indicator"]',
     );
+    const title = container?.querySelector('[data-testid="workspace-header-title"]');
     expect(indicator).not.toBeNull();
     expect(indicator?.getAttribute("aria-label")).toBe("Worktree");
+    expect(title).not.toBeNull();
+    expect(indicator?.compareDocumentPosition(title!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
   it("does not render worktree indicator when isWorktree is false", async () => {

@@ -118,7 +118,6 @@ export function WorkspaceHeaderTitleBar({
       ) : (
         <View style={styles.headerTitleTextGroup}>
           <View style={styles.headerTitleRow}>
-            <ScreenTitle testID="workspace-header-title">{title}</ScreenTitle>
             {isWorktree ? (
               <View
                 style={styles.headerWorktreeBadge}
@@ -128,6 +127,7 @@ export function WorkspaceHeaderTitleBar({
                 <ThemedFolderGit2 size={14} uniProps={mutedColorMapping} />
               </View>
             ) : null}
+            <ScreenTitle testID="workspace-header-title">{title}</ScreenTitle>
           </View>
           <WorkspaceHeaderProjectRow
             subtitle={subtitle}

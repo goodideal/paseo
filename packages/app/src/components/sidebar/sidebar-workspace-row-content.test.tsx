@@ -108,6 +108,7 @@ describe("SidebarWorkspaceRowContent worktree indicator", () => {
     );
     expect(indicator).not.toBeNull();
     expect(indicator?.getAttribute("aria-label")).toBe("Worktree");
+    expect(indicator?.nextElementSibling?.textContent).toBe("feat/my-worktree");
   });
 
   it("does not render worktree indicator when workspaceKind is local_checkout", async () => {
