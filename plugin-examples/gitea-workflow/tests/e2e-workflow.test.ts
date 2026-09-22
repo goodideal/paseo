@@ -91,6 +91,7 @@ describe("E2E Automated Task to Review Flow (Multi-Project)", () => {
     expect(pendingTask?.workspaceId).toBe("ws-e2e-test");
     expect(pendingTask?.agentId).toBe("agent-e2e-test");
     expect(pendingTask?.screenshots).toHaveLength(2);
+    expect(pendingTask?.screenshots[0].dataUri).toBeDefined();
 
     // 4. Human Approval
     const approveRes = await orchestrator.approveTask(task.id);
@@ -100,5 +101,61 @@ describe("E2E Automated Task to Review Flow (Multi-Project)", () => {
     // 5. Final State Done
     const finalTask = await store.getTask(task.id);
     expect(finalTask?.state).toBe("done");
+  });
+
+  it("handles rejection loop: pending_review -> reject with feedback -> re-executes to pending_review", async () => {
+    const storePath = join(tmpdir(), `test-e2e-reject-${Date.now()}.json`);
+    const store = new TaskStore(storePath);
+    const clientPool = new GiteaClientPool();
+
+    const sampleProject: ResolvedProjectGitea = {
+      projectId: "proj-web",
+      projectPath: "/tmp/web",
+      projectName: "web",
+      host: "gitea.local",
+      baseUrl: "http://gitea.local",
+      token: "tok-123",
+      repoOwner: "org",
+      repoName: "web",
+      authSource: "tea",
+    };
+
+    const client = clientPool.getClient({
+      giteaUrl: sampleProject.baseUrl,
+      giteaToken: sampleProject.token,
+      repoOwner: sampleProject.repoOwner,
+      repoName: sampleProject.repoName,
+    });
+
+    vi.spyOn(client, "claimIssue").mockResolvedValue(undefined);
+
+    const orchestrator = new WorktreeOrchestrator({
+      store,
+      clientPool,
+    });
+
+    const task = await orchestrator.enqueueIssue(sampleProject, {
+      number: 99,
+      title: "Fix Navigation Bar",
+      body: "Navbar overlaps content",
+      html_url: "http://gitea.local/org/web/issues/99",
+      labels: [{ name: "agent-ready" }],
+    });
+
+    await orchestrator.processQueue();
+    await orchestrator.waitForIdle();
+
+    const pendingTask = await store.getTask(task.id);
+    expect(pendingTask?.state).toBe("pending_human_review");
+
+    // Human Rejection with feedback
+    const rejectRes = await orchestrator.rejectTask(task.id, "Please adjust margin-top to 16px");
+    expect(rejectRes.ok).toBe(true);
+
+    await orchestrator.waitForIdle();
+
+    const rePendingTask = await store.getTask(task.id);
+    expect(rePendingTask?.state).toBe("pending_human_review");
+    expect(rePendingTask?.reviewFeedback).toContain("Please adjust margin-top to 16px");
   });
 });

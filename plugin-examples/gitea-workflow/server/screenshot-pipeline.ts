@@ -61,8 +61,10 @@ export async function captureViewports(params: {
       const fullPath = join(params.outputDir, relativePath);
       await mkdir(dirname(fullPath), { recursive: true });
 
+      let dataUri: string | undefined;
       if (snapRes.result?.base64) {
         await writeFile(fullPath, Buffer.from(snapRes.result.base64, "base64"));
+        dataUri = `data:image/png;base64,${snapRes.result.base64}`;
       } else {
         await writeFile(fullPath, Buffer.from(""));
       }
@@ -73,6 +75,7 @@ export async function captureViewports(params: {
         viewport: { width: vp.width, height: vp.height },
         relativePath,
         capturedAt: new Date().toISOString(),
+        ...(dataUri ? { dataUri } : {}),
       });
     }
   } finally {

@@ -35,6 +35,39 @@ describe("ProjectGiteaResolver & GiteaClientPool", () => {
     expect(resolved?.authSource).toBe("tea");
   });
 
+  it("resolves SSH alias via resolveSshHost to true network hostname", async () => {
+    const resolver = new ProjectGiteaResolver({
+      resolveGitRemote: async () => "git@my-alias:infra/gateway.git",
+      resolveSshHost: async (host) => {
+        if (host === "my-alias") return "real-gitea.internal";
+        return host;
+      },
+      runTea: async () => ({
+        stdout: JSON.stringify([
+          {
+            name: "real-gitea",
+            url: "https://real-gitea.internal",
+            ssh_host: "real-gitea.internal",
+            token: "alias-token-789",
+          },
+        ]),
+        stderr: "",
+      }),
+    });
+
+    const resolved = await resolver.resolveProject({
+      projectId: "proj-ssh-alias",
+      projectRootPath: "/path/to/gateway",
+    });
+
+    expect(resolved).not.toBeNull();
+    expect(resolved?.host).toBe("real-gitea.internal");
+    expect(resolved?.baseUrl).toBe("https://real-gitea.internal");
+    expect(resolved?.token).toBe("alias-token-789");
+    expect(resolved?.repoOwner).toBe("infra");
+    expect(resolved?.repoName).toBe("gateway");
+  });
+
   it("resolves project using HTTP probe and env var token fallback", async () => {
     const resolver = new ProjectGiteaResolver({
       resolveGitRemote: async () => "git@internal-git.local:backend/service.git",

@@ -23,6 +23,7 @@ export const ScreenshotMetadataSchema = z.object({
   }),
   relativePath: z.string(),
   capturedAt: z.string(),
+  dataUri: z.string().optional(),
 });
 
 export type ScreenshotMetadata = z.infer<typeof ScreenshotMetadataSchema>;
