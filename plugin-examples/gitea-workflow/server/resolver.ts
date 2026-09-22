@@ -1,5 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import {
   parseGitRemoteLocation,
   parseGitHubRemoteIdentity,
@@ -15,6 +18,7 @@ export interface ProjectGiteaResolverOptions {
   runTea?: (args: string[]) => Promise<{ stdout: string; stderr: string }>;
   resolveSshHost?: (host: string) => Promise<string | null>;
   probeUrl?: (url: string) => Promise<boolean>;
+  readTeaConfig?: () => TeaLoginEntry[];
   env?: NodeJS.ProcessEnv;
 }
 
@@ -30,6 +34,7 @@ export class ProjectGiteaResolver {
   private readonly runTea: (args: string[]) => Promise<{ stdout: string; stderr: string }>;
   private readonly resolveSshHost: (host: string) => Promise<string | null>;
   private readonly probeUrl: (url: string) => Promise<boolean>;
+  private readonly readTeaConfig?: () => TeaLoginEntry[];
   private readonly env: NodeJS.ProcessEnv;
 
   constructor(options: ProjectGiteaResolverOptions = {}) {
@@ -78,6 +83,7 @@ export class ProjectGiteaResolver {
         return host.toLowerCase();
       });
 
+    this.readTeaConfig = options.readTeaConfig;
     this.probeUrl =
       options.probeUrl ??
       (async (url: string) => {
@@ -100,14 +106,69 @@ export class ProjectGiteaResolver {
       });
   }
 
+  private readTeaConfigLogins(): TeaLoginEntry[] {
+    const home = homedir();
+    const configCandidates = [
+      join(home, "Library/Application Support/tea/config.yml"),
+      join(home, ".config/tea/config.yml"),
+      join(this.env.APPDATA || home, "tea/config.yml"),
+    ];
+
+    for (const p of configCandidates) {
+      if (existsSync(p)) {
+        try {
+          const raw = readFileSync(p, "utf8");
+          const logins: TeaLoginEntry[] = [];
+          const blocks = raw.split(/\n\s*-\s+name:\s*/);
+          for (let i = 1; i < blocks.length; i++) {
+            const b = blocks[i];
+            const name = b
+              .split("\n")[0]
+              .trim()
+              .replace(/^["'`]|["'`]$/g, "");
+            const urlMatch = b.match(/url:\s*(.+)/);
+            const tokenMatch = b.match(/token:\s*(.+)/);
+            const sshMatch = b.match(/ssh_host:\s*(.+)/);
+            logins.push({
+              name,
+              url: urlMatch ? urlMatch[1].trim().replace(/^["'`]|["'`]$/g, "") : undefined,
+              token: tokenMatch ? tokenMatch[1].trim().replace(/^["'`]|["'`]$/g, "") : undefined,
+              ssh_host: sshMatch ? sshMatch[1].trim().replace(/^["'`]|["'`]$/g, "") : undefined,
+            });
+          }
+          if (logins.length > 0) return logins;
+        } catch {
+          // ignore read error
+        }
+      }
+    }
+    return [];
+  }
+
   private async fetchTeaLogins(): Promise<TeaLoginEntry[]> {
+    const results: TeaLoginEntry[] = [];
+    // 1. Direct zero-config read from tea's config.yml (contains the actual auth token)
+    const fileLogins = this.readTeaConfig ? this.readTeaConfig() : this.readTeaConfigLogins();
+    results.push(...fileLogins);
+
+    // 2. CLI output fallback or supplement (when config file is not at standard path or mock runner is provided)
     try {
       const { stdout } = await this.runTea(["login", "list", "-o", "json"]);
       const parsed = JSON.parse(stdout);
-      return Array.isArray(parsed) ? parsed : [];
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (
+            !results.some((r) => (r.name && r.name === item.name) || (r.url && r.url === item.url))
+          ) {
+            results.push(item);
+          }
+        }
+      }
     } catch {
-      return [];
+      // ignore cli error
     }
+
+    return results;
   }
 
   private async resolveEffectiveHost(location: GitRemoteLocation): Promise<string> {

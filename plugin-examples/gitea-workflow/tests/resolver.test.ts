@@ -68,6 +68,30 @@ describe("ProjectGiteaResolver & GiteaClientPool", () => {
     expect(resolved?.repoName).toBe("gateway");
   });
 
+  it("extracts real token from tea config without user input", async () => {
+    const resolver = new ProjectGiteaResolver({
+      resolveGitRemote: async () => "git@my-gitea.org:org/repo.git",
+      readTeaConfig: () => [
+        {
+          name: "my-gitea",
+          url: "https://my-gitea.org",
+          ssh_host: "my-gitea.org",
+          token: "auto-extracted-token-zero-config",
+        },
+      ],
+      runTea: async () => ({ stdout: "[]", stderr: "" }),
+    });
+
+    const resolved = await resolver.resolveProject({
+      projectId: "zero-conf-project",
+      projectRootPath: "/path/to/repo",
+    });
+
+    expect(resolved).not.toBeNull();
+    expect(resolved?.token).toBe("auto-extracted-token-zero-config");
+    expect(resolved?.authSource).toBe("tea");
+  });
+
   it("resolves project using HTTP probe and env var token fallback", async () => {
     const resolver = new ProjectGiteaResolver({
       resolveGitRemote: async () => "git@internal-git.local:backend/service.git",
