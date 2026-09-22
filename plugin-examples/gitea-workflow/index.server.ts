@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
+import { createPaseoClient, type PaseoClient } from "@getpaseo/client";
 import {
   approveTaskRpc,
   getTaskDetailRpc,
@@ -12,6 +13,14 @@ import { GiteaClientPool } from "./server/client-pool.js";
 import { ProjectGiteaResolver } from "./server/resolver.js";
 import { WorktreeOrchestrator } from "./server/orchestrator.js";
 import { MultiProjectPoller } from "./server/poller.js";
+
+function getDaemonWsUrl(): string {
+  const listen = process.env.PASEO_LISTEN || "127.0.0.1:6767";
+  if (listen.startsWith("ws://") || listen.startsWith("wss://")) {
+    return listen.endsWith("/ws") ? listen : `${listen}/ws`;
+  }
+  return `ws://${listen.replace(/\/+$/, "")}/ws`;
+}
 
 export default function contribute(server: PluginServerContext) {
   const storePath = join(tmpdir(), "paseo-gitea-workflow", "tasks.json");
@@ -26,6 +35,27 @@ export default function contribute(server: PluginServerContext) {
   });
 
   let poller: MultiProjectPoller | null = null;
+  let paseoClient: PaseoClient | null = null;
+
+  async function initBackgroundPoller(): Promise<void> {
+    try {
+      paseoClient = createPaseoClient({
+        url: getDaemonWsUrl(),
+        reconnect: { enabled: true },
+      });
+      await paseoClient.connect();
+      orchestrator.setPaseoApi(paseoClient);
+
+      if (!poller) {
+        poller = new MultiProjectPoller(resolver, orchestrator, paseoClient.projects, 30_000);
+        poller.start();
+      }
+    } catch (err) {
+      console.warn("[gitea-workflow] Background client connect deferred/failed:", err);
+    }
+  }
+
+  void initBackgroundPoller();
 
   server.handle(listTasksRpc, async ({ projectId, workspaceId }, context) => {
     let resolvedProjectId = projectId;
@@ -41,8 +71,12 @@ export default function contribute(server: PluginServerContext) {
       }
     }
 
+    if (!orchestrator.hasPaseoApi && context.paseo) {
+      orchestrator.setPaseoApi(context.paseo);
+    }
+
     if (!poller && context.paseo?.projects) {
-      poller = new MultiProjectPoller(resolver, orchestrator, context.paseo.projects, 60_000);
+      poller = new MultiProjectPoller(resolver, orchestrator, context.paseo.projects, 30_000);
       poller.start();
     }
 
@@ -68,5 +102,8 @@ export default function contribute(server: PluginServerContext) {
 
   return () => {
     poller?.stop();
+    if (paseoClient) {
+      void paseoClient.close().catch(() => {});
+    }
   };
 }

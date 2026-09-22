@@ -68,6 +68,37 @@ describe("ProjectGiteaResolver & GiteaClientPool", () => {
     expect(resolved?.repoName).toBe("gateway");
   });
 
+  it("resolves project when tea login ssh_host includes port", async () => {
+    const resolver = new ProjectGiteaResolver({
+      resolveGitRemote: async () =>
+        "ssh://git@data.birman-blenny.ts.net:222/CoDevAI/codevai-hub.git",
+      readTeaConfig: () => [
+        {
+          name: "luna_ai",
+          url: "https://git.codevai.cc",
+          ssh_host: "data.birman-blenny.ts.net:222",
+          token: "tea-ssh-port-token",
+        },
+      ],
+      runTea: async () => ({ stdout: "[]", stderr: "" }),
+      resolveSshHost: async (h) => h,
+    });
+
+    const resolved = await resolver.resolveProject({
+      projectId: "proj-codevai-hub",
+      projectRootPath: "/path/to/codevai-hub",
+      projectDisplayName: "codevai-hub",
+    });
+
+    expect(resolved).not.toBeNull();
+    expect(resolved?.host).toBe("data.birman-blenny.ts.net");
+    expect(resolved?.baseUrl).toBe("https://git.codevai.cc");
+    expect(resolved?.token).toBe("tea-ssh-port-token");
+    expect(resolved?.repoOwner).toBe("CoDevAI");
+    expect(resolved?.repoName).toBe("codevai-hub");
+    expect(resolved?.authSource).toBe("tea");
+  });
+
   it("extracts real token from tea config without user input", async () => {
     const resolver = new ProjectGiteaResolver({
       resolveGitRemote: async () => "git@my-gitea.org:org/repo.git",

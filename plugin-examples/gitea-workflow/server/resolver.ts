@@ -182,12 +182,25 @@ export class ProjectGiteaResolver {
     return effectiveHost;
   }
 
-  private async findMatchingTeaLogin(effectiveHost: string): Promise<TeaLoginEntry | null> {
+  private async findMatchingTeaLogin(
+    effectiveHost: string,
+    locationPort?: string,
+  ): Promise<TeaLoginEntry | null> {
     const teaLogins = await this.fetchTeaLogins();
+    const hostCandidates = [effectiveHost.toLowerCase()];
+    if (locationPort) {
+      hostCandidates.push(`${effectiveHost.toLowerCase()}:${locationPort}`);
+    }
+
     return (
       teaLogins.find((login) => {
         const candidates: string[] = [];
-        if (login.ssh_host) candidates.push(login.ssh_host.toLowerCase());
+        if (login.ssh_host) {
+          const sshHost = login.ssh_host.toLowerCase();
+          candidates.push(sshHost);
+          const [hostWithoutPort] = sshHost.split(":");
+          if (hostWithoutPort) candidates.push(hostWithoutPort);
+        }
         if (login.name) candidates.push(login.name.toLowerCase());
         if (login.url) {
           try {
@@ -196,7 +209,7 @@ export class ProjectGiteaResolver {
             // ignore invalid url
           }
         }
-        return candidates.includes(effectiveHost);
+        return hostCandidates.some((hc) => candidates.includes(hc));
       }) ?? null
     );
   }
@@ -255,7 +268,7 @@ export class ProjectGiteaResolver {
       return null;
     }
 
-    const matchedLogin = await this.findMatchingTeaLogin(effectiveHost);
+    const matchedLogin = await this.findMatchingTeaLogin(effectiveHost, location.port);
     if (matchedLogin?.url && matchedLogin.token) {
       return {
         projectId: project.projectId,

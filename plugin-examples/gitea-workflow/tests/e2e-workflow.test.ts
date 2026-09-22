@@ -128,6 +128,10 @@ describe("E2E Automated Task to Review Flow (Multi-Project)", () => {
     });
 
     vi.spyOn(client, "claimIssue").mockResolvedValue(undefined);
+    vi.spyOn(client, "createPullRequest").mockResolvedValue({
+      url: "http://gitea.local/org/web/pulls/99",
+    });
+    vi.spyOn(client, "markReviewed").mockResolvedValue(undefined);
 
     const orchestrator = new WorktreeOrchestrator({
       store,

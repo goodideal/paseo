@@ -49,6 +49,10 @@ describe("MultiProjectPoller", () => {
       },
     ]);
     vi.spyOn(clientA, "claimIssue").mockResolvedValue(undefined);
+    vi.spyOn(clientA, "createPullRequest").mockResolvedValue({
+      url: "http://gitea.local/org/proj-a/pulls/1",
+    });
+    vi.spyOn(clientA, "markReviewed").mockResolvedValue(undefined);
 
     vi.spyOn(clientB, "fetchReadyIssues").mockResolvedValue([
       {
@@ -60,6 +64,10 @@ describe("MultiProjectPoller", () => {
       },
     ]);
     vi.spyOn(clientB, "claimIssue").mockResolvedValue(undefined);
+    vi.spyOn(clientB, "createPullRequest").mockResolvedValue({
+      url: "http://gitea.local/org/proj-b/pulls/2",
+    });
+    vi.spyOn(clientB, "markReviewed").mockResolvedValue(undefined);
 
     const mockProjectsProvider = {
       list: async () => ({
