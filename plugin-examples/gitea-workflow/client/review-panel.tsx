@@ -109,6 +109,20 @@ function PreviewUrlBar({ url }: { url: string }) {
   );
 }
 
+function HibernatedServiceBar() {
+  return (
+    <View style={styles.hibernatedBar}>
+      <Text style={styles.hibernatedIcon}>⏸</Text>
+      <View style={styles.previewInfo}>
+        <Text style={styles.hibernatedLabel}>SANDBOX SERVICE HIBERNATED (IDLE &gt; 24H)</Text>
+        <Text style={styles.hibernatedSub}>
+          Dev service auto-stopped to conserve resources. Will restart on new review iteration.
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 function DualReviewBadgeRow({ signOff }: { signOff?: ReviewSignOff | null }) {
   if (!signOff?.staticReview && !signOff?.dynamicReview) return null;
 
@@ -237,6 +251,7 @@ function TaskCard({ task, isSubmitting, statusMsg, onApprove, onOpenFeedback }: 
       </View>
 
       {task.previewUrl && <PreviewUrlBar url={task.previewUrl} />}
+      {task.sandboxHibernated && <HibernatedServiceBar />}
 
       <DualReviewBadgeRow signOff={task.reviewSignOff} />
 
@@ -731,6 +746,32 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 6,
+  },
+  hibernatedBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#1e1b2e",
+    borderWidth: 1,
+    borderColor: "#473b6b",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 12,
+    gap: 8,
+  },
+  hibernatedIcon: {
+    fontSize: 14,
+  },
+  hibernatedLabel: {
+    color: "#a78bfa",
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
+  hibernatedSub: {
+    color: "#94a3b8",
+    fontSize: 10,
+    marginTop: 1,
   },
   previewOpenBtnText: {
     color: "#ffffff",

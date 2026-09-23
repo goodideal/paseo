@@ -52,6 +52,7 @@ export interface OrchestratorOptions {
   paseoApi?: OrchestratorPaseoApi;
   screenshotBroker?: ScreenshotBroker;
   probeTimeoutMs?: number;
+  sandboxIdleTimeoutMs?: number;
 }
 
 const ACTIVE_STATES = new Set([
@@ -158,6 +159,7 @@ export class WorktreeOrchestrator {
 
       // 1. Reconcile in-flight tasks where agent finished but PR was not finalized
       await this.reconcileFinishedTasks(tasks);
+      await this.reapIdleSandboxServices(tasks);
 
       // 2. Schedule queued tasks
       const refreshedTasks = await this.options.store.listTasks();
@@ -404,6 +406,34 @@ Check for security risks, boundary conditions, and test coverage. If satisfied, 
     } catch (err) {
       console.warn("[Orchestrator] Screenshot capture failed:", err);
       return task.screenshots;
+    }
+  }
+
+  private async reapIdleSandboxServices(tasks: GiteaWorkflowTask[]): Promise<void> {
+    const idleTimeoutMs = this.options.sandboxIdleTimeoutMs ?? 24 * 60 * 60 * 1000;
+    const now = Date.now();
+
+    const idleTasks = tasks.filter(
+      (t) =>
+        t.state === "pending_human_review" && t.workspaceId && t.previewUrl && !t.sandboxHibernated,
+    );
+
+    for (const task of idleTasks) {
+      const updatedAtMs = new Date(task.updatedAt).getTime();
+      if (now - updatedAtMs >= idleTimeoutMs) {
+        if (this.options.paseoApi?.scripts) {
+          await this.options.paseoApi.scripts
+            .stop({
+              workspaceId: task.workspaceId!,
+              scriptName: "dev",
+            })
+            .catch(() => {});
+        }
+        await this.options.store.updateTask(task.id, {
+          sandboxHibernated: true,
+          previewUrl: null,
+        });
+      }
     }
   }
 

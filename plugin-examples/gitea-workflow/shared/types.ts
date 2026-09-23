@@ -95,6 +95,7 @@ export const GiteaWorkflowTaskSchema = z.object({
   testMatrix: TestMatrixEvidenceSchema.nullable().optional(),
   reviewSignOff: ReviewSignOffSchema.nullable().optional(),
   previewUrl: z.string().nullable().optional(),
+  sandboxHibernated: z.boolean().optional(),
   diffSummary: z
     .object({
       additions: z.number().int(),
@@ -132,6 +133,7 @@ export const GiteaSettingsSchema = z.object({
   reviewedLabel: z.string().default("agent-reviewed"),
   pollIntervalSeconds: z.number().int().min(10).default(60),
   maxConcurrentWorktrees: z.number().int().min(1).max(10).default(3),
+  sandboxIdleTimeoutHours: z.number().int().min(1).default(24),
 });
 
 export type GiteaSettings = z.infer<typeof GiteaSettingsSchema>;
