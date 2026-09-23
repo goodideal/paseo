@@ -4,10 +4,14 @@ export const TaskStateSchema = z.enum([
   "queued",
   "worktree_creating",
   "coding",
+  "static_reviewing",
+  "sandbox_provisioning",
+  "dynamic_reviewing",
+  "shipping",
   "self_review",
   "screenshotting",
-  "pending_human_review",
   "pr_creating",
+  "pending_human_review",
   "done",
   "failed",
 ]);
@@ -28,6 +32,49 @@ export const ScreenshotMetadataSchema = z.object({
 
 export type ScreenshotMetadata = z.infer<typeof ScreenshotMetadataSchema>;
 
+export const TestCaseResultSchema = z.object({
+  name: z.string(),
+  input: z.string().default("-"),
+  expected: z.string().default("-"),
+  actual: z.string().default("-"),
+  status: z.enum(["PASS", "FAIL"]),
+  durationMs: z.number().optional(),
+});
+
+export type TestCaseResult = z.infer<typeof TestCaseResultSchema>;
+
+export const TestMatrixEvidenceSchema = z.object({
+  command: z.string().default("npm test"),
+  exitCode: z.number().int().default(0),
+  totalPassed: z.number().int().default(0),
+  totalFailed: z.number().int().default(0),
+  durationMs: z.number().default(0),
+  cases: z.array(TestCaseResultSchema).default([]),
+});
+
+export type TestMatrixEvidence = z.infer<typeof TestMatrixEvidenceSchema>;
+
+export const ReviewSignOffSchema = z.object({
+  staticReview: z
+    .object({
+      passed: z.boolean(),
+      model: z.string().optional(),
+      summary: z.string().optional(),
+      reviewedAt: z.string().optional(),
+    })
+    .optional(),
+  dynamicReview: z
+    .object({
+      passed: z.boolean(),
+      previewUrl: z.string().optional(),
+      screenshotsCount: z.number().optional(),
+      reviewedAt: z.string().optional(),
+    })
+    .optional(),
+});
+
+export type ReviewSignOff = z.infer<typeof ReviewSignOffSchema>;
+
 export const GiteaWorkflowTaskSchema = z.object({
   id: z.string(),
   projectId: z.string().default("default-project"),
@@ -45,6 +92,9 @@ export const GiteaWorkflowTaskSchema = z.object({
   agentId: z.string().nullable(),
   state: TaskStateSchema,
   screenshots: z.array(ScreenshotMetadataSchema),
+  testMatrix: TestMatrixEvidenceSchema.nullable().optional(),
+  reviewSignOff: ReviewSignOffSchema.nullable().optional(),
+  previewUrl: z.string().nullable().optional(),
   diffSummary: z
     .object({
       additions: z.number().int(),

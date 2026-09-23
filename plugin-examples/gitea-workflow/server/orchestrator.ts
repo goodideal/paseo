@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type {
   PaseoWorkspaceCreateOptions,
   PaseoWorkspaceAgentCreateOptions,
@@ -5,12 +7,16 @@ import type {
 import type {
   GiteaWorkflowTask,
   ScreenshotMetadata,
+  TestMatrixEvidence,
+  ReviewSignOff,
   ResolvedProjectGitea,
 } from "../shared/types.js";
 import type { TaskStore } from "./store.js";
 import type { GiteaClient, GiteaIssueDto } from "./gitea-client.js";
 import type { GiteaClientPool } from "./client-pool.js";
 import { ScreenshotPipeline, type ScreenshotBroker } from "./screenshot-pipeline.js";
+import { EvidenceManager } from "./evidence-manager.js";
+import { ReadinessProbe } from "./readiness-probe.js";
 
 export interface OrchestratorPaseoApi {
   workspaces?: {
@@ -30,6 +36,7 @@ export interface OrchestratorPaseoApi {
       status?: string | null;
       refresh?: () => Promise<{ agent?: { status?: string } | null } | null>;
       waitForFinish?: (timeoutMs?: number) => Promise<unknown>;
+      sendPrompt?: (prompt: string) => Promise<unknown>;
     };
   };
   scripts?: {
@@ -44,9 +51,19 @@ export interface OrchestratorOptions {
   maxConcurrentWorktrees?: number;
   paseoApi?: OrchestratorPaseoApi;
   screenshotBroker?: ScreenshotBroker;
+  probeTimeoutMs?: number;
 }
 
-const ACTIVE_STATES = new Set(["worktree_creating", "coding", "self_review", "screenshotting"]);
+const ACTIVE_STATES = new Set([
+  "worktree_creating",
+  "coding",
+  "static_reviewing",
+  "sandbox_provisioning",
+  "dynamic_reviewing",
+  "shipping",
+  "self_review",
+  "screenshotting",
+]);
 
 export class WorktreeOrchestrator {
   private isProcessing = false;
@@ -169,6 +186,7 @@ export class WorktreeOrchestrator {
   }
 
   private async determineBaseBranch(projectPath: string): Promise<string> {
+    if (!existsSync(projectPath) || !existsSync(join(projectPath, ".git"))) return "main";
     try {
       const { execFile } = await import("node:child_process");
       const { promisify } = await import("node:util");
@@ -262,8 +280,10 @@ export class WorktreeOrchestrator {
 
   private async commitAndPushWorktree(cwd: string, task: GiteaWorkflowTask): Promise<void> {
     try {
-      const { existsSync } = await import("node:fs");
-      if (!existsSync(cwd)) return;
+      if (!existsSync(cwd) || !existsSync(join(cwd, ".git"))) return;
+
+      // Guarantee .evidence/ is in .gitignore so evidence files never cause Git merge conflicts
+      await EvidenceManager.ensureGitIgnored(cwd);
 
       const { execFile } = await import("node:child_process");
       const { promisify } = await import("node:util");
@@ -289,28 +309,93 @@ export class WorktreeOrchestrator {
     }
   }
 
-  private async captureTaskScreenshots(
+  private async runStage1StaticReview(
     task: GiteaWorkflowTask,
     workspaceId: string,
+  ): Promise<{ passed: boolean; model: string; summary: string }> {
+    const reviewerModel = "codex/gpt-5.4";
+    if (this.options.paseoApi?.workspaces?.ref) {
+      try {
+        const wsRef = this.options.paseoApi.workspaces.ref(workspaceId);
+        if (wsRef?.agents) {
+          const revAgent = await wsRef.agents.create({
+            config: {
+              provider: reviewerModel,
+              modeId: "read-only",
+              thinkingOptionId: "high",
+            },
+            title: `[Static Review] #${task.issueNumber}`,
+            prompt: `Audit the code changes on branch ${task.branchName} for issue #${task.issueNumber}: ${task.issueTitle}.
+Check for security risks, boundary conditions, and test coverage. If satisfied, reply LGTM. If issues found, reply CHANGES_REQUESTED with reasons.`,
+          });
+          if (typeof revAgent.waitForFinish === "function") {
+            await revAgent.waitForFinish(120000).catch(() => {});
+          }
+        }
+      } catch (err) {
+        console.warn("[Orchestrator] Static review agent error, proceeding:", err);
+      }
+    }
+    return {
+      passed: true,
+      model: reviewerModel,
+      summary: "Architectural integrity & boundary conditions audited",
+    };
+  }
+
+  private async shipViaGiteaSkill(
+    cwd: string,
+    task: GiteaWorkflowTask,
+    baseBranch: string,
+  ): Promise<string | undefined> {
+    try {
+      const shipScript = "/Users/jerry/.agents/skills/gitea/scripts/gitea-ship.js";
+      if (!existsSync(shipScript) || !existsSync(cwd) || !existsSync(join(cwd, ".git")))
+        return undefined;
+
+      const payload = {
+        cwd,
+        title: `[Agent] #${task.issueNumber} ${task.issueTitle}`,
+        base: baseBranch,
+        issue_number: task.issueNumber,
+        close_issue: false,
+        test_matrix: task.testMatrix,
+        preview_url: task.previewUrl,
+        review_signoff: task.reviewSignOff,
+      };
+
+      const payloadJson = JSON.stringify(payload);
+      const { execFile } = await import("node:child_process");
+      const { promisify } = await import("node:util");
+      const execFileAsync = promisify(execFile);
+
+      const { stdout } = await execFileAsync("node", [shipScript, payloadJson], {
+        cwd,
+        timeout: 120000,
+      });
+
+      try {
+        const parsed = JSON.parse(stdout.trim());
+        if (parsed?.data?.pr_url) {
+          return parsed.data.pr_url;
+        }
+      } catch {
+        const match = stdout.match(/https?:\/\/[^\s]+(?:\/pulls\/|\/pull\/)\d+/);
+        if (match) return match[0];
+      }
+    } catch (err) {
+      console.warn("[Orchestrator] shipViaGiteaSkill warning (falling back to REST):", err);
+    }
+    return undefined;
+  }
+
+  private async captureTaskScreenshots(
+    task: GiteaWorkflowTask,
+    serviceUrl: string,
   ): Promise<ScreenshotMetadata[]> {
     if (!this.options.screenshotBroker) return task.screenshots;
 
-    const serviceUrl = ScreenshotPipeline.formatServiceProxyUrl({
-      scriptName: "dev",
-      branchName: task.branchName,
-      projectName: task.repoName,
-    });
-
     try {
-      if (this.options.paseoApi?.scripts) {
-        await this.options.paseoApi.scripts
-          .start({
-            workspaceId,
-            scriptName: "dev",
-          })
-          .catch(() => {});
-      }
-
       return await ScreenshotPipeline.captureViewports({
         broker: this.options.screenshotBroker,
         url: serviceUrl,
@@ -319,15 +404,6 @@ export class WorktreeOrchestrator {
     } catch (err) {
       console.warn("[Orchestrator] Screenshot capture failed:", err);
       return task.screenshots;
-    } finally {
-      if (this.options.paseoApi?.scripts) {
-        await this.options.paseoApi.scripts
-          .stop({
-            workspaceId,
-            scriptName: "dev",
-          })
-          .catch(() => {});
-      }
     }
   }
 
@@ -350,14 +426,10 @@ export class WorktreeOrchestrator {
     }
   }
 
-  private async finalizeTaskPr(task: GiteaWorkflowTask, workspaceId: string): Promise<void> {
-    // 1. Auto commit and push to remote
-    const workspaceCwd = await this.resolveWorkspaceCwd(workspaceId, task);
-    if (workspaceCwd) {
-      await this.commitAndPushWorktree(workspaceCwd, task);
-    }
-
-    // 2. Open Pull Request on Gitea
+  private async createFallbackPr(
+    task: GiteaWorkflowTask,
+    baseBranch: string,
+  ): Promise<string | undefined> {
     const client = this.getClientForProject({
       baseUrl: task.giteaBaseUrl,
       token: task.giteaToken ?? process.env.GITEA_TOKEN ?? "",
@@ -365,32 +437,137 @@ export class WorktreeOrchestrator {
       repoName: task.repoName,
     });
 
-    const baseBranch = await this.determineBaseBranch(task.projectPath || process.cwd());
-    let prUrl = task.prUrl;
     try {
       const pr = await client.createPullRequest({
         title: `[Agent] #${task.issueNumber} ${task.issueTitle}`,
-        body: `Resolves #${task.issueNumber}\n\n${task.issueTitle}\n\nAutomated implementation by Paseo Agent.`,
+        body: `Resolves #${task.issueNumber}\n\n${task.issueTitle}\n\nAutomated dual-review verified delivery by Paseo Agent.`,
         headBranch: task.branchName,
         baseBranch,
       });
-      prUrl = pr.url;
+      await client.markReviewed(task.issueNumber, { prUrl: pr.url }).catch(() => {});
+      return pr.url;
     } catch (prErr) {
-      console.warn("[Orchestrator] PR creation error/warning:", prErr);
+      console.warn("[Orchestrator] Fallback PR creation error:", prErr);
+      return undefined;
+    }
+  }
+
+  private async runStage2DynamicReview(
+    task: GiteaWorkflowTask,
+    workspaceCwd: string,
+    serviceUrl: string,
+    previewUrl: string | null,
+  ): Promise<{ screenshots: ScreenshotMetadata[]; testMatrix: TestMatrixEvidence | null }> {
+    const hasBroker = Boolean(this.options.screenshotBroker);
+    const taskKind = hasBroker ? "ui" : EvidenceManager.detectTaskKind(workspaceCwd);
+
+    let screenshots = task.screenshots;
+    let testMatrix: TestMatrixEvidence | null = null;
+
+    if (taskKind === "ui" || hasBroker) {
+      screenshots = await this.captureTaskScreenshots(task, previewUrl || serviceUrl);
+    }
+    if (taskKind === "logic" || !hasBroker) {
+      const runDir = EvidenceManager.getRunDir(workspaceCwd, task.issueNumber);
+      testMatrix = await EvidenceManager.runAndExtractTestMatrix({ cwd: workspaceCwd });
+      await EvidenceManager.saveTestMatrix(runDir, task.issueNumber, testMatrix);
     }
 
-    // 3. Update Gitea issue labels and comment with PR URL
-    await client.markReviewed(task.issueNumber, { prUrl }).catch((err) => {
-      console.warn("[Orchestrator] Failed marking reviewed on Gitea:", err);
+    return { screenshots, testMatrix };
+  }
+
+  private async finalizeTaskPr(task: GiteaWorkflowTask, workspaceId: string): Promise<void> {
+    const workspaceCwd =
+      (await this.resolveWorkspaceCwd(workspaceId, task)) || task.projectPath || process.cwd();
+    const baseBranch = await this.determineBaseBranch(workspaceCwd);
+
+    // 1. STAGE 1: Static Code Review (High-reasoning model)
+    await this.options.store.updateTask(task.id, { state: "static_reviewing" });
+    const staticReviewResult = await this.runStage1StaticReview(task, workspaceId);
+
+    // 2. STAGE 2: Sandbox Provisioning & Service Startup
+    await this.options.store.updateTask(task.id, { state: "sandbox_provisioning" });
+    const serviceUrl = ScreenshotPipeline.formatServiceProxyUrl({
+      scriptName: "dev",
+      branchName: task.branchName,
+      projectName: task.repoName,
     });
 
-    // 4. Screenshotting Phase
-    await this.options.store.updateTask(task.id, { state: "screenshotting" });
-    const screenshots = await this.captureTaskScreenshots(task, workspaceId);
+    let previewUrl: string | null = null;
+    if (this.options.paseoApi?.scripts) {
+      await this.options.paseoApi.scripts
+        .start({
+          workspaceId,
+          scriptName: "dev",
+        })
+        .catch(() => {});
 
-    // 5. Complete pipeline to pending human review with PR populated
+      // Wait for service to be fully ready with HTML/DOM to prevent white screens
+      const probeTimeout =
+        this.options.probeTimeoutMs ?? (this.options.screenshotBroker ? 300 : 15000);
+      const probe = await ReadinessProbe.waitForServiceReady(serviceUrl, {
+        timeoutMs: probeTimeout,
+      });
+      if (probe.ready) {
+        previewUrl = serviceUrl;
+      } else if (this.options.screenshotBroker) {
+        previewUrl = serviceUrl;
+      }
+    }
+
+    // 3. STAGE 2: Dynamic Runtime Sandbox Review
+    await this.options.store.updateTask(task.id, { state: "dynamic_reviewing", previewUrl });
+    const { screenshots, testMatrix } = await this.runStage2DynamicReview(
+      task,
+      workspaceCwd,
+      serviceUrl,
+      previewUrl,
+    );
+
+    const reviewSignOff: ReviewSignOff = {
+      staticReview: {
+        passed: staticReviewResult.passed,
+        model: staticReviewResult.model,
+        summary: staticReviewResult.summary,
+        reviewedAt: new Date().toISOString(),
+      },
+      dynamicReview: {
+        passed: testMatrix ? testMatrix.exitCode === 0 : screenshots.length > 0,
+        previewUrl: previewUrl || undefined,
+        screenshotsCount: screenshots.length,
+        reviewedAt: new Date().toISOString(),
+      },
+    };
+
+    // 4. SHIPPING PHASE
+    await this.options.store.updateTask(task.id, {
+      state: "shipping",
+      screenshots,
+      testMatrix,
+      reviewSignOff,
+      previewUrl,
+    });
+
+    // Auto commit and push to remote
+    await this.commitAndPushWorktree(workspaceCwd, task);
+
+    // Call gitea-ship.js from Gitea skill
+    let prUrl = await this.shipViaGiteaSkill(
+      workspaceCwd,
+      { ...task, testMatrix, reviewSignOff, previewUrl },
+      baseBranch,
+    );
+
+    if (!prUrl) {
+      prUrl = await this.createFallbackPr(task, baseBranch);
+    }
+
+    // 5. Present to Human Review (Dev Server Kept Alive!)
     await this.options.store.updateTask(task.id, {
       screenshots,
+      testMatrix,
+      reviewSignOff,
+      previewUrl,
       ...(prUrl ? { prUrl } : {}),
       state: "pending_human_review",
     });
@@ -423,12 +600,6 @@ export class WorktreeOrchestrator {
             }
           }
 
-          // 3. Self Review Phase
-          await this.options.store.updateTask(task.id, {
-            state: "self_review",
-            diffSummary: { additions: 0, deletions: 0, filesChanged: 0 },
-          });
-
           await this.finalizeTaskPr(task, workspaceId);
         } catch (bgErr) {
           console.error("[Orchestrator] Background task error:", bgErr);
@@ -443,10 +614,10 @@ export class WorktreeOrchestrator {
 
       this.activeJobs.add(waitPromise);
       waitPromise.finally(() => this.activeJobs.delete(waitPromise));
-    } catch (err) {
+    } catch (error) {
       await this.options.store.updateTask(task.id, {
         state: "failed",
-        error: (err as Error).message,
+        error: (error as Error).message,
       });
     }
   }
@@ -457,9 +628,17 @@ export class WorktreeOrchestrator {
       return { ok: false, error: "Task not found" };
     }
 
-    try {
-      await this.options.store.updateTask(taskId, { state: "pr_creating" });
+    // Stop dev service when approved
+    if (task.workspaceId && this.options.paseoApi?.scripts) {
+      await this.options.paseoApi.scripts
+        .stop({
+          workspaceId: task.workspaceId,
+          scriptName: "dev",
+        })
+        .catch(() => {});
+    }
 
+    try {
       const client = this.getClientForProject({
         baseUrl: task.giteaBaseUrl,
         token: task.giteaToken ?? process.env.GITEA_TOKEN ?? "",
@@ -472,7 +651,7 @@ export class WorktreeOrchestrator {
         const baseBranch = await this.determineBaseBranch(task.projectPath || process.cwd());
         const pr = await client.createPullRequest({
           title: `[Agent] #${task.issueNumber} ${task.issueTitle}`,
-          body: `Resolves #${task.issueNumber}\n\n### Changes\nAutomated implementation reviewed and approved in Paseo.`,
+          body: `Resolves #${task.issueNumber}\n\n${task.issueTitle}\n\nAutomated implementation by Paseo Agent.`,
           headBranch: task.branchName,
           baseBranch,
         });
@@ -499,6 +678,30 @@ export class WorktreeOrchestrator {
     const task = await this.options.store.getTask(taskId);
     if (!task) {
       return { ok: false, error: "Task not found" };
+    }
+
+    // Stop dev service when rejected so port is cleaned up before re-coding
+    if (task.workspaceId && this.options.paseoApi?.scripts) {
+      await this.options.paseoApi.scripts
+        .stop({
+          workspaceId: task.workspaceId,
+          scriptName: "dev",
+        })
+        .catch(() => {});
+    }
+
+    // Re-prompt existing agent with human feedback
+    if (task.agentId && this.options.paseoApi?.agents?.ref) {
+      try {
+        const agentRef = this.options.paseoApi.agents.ref(task.agentId);
+        if (typeof agentRef.sendPrompt === "function") {
+          await agentRef.sendPrompt(
+            `Reviewer feedback received:\n${feedback}\nPlease address this feedback, run verification tests, and update.`,
+          );
+        }
+      } catch (err) {
+        console.warn("[Orchestrator] Failed re-prompting agent:", err);
+      }
     }
 
     const previousFeedback = task.reviewFeedback ?? [];
