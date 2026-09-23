@@ -1,0 +1,210 @@
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+import {
+  approveDirectiveRpc,
+  batchApproveRpc,
+  getCrawlStatusRpc,
+  getWorkerPoolStatusRpc,
+  listDirectivesRpc,
+  rejectDirectiveRpc,
+  startCrawlRpc,
+  stopCrawlRpc,
+} from "./shared/contracts.js";
+import { TaskStore } from "./server/store/task-store.js";
+import { VisualCrawlerEngine, type BrowserDriver } from "./server/engine/crawler-engine.js";
+import { ReviewTriageAgent } from "./server/triage/triage-agent.js";
+import { WorktreeFixPool, type WorktreeAdapter } from "./server/orchestrator/worktree-pool.js";
+
+// Default in-memory / mock adapter suitable for development & test execution
+export function createDefaultBrowserDriver(): BrowserDriver {
+  let step = 0;
+  return {
+    async navigate(url: string) {
+      step++;
+      return {
+        url,
+        domFingerprint: `fp-${url.replace(/[^a-z0-9]/gi, "_")}-${step}`,
+        title: `Page ${url}`,
+      };
+    },
+    async getConsoleLogs() {
+      // Simulate intermittent console error on specific routes
+      if (step % 4 === 0) {
+        return [
+          {
+            level: "error",
+            text: "Uncaught TypeError: Cannot read properties of undefined (reading 'items')",
+          },
+        ];
+      }
+      return [];
+    },
+    async getNetworkFailures() {
+      if (step % 7 === 0) {
+        return [{ url: "/api/v1/telemetry", status: 500, statusText: "Internal Server Error" }];
+      }
+      return [];
+    },
+    async getInteractiveElements() {
+      return [
+        { selector: "button.submit-btn", tag: "button", text: "Submit" },
+        { selector: "a.nav-link-dashboard", tag: "a", text: "Dashboard", href: "/dashboard" },
+        { selector: "a.nav-link-settings", tag: "a", text: "Settings", href: "/settings" },
+      ];
+    },
+    async click(selector: string) {
+      step++;
+      return {
+        domFingerprint: `fp-click-${selector}-${step}`,
+        url: "/dashboard",
+      };
+    },
+    async checkVisualAnomalies() {
+      if (step % 5 === 0) {
+        return [
+          {
+            selector: "div.header-nav",
+            reason: "overlap",
+            boundingBox: { x: 0, y: 0, width: 800, height: 60 },
+            sourceHint: {
+              filePath: "src/components/HeaderNav.tsx",
+              componentName: "HeaderNav",
+              line: 42,
+            },
+          },
+        ];
+      }
+      return [];
+    },
+    async captureScreenshot() {
+      return `.evidence/screenshots/crawl-step-${step}.png`;
+    },
+  };
+}
+
+export function createDefaultWorktreeAdapter(): WorktreeAdapter {
+  return {
+    async createWorktree(_branchName: string, worktreeSlug: string) {
+      return { worktreePath: join(tmpdir(), "paseo-worktrees", worktreeSlug) };
+    },
+    async removeWorktree() {},
+    async dispatchCodingAgent(_worktreePath: string, _prompt: string) {
+      return { success: true };
+    },
+    async runVerification(_worktreePath: string) {
+      return { passed: true, output: "All checks passed. 0 errors, 0 warnings." };
+    },
+    async pushAndCreatePr(_branchName: string, _title: string) {
+      return { prUrl: `https://gitea.local/repo/pulls/${Math.floor(Math.random() * 900 + 100)}` };
+    },
+  };
+}
+
+export default function contribute(server: PluginServerContext) {
+  const storePath = join(tmpdir(), "paseo-visual-crawler", "state.json");
+  const store = new TaskStore(storePath, 3);
+  const driver = createDefaultBrowserDriver();
+  const adapter = createDefaultWorktreeAdapter();
+
+  const crawler = new VisualCrawlerEngine(store, driver);
+  const triageAgent = new ReviewTriageAgent(store);
+  const fixPool = new WorktreeFixPool(store, adapter, 3);
+
+  server.handle(startCrawlRpc, async (input) => {
+    try {
+      void (async () => {
+        await crawler.start({
+          targetUrl: input.targetUrl,
+          maxHops: input.maxHops,
+          seedRoutes: input.seedRoutes,
+          maxConcurrency: input.maxConcurrency,
+          autoApproveP0: input.autoApproveP0,
+        });
+
+        // Automatically triage detected anomalies after crawl finishes
+        const telemetry = store.getTelemetry();
+        if (telemetry.totalAnomalies > 0) {
+          const rawAnomalies = store.getAnomalies();
+          triageAgent.triageAnomalies(rawAnomalies, { autoApproveP0: input.autoApproveP0 });
+          if (input.autoApproveP0) {
+            const approved = store.getDirectives({ status: "approved" });
+            for (const dir of approved) {
+              fixPool.enqueueDirective(dir.id);
+            }
+          }
+        }
+      })();
+
+      return { ok: true };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: msg };
+    }
+  });
+
+  server.handle(stopCrawlRpc, async () => {
+    crawler.stop();
+    return { ok: true };
+  });
+
+  server.handle(getCrawlStatusRpc, async () => {
+    return { telemetry: store.getTelemetry() };
+  });
+
+  server.handle(listDirectivesRpc, async (input) => {
+    const directives = store.getDirectives({
+      severity: input.severity,
+      status: input.status,
+    });
+    return { directives };
+  });
+
+  server.handle(approveDirectiveRpc, async ({ directiveId }) => {
+    const directive = store.getDirective(directiveId);
+    if (!directive) {
+      return { ok: false, error: "Directive not found" };
+    }
+    fixPool.enqueueDirective(directiveId);
+    return { ok: true };
+  });
+
+  server.handle(batchApproveRpc, async ({ minSeverity }) => {
+    const rank: Record<string, number> = { P0: 4, P1: 3, P2: 2, P3: 1 };
+    const minRank = rank[minSeverity] || 1;
+
+    const all = store.getDirectives({ status: "pending_review" });
+    let count = 0;
+    for (const d of all) {
+      if ((rank[d.severity] || 0) >= minRank) {
+        fixPool.enqueueDirective(d.id);
+        count++;
+      }
+    }
+    return { approvedCount: count };
+  });
+
+  server.handle(rejectDirectiveRpc, async ({ directiveId }) => {
+    const directive = store.getDirective(directiveId);
+    if (directive) {
+      directive.status = "rejected";
+      directive.updatedAt = Date.now();
+      store.upsertDirective(directive);
+    }
+    return { ok: true };
+  });
+
+  server.handle(getWorkerPoolStatusRpc, async () => {
+    const slots = store.getSlots();
+    const activeCount = slots.filter((s) => s.status !== "idle").length;
+    return {
+      maxConcurrency: slots.length,
+      activeCount,
+      slots,
+    };
+  });
+
+  return () => {
+    crawler.stop();
+  };
+}
