@@ -3,10 +3,12 @@
 ## 1. Overview & Objectives
 
 In Paseo, users interact with AI coding agents across multiple platforms (mobile iOS/Android, desktop Electron, and web). The original implementation stored quick prompt buttons purely in the client's local cache (`AsyncStorage` under `"paseo-quick-prompts"`). This had two fatal shortcomings:
+
 1. **No Cross-Device Synchronization**: Custom quick prompts created on a desktop did not sync to the mobile app or browser sessions.
 2. **Lack of Project Context**: Generic global buttons cluttered the bar, while project-specific repetitive tasks (e.g. `cargo test`, `pnpm lint`, `pytest`) had no dedicated scope.
 
 This specification elevates Quick Prompts to a **Server-Backed, Two-Tier Hierarchical Configuration Architecture**:
+
 1. **Global Quick Prompts**: Stored in Paseo Daemon (`$PASEO_HOME/quick-prompts.json`), accessible to all projects and synchronized automatically across all connected clients.
 2. **Project-Level Quick Prompts**: Stored on the Daemon in `$PASEO_HOME/projects/project-quick-prompts.json` keyed by `projectId` (completely zero-touch to the user's Git repository and codebase).
 3. **Inheritance & Permission Rules**:
@@ -56,9 +58,9 @@ export interface GlobalQuickPromptsRecord {
 export interface ProjectQuickPromptsRecord {
   version: 1;
   projectId: string;
-  items: QuickPromptItem[];        // Project-owned custom buttons
-  disabledGlobalIds: string[];    // Set of global prompt IDs disabled in this project
-  order?: string[];               // Optional explicit display order
+  items: QuickPromptItem[]; // Project-owned custom buttons
+  disabledGlobalIds: string[]; // Set of global prompt IDs disabled in this project
+  order?: string[]; // Optional explicit display order
 }
 ```
 
@@ -79,6 +81,7 @@ export interface ProjectQuickPromptsRecord {
 Following Paseo RPC naming standards (`quick_prompts.<scope>.<action>.<request|response>`):
 
 ### 3.1 Global RPCs
+
 1. **`quick_prompts.global.get.request`**:
    - Payload: `{ requestId: string }`
    - Response: `quick_prompts.global.get.response` -> `{ payload: { items: QuickPromptItem[], requestId: string } }`
@@ -87,6 +90,7 @@ Following Paseo RPC naming standards (`quick_prompts.<scope>.<action>.<request|r
    - Response: `quick_prompts.global.set.response` -> `{ payload: { success: boolean, items: QuickPromptItem[], requestId: string } }`
 
 ### 3.2 Project RPCs
+
 1. **`quick_prompts.project.get.request`**:
    - Payload: `{ projectId: string, requestId: string }`
    - Response: `quick_prompts.project.get.response` -> `{ payload: { projectId: string, items: QuickPromptItem[], disabledGlobalIds: string[], requestId: string } }`
@@ -95,9 +99,11 @@ Following Paseo RPC naming standards (`quick_prompts.<scope>.<action>.<request|r
    - Response: `quick_prompts.project.set.response` -> `{ payload: { success: boolean, projectId: string, items: QuickPromptItem[], disabledGlobalIds: string[], requestId: string } }`
 
 ### 3.3 Broadcast Notification
+
 When global or project prompts are updated, the server broadcasts an event:
+
 - `quick_prompts.changed` -> `{ scope: "global" }` or `{ scope: "project", projectId: string }`
-Clients listen and invalidate their TanStack Query caches, providing real-time multi-device synchronization.
+  Clients listen and invalidate their TanStack Query caches, providing real-time multi-device synchronization.
 
 ---
 
@@ -106,6 +112,7 @@ Clients listen and invalidate their TanStack Query caches, providing real-time m
 ### 4.1 Resolution Logic (`resolveEffectiveQuickPrompts`)
 
 Pure deterministic evaluation:
+
 1. `ephemeralOptions`: dynamic options extracted from the latest assistant turn (if any), always displayed first.
 2. `projectActive`: project-specific items where `enabled === true`.
 3. `globalActive`: global items where `enabled === true` and `id` is NOT in `disabledGlobalIds`.
@@ -119,15 +126,16 @@ Pure deterministic evaluation:
 - **Project Tab Rules**:
   - Displays Project items with full CRUD actions (edit, delete, toggle, create new).
   - Displays inherited Global items marked with a `Global` badge.
-  - Global items only display a toggle switch. Content/label inputs are disabled/hidden, with a hint: *"Global item: you can disable this for the current project, or edit the master definition in the Global tab."*
+  - Global items only display a toggle switch. Content/label inputs are disabled/hidden, with a hint: _"Global item: you can disable this for the current project, or edit the master definition in the Global tab."_
 - **Global Tab Rules**:
   - Full CRUD on all global items.
-  - Banner: *"Changes here apply across all projects on this machine."*
+  - Banner: _"Changes here apply across all projects on this machine."_
   - "Reset to Defaults" button to restore built-in presets.
 
 ### 4.3 App Settings Integration
 
 In `packages/app/src/screens/settings/editor-section.tsx`:
+
 - Directly opens the modal in Global mode.
 - Shows total count of active global prompts.
 
