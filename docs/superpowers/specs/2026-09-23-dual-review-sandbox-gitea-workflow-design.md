@@ -147,6 +147,45 @@ export interface GiteaWorkflowTask {
 
 ---
 
+### 3.3 Evidence Multi-Run & Parallel Conflict Resolution (证据冲突彻底根治设计)
+
+When running tasks in parallel across multiple branches/worktrees or executing multiple review rounds (Run 1 -> Rejection -> Run 2), collisions and Git merge conflicts easily occur if evidence files share hardcoded paths or are committed into Git.
+
+#### 1. 彻底杜绝 Git 分支合并冲突 (Zero Git Merge Conflict Policy)
+
+- **非代码资产不入版本库**：`.evidence/` 目录默认作为运行时构建产物，自动加入 `.gitignore`（或置于 Paseo 工作区私有运行时目录）。
+- **资产直传与 Markdown 固化**：
+  - 截图文件通过 Gitea 原生 Attachment API 直接上传至该 PR/Issue，生成永久有效的 Gitea 附件链接（如 `/attachments/<uuid>`），直接写入 PR 正文。
+  - 测试用例矩阵在运行时提取后，由 `gitea-ship` 直接转译并持久化为 PR Description 中的 Markdown 表格。
+  - **结论**：主分支（`develop`/`main`）永远不会因合并不同 PR 而在 `.evidence/` 上发生 Git Conflict。
+
+#### 2. 任务与运行批次命名空间隔离 (Namespaced Path Isolation)
+
+证据产物按 `issueNumber` 与 `runId` 双层分片存储，禁止任何任务使用平铺根目录：
+
+```text
+.evidence/
+└── issues/
+    └── 42/
+        ├── run-20260923-142010/
+        │   ├── screenshots/
+        │   │   ├── desktop.png
+        │   │   └── mobile.png
+        │   ├── test-matrix.json
+        │   └── runtime-probe.json
+        └── latest -> run-20260923-142010/ (软链或指向最新批次)
+```
+
+- **多任务并行隔离**：Issue #42 与 Issue #43 路径物理隔离，零竞争。
+- **多轮次打回重审隔离**：第 1 轮（Run 1）被打回后，第 2 轮（Run 2）写入新的独立批次目录，旧凭据作为历史追溯保留，彻底避免文件写入竞争与覆盖污染。
+
+#### 3. 原子落盘与运行互斥锁 (Atomic Writes & Per-Task Mutex)
+
+- 写入 `test-matrix.json` 时采用 `fs.writeFile(path + '.tmp.' + pid) -> fs.rename()` 原子替换，杜绝并发读到半截 JSON。
+- 任务调度器在执行沙箱动态验证时加持 `taskLock`，确保单任务同一时间仅存在一个运行中的测试实例。
+
+---
+
 ## 4. Sandbox Lifecycle & Service Readiness Probing
 
 1. **Service Startup**:
