@@ -47,6 +47,9 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
 });
 
 interface FilePreviewBodyProps {
+  client: DaemonClient | null;
+  serverId: string;
+  cwd: string;
   preview: ExplorerFile | null;
   mode?: "preview" | "source";
   isLoading: boolean;
@@ -128,6 +131,9 @@ function TooLargeSource({ size }: { size?: number }) {
 }
 
 function FilePreviewBody({
+  client,
+  serverId,
+  cwd,
   preview,
   mode,
   isLoading,
@@ -182,7 +188,13 @@ function FilePreviewBody({
             style={styles.previewContent}
             showsVerticalScrollIndicator
           >
-            <FileMarkdownPreview source={preview.content ?? ""} />
+            <FileMarkdownPreview
+              source={preview.content ?? ""}
+              filePath={location.path}
+              workspaceRoot={cwd}
+              client={client}
+              serverId={serverId}
+            />
           </RNScrollView>
         </View>
       );
@@ -392,6 +404,7 @@ function FilePanePresentation({
   if (editable && client && readTarget && preview?.kind === "text") {
     return (
       <EditableFilePane
+        serverId={serverId}
         key={`${serverId}:${readTarget.cwd}:${readTarget.path}`}
         client={client}
         cwd={readTarget.cwd}
@@ -449,12 +462,16 @@ function FilePanePresentation({
         location={location}
         navigationRevision={navigationRevision}
         imagePreviewUri={imagePreviewUri}
+        client={client}
+        serverId={serverId}
+        cwd={readTarget?.cwd ?? ""}
       />
     </View>
   );
 }
 
 function EditableFilePane({
+  serverId,
   client,
   cwd,
   path,
@@ -470,6 +487,7 @@ function EditableFilePane({
   location,
   navigationRevision,
 }: {
+  serverId: string;
   client: DaemonClient;
   cwd: string;
   path: string;
@@ -622,6 +640,9 @@ function EditableFilePane({
           location={location}
           navigationRevision={navigationRevision}
           imagePreviewUri={null}
+          client={client}
+          serverId={serverId}
+          cwd={cwd}
         />
       )}
     </View>
