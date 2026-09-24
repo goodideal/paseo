@@ -219,6 +219,8 @@ export const ko: TranslationResources = {
         resetToDefaults: "기본값으로 초기화",
         fixedBadge: "고정",
         ruleBadge: "동적 규칙",
+        moveUp: "위로 이동",
+        moveDown: "아래로 이동",
         edit: "수정",
         delete: "삭제",
         form: {

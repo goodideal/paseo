@@ -215,6 +215,8 @@ export const en = {
         resetToDefaults: "Reset to Defaults",
         fixedBadge: "Fixed",
         ruleBadge: "Dynamic Rule",
+        moveUp: "Move up",
+        moveDown: "Move down",
         edit: "Edit",
         delete: "Delete",
         form: {
@@ -2941,6 +2943,8 @@ export type TranslationResources = {
                 | "editGlobalPrompt"
                 | "jumpToGlobal"
                 | "emptyProjectItems"
+                | "moveUp"
+                | "moveDown"
               > & {
                 tabProject?: string;
                 tabGlobal?: string;
@@ -2955,6 +2959,8 @@ export type TranslationResources = {
                 editGlobalPrompt?: string;
                 jumpToGlobal?: string;
                 emptyProjectItems?: string;
+                moveUp?: string;
+                moveDown?: string;
               };
             };
           }

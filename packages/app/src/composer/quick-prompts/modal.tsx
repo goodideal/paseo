@@ -2,6 +2,8 @@ import React, { memo, useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import {
+  ArrowDown,
+  ArrowUp,
   ExternalLink,
   FolderGit2,
   Globe,
@@ -17,12 +19,6 @@ import { AdaptiveTextInput } from "@/components/adaptive-text-input";
 import { Button } from "@/components/ui/button";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Switch } from "@/components/ui/switch";
-import { SortableInlineList } from "@/components/sortable-inline-list";
-import type {
-  DraggableListDragHandleProps,
-  DraggableRenderItemInfo,
-} from "@/components/draggable-list.types";
-import { GripVertical } from "lucide-react-native";
 import { useSessionStore } from "@/stores/session-store";
 import { useGlobalQuickPrompts, useProjectQuickPrompts } from "@/hooks/use-quick-prompts";
 import {
@@ -94,12 +90,14 @@ interface QuickPromptCardProps {
   isProjectScopedItem?: boolean;
   isInheritedGlobal?: boolean;
   isDisabledInProject?: boolean;
-  isActive?: boolean;
+  isFirst?: boolean;
+  isLast?: boolean;
   onToggle: (id: string) => void;
   onEdit?: (item: QuickPromptItem) => void;
   onDelete?: (id: string) => void;
+  onMoveUp?: (id: string) => void;
+  onMoveDown?: (id: string) => void;
   onJumpToGlobal?: (item: QuickPromptItem) => void;
-  dragHandleProps?: DraggableListDragHandleProps;
 }
 
 const QuickPromptCard = memo(function QuickPromptCard({
@@ -107,39 +105,30 @@ const QuickPromptCard = memo(function QuickPromptCard({
   isProjectScopedItem,
   isInheritedGlobal,
   isDisabledInProject,
-  isActive,
+  isFirst,
+  isLast,
   onToggle,
   onEdit,
   onDelete,
+  onMoveUp,
+  onMoveDown,
   onJumpToGlobal,
-  dragHandleProps,
 }: QuickPromptCardProps) {
   const { t } = useTranslation();
   const handleToggle = useCallback(() => onToggle(item.id), [item.id, onToggle]);
   const handleEdit = useCallback(() => onEdit?.(item), [item, onEdit]);
   const handleDelete = useCallback(() => onDelete?.(item.id), [item.id, onDelete]);
+  const handleMoveUp = useCallback(() => onMoveUp?.(item.id), [item.id, onMoveUp]);
+  const handleMoveDown = useCallback(() => onMoveDown?.(item.id), [item.id, onMoveDown]);
   const handleJump = useCallback(() => onJumpToGlobal?.(item), [item, onJumpToGlobal]);
 
   const isRule = item.triggerType === "rule";
   const switchValue = isInheritedGlobal ? !isDisabledInProject : item.enabled;
 
   return (
-    <View
-      style={[styles.itemCard, isActive ? styles.itemCardDragging : undefined]}
-      testID={`quick-prompt-item-${item.id}`}
-    >
+    <View style={styles.itemCard} testID={`quick-prompt-item-${item.id}`}>
       <View style={styles.itemHeader}>
         <View style={styles.itemTitleRow}>
-          {dragHandleProps ? (
-            <View
-              {...(dragHandleProps.attributes as object | undefined)}
-              {...(dragHandleProps.listeners as object | undefined)}
-              ref={dragHandleProps.setActivatorNodeRef as unknown as React.Ref<View>}
-              style={styles.dragHandle}
-            >
-              <GripVertical size={14} color={styles.outlineIcon.color} />
-            </View>
-          ) : null}
           <Switch
             value={switchValue}
             onValueChange={handleToggle}
@@ -183,6 +172,34 @@ const QuickPromptCard = memo(function QuickPromptCard({
             </Pressable>
           ) : (
             <>
+              {onMoveUp ? (
+                <Pressable
+                  onPress={handleMoveUp}
+                  disabled={isFirst}
+                  style={[styles.actionIconBtn, isFirst && styles.actionIconDisabled]}
+                  accessibilityLabel={t("composer.quickPrompts.modal.moveUp")}
+                  testID={`quick-prompt-move-up-${item.id}`}
+                >
+                  <ArrowUp
+                    size={14}
+                    color={isFirst ? styles.actionIconDisabledText.color : styles.actionIcon.color}
+                  />
+                </Pressable>
+              ) : null}
+              {onMoveDown ? (
+                <Pressable
+                  onPress={handleMoveDown}
+                  disabled={isLast}
+                  style={[styles.actionIconBtn, isLast && styles.actionIconDisabled]}
+                  accessibilityLabel={t("composer.quickPrompts.modal.moveDown")}
+                  testID={`quick-prompt-move-down-${item.id}`}
+                >
+                  <ArrowDown
+                    size={14}
+                    color={isLast ? styles.actionIconDisabledText.color : styles.actionIcon.color}
+                  />
+                </Pressable>
+              ) : null}
               {onEdit ? (
                 <Pressable
                   onPress={handleEdit}
@@ -559,58 +576,87 @@ export function QuickPromptsModal({
     [mode, editingTargetScope, t],
   );
 
-  const keyExtractor = useCallback((i: QuickPromptItem) => i.id, []);
+  const sortedProjectItems = useMemo(() => {
+    const list = [...projectStore.items];
+    if (projectStore.order && projectStore.order.length > 0) {
+      const orderMap = new Map(projectStore.order.map((id, index) => [id, index]));
+      list.sort((a, b) => {
+        const idxA = orderMap.get(a.id) ?? a.order ?? 0;
+        const idxB = orderMap.get(b.id) ?? b.order ?? 0;
+        return idxA - idxB;
+      });
+    } else {
+      list.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    }
+    return list;
+  }, [projectStore.items, projectStore.order]);
 
-  const handleProjectDragEnd = useCallback(
-    (data: QuickPromptItem[]) => {
-      const newOrder = data.map((i) => i.id);
+  const sortedGlobalItems = useMemo(() => {
+    return [...globalStore.items].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  }, [globalStore.items]);
+
+  const handleMoveUpProjectItem = useCallback(
+    (id: string) => {
+      const index = sortedProjectItems.findIndex((i) => i.id === id);
+      if (index <= 0) return;
+      const next = [...sortedProjectItems];
+      const temp = next[index - 1];
+      next[index - 1] = next[index];
+      next[index] = temp;
+      const updated = next.map((item, idx) => Object.assign({}, item, { order: idx }));
       void projectStore.setProjectConfig({
-        items: projectStore.items,
+        items: updated,
         disabledGlobalIds: projectStore.disabledGlobalIds,
-        order: newOrder,
+        order: updated.map((i) => i.id),
       });
     },
-    [projectStore],
+    [sortedProjectItems, projectStore],
   );
 
-  const renderProjectItem = useCallback(
-    ({ item, isActive, dragHandleProps }: DraggableRenderItemInfo<QuickPromptItem>) => (
-      <QuickPromptCard
-        item={item}
-        isProjectScopedItem
-        isActive={isActive}
-        onToggle={handleToggleProjectItem}
-        onEdit={handleEditProjectItem}
-        onDelete={handleDeleteProjectItem}
-        dragHandleProps={dragHandleProps}
-      />
-    ),
-    [handleToggleProjectItem, handleEditProjectItem, handleDeleteProjectItem],
+  const handleMoveDownProjectItem = useCallback(
+    (id: string) => {
+      const index = sortedProjectItems.findIndex((i) => i.id === id);
+      if (index === -1 || index >= sortedProjectItems.length - 1) return;
+      const next = [...sortedProjectItems];
+      const temp = next[index + 1];
+      next[index + 1] = next[index];
+      next[index] = temp;
+      const updated = next.map((item, idx) => Object.assign({}, item, { order: idx }));
+      void projectStore.setProjectConfig({
+        items: updated,
+        disabledGlobalIds: projectStore.disabledGlobalIds,
+        order: updated.map((i) => i.id),
+      });
+    },
+    [sortedProjectItems, projectStore],
   );
 
-  const handleGlobalDragEnd = useCallback(
-    (data: QuickPromptItem[]) => {
-      const idMap = new Map(data.map((i, index) => [i.id, index]));
-      const updated = globalStore.items
-        .map((i) => ({ ...i, order: idMap.get(i.id) ?? i.order }))
-        .sort((a, b) => a.order - b.order);
+  const handleMoveUpGlobalItem = useCallback(
+    (id: string) => {
+      const index = sortedGlobalItems.findIndex((i) => i.id === id);
+      if (index <= 0) return;
+      const next = [...sortedGlobalItems];
+      const temp = next[index - 1];
+      next[index - 1] = next[index];
+      next[index] = temp;
+      const updated = next.map((item, idx) => Object.assign({}, item, { order: idx }));
       void globalStore.setGlobalItems(updated);
     },
-    [globalStore],
+    [sortedGlobalItems, globalStore],
   );
 
-  const renderGlobalItem = useCallback(
-    ({ item, isActive, dragHandleProps }: DraggableRenderItemInfo<QuickPromptItem>) => (
-      <QuickPromptCard
-        item={item}
-        isActive={isActive}
-        onToggle={handleToggleGlobalItem}
-        onEdit={handleEditGlobalItem}
-        onDelete={handleDeleteGlobalItem}
-        dragHandleProps={dragHandleProps}
-      />
-    ),
-    [handleToggleGlobalItem, handleEditGlobalItem, handleDeleteGlobalItem],
+  const handleMoveDownGlobalItem = useCallback(
+    (id: string) => {
+      const index = sortedGlobalItems.findIndex((i) => i.id === id);
+      if (index === -1 || index >= sortedGlobalItems.length - 1) return;
+      const next = [...sortedGlobalItems];
+      const temp = next[index + 1];
+      next[index + 1] = next[index];
+      next[index] = temp;
+      const updated = next.map((item, idx) => Object.assign({}, item, { order: idx }));
+      void globalStore.setGlobalItems(updated);
+    },
+    [sortedGlobalItems, globalStore],
   );
 
   const modalHeader = useMemo(() => ({ title: t("composer.quickPrompts.modal.title") }), [t]);
@@ -683,20 +729,27 @@ export function QuickPromptsModal({
                     </Text>
                   </View>
 
-                  {projectStore.items.length === 0 ? (
+                  {sortedProjectItems.length === 0 ? (
                     <View style={styles.emptyCard}>
                       <Text style={styles.emptyText}>
                         {t("composer.quickPrompts.modal.emptyProjectItems")}
                       </Text>
                     </View>
                   ) : (
-                    <SortableInlineList
-                      data={projectStore.items}
-                      keyExtractor={keyExtractor}
-                      useDragHandle
-                      onDragEnd={handleProjectDragEnd}
-                      renderItem={renderProjectItem}
-                    />
+                    sortedProjectItems.map((item, index) => (
+                      <QuickPromptCard
+                        key={item.id}
+                        item={item}
+                        isProjectScopedItem
+                        isFirst={index === 0}
+                        isLast={index === sortedProjectItems.length - 1}
+                        onToggle={handleToggleProjectItem}
+                        onEdit={handleEditProjectItem}
+                        onDelete={handleDeleteProjectItem}
+                        onMoveUp={handleMoveUpProjectItem}
+                        onMoveDown={handleMoveDownProjectItem}
+                      />
+                    ))
                   )}
 
                   <View style={[styles.sectionHeader, styles.sectionHeaderSpaced]}>
@@ -708,7 +761,7 @@ export function QuickPromptsModal({
                     </Text>
                   </View>
 
-                  {globalStore.items.map((item) => (
+                  {sortedGlobalItems.map((item) => (
                     <QuickPromptCard
                       key={item.id}
                       item={item}
@@ -720,13 +773,19 @@ export function QuickPromptsModal({
                   ))}
                 </>
               ) : (
-                <SortableInlineList
-                  data={globalStore.items}
-                  keyExtractor={keyExtractor}
-                  useDragHandle
-                  onDragEnd={handleGlobalDragEnd}
-                  renderItem={renderGlobalItem}
-                />
+                sortedGlobalItems.map((item, index) => (
+                  <QuickPromptCard
+                    key={item.id}
+                    item={item}
+                    isFirst={index === 0}
+                    isLast={index === sortedGlobalItems.length - 1}
+                    onToggle={handleToggleGlobalItem}
+                    onEdit={handleEditGlobalItem}
+                    onDelete={handleDeleteGlobalItem}
+                    onMoveUp={handleMoveUpGlobalItem}
+                    onMoveDown={handleMoveDownGlobalItem}
+                  />
+                ))
               )}
             </ScrollView>
           </View>
@@ -941,15 +1000,6 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     textAlign: "center",
   },
-  itemCardDragging: {
-    opacity: 0.8,
-    borderColor: theme.colors.accent,
-  },
-  dragHandle: {
-    padding: theme.spacing[1],
-    justifyContent: "center",
-    alignItems: "center",
-  },
   itemCard: {
     backgroundColor: theme.colors.surface2,
     borderWidth: theme.borderWidth[1],
@@ -1063,6 +1113,12 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.sm,
   },
   actionIcon: {
+    color: theme.colors.foregroundMuted,
+  },
+  actionIconDisabled: {
+    opacity: 0.35,
+  },
+  actionIconDisabledText: {
     color: theme.colors.foregroundMuted,
   },
   dangerIcon: {

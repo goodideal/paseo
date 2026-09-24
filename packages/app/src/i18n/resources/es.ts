@@ -221,6 +221,8 @@ export const es: TranslationResources = {
         resetToDefaults: "Restablecer valores predeterminados",
         fixedBadge: "Fijo",
         ruleBadge: "Regla dinámica",
+        moveUp: "Mover hacia arriba",
+        moveDown: "Mover hacia abajo",
         edit: "Editar",
         delete: "Eliminar",
         form: {

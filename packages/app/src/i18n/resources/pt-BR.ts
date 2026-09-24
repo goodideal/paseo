@@ -221,6 +221,8 @@ export const ptBR: TranslationResources = {
         resetToDefaults: "Restaurar padrões",
         fixedBadge: "Fixo",
         ruleBadge: "Regra dinâmica",
+        moveUp: "Mover para cima",
+        moveDown: "Mover para baixo",
         edit: "Editar",
         delete: "Excluir",
         form: {
