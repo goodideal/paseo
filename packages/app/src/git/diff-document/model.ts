@@ -222,7 +222,7 @@ function appendNewFileRows(candidate: {
     const isImage = isImageFilePath(candidate.file.path);
     if (isImage) {
       // Allow some space for the image card
-      const height = 300; 
+      const height = 480;
       candidate.rows.push({
         kind: "status",
         index: candidate.rows.length,

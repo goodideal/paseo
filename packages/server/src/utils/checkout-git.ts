@@ -1,4 +1,4 @@
-import { resolve, dirname, basename } from "path";
+import { resolve, dirname, basename, extname } from "path";
 import { existsSync, realpathSync } from "fs";
 import { open as openFile, readFile, stat as statFile } from "fs/promises";
 import { setImmediate } from "node:timers/promises";
@@ -29,7 +29,7 @@ import {
   ForgeCommandError,
 } from "../services/forge-cli-command.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
-import { runGitCommand, type RunGitCommand } from "./run-git-command.js";
+import { runGitCommand, runGitCommandBytes, type RunGitCommand } from "./run-git-command.js";
 import { readGitFileContents } from "./git-file-contents.js";
 import { isPaseoOwnedWorktreeCwd, resolvePaseoWorktreesBaseRoot } from "./worktree.js";
 import {
@@ -2661,6 +2661,70 @@ export async function getCommitFileDiff({
   }
 
   return file;
+}
+
+export async function getGitBlob({
+  cwd,
+  ref,
+  path: filePath,
+  maxBytes = 5 * 1024 * 1024,
+}: {
+  cwd: string;
+  ref: string;
+  path: string;
+  maxBytes?: number;
+}): Promise<
+  | { status: "ok"; mimeType: string; size: number; base64Data: string }
+  | { status: "too_large"; size: number }
+  | { status: "missing" }
+  | { status: "error"; error: string }
+> {
+  const spec = `${ref}:${filePath}`;
+  try {
+    const sizeResult = await runGitCommand(["cat-file", "-s", spec], {
+      cwd,
+      acceptExitCodes: [0, 1, 128],
+    });
+    if (sizeResult.exitCode !== 0) {
+      return { status: "missing" };
+    }
+    const size = parseInt(sizeResult.stdout.trim(), 10);
+    if (isNaN(size)) {
+      return { status: "missing" };
+    }
+    if (size > maxBytes) {
+      return { status: "too_large", size };
+    }
+    const blobResult = await runGitCommandBytes(["cat-file", "-p", spec], {
+      cwd,
+      maxOutputBytes: maxBytes + 1024,
+      acceptExitCodes: [0, 1, 128],
+    });
+    if (blobResult.exitCode !== 0) {
+      return { status: "missing" };
+    }
+    const ext = extname(filePath).toLowerCase();
+    const MIME_MAP: Record<string, string> = {
+      ".png": "image/png",
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".gif": "image/gif",
+      ".webp": "image/webp",
+      ".svg": "image/svg+xml",
+      ".ico": "image/x-icon",
+      ".bmp": "image/bmp",
+      ".avif": "image/avif",
+    };
+    const mimeType = MIME_MAP[ext] || "application/octet-stream";
+    return {
+      status: "ok",
+      mimeType,
+      size,
+      base64Data: Buffer.from(blobResult.stdout).toString("base64"),
+    };
+  } catch (error) {
+    return { status: "error", error: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 export interface CheckoutShortstat {

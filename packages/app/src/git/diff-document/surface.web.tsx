@@ -77,7 +77,11 @@ export function DiffSurface(props: DiffSurfaceProps) {
   const { t } = useTranslation();
   const toast = useToast();
   const workspaceCache = useDiffDocumentWorkspaceCache();
-  const client = useHostRuntimeClient(props.mode.kind === "working" ? props.mode.workspaceFileDragScope?.serverId ?? "" : "");
+  const modeServerId =
+    props.mode.kind === "working"
+      ? (props.mode.workspaceFileDragScope?.serverId ?? "")
+      : (props.mode.serverId ?? "");
+  const client = useHostRuntimeClient(modeServerId);
   const rootRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stickyHeaderSlotsRef = useRef<[StickyHeaderCanvasSlot, StickyHeaderCanvasSlot]>([
@@ -839,34 +843,33 @@ export function DiffSurface(props: DiffSurfaceProps) {
               />
             </WebFileHeaderSection>
           ))}
-          
+
           {interactionFiles
             .filter((file) => isImageFilePath(file.path) && !file.isCollapsed)
-            
+
             .map((file) => {
               // eslint-disable-next-line react-perf/jsx-no-new-object-as-prop
               const style = {
-                  position: "absolute" as const,
-                  top: file.bodyTop,
-                  left: 0,
-                  right: 0,
-                  height: file.bodyHeight,
-                  zIndex: 4,
+                position: "absolute" as const,
+                top: file.bodyTop,
+                left: 0,
+                right: 0,
+                height: file.bodyHeight,
+                zIndex: 4,
               };
               return (
-              <div
-                key={`${file.path}-img`}
-                style={style}
-              >
-                <ImageDiffCard
-                  file={file.file}
-                  serverId={""}
-                  cwd={props.mode.kind === "working" ? props.mode.workspaceFileDragScope?.workspaceId ?? "" : ""}
-                  baseRef="HEAD"
-                  client={client}
-                />
-              </div>
-            );})}
+                <div key={`${file.path}-img`} style={style}>
+                  <ImageDiffCard
+                    file={file.file}
+                    serverId={modeServerId}
+                    cwd={props.mode.cwd ?? ""}
+                    baseRef={props.mode.baseRef ?? "HEAD"}
+                    targetRef={props.mode.kind === "commit" ? props.mode.targetRef : undefined}
+                    client={client}
+                  />
+                </div>
+              );
+            })}
           {interactionFiles
             .filter((file) => !file.isCollapsed && !model.wrapLines && !isImageFilePath(file.path))
 

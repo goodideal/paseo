@@ -243,7 +243,6 @@ export function DiffSurface(props: DiffSurfaceProps) {
     );
   }, [horizontalOffsets, model.files]);
 
-  
   const collapsedFilePaths = props.collapsedFilePaths;
   const onToggleFile = props.onToggleFile;
   useEffect(() => {
@@ -481,10 +480,12 @@ function NativeFileBody({
     },
     [file, horizontalOffsets, model, reviewActions],
   );
-  
-  const client = useHostRuntimeClient(mode.kind === "working" ? mode.workspaceFileDragScope?.serverId ?? "" : "");
+
+  const modeServerId =
+    mode.kind === "working" ? (mode.workspaceFileDragScope?.serverId ?? "") : (mode.serverId ?? "");
+  const client = useHostRuntimeClient(modeServerId);
   const isImage = isImageFilePath(file.path);
-  
+
   if (isImage && !file.isCollapsed) {
     return (
       <View
@@ -500,9 +501,10 @@ function NativeFileBody({
       >
         <ImageDiffCard
           file={file.file}
-          serverId={""}
-          cwd={mode.kind === "working" ? mode.workspaceFileDragScope?.workspaceId ?? "" : ""}
-          baseRef="HEAD" // For now, we assume HEAD or handle it differently
+          serverId={modeServerId}
+          cwd={mode.cwd ?? ""}
+          baseRef={mode.baseRef ?? "HEAD"}
+          targetRef={mode.kind === "commit" ? mode.targetRef : undefined}
           client={client}
         />
       </View>
@@ -512,7 +514,6 @@ function NativeFileBody({
   return (
     <View
       testID={`diff-file-${file.fileIndex}-body`}
-
       style={inlineUnistylesStyle<ViewStyle>({
         position: "absolute",
         top: file.bodyTop,

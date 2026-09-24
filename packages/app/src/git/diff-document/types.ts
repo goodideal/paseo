@@ -1,4 +1,3 @@
-
 import type { ParsedDiffFile } from "@getpaseo/protocol/messages";
 import type { InlineReviewActions } from "@/review";
 import type { ReviewableDiffTarget } from "@/utils/diff-layout";
@@ -16,6 +15,8 @@ interface DiffDocumentBaseProps {
 }
 
 export interface WorkingDiffMode {
+  cwd?: string;
+  baseRef?: string;
   kind: "working";
   reviewActions?: InlineReviewActions;
   onFilePress?: (path: string) => void;
@@ -34,6 +35,14 @@ export interface WorkingDiffMode {
   onRevert?: (path: string, oldPath?: string) => void;
 }
 
+export interface CommitDiffMode {
+  kind: "commit";
+  cwd?: string;
+  serverId?: string;
+  baseRef?: string;
+  targetRef?: string;
+}
+
 export type DiffDocumentProps = DiffDocumentBaseProps &
   (
     | {
@@ -43,7 +52,7 @@ export type DiffDocumentProps = DiffDocumentBaseProps &
           onChange: (paths: string[]) => void;
         };
       }
-    | { mode: { kind: "commit" }; collapseState?: never }
+    | { mode: CommitDiffMode; collapseState?: never }
   );
 
 export interface DiffTypography {
