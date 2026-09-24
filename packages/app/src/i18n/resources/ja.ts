@@ -221,6 +221,8 @@ export const ja: TranslationResources = {
         resetToDefaults: "デフォルトに戻す",
         fixedBadge: "常時表示",
         ruleBadge: "動的ルール",
+        moveUp: "上に移動",
+        moveDown: "下に移動",
         edit: "編集",
         delete: "削除",
         form: {

@@ -219,6 +219,8 @@ export const zhCN: TranslationResources = {
         resetToDefaults: "恢复默认",
         fixedBadge: "常驻",
         ruleBadge: "动态规则",
+        moveUp: "上移",
+        moveDown: "下移",
         edit: "编辑",
         delete: "删除",
         form: {

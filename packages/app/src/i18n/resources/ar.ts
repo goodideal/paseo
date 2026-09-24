@@ -220,6 +220,8 @@ export const ar: TranslationResources = {
         resetToDefaults: "إعادة التعيين إلى الافتراضي",
         fixedBadge: "ثابت",
         ruleBadge: "قاعدة ديناميكية",
+        moveUp: "نقل لأعلى",
+        moveDown: "نقل لأسفل",
         edit: "تعديل",
         delete: "حذف",
         form: {

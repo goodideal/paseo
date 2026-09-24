@@ -249,4 +249,85 @@ describe("QuickPromptsModal", () => {
       );
     });
   });
+
+  it("disables move-up on the first item and moves item down on move-down click in global mode", async () => {
+    const { findByTestId } = render(
+      <QueryClientProvider client={queryClient}>
+        <QuickPromptsModal visible={true} onClose={vi.fn()} serverId="server-1" />
+      </QueryClientProvider>,
+    );
+
+    const firstMoveUp = await findByTestId("quick-prompt-move-up-builtin-continue");
+    expect(firstMoveUp.getAttribute("aria-disabled")).toBe("true");
+
+    const firstMoveDown = await findByTestId("quick-prompt-move-down-builtin-continue");
+    expect(firstMoveDown.getAttribute("aria-disabled")).toBeNull();
+    fireEvent.click(firstMoveDown);
+
+    await waitFor(() => {
+      expect(mockClient.quickPromptsGlobalSet).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ id: "builtin-review", order: 0 }),
+          expect.objectContaining({ id: "builtin-continue", order: 1 }),
+        ]),
+      );
+    });
+  });
+
+  it("moves project item down and saves updated items and order in project mode", async () => {
+    mockClient.quickPromptsProjectGet.mockResolvedValue({
+      projectId: "prj_test",
+      items: [
+        {
+          id: "prj_cmd_1",
+          label: "Test Project Cmd 1",
+          content: "run 1",
+          triggerType: "fixed" as const,
+          enabled: true,
+          createdAt: 100,
+          order: 0,
+        },
+        {
+          id: "prj_cmd_2",
+          label: "Test Project Cmd 2",
+          content: "run 2",
+          triggerType: "fixed" as const,
+          enabled: true,
+          createdAt: 101,
+          order: 1,
+        },
+      ],
+      disabledGlobalIds: [],
+    });
+
+    const { findByTestId, findByText } = render(
+      <QueryClientProvider client={queryClient}>
+        <QuickPromptsModal
+          visible={true}
+          onClose={vi.fn()}
+          serverId="server-1"
+          workspaceId="ws_1"
+        />
+      </QueryClientProvider>,
+    );
+
+    await findByText("Test Project Cmd 1");
+
+    const moveDownBtn = await findByTestId("quick-prompt-move-down-prj_cmd_1");
+    expect(moveDownBtn.getAttribute("aria-disabled")).toBeNull();
+    fireEvent.click(moveDownBtn);
+
+    await waitFor(() => {
+      expect(mockClient.quickPromptsProjectSet).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: "prj_test",
+          items: [
+            expect.objectContaining({ id: "prj_cmd_2", order: 0 }),
+            expect.objectContaining({ id: "prj_cmd_1", order: 1 }),
+          ],
+          order: ["prj_cmd_2", "prj_cmd_1"],
+        }),
+      );
+    });
+  });
 });

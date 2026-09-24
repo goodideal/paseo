@@ -198,4 +198,66 @@ describe("quick-prompt-resolver", () => {
     });
     expect(resultNotMatching.map((i) => i.id)).not.toContain("profile-prompt");
   });
+
+  it("strictly places project items before global items regardless of their individual order integers", () => {
+    const projectItems: QuickPromptItem[] = [
+      {
+        id: "project-1",
+        label: "Project Item 1",
+        content: "content",
+        triggerType: "fixed",
+        enabled: true,
+        createdAt: 10,
+        order: 5,
+      },
+      {
+        id: "project-2",
+        label: "Project Item 2",
+        content: "content",
+        triggerType: "fixed",
+        enabled: true,
+        createdAt: 11,
+        order: 10,
+      },
+    ];
+
+    const result = resolveEffectiveQuickPrompts({
+      globalItems,
+      projectItems,
+      disabledGlobalIds: [],
+    });
+
+    expect(result.map((i) => i.id)).toEqual(["project-1", "project-2", "global-1", "global-2"]);
+  });
+
+  it("respects explicit order array for project items", () => {
+    const projectItems: QuickPromptItem[] = [
+      {
+        id: "project-1",
+        label: "Project Item 1",
+        content: "content",
+        triggerType: "fixed",
+        enabled: true,
+        createdAt: 10,
+        order: 0,
+      },
+      {
+        id: "project-2",
+        label: "Project Item 2",
+        content: "content",
+        triggerType: "fixed",
+        enabled: true,
+        createdAt: 11,
+        order: 1,
+      },
+    ];
+
+    const result = resolveEffectiveQuickPrompts({
+      globalItems: [],
+      projectItems,
+      order: ["project-2", "project-1"],
+    });
+
+    expect(result.map((i) => i.id)).toEqual(["project-2", "project-1"]);
+  });
 });

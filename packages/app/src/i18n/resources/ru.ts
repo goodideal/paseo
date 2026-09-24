@@ -222,6 +222,8 @@ export const ru: TranslationResources = {
         resetToDefaults: "Сбросить по умолчанию",
         fixedBadge: "Закреплено",
         ruleBadge: "Динамическое правило",
+        moveUp: "Переместить вверх",
+        moveDown: "Переместить вниз",
         edit: "Редактировать",
         delete: "Удалить",
         form: {
