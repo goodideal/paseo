@@ -2680,6 +2680,81 @@ test("listProviderAvailability uses registered client keys, including custom pro
   ]);
 });
 
+test("listProviderAvailability times out slow provider checks without hanging", async () => {
+  const slowClient: AgentClient = {
+    provider: "slow",
+    capabilities: TEST_CAPABILITIES,
+    async isAvailable() {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      return true;
+    },
+    async createSession() {
+      throw new Error("not implemented");
+    },
+    async resumeSession() {
+      throw new Error("not implemented");
+    },
+  };
+
+  const manager = new AgentManager({
+    clients: {
+      slow: slowClient,
+    },
+    logger,
+  });
+
+  const result = await manager.listProviderAvailability({ timeoutMs: 20 });
+  expect(result).toHaveLength(1);
+  expect(result[0].provider).toBe("slow");
+  expect(result[0].available).toBe(false);
+  expect(result[0].error).toContain("Timed out checking availability for provider 'slow'");
+});
+
+test("listProviderAvailability caches results within TTL and coalesces in-flight calls", async () => {
+  let callCount = 0;
+  const countingClient: AgentClient = {
+    provider: "counting",
+    capabilities: TEST_CAPABILITIES,
+    async isAvailable() {
+      callCount += 1;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return true;
+    },
+    async createSession() {
+      throw new Error("not implemented");
+    },
+    async resumeSession() {
+      throw new Error("not implemented");
+    },
+  };
+
+  const manager = new AgentManager({
+    clients: {
+      counting: countingClient,
+    },
+    logger,
+  });
+
+  // Concurrent calls should coalesce to a single isAvailable invocation
+  const [first, second] = await Promise.all([
+    manager.listProviderAvailability(),
+    manager.listProviderAvailability(),
+  ]);
+  expect(first).toEqual([{ provider: "counting", available: true, error: null }]);
+  expect(second).toEqual([{ provider: "counting", available: true, error: null }]);
+  expect(callCount).toBe(1);
+
+  // Subsequent call within TTL should return cached result
+  const third = await manager.listProviderAvailability();
+  expect(third).toEqual([{ provider: "counting", available: true, error: null }]);
+  expect(callCount).toBe(1);
+
+  // bypassCache should force fresh invocation
+  const fourth = await manager.listProviderAvailability({ bypassCache: true });
+  expect(fourth).toEqual([{ provider: "counting", available: true, error: null }]);
+  expect(callCount).toBe(2);
+});
+
 test("createAgent passes daemon launch env through the provider launch context", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");

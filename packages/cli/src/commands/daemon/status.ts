@@ -11,15 +11,19 @@ import { connectToDaemon, buildDaemonConnectionCommandError } from "../../utils/
 import { withOutput, toCommandError, type CommandOptions } from "../../output/index.js";
 import { addJsonAndDaemonHostOptions } from "../../utils/command-options.js";
 import { describeDaemonTarget, type DaemonTarget } from "../../utils/daemon-target.js";
+import { parseTimeoutMs } from "./local-daemon.js";
 
 export function daemonStatusCommand(): Command {
   return addJsonAndDaemonHostOptions(
     new Command("status").description("Observe the selected daemon and its published endpoint"),
-  ).action(withOutput(runStatusCommand));
+  )
+    .option("--timeout <seconds>", "Probe deadline (default: 5)")
+    .action(withOutput(runStatusCommand));
 }
 
 export async function runStatusCommand(options: CommandOptions, _command: Command) {
   const target = options.daemonTarget;
+  const timeoutMs = parseTimeoutMs(options.timeout, 5_000);
   const instance = target.kind === "instance" ? await readDaemonInstance(target.home) : null;
   const local =
     target.kind === "instance"
@@ -27,7 +31,7 @@ export async function runStatusCommand(options: CommandOptions, _command: Comman
       : { host: describeDaemonTarget(target) };
   const observed =
     target.kind === "endpoint" || instance?.listen
-      ? await probeDaemonStatus(target, instance, local)
+      ? await probeDaemonStatus(target, instance, local, timeoutMs)
       : { connectedDaemon: "not_probed" };
   const data: Record<string, unknown> = { ...local, ...observed };
   return {
@@ -52,13 +56,14 @@ async function probeDaemonStatus(
   target: DaemonTarget,
   instance: Awaited<ReturnType<typeof readDaemonInstance>>,
   local: Record<string, unknown>,
+  timeoutMs = 5_000,
 ) {
   let connectedDaemon = "unreachable";
   let note: string | undefined;
   let live: Record<string, unknown> = {};
   let client: Awaited<ReturnType<typeof connectToDaemon>> | undefined;
   try {
-    client = await connectToDaemon({ target, instance: instance ?? undefined, timeout: 1_500 });
+    client = await connectToDaemon({ target, instance: instance ?? undefined, timeout: timeoutMs });
   } catch (error) {
     const failure = buildDaemonConnectionCommandError({ target, error });
     if (target.kind === "endpoint") throw failure;
@@ -70,7 +75,7 @@ async function probeDaemonStatus(
   if (!client) return { connectedDaemon, note };
   try {
     let requestError: unknown;
-    const status = await client.getDaemonStatus({ timeout: 1_500 }).catch((error: unknown) => {
+    const status = await client.getDaemonStatus({ timeout: timeoutMs }).catch((error: unknown) => {
       requestError = error;
       return null;
     });

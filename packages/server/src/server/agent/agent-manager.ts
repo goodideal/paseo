@@ -95,6 +95,8 @@ import { extractAttention } from "../persistence-hooks.js";
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
 const IMPORTABLE_SESSION_LIST_TIMEOUT_MS = 90_000;
+const DEFAULT_PROVIDER_AVAILABILITY_TIMEOUT_MS = 2_500;
+const PROVIDER_AVAILABILITY_CACHE_TTL_MS = 5_000;
 const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: false,
   supportsSessionPersistence: true,
@@ -743,6 +745,11 @@ export class AgentManager {
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
   private paseoToolsEnabled = true;
+  private providerAvailabilityCache: {
+    expiresAt: number;
+    results: ProviderAvailability[];
+  } | null = null;
+  private inFlightProviderAvailability: Promise<ProviderAvailability[]> | null = null;
   private paseoToolCatalogFactory: PaseoToolCatalogFactory | null = null;
   private readonly paseoToolPolicies = new Map<string, ProviderPaseoToolsPolicy | undefined>();
   private readonly resolvePaseoToolPolicy: (
@@ -796,8 +803,14 @@ export class AgentManager {
     this.paseoToolCatalogFactory = options.paseoToolCatalogFactory ?? null;
   }
 
+  clearProviderAvailabilityCache(): void {
+    this.providerAvailabilityCache = null;
+    this.inFlightProviderAvailability = null;
+  }
+
   registerClient(provider: AgentProvider, client: AgentClient): void {
     this.clients.set(provider, client);
+    this.clearProviderAvailabilityCache();
   }
 
   updateProviderRegistry(input: {
@@ -820,6 +833,7 @@ export class AgentManager {
         this.clients.set(provider, client);
       }
     }
+    this.clearProviderAvailabilityCache();
 
     for (const provider of input.retiredProviders ?? []) {
       for (const agent of this.agents.values()) {
@@ -1059,13 +1073,60 @@ export class AgentManager {
     return true;
   }
 
-  async listProviderAvailability(): Promise<ProviderAvailability[]> {
-    return Promise.all(
-      Array.from(this.clients.keys()).map((provider) => this.getProviderAvailability(provider)),
-    );
+  async listProviderAvailability(options?: {
+    timeoutMs?: number;
+    bypassCache?: boolean;
+  }): Promise<ProviderAvailability[]> {
+    const now = Date.now();
+    if (
+      !options?.bypassCache &&
+      options?.timeoutMs === undefined &&
+      this.providerAvailabilityCache &&
+      this.providerAvailabilityCache.expiresAt > now
+    ) {
+      return this.providerAvailabilityCache.results;
+    }
+
+    if (
+      !options?.bypassCache &&
+      options?.timeoutMs === undefined &&
+      this.inFlightProviderAvailability
+    ) {
+      return await this.inFlightProviderAvailability;
+    }
+
+    const run = (async () => {
+      const results = await Promise.all(
+        Array.from(this.clients.keys()).map((provider) =>
+          this.getProviderAvailability(provider, { timeoutMs: options?.timeoutMs }),
+        ),
+      );
+      if (options?.timeoutMs === undefined) {
+        this.providerAvailabilityCache = {
+          expiresAt: Date.now() + PROVIDER_AVAILABILITY_CACHE_TTL_MS,
+          results,
+        };
+      }
+      return results;
+    })();
+
+    if (!options?.bypassCache && options?.timeoutMs === undefined) {
+      this.inFlightProviderAvailability = run;
+    }
+
+    try {
+      return await run;
+    } finally {
+      if (this.inFlightProviderAvailability === run) {
+        this.inFlightProviderAvailability = null;
+      }
+    }
   }
 
-  async getProviderAvailability(provider: AgentProvider): Promise<ProviderAvailability> {
+  async getProviderAvailability(
+    provider: AgentProvider,
+    options?: { timeoutMs?: number },
+  ): Promise<ProviderAvailability> {
     const client = this.clients.get(provider);
     if (!client) {
       return {
@@ -1075,8 +1136,13 @@ export class AgentManager {
       };
     }
 
+    const timeoutMs = options?.timeoutMs ?? DEFAULT_PROVIDER_AVAILABILITY_TIMEOUT_MS;
     try {
-      const available = await client.isAvailable();
+      const available = await withTimeout(
+        client.isAvailable(),
+        timeoutMs,
+        `Timed out checking availability for provider '${provider}' after ${timeoutMs}ms`,
+      );
       return {
         provider,
         available,
