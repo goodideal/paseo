@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import type { ViewStyle } from "react-native";
 import { DomOverlayScrollbar } from "@/components/ui/overlay-scrollbar/dom-overlay-scrollbar";
 import {
@@ -42,6 +43,8 @@ import type {
   TextMeasurer,
 } from "./types";
 import { useDiffDocumentWorkspaceCache } from "./workspace-cache";
+import { ImageDiffCard } from "../image-diff/image-diff-card";
+import { isImageFilePath } from "../image-diff/file-type";
 
 const DEFAULT_MONO_STACK = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
 const RESIZE_SETTLE_DELAY_MS = 120;
@@ -74,6 +77,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
   const { t } = useTranslation();
   const toast = useToast();
   const workspaceCache = useDiffDocumentWorkspaceCache();
+  const client = useHostRuntimeClient(props.mode.kind === "working" ? props.mode.workspaceFileDragScope?.serverId ?? "" : "");
   const rootRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stickyHeaderSlotsRef = useRef<[StickyHeaderCanvasSlot, StickyHeaderCanvasSlot]>([
@@ -835,8 +839,37 @@ export function DiffSurface(props: DiffSurfaceProps) {
               />
             </WebFileHeaderSection>
           ))}
+          
           {interactionFiles
-            .filter((file) => !file.isCollapsed && !model.wrapLines)
+            .filter((file) => isImageFilePath(file.path) && !file.isCollapsed)
+            
+            .map((file) => {
+              // eslint-disable-next-line react-perf/jsx-no-new-object-as-prop
+              const style = {
+                  position: "absolute" as const,
+                  top: file.bodyTop,
+                  left: 0,
+                  right: 0,
+                  height: file.bodyHeight,
+                  zIndex: 4,
+              };
+              return (
+              <div
+                key={`${file.path}-img`}
+                style={style}
+              >
+                <ImageDiffCard
+                  file={file.file}
+                  serverId={""}
+                  cwd={props.mode.kind === "working" ? props.mode.workspaceFileDragScope?.workspaceId ?? "" : ""}
+                  baseRef="HEAD"
+                  client={client}
+                />
+              </div>
+            );})}
+          {interactionFiles
+            .filter((file) => !file.isCollapsed && !model.wrapLines && !isImageFilePath(file.path))
+
             .map((file) => (
               <HorizontalScroll
                 key={file.path}
