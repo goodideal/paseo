@@ -625,3 +625,38 @@ Stores binary attachment blobs keyed by attachment ID.
 | `createdAt`   | `number`  | Epoch ms                       |
 | `fileName`    | `string?` | Original filename              |
 | `byteSize`    | `number?` | Size in bytes                  |
+
+## Workflow Store
+
+**File:** `$PASEO_HOME/workflows/runs/<runId>.json`
+
+Atomic file writes (write to temp file, then rename). Stores immutable and current state of Workflow Engine runs scoped by `projectId` and `workspaceId`.
+
+### WorkflowRun schema
+
+```typescript
+{
+  id: string,               // run_<uuid>
+  projectId: string,        // Scope boundary: project identifier
+  workspaceId: string,      // Scope boundary: workspace identifier
+  definitionId: string,     // Workflow definition identifier
+  definitionRevision: string,
+  definitionHash: string,   // SHA-256 digest of resolved definition & prompts
+  workspaceRoot: string,    // Absolute workspace cwd
+  principalId: string,      // Owner principal
+  status: "queued" | "running" | "waiting_approval" | "succeeded" | "failed" | "cancelled" | "blocked" | "unknown",
+  createdAt: number,        // epoch ms
+  updatedAt: number,
+  stepAttempts: StepAttempt[], // Execution history of each step attempt
+  approvals: Approval[],       // One-time expiring approval requests and decisions
+  artifacts: Artifact[],       // Sanitized, content-hashed step outputs
+  intents: Intent[],           // Pre-side-effect declarations with idempotency keys
+  receipts: Receipt[],         // Post-side-effect confirmations
+  leases: Lease[],             // Daemon-owned execution leases
+  unknownOutcomes: UnknownOutcome[] // Ambiguous failure convergence records
+}
+```
+
+### Unknown outcome convergence
+
+When an external side effect (e.g. `git.push`, `git.create_pr`) is attempted after writing an immutable `intent`, but the result cannot be conclusively observed before a crash or network interruption, the engine transitions the attempt to `unknown` and records a `WorkflowUnknownOutcome`. Resumption requires querying forge/worktree state; automatic retry is prohibited without explicit inspection to prevent duplicate external writes.

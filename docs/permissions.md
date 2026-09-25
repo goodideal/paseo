@@ -57,3 +57,17 @@ The Hub authenticates as a service principal. Its locally selected grants decide
 Hub user and role identifiers remain opaque external subjects. The Hub may create and revoke linked daemon principals when granted `access.manage`; the daemon does not interpret accounts, organizations, or roles.
 
 Hub enrollment and permission updates exchange these semantic permissions directly. Legacy persisted Hub relationships that contain `hub.execution.*` migrate once to `hub.execute` when the daemon loads them; new relationships never persist or emit transport scopes as authority.
+
+## Workflow authority and execution risk
+
+The Workflow Engine classifies every Step with an `executionRisk` level:
+
+| Risk level          | Meaning                                       | Required permission | Approval requirement      |
+| ------------------- | --------------------------------------------- | ------------------- | ------------------------- |
+| `read`              | Read-only observation                         | `workspace.read`    | Automatic                 |
+| `workspace_observe` | Inspection within workspace (e.g. verify)     | `workspace.read`    | Automatic                 |
+| `workspace_write`   | Modifying workspace/worktree (agent dispatch) | `workspace.write`   | Configurable              |
+| `external_write`    | External side effects (`git.push`, create PR) | `workspace.write`   | Explicit approval default |
+| `privileged`        | Host-level configuration changes              | `daemon.manage`     | Explicit approval default |
+
+Finding severity (P0/P1/P2) does not grant permissions or bypass approvals. P0 findings elevate the approval request priority (`[P0 High Priority]`) for operator visibility while preserving host policy boundaries.

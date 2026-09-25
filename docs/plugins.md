@@ -543,3 +543,33 @@ Existing plugin authors should follow the standalone [v0.8 runtime-entry migrati
 See `plugin-examples/local-plugin` for a native surface, `plugin-examples/linear` for a complete
 attachment-source example, `plugin-examples/timeline-items` for timeline projection, and
 `plugin-examples/catppuccin` for a theme.
+
+## Workflow contributions
+
+Plugins can register Workflow presets and custom `StepAdapter` implementations on `PluginServerContext`:
+
+```typescript
+server.registerWorkflowPreset?.({
+  workflowId: "my-plugin.fix-flow",
+  name: "Plugin Fix Flow",
+  sourcePreset: "my-plugin",
+  definition: { ... }
+});
+
+server.registerWorkflowStepAdapter?.({
+  type: "my_plugin.action",
+  version: "1.0.0",
+  inputSchema: MyInputSchema,
+  outputSchema: MyOutputSchema,
+  executionRisk: "workspace_write",
+  requiredPermissions: ["workspace.write"],
+  repositoryCallable: true,
+  idempotency: "none",
+  cancellation: "supported",
+  recovery: "not_resumable",
+  supportedPlatforms: ["darwin", "linux", "win32"],
+  resourceConflictKey: "workspace:{{workspaceId}}:custom",
+});
+```
+
+A plugin cannot overwrite Core step adapters (`worktree.create`, `agent.dispatch`, `verify.command`, `review.agent`, `approval.wait`, `git.push`, `git.create_pr`) or adapters registered by other plugins. When a plugin unloads or reloads, its registered adapters are unregistered; active runs using them transition to `blocked` with `failureClassification: "dependency_unavailable"`, and new runs using them are rejected.
