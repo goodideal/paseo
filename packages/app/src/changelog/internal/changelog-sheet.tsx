@@ -102,7 +102,8 @@ function ChangelogBody({ state, shownReleases, onShowMore, onRetry }: ChangelogB
     () =>
       resolveAppVersion()
         ?.replace(/^v/i, "")
-        .replace(/-custom(?:\.\d+)?$/, "") ?? null,
+        .replace(/\s*\[[^\]]+\]$/, "")
+        .replace(/-custom(?:\.[-\w]+)?$/, "") ?? null,
     [],
   );
 

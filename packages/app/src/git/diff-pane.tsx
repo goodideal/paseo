@@ -1694,6 +1694,8 @@ export function ChangesSurface({
   const workingMode = useMemo(
     () => ({
       kind: "working" as const,
+      cwd,
+      baseRef,
       reviewActions,
       focusPath: documentFocusRequest?.path,
       focusRequestId: documentFocusRequest?.revision,
@@ -1710,6 +1712,8 @@ export function ChangesSurface({
       onRevert: onRevertPath,
     }),
     [
+      cwd,
+      baseRef,
       reviewActions,
       documentFocusRequest?.path,
       documentFocusRequest?.revision,

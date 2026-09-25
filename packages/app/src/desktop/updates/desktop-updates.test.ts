@@ -19,6 +19,8 @@ describe("desktop-updates helpers", () => {
     expect(normalizeVersionForComparison(" v0.1.15 ")).toBe("0.1.15");
     expect(normalizeVersionForComparison("0.1.15")).toBe("0.1.15");
     expect(normalizeVersionForComparison("0.1.15-custom")).toBe("0.1.15");
+    expect(normalizeVersionForComparison("0.1.15-custom.251223")).toBe("0.1.15");
+    expect(normalizeVersionForComparison("v0.1.15 [mod-251223]")).toBe("0.1.15");
     expect(normalizeVersionForComparison(null)).toBeNull();
   });
 
@@ -27,6 +29,8 @@ describe("desktop-updates helpers", () => {
 
     expect(isVersionMismatch("v0.1.15", "0.1.15")).toBe(false);
     expect(isVersionMismatch("v0.1.15-custom", "0.1.15")).toBe(false);
+    expect(isVersionMismatch("v0.1.15 [mod-251223]", "0.1.15")).toBe(false);
+    expect(isVersionMismatch("v0.1.15 [mod-251223]", "0.1.15-custom.251223")).toBe(false);
     expect(isVersionMismatch("0.1.15", "0.1.16")).toBe(true);
     expect(isVersionMismatch("0.1.15", null)).toBe(false);
   });
@@ -36,6 +40,10 @@ describe("desktop-updates helpers", () => {
 
     expect(formatVersionWithPrefix("0.2.0")).toBe("v0.2.0");
     expect(formatVersionWithPrefix("v0.2.0")).toBe("v0.2.0");
+    expect(formatVersionWithPrefix("0.9.2-custom.251223")).toBe("v0.9.2 [mod-251223]");
+    expect(formatVersionWithPrefix("v0.9.2-custom.251223")).toBe("v0.9.2 [mod-251223]");
+    expect(formatVersionWithPrefix("v0.9.2 [mod-251223]")).toBe("v0.9.2 [mod-251223]");
+    expect(formatVersionWithPrefix("0.9.2-custom")).toMatch(/^v0\.9\.2 \[mod-\d{6}\]$/);
     expect(formatVersionWithPrefix(null)).toBe("\u2014");
   });
 

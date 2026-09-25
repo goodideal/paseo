@@ -1,6 +1,7 @@
 import { Canvas, Group, Picture, type SkPicture } from "@shopify/react-native-skia";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import {
   ScrollView,
   StyleSheet,
@@ -23,6 +24,8 @@ import { InlineReviewThread } from "@/review";
 import { useKeyboardShift } from "@/keyboard/shift";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { DocumentFileHeader } from "./document-file-header";
+import { ImageDiffCard } from "../image-diff/image-diff-card";
+import { isImageFilePath } from "../image-diff/file-type";
 import {
   diffInteractionWindowTop,
   diffMaterializationWindow,
@@ -77,6 +80,7 @@ const SYSTEM_MONO = "monospace";
 const CODE_LEFT_PADDING = 8;
 
 export function DiffSurface(props: DiffSurfaceProps) {
+  const mode = props.mode;
   const { t } = useTranslation();
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const [fileWindowTop, setFileWindowTop] = useState(0);
@@ -107,7 +111,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
     () => createNativeTextMeasurer({ configuredFamily: family, fontSize: typography.size }),
     [family, typography.size],
   );
-  const reviewActions = props.mode.kind === "working" ? props.mode.reviewActions : undefined;
+  const reviewActions = mode.kind === "working" ? mode.reviewActions : undefined;
   const model = useMemo(() => {
     const dependencies = [
       props.displayPreferences.layout,
@@ -239,7 +243,6 @@ export function DiffSurface(props: DiffSurfaceProps) {
     );
   }, [horizontalOffsets, model.files]);
 
-  const mode = props.mode;
   const collapsedFilePaths = props.collapsedFilePaths;
   const onToggleFile = props.onToggleFile;
   useEffect(() => {
@@ -477,6 +480,37 @@ function NativeFileBody({
     },
     [file, horizontalOffsets, model, reviewActions],
   );
+
+  const modeServerId =
+    mode.kind === "working" ? (mode.workspaceFileDragScope?.serverId ?? "") : (mode.serverId ?? "");
+  const client = useHostRuntimeClient(modeServerId);
+  const isImage = isImageFilePath(file.path);
+
+  if (isImage && !file.isCollapsed) {
+    return (
+      <View
+        testID={`diff-file-${file.fileIndex}-body`}
+        style={inlineUnistylesStyle<ViewStyle>({
+          position: "absolute",
+          top: file.bodyTop,
+          left: 0,
+          right: 0,
+          height: file.bodyHeight,
+          zIndex: 4,
+        })}
+      >
+        <ImageDiffCard
+          file={file.file}
+          serverId={modeServerId}
+          cwd={mode.cwd ?? ""}
+          baseRef={mode.baseRef ?? "HEAD"}
+          targetRef={mode.kind === "commit" ? mode.targetRef : undefined}
+          client={client}
+        />
+      </View>
+    );
+  }
+
   return (
     <View
       testID={`diff-file-${file.fileIndex}-body`}

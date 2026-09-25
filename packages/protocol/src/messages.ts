@@ -2232,6 +2232,20 @@ export const SubscribeCheckoutDiffRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const WorkspaceGitBlobRequestSchema = z.object({
+  type: z.literal("workspace.git.blob.request"),
+  cwd: z.string(),
+  ref: z.string(),
+  path: z.string(),
+  requestId: z.string(),
+  maxBytes: z
+    .number()
+    .int()
+    .positive()
+    .max(20 * 1024 * 1024)
+    .optional(),
+});
+
 export const CheckoutDiffGetRequestSchema = z.object({
   type: z.literal("checkout.diff.get.request"),
   cwd: z.string(),
@@ -3334,6 +3348,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AgentRewindRequestMessageSchema,
   AgentPermissionResponseMessageSchema,
   CheckoutStatusRequestSchema,
+  WorkspaceGitBlobRequestSchema,
   CheckoutDiffGetRequestSchema,
   SubscribeCheckoutDiffRequestSchema,
   UnsubscribeCheckoutDiffRequestSchema,
@@ -3635,6 +3650,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceSetupRun: z.boolean().optional(),
         // COMPAT(workspaceTerminals): added in v0.8.0, remove gate after 2027-09-05.
         workspaceTerminals: z.boolean().optional(),
+        // COMPAT(gitImageDiff): added in v0.9.2, remove gate after 2027-09-24.
+        gitImageDiff: z.boolean().optional(),
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the
         // feature gate and checkoutGithubSetAutoMerge fallback after 2027-01-17
         // once the supported daemon floor is >= v0.2.0.
@@ -5526,6 +5543,47 @@ export const SubscribeCheckoutDiffResponseSchema = z.object({
   }),
 });
 
+export const WorkspaceGitBlobResponsePayloadSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("ok"),
+    cwd: z.string(),
+    ref: z.string(),
+    path: z.string(),
+    mimeType: z.string(),
+    size: z.number(),
+    base64Data: z.string(),
+    requestId: z.string(),
+  }),
+  z.object({
+    status: z.literal("too_large"),
+    cwd: z.string(),
+    ref: z.string(),
+    path: z.string(),
+    size: z.number(),
+    requestId: z.string(),
+  }),
+  z.object({
+    status: z.literal("missing"),
+    cwd: z.string(),
+    ref: z.string(),
+    path: z.string(),
+    requestId: z.string(),
+  }),
+  z.object({
+    status: z.literal("error"),
+    cwd: z.string(),
+    ref: z.string(),
+    path: z.string(),
+    error: z.string(),
+    requestId: z.string(),
+  }),
+]);
+
+export const WorkspaceGitBlobResponseSchema = z.object({
+  type: z.literal("workspace.git.blob.response"),
+  payload: WorkspaceGitBlobResponsePayloadSchema,
+});
+
 export const CheckoutDiffGetResponseSchema = z.object({
   type: z.literal("checkout.diff.get.response"),
   payload: CheckoutDiffSubscriptionPayloadSchema.omit({ subscriptionId: true }).extend({
@@ -7012,6 +7070,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CloseItemsResponseSchema,
   CheckoutStatusResponseSchema,
   CheckoutStatusUpdateSchema,
+  WorkspaceGitBlobResponseSchema,
   CheckoutDiffGetResponseSchema,
   SubscribeCheckoutDiffResponseSchema,
   CheckoutDiffUpdateSchema,
@@ -7123,6 +7182,11 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
 export type SessionOutboundMessage = z.infer<typeof SessionOutboundMessageSchema>;
 
 // Type exports for individual message types
+
+export type WorkspaceGitBlobRequest = z.infer<typeof WorkspaceGitBlobRequestSchema>;
+export type WorkspaceGitBlobResponse = z.infer<typeof WorkspaceGitBlobResponseSchema>;
+export type WorkspaceGitBlobResponsePayload = z.infer<typeof WorkspaceGitBlobResponsePayloadSchema>;
+
 export type ActivityLogMessage = z.infer<typeof ActivityLogMessageSchema>;
 export type AssistantChunkMessage = z.infer<typeof AssistantChunkMessageSchema>;
 export type AudioOutputMessage = z.infer<typeof AudioOutputMessageSchema>;

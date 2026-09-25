@@ -28,6 +28,34 @@ function runCapture(command, args, options = {}) {
   }
 }
 
+function getModTimestamp() {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}`;
+}
+
+function formatModDisplayVersion(version) {
+  if (!version) return "unknown";
+  const val = String(version).trim();
+  const bracketMatch = val.match(
+    /^(?:v)?(\d+\.\d+\.\d+(?:-beta\.\d+)?)\s*\[(?:mod-|m)?([^\]]+)\]$/i,
+  );
+  if (bracketMatch) {
+    return `v${bracketMatch[1]} [mod-${bracketMatch[2]}]`;
+  }
+  const customTimestampMatch = val.match(
+    /^(?:v)?(\d+\.\d+\.\d+(?:-beta\.\d+)?)-custom(?:(?:\.|-))(?:mod-)?(\d{6}|\w+)$/i,
+  );
+  if (customTimestampMatch) {
+    return `v${customTimestampMatch[1]} [mod-${customTimestampMatch[2]}]`;
+  }
+  const plainCustomMatch = val.match(/^(?:v)?(\d+\.\d+\.\d+(?:-beta\.\d+)?)-custom$/i);
+  if (plainCustomMatch) {
+    return `v${plainCustomMatch[1]} [mod-${getModTimestamp()}]`;
+  }
+  return val.startsWith("v") ? val : `v${val}`;
+}
+
 function printHelp() {
   console.log(`
 Paseo Local Maintenance & Installer (paseo-maintenance / install-local)
@@ -187,7 +215,9 @@ function showStatus() {
 
   // 2. Version
   const localPkg = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
-  console.log(`📌 本地仓库版本:   ${localPkg.version}`);
+  console.log(
+    `📌 本地仓库版本:   ${formatModDisplayVersion(localPkg.version)} (${localPkg.version})`,
+  );
 
   // 3. Global Install targets
   const targets = getGlobalInstallTargets();
@@ -196,7 +226,7 @@ function showStatus() {
     console.log("   ⚠️ 未检测到全局安装的 @getpaseo/cli (Volta 或 npm -g)");
   } else {
     for (const t of targets) {
-      console.log(`   - [${t.name}] 版本: ${t.version}`);
+      console.log(`   - [${t.name}] 版本: ${formatModDisplayVersion(t.version)} (${t.version})`);
       console.log(`     路径: ${t.cliDir}`);
     }
   }
@@ -266,7 +296,9 @@ function checkUpstream() {
   const localPkg = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
 
   console.log("\n-------------------------------------------------------");
-  console.log(`📊 官方版本对比: 官方版本 ${upstreamVersion}  vs  本地版本 ${localPkg.version}`);
+  console.log(
+    `📊 官方版本对比: 官方版本 ${upstreamVersion}  vs  本地版本 ${formatModDisplayVersion(localPkg.version)}`,
+  );
   console.log(`📊 提交差距: 本地领先 ${aheadCount} 个提交, 落后官方 ${behindCount} 个提交`);
   console.log("-------------------------------------------------------");
 
@@ -351,16 +383,20 @@ function syncUpstream() {
       }
     }
 
-    // Ensure custom version suffix is preserved
+    // Ensure custom version suffix is preserved with mod timestamp
     console.log("🏷️ 校验并维护自定义版本标识 (-custom)...");
     try {
       const rootPkgPath = path.join(repoRoot, "package.json");
       const rootPkg = JSON.parse(readFileSync(rootPkgPath, "utf8"));
-      if (!rootPkg.version.endsWith("-custom")) {
-        rootPkg.version = `${rootPkg.version}-custom`;
-        writeFileSync(rootPkgPath, `${JSON.stringify(rootPkg, null, 2)}\n`);
-        console.log(`   -> 更新根版本号为: ${rootPkg.version}`);
-      }
+      const baseVersion = rootPkg.version
+        .replace(/^v/i, "")
+        .replace(/-custom(?:\.[\w-]+)?$/, "")
+        .replace(/\s*\[[^\]]+\]$/, "");
+      rootPkg.version = `${baseVersion}-custom.${getModTimestamp()}`;
+      writeFileSync(rootPkgPath, `${JSON.stringify(rootPkg, null, 2)}\n`);
+      console.log(
+        `   -> 更新根版本号为: ${rootPkg.version} (${formatModDisplayVersion(rootPkg.version)})`,
+      );
       run("node", ["scripts/sync-workspace-versions.mjs"]);
     } catch (err) {
       console.warn("⚠️ 同步子包版本号时出现提示:", err.message);

@@ -141,19 +141,21 @@ git remote set-url origin https://github.com/goodideal/paseo.git
 
 ---
 
-### 特性 D：本地构建安装脚本与 `-custom` 版本后缀全链路兼容 (`packages/*` & `scripts/`)
+### 特性 D：本地构建安装脚本与 `-custom` 版本后缀及 `[mod-DDhhmm]` 全链路兼容 (`packages/*` & `scripts/`)
 
 - **核心意图**：
   1. 提供 `scripts/install-local.mjs`（`npm run install:local`），一键将本地定制源码编译并同步到本地全局 Volta 安装路径；
-  2. 在全库 `package.json` 的版本号后追加 `-custom` 后缀（如 `0.9.0-beta.2-custom`），同时让原生版本号转换、桌面更新检测、设置面板及 Changelog 正确识别并剥离该后缀，避免本地客户端与服务端被误判为版本漂移，或在构建原生安装包时正则解析崩溃。
+  2. 在全库 `package.json` 的版本号后追加 `-custom.<DDhhmm>` 后缀（如 `0.9.2-custom.251223`），同时在 App UI（设置面板、侧边栏帮助、欢迎页）、CLI 终端输出中统一展示为友好格式 `v0.9.2 [mod-DDhhmm]`（如 `v0.9.2 [mod-251223]`，DD 代表日期，hhmm 代表小时分钟），精准识别构建时刻；
+  3. 让原生版本号转换、桌面更新检测、设置面板及 Changelog 正确识别并剥离该后缀及 `[mod-DDhhmm]` 标签，避免本地客户端与服务端被误判为版本漂移，或在构建原生安装包时正则解析崩溃。
 - **涉及核心文件**：
-  - `scripts/install-local.mjs`（本地维护、上游同步、编译与全局 Volta 路径增量覆盖安装）
-  - `.agents/skills/install-local/SKILL.md`（本指南）
-  - `packages/app/native-release-version.js` & `native-release-version.test.ts`（版本号正则允许 `-custom`）
-  - `packages/app/src/desktop/updates/desktop-updates.ts` & `desktop-updates.test.ts`（版本比对归一化时剥离 `-custom`）
-  - `packages/app/src/screens/settings-screen.tsx`（版本比对去除 `-custom`，消除误报 mismatch）
-  - `packages/app/src/changelog/internal/changelog-sheet.tsx`（更新日志展示时剥离 `-custom`）
-  - 根目录及各子包 `package.json`（版本同步为 `<upstream_version>-custom`）
+  - `scripts/install-local.mjs`（本地维护、上游同步、编译与全局 Volta 路径增量覆盖安装，自动维护 `-custom.<DDhhmm>` 及格式化展示）
+  - `.agents/skills/paseo-maintenance/SKILL.md`（本指南）
+  - `packages/app/native-release-version.js` & `native-release-version.test.ts`（版本号正则允许 `-custom`、时间戳后缀及 `[mod-...]` 标签）
+  - `packages/app/src/desktop/updates/desktop-updates.ts` & `desktop-updates.test.ts`（格式化为 `v<base> [mod-DDhhmm]`，并在版本比对归一化时剥离）
+  - `packages/app/src/screens/settings-screen.tsx`（版本比对去除 `-custom` 与 `[mod-...]`，消除误报 mismatch）
+  - `packages/app/src/changelog/internal/changelog-sheet.tsx`（更新日志展示时剥离 `-custom` 与 `[mod-...]`）
+  - `packages/cli/src/version.ts` & `version.test.ts` & `cli.ts`（CLI `--version` 输出格式化为 `v<base> [mod-DDhhmm]`）
+  - 根目录及各子包 `package.json`（版本同步为 `<upstream_version>-custom.<DDhhmm>`）
 
 ---
 

@@ -80,10 +80,12 @@ function tryParseControlMessage(raw: unknown): ControlMessage | null {
     if (!isRecord(parsed)) return null;
     if (parsed.type === "ping") return { type: "ping" };
     if (parsed.type === "pong") return { type: "pong" };
-    if (parsed.type === "sync" && Array.isArray(parsed.connectionIds)) {
-      const connectionIds = parsed.connectionIds.filter(
-        (id: unknown) => typeof id === "string" && id.trim().length > 0,
-      );
+    if (parsed.type === "sync") {
+      const connectionIds = Array.isArray(parsed.connectionIds)
+        ? parsed.connectionIds.filter(
+            (id: unknown) => typeof id === "string" && id.trim().length > 0,
+          )
+        : [];
       return { type: "sync", connectionIds };
     }
     if (

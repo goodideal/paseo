@@ -1,6 +1,5 @@
 {
   "id": "visual-crawler-auto-fix",
-  "name": "Visual Crawler & Autonomous Fix",
   "description": "50-100 hop visual & runtime crawler with triage and multi-worktree parallel auto-fix",
   "requirements": {
     "paseo": ">=0.8.0"

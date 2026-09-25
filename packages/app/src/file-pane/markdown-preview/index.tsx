@@ -2,11 +2,46 @@ import { useMemo } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { MarkdownRenderer } from "@/components/markdown/renderer";
+import type { RenderRules, ASTNode } from "react-native-markdown-display";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { parseMarkdownPreviewDocument } from "./document";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { MarkdownLocalImage } from "./image";
 
-export function FileMarkdownPreview({ source }: { source: string }) {
+export interface FileMarkdownPreviewProps {
+  source: string;
+  filePath: string;
+  workspaceRoot?: string;
+  client?: DaemonClient | null;
+  serverId?: string;
+}
+
+export function FileMarkdownPreview({
+  source,
+  filePath,
+  workspaceRoot,
+  client,
+  serverId,
+}: FileMarkdownPreviewProps) {
   const document = useMemo(() => parseMarkdownPreviewDocument(source), [source]);
+
+  const rules = useMemo<RenderRules>(() => {
+    return {
+      image: (node: ASTNode) => {
+        return (
+          <MarkdownLocalImage
+            key={node.key}
+            source={node.attributes.src}
+            alt={node.attributes.alt}
+            documentPath={filePath}
+            workspaceRoot={workspaceRoot}
+            client={client}
+            serverId={serverId}
+          />
+        );
+      },
+    };
+  }, [filePath, workspaceRoot, client, serverId]);
 
   return (
     <View style={styles.outerGutter}>
@@ -32,7 +67,7 @@ export function FileMarkdownPreview({ source }: { source: string }) {
             ))}
           </View>
         ) : null}
-        <MarkdownRenderer text={document.body} />
+        <MarkdownRenderer text={document.body} rules={rules} />
       </View>
     </View>
   );

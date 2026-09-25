@@ -2,7 +2,11 @@ import { z } from "zod";
 import { CHECK_TRAIT_ACTION_REQUIRED, CHECK_TRAIT_WARNING } from "@getpaseo/protocol/check-traits";
 import { mapGiteaCommitState } from "@getpaseo/protocol/gitea-status";
 import pLimit from "p-limit";
-import { parseGitHubRemoteIdentity, parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
+import {
+  normalizeHost,
+  parseGitHubRemoteIdentity,
+  parseGitRemoteLocation,
+} from "@getpaseo/protocol/git-remote";
 import { findExecutable } from "../executable-resolution/executable-resolution.js";
 import { runGitCommand } from "../utils/run-git-command.js";
 import { execCommand } from "../utils/spawn.js";
@@ -252,6 +256,7 @@ const GiteaCurrentPullRequestApiSchema = z
       .default([]),
     head: z
       .object({
+        label: z.string().optional(),
         ref: z.string(),
         sha: z.string(),
         repo: GiteaPullRequestRepoSchema.nullable().optional(),
@@ -986,11 +991,23 @@ function parseGiteaRepoFromUrl(url: string): { owner?: string; name?: string } {
   return {};
 }
 
+function resolveGiteaHeadRef(head: GiteaCurrentPullRequestApi["head"], baseOwner?: string): string {
+  const headOwner = head.repo?.owner?.login;
+  const isFork = headOwner !== undefined && baseOwner !== undefined && headOwner !== baseOwner;
+
+  let bareRef = head.ref;
+  if (bareRef.startsWith("refs/pull/") && head.label) {
+    bareRef = stripHeadOwner(head.label);
+  } else if (bareRef.startsWith("refs/heads/")) {
+    bareRef = bareRef.slice("refs/heads/".length);
+  }
+
+  return isFork ? `${headOwner}:${bareRef}` : bareRef;
+}
+
 function currentPullRequestApiToListItem(item: GiteaCurrentPullRequestApi): GiteaPrListItem {
-  const headOwner = item.head.repo?.owner?.login;
   const baseOwner = item.base.repo?.owner?.login;
-  const head =
-    headOwner && headOwner !== baseOwner ? `${headOwner}:${item.head.ref}` : item.head.ref;
+  const head = resolveGiteaHeadRef(item.head, baseOwner);
   return {
     index: String(item.number),
     state: item.merged ? "merged" : item.state,
@@ -1195,7 +1212,37 @@ export async function probeGiteaHost(host: string): Promise<boolean> {
   }
 }
 
-function findTeaLoginNameForHost(stdout: string, host: string): string | null {
+export function extractCandidateHost(candidate: string | undefined): string | null {
+  if (!candidate) {
+    return null;
+  }
+  const trimmed = candidate.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (trimmed.includes("://")) {
+    try {
+      return normalizeHost(new URL(trimmed).hostname);
+    } catch {
+      // ignore malformed login url
+    }
+  }
+  const withoutUser = trimmed.includes("@") ? trimmed.slice(trimmed.indexOf("@") + 1) : trimmed;
+  const hostAndPort = withoutUser.split("/")[0] ?? "";
+  if (hostAndPort.startsWith("[")) {
+    const closing = hostAndPort.indexOf("]");
+    if (closing > 0) {
+      return normalizeHost(hostAndPort.slice(1, closing));
+    }
+  }
+  const parts = hostAndPort.split(":");
+  if (parts.length === 2 && /^\d+$/.test(parts[1])) {
+    return normalizeHost(parts[0]);
+  }
+  return normalizeHost(hostAndPort);
+}
+
+export function findTeaLoginNameForHost(stdout: string, host: string): string | null {
   let data: unknown;
   try {
     data = JSON.parse(stdout);
@@ -1206,7 +1253,7 @@ function findTeaLoginNameForHost(stdout: string, host: string): string | null {
   if (!parsed.success) {
     return null;
   }
-  const target = host.toLowerCase();
+  const target = normalizeHost(host);
   const match = parsed.data.find((login) => {
     const candidates = [login.ssh_host, login.name];
     if (login.url) {
@@ -1216,7 +1263,15 @@ function findTeaLoginNameForHost(stdout: string, host: string): string | null {
         // ignore malformed login url
       }
     }
-    return candidates.some((candidate) => candidate?.toLowerCase() === target);
+    return candidates.some((candidate) => {
+      if (!candidate) {
+        return false;
+      }
+      if (candidate.toLowerCase() === target) {
+        return true;
+      }
+      return extractCandidateHost(candidate) === target;
+    });
   });
   return match?.name ?? null;
 }
@@ -1621,12 +1676,19 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     });
     const match =
       candidates.find((item) => mapGiteaState(item.state) === "open") ??
-      candidates.find(
-        (item) =>
-          mapGiteaState(item.state) !== "open" &&
-          input.headSha !== undefined &&
-          item.head.sha === input.headSha,
-      ) ??
+      candidates.find((item) => {
+        if (mapGiteaState(item.state) === "open") {
+          return false;
+        }
+        if (input.headSha !== undefined) {
+          return item.head.sha === input.headSha;
+        }
+        return matchesCurrentHeadRef(
+          currentPullRequestApiToListItem(item),
+          input.headRef,
+          expectedHeadOwner,
+        );
+      }) ??
       null;
     return match ? currentPullRequestApiToListItem(match) : null;
   }

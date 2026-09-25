@@ -5,6 +5,8 @@ import {
   type CreateGiteaServiceOptions,
   createGiteaService,
   detectGiteaFamilySoftware,
+  extractCandidateHost,
+  findTeaLoginNameForHost,
   TeaAuthenticationError,
   TeaCommandError,
   type TeaCommandResult,
@@ -3040,5 +3042,131 @@ describe("detectGiteaFamilySoftware", () => {
       runTea: async () => ({ stdout: "[]", stderr: "" }),
     });
     expect(software).toBe("gitea");
+  });
+
+  it("resolves gitea when tea login has an ssh_host with port", async () => {
+    const runTea = async (args: string[]): Promise<{ stdout: string; stderr: string }> => {
+      if (args[0] === "login") {
+        return {
+          stdout: JSON.stringify([
+            {
+              name: "luna_ai",
+              url: "https://git.codevai.cc",
+              ssh_host: "data.birman-blenny.ts.net:222",
+              user: "luna_ai",
+            },
+          ]),
+          stderr: "",
+        };
+      }
+      return { stdout: "Not found.", stderr: "HTTP/1.1 404 Not Found\nServer: Caddy\n" };
+    };
+    const software = await detectGiteaFamilySoftware("data.birman-blenny.ts.net", {
+      runTea,
+    });
+    expect(software).toBe("gitea");
+  });
+});
+
+describe("findTeaLoginNameForHost & extractCandidateHost", () => {
+  it("extracts hostname from candidate strings with ports, users, or protocols", () => {
+    expect(extractCandidateHost("data.birman-blenny.ts.net:222")).toBe("data.birman-blenny.ts.net");
+    expect(extractCandidateHost("git@data.birman-blenny.ts.net:222")).toBe(
+      "data.birman-blenny.ts.net",
+    );
+    expect(extractCandidateHost("https://git.codevai.cc:8443")).toBe("git.codevai.cc");
+    expect(extractCandidateHost("[::1]:222")).toBe("::1");
+    expect(extractCandidateHost("plain-host")).toBe("plain-host");
+    expect(extractCandidateHost(undefined)).toBeNull();
+    expect(extractCandidateHost("   ")).toBeNull();
+  });
+
+  it("matches tea login entries when ssh_host has a port suffix", () => {
+    const stdout = JSON.stringify([
+      {
+        name: "luna_ai",
+        url: "https://git.codevai.cc",
+        ssh_host: "data.birman-blenny.ts.net:222",
+        user: "luna_ai",
+        default: "true",
+      },
+    ]);
+
+    expect(findTeaLoginNameForHost(stdout, "data.birman-blenny.ts.net")).toBe("luna_ai");
+    expect(findTeaLoginNameForHost(stdout, "git.codevai.cc")).toBe("luna_ai");
+    expect(findTeaLoginNameForHost(stdout, "other.host.com")).toBeNull();
+  });
+
+  it("matches tea login entries by IPv6 with port", () => {
+    const stdout = JSON.stringify([
+      {
+        name: "local_ipv6",
+        url: "http://[::1]:3000",
+        ssh_host: "[::1]:2222",
+        user: "git",
+      },
+    ]);
+
+    expect(findTeaLoginNameForHost(stdout, "::1")).toBe("local_ipv6");
+  });
+});
+
+describe("merged pull request head resolution", () => {
+  it("resolves head branch from head.label when head.ref is refs/pull/<index>/head", async () => {
+    const mergedPrApi = {
+      number: 79,
+      html_url: "https://gitea.com/example-user/sample-repo/pulls/79",
+      title: "Fix issue 78",
+      body: "Resolves #78",
+      state: "closed",
+      merged: true,
+      mergeable: true,
+      updated_at: "2026-09-23T13:14:52Z",
+      labels: [],
+      head: {
+        label: "agent/issue-78-bug-sb-s-p1-google-antigravity",
+        ref: "refs/pull/79/head",
+        sha: "12c46a31dcbe9ecd0274fb6e0687fc200fd74649",
+        repo: {
+          owner: { login: "example-user" },
+          name: "sample-repo",
+        },
+      },
+      base: {
+        ref: "develop",
+        repo: {
+          owner: { login: "example-user" },
+          name: "sample-repo",
+        },
+      },
+    };
+
+    const { service } = makeService((args) => {
+      if (args[0] === "pr" && args[1] === "list") {
+        return ok("[]");
+      }
+      if (args[0] === "api" && args[1].includes("/pulls?state=all")) {
+        return ok(JSON.stringify([mergedPrApi]));
+      }
+      if (args[0] === "api" && args[1].includes("/commits/")) {
+        return ok(JSON.stringify({ state: "success", statuses: [], total_count: 0 }));
+      }
+      throw new Error(`unexpected call: ${args.join(" ")}`);
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "agent/issue-78-bug-sb-s-p1-google-antigravity",
+    });
+
+    expect(status).not.toBeNull();
+    expect(status).toMatchObject({
+      number: 79,
+      title: "Fix issue 78",
+      state: "merged",
+      isMerged: true,
+      headRefName: "agent/issue-78-bug-sb-s-p1-google-antigravity",
+      baseRefName: "develop",
+    });
   });
 });

@@ -701,8 +701,8 @@ function HostVersionRow({
   const isMismatch =
     normalizedHost !== null &&
     normalizedClient !== null &&
-    normalizedHost.replace(/-custom(?:\.\d+)?$/, "") !==
-      normalizedClient.replace(/-custom(?:\.\d+)?$/, "");
+    normalizedHost.replace(/\s*\[[^\]]+\]$/, "").replace(/-custom(?:\.[-\w]+)?$/, "") !==
+      normalizedClient.replace(/\s*\[[^\]]+\]$/, "").replace(/-custom(?:\.[-\w]+)?$/, "");
 
   let valueText: string;
   if (!isConnected) {

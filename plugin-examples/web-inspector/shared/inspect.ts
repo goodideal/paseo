@@ -1,4 +1,4 @@
-import { defineRpc, } from "@getpaseo/plugin";
+import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 import { PluginAttachmentSearchPayloadSchema } from "@getpaseo/plugin";
 

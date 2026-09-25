@@ -26,6 +26,16 @@ describe("native release version", () => {
       androidVersionCode: 9000,
       iosBuildNumber: "9000999",
     });
+    expect(getNativeReleaseVersion("0.9.2-custom.251223")).toEqual({
+      appVersion: "0.9.2",
+      androidVersionCode: 9002,
+      iosBuildNumber: "9002999",
+    });
+    expect(getNativeReleaseVersion("v0.9.2 [mod-251223]")).toEqual({
+      appVersion: "0.9.2",
+      androidVersionCode: 9002,
+      iosBuildNumber: "9002999",
+    });
   });
 
   it("gives each beta a unique iOS build slot under the stable app version", () => {

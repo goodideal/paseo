@@ -1,3 +1,4 @@
+import { isImageFilePath } from "../image-diff/file-type";
 import { lineNumberGutterWidth } from "@/components/code-insets";
 import { findClusterBreak } from "@marijn/find-cluster-break";
 import {
@@ -218,6 +219,24 @@ function appendNewFileRows(candidate: {
   gutterWidth: number;
 }): FileRowsResult {
   if (candidate.file.status === "binary" || candidate.file.status === "too_large") {
+    const isImage = isImageFilePath(candidate.file.path);
+    if (isImage) {
+      // Allow some space for the image card
+      const height = 480;
+      candidate.rows.push({
+        kind: "status",
+        index: candidate.rows.length,
+        fileIndex: candidate.fileIndex,
+        path: candidate.file.path,
+        top: candidate.bodyTop,
+        height,
+        label: "",
+      });
+      return {
+        bottom: candidate.bodyTop + height + DIFF_BODY_BORDER_HEIGHT,
+        maximumHorizontalOverflow: 0,
+      };
+    }
     const height = candidate.input.typography.lineHeight + 24;
     candidate.rows.push({
       kind: "status",

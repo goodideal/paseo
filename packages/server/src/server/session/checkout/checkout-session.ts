@@ -15,6 +15,7 @@ import type {
   SessionOutboundMessage,
   SubscribeCheckoutDiffRequest,
   UnsubscribeCheckoutDiffRequest,
+  WorkspaceGitBlobRequest,
   ValidateBranchRequest,
 } from "../../messages.js";
 import type {
@@ -52,6 +53,7 @@ import {
   pushCurrentBranch,
   listCheckoutCommits,
   getCommitFileDiff,
+  getGitBlob,
 } from "../../../utils/checkout-git.js";
 import { runGitCommand } from "../../../utils/run-git-command.js";
 import { expandTilde } from "../../../utils/path.js";
@@ -307,6 +309,81 @@ export class CheckoutSession {
       this.host.emit({
         type: "checkout.commits.file_diff.response",
         payload: { cwd, sha, path, file: null, error: toCheckoutError(error), requestId },
+      });
+    }
+  }
+
+  async handleGitBlobRequest(msg: WorkspaceGitBlobRequest): Promise<void> {
+    const { cwd, ref, path, requestId, maxBytes } = msg;
+
+    try {
+      assertSafeGitRef(ref, "commit");
+      if (path.length === 0 || isAbsolute(path) || path.split(/[\\/]/).includes("..")) {
+        throw new Error(`Invalid path: ${path}`);
+      }
+      const safeMaxBytes = Math.min(maxBytes ?? 5 * 1024 * 1024, 20 * 1024 * 1024);
+      const result = await getGitBlob({ cwd: expandTilde(cwd), ref, path, maxBytes: safeMaxBytes });
+      if (result.status === "ok") {
+        this.host.emit({
+          type: "workspace.git.blob.response",
+          payload: {
+            status: "ok",
+            cwd,
+            ref,
+            path,
+            mimeType: result.mimeType,
+            size: result.size,
+            base64Data: result.base64Data,
+            requestId,
+          },
+        });
+      } else if (result.status === "too_large") {
+        this.host.emit({
+          type: "workspace.git.blob.response",
+          payload: {
+            status: "too_large",
+            cwd,
+            ref,
+            path,
+            size: result.size,
+            requestId,
+          },
+        });
+      } else if (result.status === "missing") {
+        this.host.emit({
+          type: "workspace.git.blob.response",
+          payload: {
+            status: "missing",
+            cwd,
+            ref,
+            path,
+            requestId,
+          },
+        });
+      } else {
+        this.host.emit({
+          type: "workspace.git.blob.response",
+          payload: {
+            status: "error",
+            cwd,
+            ref,
+            path,
+            error: result.error,
+            requestId,
+          },
+        });
+      }
+    } catch (error) {
+      this.host.emit({
+        type: "workspace.git.blob.response",
+        payload: {
+          status: "error",
+          cwd,
+          ref,
+          path,
+          error: error instanceof Error ? error.message : String(error),
+          requestId,
+        },
       });
     }
   }

@@ -940,6 +940,7 @@ export class Session {
       workspaceRegistry: this.workspaceRegistry,
       projectRegistry: this.projectRegistry,
       workspaceGitService: this.workspaceGitService,
+      isDirectory: (path) => this.filesystem.isDirectory(path),
       logger: this.sessionLogger,
     });
     this.workspaceRecovery = createWorkspaceRecoveryService({
@@ -2864,6 +2865,8 @@ export class Session {
         return this.checkoutSession.handleStatusRequest(msg);
       case "checkout.commits.list.request":
         return this.checkoutSession.handleCommitsListRequest(msg);
+      case "workspace.git.blob.request":
+        return this.checkoutSession.handleGitBlobRequest(msg);
       case "checkout.commits.file_diff.request":
         return this.checkoutSession.handleCommitFileDiffRequest(msg);
       case "validate_branch_request":
