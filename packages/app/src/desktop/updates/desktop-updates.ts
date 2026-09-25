@@ -162,7 +162,10 @@ export function normalizeVersionForComparison(version: string | null | undefined
     return null;
   }
 
-  return value.replace(/^v/i, "").replace(/-custom(?:\.\d+)?$/, "");
+  return value
+    .replace(/^v/i, "")
+    .replace(/\s*\[[^\]]+\]$/, "")
+    .replace(/-custom(?:\.[-\w]+)?$/, "");
 }
 
 export function isVersionMismatch(
@@ -179,10 +182,40 @@ export function isVersionMismatch(
   return app !== daemon;
 }
 
+function getModTimestamp(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}`;
+}
+
 export function formatVersionWithPrefix(version: string | null | undefined): string {
   const value = version?.trim();
   if (!value) {
     return "\u2014";
+  }
+
+  const bracketMatch = value.match(
+    /^(?:v)?(\d+\.\d+\.\d+(?:-beta\.\d+)?)\s*\[(?:mod-|m)?([^\]]+)\]$/i,
+  );
+  if (bracketMatch) {
+    return `v${bracketMatch[1]} [mod-${bracketMatch[2]}]`;
+  }
+
+  const customTimestampMatch = value.match(
+    /^(?:v)?(\d+\.\d+\.\d+(?:-beta\.\d+)?)-custom[.-](?:mod-)?(\d{6}|\w+)$/i,
+  );
+  if (customTimestampMatch) {
+    return `v${customTimestampMatch[1]} [mod-${customTimestampMatch[2]}]`;
+  }
+
+  const genericCustomMatch = value.match(/^(?:v)?(\d+\.\d+\.\d+(?:-beta\.\d+)?)-custom$/i);
+  if (genericCustomMatch) {
+    const envMod =
+      typeof process !== "undefined" && process.env?.EXPO_PUBLIC_PASEO_MOD_TIME
+        ? process.env.EXPO_PUBLIC_PASEO_MOD_TIME
+        : undefined;
+    const tag = envMod && /^\d{6}$/.test(envMod) ? envMod : getModTimestamp();
+    return `v${genericCustomMatch[1]} [mod-${tag}]`;
   }
 
   return value.startsWith("v") ? value : `v${value}`;

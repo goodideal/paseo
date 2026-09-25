@@ -38,9 +38,9 @@ import {
   addJsonAndDaemonHostOptions,
   withGlobalOptions,
 } from "./utils/command-options.js";
-import { resolveCliVersion } from "./version.js";
+import { formatDisplayCliVersion, resolveCliVersion } from "./version.js";
 
-const VERSION = resolveCliVersion();
+const VERSION = formatDisplayCliVersion(resolveCliVersion());
 
 export function createCli(): Command {
   const program = new Command();

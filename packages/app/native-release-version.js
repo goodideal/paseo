@@ -1,4 +1,5 @@
-const versionPattern = /^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?(?:-custom(?:\.\d+)?)?$/;
+const versionPattern =
+  /^(?:v)?(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?(?:-custom(?:\.[-\w]+)?)?(?:\s*\[[^\]]+\])?$/;
 const stableIosBuildSlot = 999;
 const FDROID_ABI_VERSION_CODE_SUFFIXES = {
   "armeabi-v7a": 1,
