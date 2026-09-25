@@ -14,6 +14,7 @@ function emptyDraft(): ProjectConfigDraft {
       branchName: "",
       commitMessage: "",
       pullRequest: "",
+      audioBrief: "",
     },
     metadataGenerationBase: undefined,
   };
@@ -222,12 +223,14 @@ describe("applyDraftToConfig", () => {
         branchName: { instructions: "feat/<slug>" },
         commitMessage: { instructions: "Conventional commits." },
         pullRequest: { instructions: "Include risk notes." },
+        audioBrief: { instructions: "Explain architectural trade-offs." },
       },
     });
     expect(draft.metadataPrompts).toEqual({
       branchName: "feat/<slug>",
       commitMessage: "Conventional commits.",
       pullRequest: "Include risk notes.",
+      audioBrief: "Explain architectural trade-offs.",
     });
   });
 
@@ -239,6 +242,7 @@ describe("applyDraftToConfig", () => {
       branchName: "feat/<slug>",
       commitMessage: "",
       pullRequest: "",
+      audioBrief: "",
     });
   });
 
@@ -256,6 +260,7 @@ describe("applyDraftToConfig", () => {
       branchName: "feat/<slug>",
       commitMessage: "",
       pullRequest: "",
+      audioBrief: "",
     });
   });
 

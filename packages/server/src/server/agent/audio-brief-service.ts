@@ -4,6 +4,10 @@ import crypto from "node:crypto";
 import type { Readable } from "node:stream";
 import { z } from "zod";
 import type pino from "pino";
+import { DEFAULT_AUDIO_BRIEF_INSTRUCTIONS } from "@getpaseo/protocol/audio-brief";
+import { PaseoConfigSchema } from "@getpaseo/protocol/paseo-config-schema";
+import { readPaseoConfigJson } from "../../utils/paseo-config-file.js";
+import type { RepoRootResolver } from "../../utils/build-metadata-prompt.js";
 import type { TextToSpeechProvider } from "../speech/speech-provider.js";
 import type { StructuredTextGeneration } from "../session/checkout/git-metadata-generator.js";
 import {
@@ -24,15 +28,23 @@ export interface AudioBriefServiceOptions {
   generation?: StructuredTextGeneration;
   tts?: () => TextToSpeechProvider | null;
   logger?: pino.Logger;
+  readDaemonConfig?: () =>
+    | {
+        metadataGeneration?: {
+          audioBrief?: { instructions?: string };
+        };
+      }
+    | undefined;
+  workspaceGitService?: RepoRootResolver;
 }
 
 const BRIEF_SCHEMA = z.object({
   briefText: z
     .string()
     .min(1)
-    .max(300)
+    .max(2000)
     .describe(
-      "A spoken, executive summary of what was done and what decision/next action is required. Maximum 60 words, plain conversational speech.",
+      "A spoken, executive summary of what was done and what decision/next action is required. Plain conversational speech.",
     ),
 });
 
@@ -150,6 +162,8 @@ export class AudioBriefService {
   private readonly logger?: pino.Logger;
   private readonly cacheDir: string;
   private readonly inflight = new Map<string, Promise<AudioBriefResult>>();
+  private readonly readDaemonConfig?: AudioBriefServiceOptions["readDaemonConfig"];
+  private readonly workspaceGitService?: RepoRootResolver;
 
   constructor(options: AudioBriefServiceOptions) {
     this.paseoHome = options.paseoHome;
@@ -157,6 +171,38 @@ export class AudioBriefService {
     this.ttsResolver = options.tts;
     this.logger = options.logger?.child({ module: "audio-brief-service" });
     this.cacheDir = path.join(this.paseoHome, "cache", "audio-briefs");
+    this.readDaemonConfig = options.readDaemonConfig;
+    this.workspaceGitService = options.workspaceGitService;
+  }
+
+  private async resolvePrompt(cwd?: string, customPrompt?: string): Promise<string> {
+    if (typeof customPrompt === "string" && customPrompt.trim()) {
+      return customPrompt.trim();
+    }
+
+    if (cwd) {
+      try {
+        let repoRoot = cwd;
+        if (this.workspaceGitService) {
+          repoRoot = await this.workspaceGitService.resolveRepoRoot(cwd).catch(() => cwd);
+        }
+        const json = readPaseoConfigJson(repoRoot);
+        const parsed = PaseoConfigSchema.safeParse(json);
+        if (parsed.success && parsed.data.metadataGeneration?.audioBrief?.instructions?.trim()) {
+          return parsed.data.metadataGeneration.audioBrief.instructions.trim();
+        }
+      } catch {
+        // Ignore file read error and fall through
+      }
+    }
+
+    const daemonConfig = this.readDaemonConfig?.();
+    const daemonInstructions = daemonConfig?.metadataGeneration?.audioBrief?.instructions;
+    if (typeof daemonInstructions === "string" && daemonInstructions.trim()) {
+      return daemonInstructions.trim();
+    }
+
+    return DEFAULT_AUDIO_BRIEF_INSTRUCTIONS;
   }
 
   private getCacheFilePath(hash: string): string {
@@ -216,14 +262,18 @@ export class AudioBriefService {
     agentId: string;
     turnId: string;
     text: string;
+    customPrompt?: string;
     cwd?: string;
     forceRefresh?: boolean;
   }): Promise<AudioBriefResult> {
+    const prompt = await this.resolvePrompt(params.cwd, params.customPrompt);
+    const promptHash = crypto.createHash("sha256").update(prompt).digest("hex").slice(0, 16);
+
     const tts = this.ttsResolver?.() ?? null;
     const ttsKey = getTtsKey(tts);
     const textHash = crypto
       .createHash("sha256")
-      .update(`${params.text.trim()}\0${ttsKey}`)
+      .update(`${params.text.trim()}\0${ttsKey}\0${promptHash}`)
       .digest("hex");
 
     if (!params.forceRefresh) {
@@ -239,7 +289,7 @@ export class AudioBriefService {
       }
     }
 
-    const task = this.executeSynthesize(params, textHash, tts);
+    const task = this.executeSynthesize(params, textHash, tts, prompt);
     this.inflight.set(textHash, task);
     try {
       return await task;
@@ -257,6 +307,7 @@ export class AudioBriefService {
     },
     textHash: string,
     tts: TextToSpeechProvider | null,
+    prompt: string,
   ): Promise<AudioBriefResult> {
     const startTime = Date.now();
     let briefText = "";
@@ -264,22 +315,11 @@ export class AudioBriefService {
     // 1. Generate intelligent brief
     if (this.generation && params.cwd) {
       try {
-        const prompt = [
-          "You are an executive technical briefer.",
-          "Convert the following coding assistant message into a spoken, decision-oriented brief for the developer.",
-          "Rules:",
-          "- NEVER read code, syntax, diffs, backticks, or raw file paths.",
-          "- In 1 to 2 spoken sentences: state the key outcome (what was done or fixed), test/check status, and what decision/next action is required from the developer.",
-          "- Under 60 words total.",
-          "- Match the language of the source text (Chinese if Chinese, English if English).",
-          "",
-          "Assistant Message:",
-          params.text,
-        ].join("\n");
+        const llmPrompt = [prompt, "", "Assistant Message:", params.text].join("\n");
 
         const result = await this.generation.generate({
           cwd: params.cwd,
-          prompt,
+          prompt: llmPrompt,
           schema: BRIEF_SCHEMA,
           schemaName: "AudioBrief",
           agentTitle: "Audio briefer",

@@ -3416,7 +3416,7 @@ export class DaemonClient {
     agentId: string,
     turnId: string,
     text: string,
-    options: { forceRefresh?: boolean; requestId?: string } = {},
+    options: { customPrompt?: string; forceRefresh?: boolean; requestId?: string } = {},
   ): Promise<AgentMessageSynthesizeBriefPayload> {
     return this.sendNamespacedCorrelatedSessionRequest<"agent.message.synthesize_brief.response">({
       requestId: options.requestId,
@@ -3425,6 +3425,7 @@ export class DaemonClient {
         agentId,
         turnId,
         text,
+        ...(options.customPrompt !== undefined ? { customPrompt: options.customPrompt } : {}),
         ...(options.forceRefresh !== undefined ? { forceRefresh: options.forceRefresh } : {}),
       },
       timeout: 60000,

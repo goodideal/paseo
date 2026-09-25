@@ -2082,6 +2082,15 @@ export const ko: TranslationResources = {
       fallbackHint: "사용할 수 없으면 Paseo가 다른 사용 가능한 모델을 사용합니다",
       docs: "문서",
       saveError: "메타데이터 생성을 업데이트할 수 없습니다",
+      audioBriefTitle: "음성 브리핑 프롬프트",
+      audioBriefDescription:
+        "어시스턴트 메시지에서 음성 브리핑을 생성하는 데 사용할 프롬프트 지침 사용자 지정",
+      audioBriefPlaceholder:
+        "비워두면 기본 제공 적응형 요약을 사용하거나 사용자 지정 지침을 입력하세요...",
+      loadDefaultTemplate: "템플릿 불러오기",
+      reset: "초기화",
+      save: "저장",
+      saving: "저장 중...",
     },
     general: {
       title: "일반",
@@ -2773,6 +2782,9 @@ export const ko: TranslationResources = {
         commitMessagePlaceholder: "스코프와 함께 Conventional Commits를 사용하세요",
         pullRequest: "풀 리퀘스트",
         pullRequestPlaceholder: "한 문단 요약으로 시작하고 테스트 계획 섹션을 포함하세요",
+        audioBrief: "음성 브리핑",
+        audioBriefPlaceholder:
+          "아키텍처 제안은 자세히 설명하고, 일상적인 업데이트는 간결하게 유지...",
       },
       writeFailures: {
         staleTitle: "디스크에서 구성이 변경되었습니다",

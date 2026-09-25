@@ -991,6 +991,8 @@ export class Session {
       generation: structuredTextGeneration,
       tts: toResolver(tts),
       logger: this.sessionLogger,
+      readDaemonConfig: () => this.daemonConfigStore.get(),
+      workspaceGitService: this.workspaceGitService,
     });
     this.scheduleSession = new ScheduleSession({
       host: { emit: (msg) => this.emit(msg) },
@@ -8062,6 +8064,7 @@ export class Session {
         agentId: msg.agentId,
         turnId: msg.turnId,
         text: msg.text,
+        customPrompt: msg.customPrompt,
         cwd: snapshot.cwd,
         forceRefresh: msg.forceRefresh,
       });

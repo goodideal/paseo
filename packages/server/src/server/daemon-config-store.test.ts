@@ -656,6 +656,39 @@ describe("DaemonConfigStore", () => {
     expect(persisted.agents?.metadataGeneration).toEqual({ providers: [] });
   });
 
+  test("patch persists audioBrief instructions into config.json", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+
+    const store = new DaemonConfigStore(
+      paseoHome,
+      {
+        mcp: { injectIntoAgents: false },
+        browserTools: { enabled: false },
+        providers: {},
+        metadataGeneration: { providers: [] },
+        autoArchiveAfterMerge: false,
+        enableTerminalAgentHooks: false,
+        appendSystemPrompt: "",
+      },
+      undefined,
+    );
+
+    const next = store.patch({
+      metadataGeneration: {
+        audioBrief: { instructions: "Detailed architecture explanations" },
+      },
+    });
+
+    expect(next.metadataGeneration.audioBrief?.instructions).toBe(
+      "Detailed architecture explanations",
+    );
+    const persisted = loadPersistedConfig(paseoHome);
+    expect(persisted.agents?.metadataGeneration?.audioBrief).toEqual({
+      instructions: "Detailed architecture explanations",
+    });
+  });
+
   test("patch persists append system prompt into config.json", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);
