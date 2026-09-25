@@ -8,7 +8,12 @@ import type {
   WorkflowRunDetail,
   WorkflowRunSummary,
 } from "@getpaseo/protocol/workflow/rpc-schemas";
-import { useWorkflowRuns, type WorkflowEngineClient } from "./workflow-runs-panel";
+import {
+  useWorkflowRuns,
+  workflowRunsPanelRegistration,
+  type WorkflowEngineClient,
+} from "./workflow-runs-panel";
+import { getPanelRegistration, registerPanel } from "./panel-registry";
 
 const scope = { projectId: "p1", workspaceId: "ws-1" };
 
@@ -223,6 +228,19 @@ describe("useWorkflowRuns", () => {
     await act(async () => fireEvent.click(screen.getByTestId("cancel")));
     expect(screen.getByTestId("action-error").textContent).toBe("Run is already terminal");
     expect(screen.getByTestId("action-success").textContent).toBe("none");
+  });
+
+  it("provides a presentation for launcher and tab chrome", () => {
+    expect(workflowRunsPanelRegistration.presentation).toBeDefined();
+    expect(
+      workflowRunsPanelRegistration.presentation?.label(
+        ((key: string, fallback?: string) => fallback ?? key) as never,
+      ),
+    ).toBe("Workflow Runs");
+    expect(workflowRunsPanelRegistration.presentation?.icon).toBeDefined();
+
+    registerPanel(workflowRunsPanelRegistration);
+    expect(getPanelRegistration("workflow_runs")?.presentation).toBeDefined();
   });
 });
 

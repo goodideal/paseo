@@ -6,7 +6,7 @@ import invariant from "tiny-invariant";
 import { Activity } from "lucide-react-native";
 
 import { usePaneContext } from "@/panels/pane-context";
-import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
+import { definePanel, type PanelDescriptor, type PanelPresentation } from "@/panels/panel-registry";
 import { ScreenTitle } from "@/components/headers/screen-title";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -294,14 +294,23 @@ export function useWorkflowRuns(
   };
 }
 
+const ThemedActivity = withUnistyles(Activity);
+
+export const workflowRunsPanelPresentation = {
+  label: (t) => t("panels.workflowRuns.label", "Workflow Runs"),
+  subtitle: (t) => t("panels.workflowRuns.subtitle", "Workspace"),
+  tooltip: (t) => t("panels.workflowRuns.label", "Workflow Runs"),
+  icon: ThemedActivity,
+} satisfies PanelPresentation;
+
 function useWorkflowRunsPanelDescriptor(): PanelDescriptor {
   const { t } = useTranslation();
   return {
-    label: t("panels.workflowRuns.label", "Workflow Runs"),
-    subtitle: t("panels.workflowRuns.subtitle", "Workspace"),
-    tooltip: t("panels.workflowRuns.label", "Workflow Runs"),
+    label: workflowRunsPanelPresentation.label(t),
+    subtitle: workflowRunsPanelPresentation.subtitle(t),
+    tooltip: workflowRunsPanelPresentation.tooltip(t),
     titleState: "ready",
-    icon: Activity,
+    icon: workflowRunsPanelPresentation.icon,
     statusBucket: null,
   };
 }
@@ -731,6 +740,7 @@ function WorkflowRunsPanel() {
 
 export const workflowRunsPanelRegistration = definePanel("workflow_runs", {
   component: WorkflowRunsPanel,
+  presentation: workflowRunsPanelPresentation,
   useDescriptor: useWorkflowRunsPanelDescriptor,
 });
 
