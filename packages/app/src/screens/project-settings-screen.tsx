@@ -37,6 +37,7 @@ import { useProjectIcons } from "@/projects/icons";
 import { createProjectIconTarget } from "@/projects/icon-target";
 import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
 import { useHostFeature } from "@/runtime/host-features";
+import { DEFAULT_AUDIO_BRIEF_INSTRUCTIONS } from "@getpaseo/protocol/audio-brief";
 import { useToast } from "@/contexts/toast-context";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import {
@@ -84,6 +85,12 @@ const METADATA_PROMPT_FIELDS: Record<MetadataPromptKey, MetadataPromptField> = {
     placeholderKey: "settings.project.metadata.pullRequestPlaceholder",
     sectionTestID: "metadata-prompt-pull-request-section",
     inputTestID: "metadata-prompt-pull-request-input",
+  },
+  audioBrief: {
+    titleKey: "settings.project.metadata.audioBrief",
+    placeholderKey: "settings.project.metadata.audioBriefPlaceholder",
+    sectionTestID: "metadata-prompt-audio-brief-section",
+    inputTestID: "metadata-prompt-audio-brief-input",
   },
 };
 
@@ -889,8 +896,27 @@ function MetadataPromptSection({ promptKey, value, onChange, flush }: MetadataPr
     (text: string) => onChange(promptKey, text),
     [onChange, promptKey],
   );
+  const handleLoadDefaultTemplate = useCallback(() => {
+    onChange(promptKey, DEFAULT_AUDIO_BRIEF_INSTRUCTIONS);
+  }, [onChange, promptKey]);
+  const trailing = useMemo(() => {
+    if (promptKey === "audioBrief") {
+      return (
+        <Button
+          size="xs"
+          variant="secondary"
+          onPress={handleLoadDefaultTemplate}
+          testID="project-settings-audio-brief-load-template"
+        >
+          {t("settings.metadataGeneration.loadDefaultTemplate")}
+        </Button>
+      );
+    }
+    return undefined;
+  }, [handleLoadDefaultTemplate, promptKey, t]);
+
   return (
-    <SettingsSection title={title} testID={meta.sectionTestID} flush={flush}>
+    <SettingsSection title={title} testID={meta.sectionTestID} flush={flush} trailing={trailing}>
       <SettingsTextAreaCard
         testID={meta.inputTestID}
         accessibilityLabel={title}

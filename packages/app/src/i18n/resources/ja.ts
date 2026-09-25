@@ -2092,6 +2092,15 @@ export const ja: TranslationResources = {
       fallbackHint: "利用できない場合、Paseo は別の利用可能なモデルを使用します",
       docs: "ドキュメント",
       saveError: "メタデータ生成を更新できません",
+      audioBriefTitle: "音声ブリーフプロンプト",
+      audioBriefDescription:
+        "アシスタントメッセージから音声ブリーフを合成するプロンプトをカスタマイズ",
+      audioBriefPlaceholder:
+        "空欄のままにして内蔵のアダプティブ要約を使用するか、カスタム指示を入力...",
+      loadDefaultTemplate: "テンプレートを読み込む",
+      reset: "リセット",
+      save: "保存",
+      saving: "保存中...",
     },
     general: {
       title: "一般",
@@ -2787,6 +2796,8 @@ export const ja: TranslationResources = {
         commitMessagePlaceholder: "スコープ付きのConventional Commitsを使用",
         pullRequest: "プルリクエスト",
         pullRequestPlaceholder: "1段落の要約で始め、テスト計画セクションを含める",
+        audioBrief: "音声ブリーフ",
+        audioBriefPlaceholder: "アーキテクチャ提案は詳しく説明し、日常的な更新は簡潔に...",
       },
       writeFailures: {
         staleTitle: "設定がディスク上で変更されました",

@@ -2120,6 +2120,15 @@ export const es: TranslationResources = {
       fallbackHint: "Si no está disponible, Paseo usa otro modelo disponible",
       docs: "Documentación",
       saveError: "No se pudo actualizar la generación de metadatos",
+      audioBriefTitle: "Prompt del resumen de audio",
+      audioBriefDescription:
+        "Personaliza las instrucciones que Paseo usa para sintetizar resúmenes de audio hablados a partir de mensajes del asistente",
+      audioBriefPlaceholder:
+        "Dejar en blanco para usar el resumidor adaptativo integrado, o ingresar instrucciones personalizadas...",
+      loadDefaultTemplate: "Cargar plantilla",
+      reset: "Restablecer",
+      save: "Guardar",
+      saving: "Guardando...",
     },
     general: {
       title: "General",
@@ -2820,6 +2829,9 @@ export const es: TranslationResources = {
         pullRequest: "Solicitudes de extracción",
         pullRequestPlaceholder:
           "Liderar con un resumen de un párrafo, incluir una sección de plan de prueba",
+        audioBrief: "Resumen de audio",
+        audioBriefPlaceholder:
+          "Explicar las propuestas de arquitectura en detalle, mantener breves las actualizaciones rutinarias...",
       },
       writeFailures: {
         staleTitle: "Configuración cambiada en el disco",

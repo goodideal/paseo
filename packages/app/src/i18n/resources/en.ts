@@ -2193,6 +2193,15 @@ export const en = {
       fallbackHint: "If it is unavailable, Paseo falls back to another available model",
       docs: "Docs",
       saveError: "Unable to update metadata generation",
+      audioBriefTitle: "Audio brief prompt",
+      audioBriefDescription:
+        "Customize the instructions Paseo uses to synthesize spoken audio briefs from assistant messages",
+      audioBriefPlaceholder:
+        "Leave blank to use the built-in adaptive summarizer, or enter custom instructions...",
+      loadDefaultTemplate: "Load template",
+      reset: "Reset",
+      save: "Save",
+      saving: "Saving...",
     },
     general: {
       title: "General",
@@ -2883,6 +2892,9 @@ export const en = {
         commitMessagePlaceholder: "Use Conventional Commits with a scope",
         pullRequest: "Pull requests",
         pullRequestPlaceholder: "Lead with a one-paragraph summary, include a Test plan section",
+        audioBrief: "Audio brief",
+        audioBriefPlaceholder:
+          "Explain architectural proposals thoroughly, keep routine updates brief...",
       },
       writeFailures: {
         staleTitle: "Config changed on disk",

@@ -2106,6 +2106,15 @@ export const ru: TranslationResources = {
       fallbackHint: "Если она недоступна, Paseo использует другую доступную модель",
       docs: "Документация",
       saveError: "Не удалось обновить настройки генерации метаданных",
+      audioBriefTitle: "Промпт аудиосводки",
+      audioBriefDescription:
+        "Настройте инструкции, используемые Paseo для синтеза голосовых аудиосводок из сообщений ассистента",
+      audioBriefPlaceholder:
+        "Оставьте пустым для встроенного адаптивного суммаризатора или введите свои инструкции...",
+      loadDefaultTemplate: "Загрузить шаблон",
+      reset: "Сбросить",
+      save: "Сохранить",
+      saving: "Сохранение...",
     },
     general: {
       title: "Основные",
@@ -2812,6 +2821,9 @@ export const ru: TranslationResources = {
         pullRequest: "PR",
         pullRequestPlaceholder:
           "Начинайте с краткого резюме в один абзац и добавляйте раздел «План тестирования».",
+        audioBrief: "Аудиосводка",
+        audioBriefPlaceholder:
+          "Подробно объясняйте архитектурные предложения, рутинные обновления делайте краткими...",
       },
       writeFailures: {
         staleTitle: "Конфигурация изменена на диске",

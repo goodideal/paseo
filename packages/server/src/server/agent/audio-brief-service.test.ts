@@ -136,5 +136,94 @@ All 5 tests passed successfully. Would you like me to create a pull request now?
       expect(res.briefText).toContain("Migration completed without error.");
       expect(res.error).toBeNull();
     });
+
+    it("uses customPrompt and invalidates cache when prompt changes", async () => {
+      const generatedPrompts: string[] = [];
+      const fakeGeneration: StructuredTextGeneration = {
+        generate: async (req) => {
+          generatedPrompts.push(req.prompt);
+          return { briefText: `Summary for: ${req.prompt.slice(0, 20)}` };
+        },
+      };
+
+      const service = new AudioBriefService({
+        paseoHome: tmpDir,
+        generation: fakeGeneration,
+      });
+
+      await service.synthesizeBrief({
+        agentId: "agent-1",
+        turnId: "turn-1",
+        text: "Option A vs Option B comparison",
+        customPrompt: "Explain architecture options in detail.",
+        cwd: "/tmp/cwd",
+      });
+
+      expect(generatedPrompts).toHaveLength(1);
+      expect(generatedPrompts[0]).toContain("Explain architecture options in detail.");
+
+      // Same prompt hits cache
+      await service.synthesizeBrief({
+        agentId: "agent-1",
+        turnId: "turn-1",
+        text: "Option A vs Option B comparison",
+        customPrompt: "Explain architecture options in detail.",
+        cwd: "/tmp/cwd",
+      });
+      expect(generatedPrompts).toHaveLength(1);
+
+      // Different prompt triggers fresh generation (immediate invalidation)
+      await service.synthesizeBrief({
+        agentId: "agent-1",
+        turnId: "turn-1",
+        text: "Option A vs Option B comparison",
+        customPrompt: "Summarize in one single word.",
+        cwd: "/tmp/cwd",
+      });
+      expect(generatedPrompts).toHaveLength(2);
+      expect(generatedPrompts[1]).toContain("Summarize in one single word.");
+    });
+
+    it("respects project-level paseo.json instructions over daemon config", async () => {
+      const projectDir = path.join(tmpDir, "project-repo");
+      await fs.mkdir(projectDir, { recursive: true });
+      await fs.writeFile(
+        path.join(projectDir, "paseo.json"),
+        JSON.stringify({
+          metadataGeneration: {
+            audioBrief: { instructions: "Project-level custom prompt" },
+          },
+        }),
+      );
+
+      const generatedPrompts: string[] = [];
+      const fakeGeneration: StructuredTextGeneration = {
+        generate: async (req) => {
+          generatedPrompts.push(req.prompt);
+          return { briefText: "Project brief" };
+        },
+      };
+
+      const service = new AudioBriefService({
+        paseoHome: tmpDir,
+        generation: fakeGeneration,
+        readDaemonConfig: () => ({
+          metadataGeneration: {
+            audioBrief: { instructions: "Host-level daemon prompt" },
+          },
+        }),
+      });
+
+      await service.synthesizeBrief({
+        agentId: "agent-1",
+        turnId: "turn-1",
+        text: "Some task result",
+        cwd: projectDir,
+      });
+
+      expect(generatedPrompts).toHaveLength(1);
+      expect(generatedPrompts[0]).toContain("Project-level custom prompt");
+      expect(generatedPrompts[0]).not.toContain("Host-level daemon prompt");
+    });
   });
 });

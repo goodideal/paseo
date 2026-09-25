@@ -166,6 +166,11 @@ const MutableStructuredGenerationProviderSchema = z
 const MutableMetadataGenerationConfigSchema = z
   .object({
     providers: z.array(MutableStructuredGenerationProviderSchema).default([]),
+    audioBrief: z
+      .object({
+        instructions: z.string().optional(),
+      })
+      .optional(),
   })
   .passthrough();
 
@@ -1918,6 +1923,7 @@ export const AgentMessageSynthesizeBriefRequestSchema = z.object({
   agentId: z.string(),
   turnId: z.string(),
   text: z.string().max(200_000),
+  customPrompt: z.string().optional(),
   forceRefresh: z.boolean().optional(),
   requestId: z.string(),
 });

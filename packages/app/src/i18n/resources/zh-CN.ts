@@ -2050,6 +2050,13 @@ export const zhCN: TranslationResources = {
       fallbackHint: "如果不可用，Paseo 会改用其他可用模型",
       docs: "文档",
       saveError: "无法更新元数据生成设置",
+      audioBriefTitle: "语音简报提示词",
+      audioBriefDescription: "自定义 Paseo 用于从助手消息生成语音简报的提示词指令",
+      audioBriefPlaceholder: "留空使用内置智能自适应摘要，或输入自定义指令...",
+      loadDefaultTemplate: "载入默认模板",
+      reset: "重置",
+      save: "保存",
+      saving: "保存中...",
     },
     general: {
       title: "通用",
@@ -2726,6 +2733,8 @@ export const zhCN: TranslationResources = {
         commitMessagePlaceholder: "使用带 scope 的 Conventional Commits",
         pullRequest: "Pull requests",
         pullRequestPlaceholder: "先写一段摘要，并包含 Test plan 部分",
+        audioBrief: "语音简报",
+        audioBriefPlaceholder: "对方案比选充分讲解，对日常操作简明扼要...",
       },
       writeFailures: {
         staleTitle: "磁盘上的配置已变更",

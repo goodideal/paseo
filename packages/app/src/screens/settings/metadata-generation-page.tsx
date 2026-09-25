@@ -3,10 +3,13 @@ import { Alert, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
+import { DEFAULT_AUDIO_BRIEF_INSTRUCTIONS } from "@getpaseo/protocol/audio-brief";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
 import { ExternalLink } from "@/components/ui/external-link";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { SegmentedControl } from "@/components/ui/segmented-control";
+import { Button } from "@/components/ui/button";
+import { SettingsTextAreaCard } from "@/components/settings-textarea";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { buildSelectableProviderSelectorProviders } from "@/provider-selection/provider-selection";
@@ -16,15 +19,24 @@ import { settingsStyles } from "@/styles/settings";
 const METADATA_GENERATION_DOCS_URL = "https://paseo.sh/docs/metadata-generation";
 type SelectionMode = "automatic" | "preferred";
 
-export function MetadataGenerationPage({ serverId }: { serverId: string }) {
+interface MetadataProviderSelectionSectionProps {
+  serverId: string;
+  config: NonNullable<ReturnType<typeof useDaemonConfig>["config"]>;
+  patchConfig: ReturnType<typeof useDaemonConfig>["patchConfig"];
+}
+
+function MetadataProviderSelectionSection({
+  serverId,
+  config,
+  patchConfig,
+}: MetadataProviderSelectionSectionProps) {
   const { t } = useTranslation();
-  const { config, isLoading: isConfigLoading, patchConfig } = useDaemonConfig(serverId);
   const snapshot = useProvidersSnapshot(serverId);
   const providers = useMemo(
     () => buildSelectableProviderSelectorProviders(snapshot.entries),
     [snapshot.entries],
   );
-  const configuredProviders = config?.metadataGeneration.providers;
+  const configuredProviders = config.metadataGeneration.providers;
   const configuredProvider = configuredProviders?.[0] ?? null;
   const savedMode: SelectionMode = configuredProvider ? "preferred" : "automatic";
   const [draftMode, setDraftMode] = useState<SelectionMode | null>(null);
@@ -85,10 +97,12 @@ export function MetadataGenerationPage({ serverId }: { serverId: string }) {
   const handleSelectorOpen = useCallback(() => {
     snapshot.refetchIfStale(configuredProvider?.provider);
   }, [configuredProvider?.provider, snapshot]);
+
   const handleRetryProvider = useCallback(
     (provider: AgentProvider) => snapshot.refresh([provider]),
     [snapshot],
   );
+
   const docsLink = useMemo(
     () => (
       <ExternalLink
@@ -98,14 +112,6 @@ export function MetadataGenerationPage({ serverId }: { serverId: string }) {
     ),
     [t],
   );
-
-  if (isConfigLoading || !config) {
-    return (
-      <View style={styles.loading}>
-        <LoadingSpinner size="large" color={styles.spinnerColor.color} />
-      </View>
-    );
-  }
 
   return (
     <SettingsSection
@@ -163,7 +169,141 @@ export function MetadataGenerationPage({ serverId }: { serverId: string }) {
   );
 }
 
+export function MetadataGenerationPage({ serverId }: { serverId: string }) {
+  const { t } = useTranslation();
+  const { config, isLoading: isConfigLoading, patchConfig } = useDaemonConfig(serverId);
+
+  const handleSaveAudioBrief = useCallback(
+    async (prompt: string) => {
+      try {
+        await patchConfig({
+          metadataGeneration: {
+            audioBrief: prompt ? { instructions: prompt } : {},
+          },
+        });
+      } catch (error) {
+        Alert.alert(
+          t("settings.metadataGeneration.saveError"),
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    },
+    [patchConfig, t],
+  );
+
+  if (isConfigLoading || !config) {
+    return (
+      <View style={styles.loading}>
+        <LoadingSpinner size="large" color={styles.spinnerColor.color} />
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      <MetadataProviderSelectionSection
+        serverId={serverId}
+        config={config}
+        patchConfig={patchConfig}
+      />
+      <AudioBriefSettingsSection
+        initialPrompt={config.metadataGeneration?.audioBrief?.instructions ?? ""}
+        onSavePrompt={handleSaveAudioBrief}
+      />
+    </View>
+  );
+}
+
+interface AudioBriefSettingsSectionProps {
+  initialPrompt: string;
+  onSavePrompt: (prompt: string) => Promise<void>;
+}
+
+function AudioBriefSettingsSection({
+  initialPrompt,
+  onSavePrompt,
+}: AudioBriefSettingsSectionProps) {
+  const { t } = useTranslation();
+  const [draft, setDraft] = useState(initialPrompt);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    setDraft(initialPrompt);
+  }, [initialPrompt]);
+
+  const hasChanges = draft !== initialPrompt;
+
+  const handleLoadDefaultTemplate = useCallback(() => {
+    setDraft(DEFAULT_AUDIO_BRIEF_INSTRUCTIONS);
+  }, []);
+
+  const handleReset = useCallback(() => {
+    setDraft(initialPrompt);
+  }, [initialPrompt]);
+
+  const handleSave = useCallback(async () => {
+    setIsSaving(true);
+    try {
+      await onSavePrompt(draft.trim());
+    } finally {
+      setIsSaving(false);
+    }
+  }, [draft, onSavePrompt]);
+
+  const trailing = useMemo(
+    () => (
+      <Button
+        size="xs"
+        variant="secondary"
+        onPress={handleLoadDefaultTemplate}
+        testID="metadata-generation-audio-brief-load-template"
+      >
+        {t("settings.metadataGeneration.loadDefaultTemplate")}
+      </Button>
+    ),
+    [handleLoadDefaultTemplate, t],
+  );
+
+  return (
+    <SettingsSection
+      title={t("settings.metadataGeneration.audioBriefTitle")}
+      info={t("settings.metadataGeneration.audioBriefDescription")}
+      trailing={trailing}
+      testID="metadata-generation-audio-brief-section"
+    >
+      <SettingsTextAreaCard
+        testID="metadata-generation-audio-brief-input"
+        accessibilityLabel={t("settings.metadataGeneration.audioBriefTitle")}
+        value={draft}
+        onChangeText={setDraft}
+        placeholder={t("settings.metadataGeneration.audioBriefPlaceholder")}
+      />
+      {hasChanges ? (
+        <View style={styles.actionsRow}>
+          <Button variant="ghost" size="sm" onPress={handleReset} disabled={isSaving}>
+            {t("settings.metadataGeneration.reset")}
+          </Button>
+          <Button
+            variant="default"
+            size="sm"
+            onPress={handleSave}
+            disabled={isSaving}
+            testID="metadata-generation-audio-brief-save"
+          >
+            {isSaving
+              ? t("settings.metadataGeneration.saving")
+              : t("settings.metadataGeneration.save")}
+          </Button>
+        </View>
+      ) : null}
+    </SettingsSection>
+  );
+}
+
 const styles = StyleSheet.create((theme) => ({
+  container: {
+    gap: 16,
+  },
   loading: {
     alignItems: "center",
     justifyContent: "center",
@@ -171,5 +311,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   spinnerColor: {
     color: theme.colors.foregroundMuted,
+  },
+  actionsRow: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 8,
+    marginTop: 8,
   },
 }));
