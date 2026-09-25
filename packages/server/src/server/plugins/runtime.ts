@@ -24,6 +24,7 @@ import type {
   PluginProcessMessage,
   PluginProcessRequest,
   PluginProviderMetadata,
+  PluginWorkflowPresetMetadata,
 } from "./plugin-process-protocol.js";
 import { PluginProcessMessageSchema } from "./plugin-process-protocol.js";
 import { PluginSessionSocket } from "./session-socket.js";
@@ -65,6 +66,7 @@ interface LoadedPlugin {
   methods: ReadonlySet<string>;
   hooks: { events: string[]; before: string[] };
   providers: readonly PluginProviderMetadata[];
+  workflowPresets: readonly PluginWorkflowPresetMetadata[];
   child: PluginChild | null;
   outputCapture: PluginOutputCapture | null;
   pending: Map<string, PendingInvocation>;
@@ -359,6 +361,10 @@ export class PluginRuntime {
     return this.plugins.get(pluginId)?.providers ?? [];
   }
 
+  getWorkflowPresetRegistrations(pluginId: string): readonly PluginWorkflowPresetMetadata[] {
+    return this.plugins.get(pluginId)?.workflowPresets ?? [];
+  }
+
   async connectProvider(
     pluginId: string,
     providerId: string,
@@ -566,6 +572,7 @@ export class PluginRuntime {
         methods: new Set(),
         hooks: { events: [], before: [] },
         providers: [],
+        workflowPresets: [],
         child: null,
         outputCapture: null,
         pending: new Map(),
@@ -674,6 +681,7 @@ export class PluginRuntime {
       methods: new Set(ready.methods),
       hooks: ready.hooks ?? { events: [], before: [] },
       providers: ready.providers ?? [],
+      workflowPresets: ready.workflowPresets ?? [],
       child,
       outputCapture,
       pending,

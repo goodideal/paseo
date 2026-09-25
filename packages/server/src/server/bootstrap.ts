@@ -148,6 +148,20 @@ import {
 } from "./workspace-registry.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { ScheduleService } from "./schedule/service.js";
+import { WorkflowStore } from "./workflows/workflow-store.js";
+import { StepAdapterRegistry } from "./workflows/step-adapter-registry.js";
+import { registerBuiltInWorkflowStepManifests } from "./workflows/core-step-manifests.js";
+import { createWorkflowPresetRegistry } from "./workflows/workflow-preset-registry.js";
+import { WorkflowService } from "./workflows/workflow-service.js";
+import { StepExecutor } from "./workflows/step-executors.js";
+import { createDefaultVerificationProfileRegistry } from "./workflows/verification-profiles.js";
+import {
+  getCurrentBranch,
+  pushCurrentBranch,
+  createPullRequest as createCheckoutPullRequest,
+} from "../utils/checkout-git.js";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { DaemonConfigStore, type MutableDaemonConfig } from "./daemon-config-store.js";
 import { createOrchestrationSkills } from "./orchestration-skills/index.js";
 import { resolveConfigFromPersisted, type CliConfigOverrides } from "./config.js";
@@ -606,11 +620,21 @@ export async function createPaseoDaemon(
   });
   const browserToolsPolicy = new DaemonConfigBrowserToolsPolicy(daemonConfigStore);
   const browserToolsBroker = new BrowserToolsBroker({});
+  const workflowStore = new WorkflowStore({ paseoHome: config.paseoHome });
+  const workflowRegistry = new StepAdapterRegistry();
+  registerBuiltInWorkflowStepManifests(workflowRegistry);
+  const workflowPresets = createWorkflowPresetRegistry(workflowRegistry);
+  const workflowService = new WorkflowService({
+    store: workflowStore,
+    registry: workflowRegistry,
+  });
   const pluginRuntime = new PluginService(logger, daemonConfigStore, daemonVersion, {
     managedSources: new ManagedPluginSources(config.paseoHome),
     settingsDirectory: path.join(config.paseoHome, "plugin-settings"),
+    workflowPresets,
+    workflowRegistry,
+    workflowService,
   });
-
   const serverId = getOrCreateServerId(config.paseoHome, { logger });
   const daemonKeyPair = await loadOrCreateDaemonKeyPair(config.paseoHome, logger);
   const managedProcesses = createBootstrapManagedProcessRegistry(config, logger);
@@ -1329,6 +1353,64 @@ export async function createPaseoDaemon(
       },
     );
   };
+  const execFileAsync = promisify(execFile);
+  const workflowProfiles = createDefaultVerificationProfileRegistry();
+  const workflowExecutor = new StepExecutor(workflowRegistry, workflowProfiles, {
+    createWorktree: async ({ workspaceRoot, branch }) => {
+      const result = await createPaseoWorktreeForTools({
+        cwd: workspaceRoot,
+        branchName: branch,
+        worktreeSlug: branch,
+        firstAgentContext: { attachments: [] },
+      });
+      return { worktreePath: result.worktree.worktreePath, branch: result.worktree.branchName };
+    },
+    dispatchAgent: async ({ cwd, promptId, provider }) => {
+      const result = await createAgent({
+        kind: "mcp",
+        provider: provider ?? "codex",
+        title: `Workflow ${promptId}`,
+        cwd,
+        workspaceId: (await findWorkspaceIdForCwdExternal(cwd)) ?? undefined,
+        initialPrompt: promptId,
+        background: true,
+        notifyOnFinish: false,
+        internal: true,
+      });
+      return { agentId: result.snapshot.id, sessionId: result.snapshot.id, resumable: true };
+    },
+    runVerification: async ({ profile, cwd }) => {
+      const result = await execFileAsync(profile.command, profile.args, {
+        cwd,
+        timeout: profile.timeoutMs,
+        env: Object.fromEntries(
+          (profile.envAllowlist ?? []).flatMap((key) =>
+            process.env[key] === undefined ? [] : [[key, process.env[key]]],
+          ),
+        ),
+      });
+      return { passed: true, report: `${result.stdout}${result.stderr}` };
+    },
+    gitPush: async ({ cwd }) => {
+      await pushCurrentBranch(cwd, github);
+      const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd });
+      return { success: true, commitSha: stdout.trim() };
+    },
+    createPullRequest: async ({ cwd, title, baseBranch, branch }) => {
+      const result = await createCheckoutPullRequest(
+        cwd,
+        { title, base: baseBranch, head: branch === "HEAD" ? undefined : branch },
+        github,
+      );
+      return { prUrl: result.url, prNumber: result.number };
+    },
+    findPullRequest: async ({ cwd, branch }) => {
+      const headRef = branch === "HEAD" ? await getCurrentBranch(cwd) : branch;
+      if (!headRef) return null;
+      const current = await github.getCurrentPullRequestStatus({ cwd, headRef });
+      return current?.number ? { prUrl: current.url, prNumber: current.number } : null;
+    },
+  });
   const scheduleService = new ScheduleService({
     paseoHome: config.paseoHome,
     logger,
@@ -1717,6 +1799,9 @@ export async function createPaseoDaemon(
               pluginRuntime,
               orchestrationSkills,
               workspaceLabelService,
+              workflowService,
+              workflowPresets,
+              workflowExecutor,
             );
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();

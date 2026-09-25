@@ -9,7 +9,7 @@ import * as pluginSharedRuntime from "@getpaseo/plugin";
 import * as pluginProviderRuntime from "@getpaseo/plugin/server/provider";
 import * as pluginAcpRuntime from "@getpaseo/plugin/server/acp";
 import type { SettingsDefinition, PluginRpcContract } from "@getpaseo/plugin";
-import type { PluginHandlerContext } from "@getpaseo/plugin/server";
+import type { PluginHandlerContext, PluginWorkflowPreset } from "@getpaseo/plugin/server";
 import type { ZodType } from "zod";
 import {
   ProviderEventSchema,
@@ -49,6 +49,7 @@ const hooks = new PluginHookHandlers(() => {
 });
 const handlers = new Map<string, RegisteredRpc>();
 const providers = new Map<string, ProviderRegistration>();
+const workflowPresets = new Map<string, PluginWorkflowPreset>();
 const providerConnections = new Map<
   string,
   { connection: ProviderConnection; unsubscribe: () => void }
@@ -120,6 +121,15 @@ function registerProvider(provider: ProviderRegistration): void {
   }
   if (providers.has(id)) throw new Error(`Duplicate plugin provider ID: ${id}`);
   providers.set(id, { ...provider, id });
+}
+
+function registerWorkflowPreset(preset: PluginWorkflowPreset): void {
+  const workflowId = preset.workflowId.trim();
+  if (!workflowId) throw new Error("Plugin workflow preset requires workflowId");
+  if (workflowPresets.has(workflowId)) {
+    throw new Error(`Duplicate plugin workflow preset: ${workflowId}`);
+  }
+  workflowPresets.set(workflowId, { ...preset, workflowId });
 }
 
 function providerMetadata(provider: ProviderRegistration) {
@@ -236,6 +246,7 @@ function evaluateBundle(bundle: string): void {
   const contributedCleanup = setup({
     handle: register,
     registerProvider,
+    registerWorkflowPreset,
     registerSettings,
     on: hooks.on,
     before: hooks.before,
@@ -279,6 +290,9 @@ async function initialize(message: Extract<PluginProcessRequest, { type: "initia
     providers: [...providers.values()]
       .sort((left, right) => left.id.localeCompare(right.id))
       .map(providerMetadata),
+    workflowPresets: [...workflowPresets.values()].sort((left, right) =>
+      left.workflowId.localeCompare(right.workflowId),
+    ),
   });
 }
 

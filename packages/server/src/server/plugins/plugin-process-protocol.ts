@@ -7,6 +7,13 @@ import type {
 import { ProviderEventSchema, ProviderInputSchema } from "@getpaseo/plugin/server/provider";
 import { z } from "zod";
 
+export interface PluginWorkflowPresetMetadata {
+  workflowId: string;
+  name: string;
+  sourcePreset: string;
+  definition: unknown;
+}
+
 export interface PluginProviderMetadata {
   hasCatalogCacheKey?: boolean;
   id: string;
@@ -56,6 +63,7 @@ export type PluginProcessMessage =
       type: "ready";
       methods: string[];
       providers: PluginProviderMetadata[];
+      workflowPresets?: PluginWorkflowPresetMetadata[];
       hooks?: { events: string[]; before: string[] };
     }
   | { type: "result"; requestId: string; output: unknown }
@@ -182,6 +190,18 @@ export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.dis
         type: z.literal("ready"),
         methods: z.array(z.string()),
         providers: z.array(providerMetadataSchema),
+        workflowPresets: z
+          .array(
+            z
+              .object({
+                workflowId: z.string().min(1),
+                name: z.string().min(1),
+                sourcePreset: z.string().min(1),
+                definition: z.unknown(),
+              })
+              .strict(),
+          )
+          .optional(),
         hooks: hooksSchema.optional(),
       })
       .strict(),

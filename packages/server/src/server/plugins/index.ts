@@ -23,7 +23,13 @@ import { type ManagedPluginCandidate, ManagedPluginSources } from "./managed-sou
 import { readPluginManifest } from "./manifest.js";
 import { runPluginBuild } from "./preparation.js";
 import { PluginRuntime } from "./runtime.js";
-import type { PluginProviderMetadata } from "./plugin-process-protocol.js";
+import type {
+  PluginProviderMetadata,
+  PluginWorkflowPresetMetadata,
+} from "./plugin-process-protocol.js";
+import type { WorkflowPresetRegistry } from "../workflows/workflow-preset-registry.js";
+import type { StepAdapterRegistry } from "../workflows/step-adapter-registry.js";
+import type { WorkflowService } from "../workflows/workflow-service.js";
 import { readPluginProviderIcon } from "./provider-icon.js";
 
 const BUILTIN_PROVIDER_ID_SET: ReadonlySet<string> = new Set(BUILTIN_PROVIDER_IDS);
@@ -36,6 +42,7 @@ interface PluginRuntimePort {
   getLogs(pluginId: string): PluginLogEntry[];
   clearLogs(pluginId: string): void;
   getProviderRegistrations?(pluginId: string): readonly PluginProviderMetadata[];
+  getWorkflowPresetRegistrations?(pluginId: string): readonly PluginWorkflowPresetMetadata[];
   connectProvider: PluginRuntime["connectProvider"];
   getProviderCatalogCacheKey?: PluginRuntime["getProviderCatalogCacheKey"];
   validatePlugin?(path: string): Promise<void>;
@@ -48,6 +55,9 @@ interface PluginRuntimePort {
 
 interface PluginServiceDependencies {
   settingsDirectory?: string;
+  workflowPresets?: WorkflowPresetRegistry;
+  workflowRegistry?: StepAdapterRegistry;
+  workflowService?: WorkflowService;
   runtime?: PluginRuntimePort;
   managedSources?: ManagedPluginSources;
 }
@@ -481,6 +491,7 @@ export class PluginService {
     await this.runtime.startPlugin(pluginId, sourcePath, () => this.canPublish(pluginId));
     try {
       await this.publishProviderRegistrations(pluginId, sourcePath);
+      this.publishWorkflowRegistrations(pluginId);
     } catch (error) {
       try {
         this.removeProviderRegistrations(pluginId);
@@ -493,6 +504,7 @@ export class PluginService {
 
   private stopPlugin(pluginId: string): Promise<boolean> {
     this.removeProviderRegistrations(pluginId);
+    this.removeWorkflowRegistrations(pluginId);
     return this.runtime.stopPluginById(pluginId);
   }
 
@@ -500,7 +512,31 @@ export class PluginService {
     for (const pluginId of this.providerIdsByPlugin.keys()) {
       this.removeProviderRegistrations(pluginId);
     }
+    for (const pluginId of Object.keys(this.configStore.get().plugins ?? {})) {
+      this.removeWorkflowRegistrations(pluginId);
+    }
     await this.runtime.stopAll();
+  }
+
+  private publishWorkflowRegistrations(pluginId: string): void {
+    const presets = this.runtime.getWorkflowPresetRegistrations?.(pluginId) ?? [];
+    for (const preset of presets) {
+      this.dependencies.workflowPresets?.register({
+        workflowId: preset.workflowId,
+        name: preset.name,
+        sourcePreset: pluginId,
+        definition:
+          preset.definition as import("../workflows/definition-compiler.js").WorkflowDefinition,
+      });
+    }
+  }
+
+  private removeWorkflowRegistrations(pluginId: string): void {
+    const removedTypes = this.dependencies.workflowRegistry?.unregisterPlugin(pluginId) ?? [];
+    this.dependencies.workflowPresets?.unregisterPlugin(pluginId);
+    if (removedTypes.length > 0) {
+      this.dependencies.workflowService?.handlePluginUnload(pluginId, removedTypes);
+    }
   }
 
   private async publishProviderRegistrations(

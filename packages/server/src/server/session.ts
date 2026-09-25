@@ -1,4 +1,31 @@
+function createWorkflowSession(
+  options: SessionOptions,
+  host: { emit: (msg: SessionOutboundMessage) => void },
+  workspaceRegistry: WorkspaceRegistry,
+  logger: pino.Logger,
+): WorkflowSession | null {
+  if (!options.workflowService || !options.workflowPresets) return null;
+  return new WorkflowSession({
+    host,
+    workflowService: options.workflowService,
+    presets: options.workflowPresets,
+    principalId: options.workflowPrincipalId ?? options.clientId,
+    permissions: options.permissions,
+    executor: options.workflowExecutor,
+    resolveWorkspace: async ({ projectId, workspaceId }) => {
+      const workspace = await workspaceRegistry.get(workspaceId);
+      if (!workspace || workspace.projectId !== projectId) return null;
+      return { cwd: workspace.cwd };
+    },
+    logger,
+  });
+}
+
 import { QuickPromptsSession } from "./quick-prompts/quick-prompts-session.js";
+import { WorkflowSession } from "./session/workflow/workflow-session.js";
+import type { WorkflowPresetRegistry } from "./workflows/workflow-preset-registry.js";
+import type { WorkflowService } from "./workflows/workflow-service.js";
+import type { StepExecutor } from "./workflows/step-executors.js";
 import { searchTimeline } from "./agent/chat-search/index.js";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { BrowserAutomationHostCapabilitySchema } from "@getpaseo/protocol/browser-automation/capabilities";
@@ -464,6 +491,10 @@ export interface SessionOptions {
   workspaceLabelService?: WorkspaceLabelService;
   filesystem?: SessionFileSystem;
   scheduleService: ScheduleService;
+  workflowService?: WorkflowService;
+  workflowPresets?: WorkflowPresetRegistry;
+  workflowPrincipalId?: string;
+  workflowExecutor?: StepExecutor;
   checkoutDiffManager: CheckoutDiffManager;
   github?: ForgeService;
   createAgentMcpTransport?: AgentMcpTransportFactory;
@@ -781,6 +812,7 @@ export class Session {
   private readonly voiceSessions: VoiceSessions;
   private readonly checkoutSession: CheckoutSession;
   private readonly scheduleSession: ScheduleSession;
+  private readonly workflowSession: WorkflowSession | null;
   private readonly audioBriefService: AudioBriefService;
   private readonly providerCatalogSession: ProviderCatalogSession;
   private readonly workspaceFilesSession: WorkspaceFilesSession;
@@ -964,6 +996,12 @@ export class Session {
       scheduleService,
       logger: this.sessionLogger,
     });
+    this.workflowSession = createWorkflowSession(
+      options,
+      { emit: (msg) => this.emit(msg) },
+      this.workspaceRegistry,
+      this.sessionLogger,
+    );
     this.providerCatalogSession = new ProviderCatalogSession({
       host: {
         emit: (msg) => this.emit(msg),
@@ -2300,9 +2338,20 @@ export class Session {
       this.dispatchPluginDirectoryMessage(msg) ??
       this.dispatchPluginMessage(msg) ??
       this.dispatchTerminalMessage(msg) ??
-      this.dispatchScheduleMessage(msg) ??
+      this.dispatchScheduleOrWorkflowMessage(msg) ??
       this.dispatchMiscMessage(msg);
     if (promise) await promise;
+  }
+
+  private dispatchScheduleOrWorkflowMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    return this.dispatchScheduleMessage(msg) ?? this.dispatchWorkflowMessage(msg);
+  }
+
+  private dispatchWorkflowMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    if (!this.workflowSession || !msg.type.startsWith("workflow.")) return undefined;
+    return this.workflowSession.handle(
+      msg as Extract<SessionInboundMessage, { type: `workflow.${string}` }>,
+    );
   }
 
   private dispatchWorkspaceLifecycleMessage(msg: SessionInboundMessage): Promise<void> | undefined {

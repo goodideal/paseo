@@ -49,8 +49,9 @@ export class SessionAuthorization {
     return this.permissions.has(permission);
   }
 
-  private allows(requirement: PermissionRequirement): boolean {
+  private allows(requirement: PermissionRequirement | undefined): boolean {
     if (requirement === null) return true;
+    if (requirement === undefined) return false;
     if (typeof requirement === "string") return this.permissions.has(requirement);
     return requirement.some((permission) => this.permissions.has(permission));
   }
