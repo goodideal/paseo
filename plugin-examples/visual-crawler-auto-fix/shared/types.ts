@@ -15,6 +15,7 @@ export const CrawlConfigSchema = z.object({
   seedRoutes: z.array(z.string()).optional(),
   maxConcurrency: z.number().min(1).max(10).optional(),
   autoApproveP0: z.boolean().optional(),
+  allowedOrigins: z.array(z.string()).optional(),
 });
 export type CrawlConfig = z.infer<typeof CrawlConfigSchema>;
 
@@ -91,6 +92,7 @@ export const FixDirectiveSchema = z.object({
   workerId: z.string().optional(),
   prUrl: z.string().optional(),
   branchName: z.string().optional(),
+  workflowRunId: z.string().optional(),
   createdAt: z.number(),
   updatedAt: z.number(),
 });

@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { View } from "react-native";
-import { useRpc } from "@getpaseo/plugin/client";
+import { useRpc, useWorkspace } from "@getpaseo/plugin/client";
 import type { PluginWorkspacePanelProps } from "@getpaseo/plugin/client";
 import {
   approveDirectiveRpc,
@@ -15,7 +15,7 @@ import {
 import type { CrawlTelemetry, FixDirective, Severity, WorkerSlot } from "../../shared/types.js";
 import { TelemetryHeader } from "./telemetry-header.js";
 import { TriageBoard } from "./triage-board.js";
-import { WorkerLanes } from "./worker-lanes.js";
+import { WorkerLanes, type WorkflowRunLaneSummary } from "./worker-lanes.js";
 import { styles } from "./styles.js";
 
 const DEFAULT_TELEMETRY: CrawlTelemetry = {
@@ -27,7 +27,17 @@ const DEFAULT_TELEMETRY: CrawlTelemetry = {
   anomaliesBySeverity: { P0: 0, P1: 0, P2: 0, P3: 0 },
 };
 
-export function CrawlerDashboard(_props: Partial<PluginWorkspacePanelProps>) {
+function resolveDirectiveRunStatus(status: string): WorkflowRunLaneSummary["status"] {
+  if (status === "in_progress") return "running";
+  if (status === "rejected") return "failed";
+  if (status === "resolved") return "succeeded";
+  return "waiting_approval";
+}
+
+export function CrawlerDashboard(props: Partial<PluginWorkspacePanelProps>) {
+  const workspaceId = props.workspaceId ?? "";
+  const projectId = useWorkspace(workspaceId, (w) => w.projectId) ?? "default";
+
   const startCrawl = useRpc(startCrawlRpc);
   const stopCrawl = useRpc(stopCrawlRpc);
   const getCrawlStatus = useRpc(getCrawlStatusRpc);
@@ -82,6 +92,7 @@ export function CrawlerDashboard(_props: Partial<PluginWorkspacePanelProps>) {
           seedRoutes: ["/dashboard", "/settings", "/analytics"],
           maxConcurrency: 3,
           autoApproveP0: false,
+          allowedOrigins: ["http://localhost:3000"],
         });
         await refreshAll();
       } catch (err) {
@@ -103,13 +114,13 @@ export function CrawlerDashboard(_props: Partial<PluginWorkspacePanelProps>) {
   const handleApprove = useCallback(
     async (directiveId: string) => {
       try {
-        await approveDirective({ directiveId });
+        await approveDirective({ directiveId, projectId, workspaceId });
         await refreshAll();
       } catch (err) {
         console.error("Failed to approve directive:", err);
       }
     },
-    [approveDirective, refreshAll],
+    [approveDirective, refreshAll, projectId, workspaceId],
   );
 
   const handleReject = useCallback(
@@ -127,13 +138,37 @@ export function CrawlerDashboard(_props: Partial<PluginWorkspacePanelProps>) {
   const handleBatchApprove = useCallback(
     async (minSeverity: Severity) => {
       try {
-        await batchApprove({ minSeverity });
+        await batchApprove({ minSeverity, projectId, workspaceId });
         await refreshAll();
       } catch (err) {
         console.error("Failed to batch approve directives:", err);
       }
     },
-    [batchApprove, refreshAll],
+    [batchApprove, refreshAll, projectId, workspaceId],
+  );
+
+  const workflowRuns: WorkflowRunLaneSummary[] = useMemo(() => {
+    return directives
+      .filter((d) => Boolean(d.workflowRunId))
+      .map((d) => ({
+        runId: d.workflowRunId!,
+        name: d.title,
+        status: resolveDirectiveRunStatus(d.status),
+        currentStepId: d.prUrl ? "pr_created" : "repair",
+        branchName: d.branchName,
+        prUrl: d.prUrl,
+      }));
+  }, [directives]);
+
+  const handleSelectRun = useCallback(
+    (_runId: string) => {
+      if (workspaceId && props.navigation?.openWorkspace) {
+        props.navigation.openWorkspace({
+          workspaceId,
+        });
+      }
+    },
+    [workspaceId, props.navigation],
   );
 
   return (
@@ -154,7 +189,7 @@ export function CrawlerDashboard(_props: Partial<PluginWorkspacePanelProps>) {
       />
 
       {/* 3. Bottom Concurrency Worker Lanes (3 Workers) */}
-      <WorkerLanes slots={slots} />
+      <WorkerLanes slots={slots} workflowRuns={workflowRuns} onSelectRun={handleSelectRun} />
     </View>
   );
 }

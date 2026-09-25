@@ -20,6 +20,34 @@ export interface BrowserDriver {
   captureScreenshot(): Promise<string>;
 }
 
+export function isUrlInAllowlist(targetUrlStr: string, allowedOrigins: string[]): boolean {
+  try {
+    const target = new URL(targetUrlStr);
+    if (target.protocol !== "http:" && target.protocol !== "https:") return false;
+    return allowedOrigins.some((allowed) => {
+      try {
+        const allowedUrl = new URL(allowed);
+        if (allowedUrl.protocol !== target.protocol || allowedUrl.port !== target.port)
+          return false;
+        const hostnameMatches = allowedUrl.hostname.startsWith("*.")
+          ? target.hostname.endsWith(`.${allowedUrl.hostname.slice(2)}`)
+          : allowedUrl.hostname === target.hostname;
+        if (!hostnameMatches) return false;
+        const allowedPath = allowedUrl.pathname.replace(/\/$/, "");
+        return (
+          allowedPath === "" ||
+          target.pathname === allowedPath ||
+          target.pathname.startsWith(`${allowedPath}/`)
+        );
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return false;
+  }
+}
+
 export class VisualCrawlerEngine {
   private store: TaskStore;
   private driver: BrowserDriver;
@@ -36,6 +64,14 @@ export class VisualCrawlerEngine {
   public async start(config: CrawlConfig): Promise<void> {
     if (this.isRunning) {
       throw new Error("Crawler is already running");
+    }
+
+    const allowlist = config.allowedOrigins ?? [];
+    if (allowlist.length === 0) {
+      throw new Error("Crawler requires an explicit workspace URL allowlist");
+    }
+    if (!isUrlInAllowlist(config.targetUrl, allowlist)) {
+      throw new Error(`Target URL is not in the workspace allowlist: ${config.targetUrl}`);
     }
 
     this.isRunning = true;
@@ -80,58 +116,66 @@ export class VisualCrawlerEngine {
     });
   }
 
+  private chooseNextAction(
+    elements: Array<{ selector: string; tag: string; text: string; href?: string }>,
+    queue: string[],
+    currentUrl: string,
+    config: CrawlConfig,
+    allowlist: string[],
+  ): { selector: string; type: "click" | "navigate"; targetUrl?: string } | null {
+    for (const el of elements) {
+      if (el.href) {
+        const resolvedHref = new URL(el.href, currentUrl).href;
+        if (!isUrlInAllowlist(resolvedHref, allowlist)) continue;
+        if (!this.visitedUrls.has(resolvedHref)) {
+          return { selector: el.selector, type: "navigate", targetUrl: resolvedHref };
+        }
+      }
+
+      const actionKey = `${currentUrl}::${el.selector}`;
+      const count = this.actionHistory.get(actionKey) || 0;
+      const routeCount = this.routeActionCount.get(currentUrl) || 0;
+
+      if (count < 2 && routeCount < 5) {
+        this.actionHistory.set(actionKey, count + 1);
+        this.routeActionCount.set(currentUrl, routeCount + 1);
+        return { selector: el.selector, type: "click" };
+      }
+    }
+
+    while (queue.length > 0) {
+      const nextRoute = queue.shift();
+      if (nextRoute) {
+        const resolvedRoute = new URL(nextRoute, config.targetUrl).href;
+        if (!isUrlInAllowlist(resolvedRoute, allowlist)) continue;
+        if (!this.visitedUrls.has(resolvedRoute)) {
+          return { selector: "body", type: "navigate", targetUrl: resolvedRoute };
+        }
+      }
+    }
+
+    return null;
+  }
+
   private async runLoop(config: CrawlConfig): Promise<void> {
+    const allowlist = config.allowedOrigins ?? [];
     const queue: string[] = [config.targetUrl, ...(config.seedRoutes || [])];
     let hopCount = 0;
     let currentUrl = config.targetUrl;
 
     // Initial navigation
     const initial = await this.driver.navigate(currentUrl);
+    if (!isUrlInAllowlist(initial.url, allowlist)) {
+      throw new Error(`Browser redirected outside the workspace allowlist: ${initial.url}`);
+    }
     this.visitedUrls.add(initial.url);
     hopCount++;
 
     await this.inspectAndRecordHop(hopCount, initial.url, "navigate", initial.domFingerprint);
 
     while (this.isRunning && hopCount < config.maxHops) {
-      // 1. Collect interactive elements on current page
       const elements = await this.driver.getInteractiveElements();
-      let nextAction: { selector: string; type: "click" | "navigate"; targetUrl?: string } | null =
-        null;
-
-      // 2. Select next action with loop guard
-      for (const el of elements) {
-        if (
-          el.href &&
-          !this.visitedUrls.has(el.href) &&
-          this.isInternalUrl(el.href, config.targetUrl)
-        ) {
-          // Prioritize new unvisited routes
-          nextAction = { selector: el.selector, type: "navigate", targetUrl: el.href };
-          break;
-        }
-
-        const actionKey = `${currentUrl}::${el.selector}`;
-        const count = this.actionHistory.get(actionKey) || 0;
-        const routeCount = this.routeActionCount.get(currentUrl) || 0;
-
-        // Limit to max 5 in-page actions per route to avoid local trap
-        if (count < 2 && routeCount < 5) {
-          nextAction = { selector: el.selector, type: "click" };
-          this.actionHistory.set(actionKey, count + 1);
-          this.routeActionCount.set(currentUrl, routeCount + 1);
-          break;
-        }
-      }
-
-      // 3. If no in-page action available or route exhausted, dequeue next seed route
-      if (!nextAction && queue.length > 0) {
-        const nextRoute = queue.shift();
-        if (nextRoute && !this.visitedUrls.has(nextRoute)) {
-          nextAction = { selector: "body", type: "navigate", targetUrl: nextRoute };
-        }
-      }
-
-      // If still no action, backtrack or terminate gracefully
+      const nextAction = this.chooseNextAction(elements, queue, currentUrl, config, allowlist);
       if (!nextAction) {
         break;
       }
@@ -145,12 +189,18 @@ export class VisualCrawlerEngine {
       if (nextAction.type === "navigate" && nextAction.targetUrl) {
         actionLabel = `navigate:${nextAction.targetUrl}`;
         const res = await this.driver.navigate(nextAction.targetUrl);
+        if (!isUrlInAllowlist(res.url, allowlist)) {
+          throw new Error(`Browser redirected outside the workspace allowlist: ${res.url}`);
+        }
         currentUrl = res.url;
         this.visitedUrls.add(currentUrl);
         newFingerprint = res.domFingerprint;
       } else {
         actionLabel = `click:${nextAction.selector}`;
         const res = await this.driver.click(nextAction.selector);
+        if (!isUrlInAllowlist(res.url, allowlist)) {
+          throw new Error(`Browser click navigated outside the workspace allowlist: ${res.url}`);
+        }
         currentUrl = res.url;
         newFingerprint = res.domFingerprint;
       }
@@ -249,11 +299,10 @@ export class VisualCrawlerEngine {
     return "P2";
   }
 
-  private isInternalUrl(target: string, base: string): boolean {
+  private isInternalUrl(target: string, base: string, allowlist: string[]): boolean {
     try {
       const u = new URL(target, base);
-      const b = new URL(base);
-      return u.hostname === b.hostname;
+      return isUrlInAllowlist(u.href, allowlist);
     } catch {
       return false;
     }

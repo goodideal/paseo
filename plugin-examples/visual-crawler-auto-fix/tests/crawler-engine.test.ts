@@ -18,8 +18,10 @@ describe("VisualCrawlerEngine", () => {
     store = new TaskStore(testFile, 3);
 
     let step = 0;
+    let currentNavUrl = "http://localhost:3000";
     driver = {
       async navigate(url: string) {
+        currentNavUrl = url;
         step++;
         return {
           url,
@@ -54,7 +56,7 @@ describe("VisualCrawlerEngine", () => {
         step++;
         return {
           domFingerprint: `fp-click-${selector}-${step}`,
-          url: "http://localhost:3000/clicked",
+          url: `${currentNavUrl}/clicked`,
         };
       },
       async checkVisualAnomalies() {
@@ -84,6 +86,7 @@ describe("VisualCrawlerEngine", () => {
       seedRoutes: ["http://localhost:3000/about"],
       maxConcurrency: 3,
       autoApproveP0: false,
+      allowedOrigins: ["http://localhost:3000"],
     });
 
     const telemetry = store.getTelemetry();
@@ -98,6 +101,7 @@ describe("VisualCrawlerEngine", () => {
       maxHops: 3,
       maxConcurrency: 3,
       autoApproveP0: false,
+      allowedOrigins: ["http://localhost:3000"],
     });
 
     const telemetry = store.getTelemetry();
@@ -111,6 +115,7 @@ describe("VisualCrawlerEngine", () => {
       maxHops: 50,
       maxConcurrency: 3,
       autoApproveP0: false,
+      allowedOrigins: ["http://localhost:3000"],
     });
 
     crawler.stop();
@@ -119,5 +124,44 @@ describe("VisualCrawlerEngine", () => {
     const telemetry = store.getTelemetry();
     expect(telemetry.state).toBe("idle");
     expect(telemetry.currentHop).toBeLessThan(50);
+  });
+
+  it("rejects arbitrary external URLs and unlisted intranet IPs (Task 4.4)", async () => {
+    // Arbitrary external URL
+    await expect(
+      crawler.start({
+        targetUrl: "https://google.com",
+        maxHops: 5,
+        allowedOrigins: ["http://localhost:3000"],
+      }),
+    ).rejects.toThrow("not in the workspace allowlist");
+
+    // Unlisted intranet IP
+    await expect(
+      crawler.start({
+        targetUrl: "http://192.168.1.100:8080",
+        maxHops: 5,
+        allowedOrigins: ["http://localhost:3000"],
+      }),
+    ).rejects.toThrow("not in the workspace allowlist");
+  });
+
+  it("permits declared staging/local allowlist targets and restricts path scope (Task 4.4)", async () => {
+    await expect(
+      crawler.start({
+        targetUrl: "http://staging.internal:8080/app",
+        maxHops: 2,
+        allowedOrigins: ["http://staging.internal:8080/app"],
+      }),
+    ).resolves.not.toThrow();
+
+    // Out of path scope on same origin rejected
+    await expect(
+      crawler.start({
+        targetUrl: "http://staging.internal:8080/admin/secret",
+        maxHops: 2,
+        allowedOrigins: ["http://staging.internal:8080/app"],
+      }),
+    ).rejects.toThrow("not in the workspace allowlist");
   });
 });

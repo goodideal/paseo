@@ -16,6 +16,7 @@ export const startCrawlRpc = defineRpc({
     seedRoutes: z.array(z.string()).default([]),
     maxConcurrency: z.number().min(1).max(10).default(3),
     autoApproveP0: z.boolean().default(false),
+    allowedOrigins: z.array(z.string().url()).min(1),
   }),
   output: z.object({
     ok: z.boolean(),
@@ -54,9 +55,12 @@ export const approveDirectiveRpc = defineRpc({
   name: "visual_crawler.directives.approve",
   input: z.object({
     directiveId: z.string(),
+    projectId: z.string().min(1),
+    workspaceId: z.string().min(1),
   }),
   output: z.object({
     ok: z.boolean(),
+    workflowRunId: z.string().optional(),
     error: z.string().optional(),
   }),
 });
@@ -65,6 +69,8 @@ export const batchApproveRpc = defineRpc({
   name: "visual_crawler.directives.batch_approve",
   input: z.object({
     minSeverity: SeveritySchema,
+    projectId: z.string().min(1),
+    workspaceId: z.string().min(1),
   }),
   output: z.object({
     approvedCount: z.number(),

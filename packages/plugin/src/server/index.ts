@@ -4,6 +4,8 @@ export type {
   PluginServerContribution,
   PluginSettings,
   PluginSettingsState,
+  PluginWorkflowStepAdapterManifest,
+  PluginWorkflowPreset,
 } from "./contracts.js";
 export type {
   PluginHookContext,
