@@ -48,6 +48,7 @@ import type {
   CheckoutStatusResponse,
   CheckoutCommit,
   ParsedDiffFile,
+  WorkspaceGitBlobResponsePayload,
   CheckoutCommitResponse,
   CheckoutMergeResponse,
   CheckoutMergeFromBaseResponse,
@@ -4162,6 +4163,28 @@ export class DaemonClient {
       throw new Error(payload.error.message);
     }
     return { baseRef: payload.baseRef, commits: payload.commits };
+  }
+
+  async readGitBlob(
+    cwd: string,
+    ref: string,
+    path: string,
+    maxBytes?: number,
+    requestId?: string,
+  ): Promise<WorkspaceGitBlobResponsePayload> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.git.blob.response">({
+        requestId,
+        message: {
+          type: "workspace.git.blob.request",
+          cwd,
+          ref,
+          path,
+          maxBytes,
+        },
+        timeout: 60000,
+      });
+    return payload;
   }
 
   async getCommitFileDiff(

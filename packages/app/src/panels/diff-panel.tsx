@@ -161,7 +161,16 @@ function CommitDiffPanel() {
     sha: target.sha,
     enabled: Boolean(cwd),
   });
-  const mode = useMemo(() => ({ kind: "commit" as const }), []);
+  const mode = useMemo(
+    () => ({
+      kind: "commit" as const,
+      cwd: cwd ?? "",
+      serverId,
+      baseRef: `${target.sha}^`,
+      targetRef: target.sha,
+    }),
+    [cwd, serverId, target.sha],
+  );
 
   let body: ReactNode;
   if (!cwd) {
