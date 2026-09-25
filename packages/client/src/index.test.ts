@@ -271,6 +271,7 @@ test("createPaseoApi borrows daemon capabilities without exposing connection own
     "projects",
     "providers",
     "terminals",
+    "workflows",
     "workspaces",
   ]);
   expect("connect" in paseo).toBe(false);
@@ -1673,3 +1674,42 @@ test("canceled timeline handles and captured state are collectible while their A
   );
   expect(result.stdout).toContain('"phase":"API alive"');
 }, 20000);
+
+test("workflow actions delegate through the public PaseoApi group", async () => {
+  const { client, ws } = await connectClient({ workflowEngine: true });
+  const listing = client.workflows.runList({
+    projectId: "project_sdk",
+    workspaceId: "workspace_sdk",
+    requestId: "workflow-list-1",
+    status: "waiting_approval",
+  });
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toEqual({
+    type: "workflow.run.list.request",
+    projectId: "project_sdk",
+    workspaceId: "workspace_sdk",
+    requestId: "workflow-list-1",
+    status: "waiting_approval",
+  });
+  ws.message(
+    sessionMessage({
+      type: "workflow.run.list.response",
+      payload: {
+        projectId: "project_sdk",
+        workspaceId: "workspace_sdk",
+        runId: null,
+        requestId: "workflow-list-1",
+        runs: [],
+        error: null,
+      },
+    }),
+  );
+  await expect(listing).resolves.toEqual({
+    projectId: "project_sdk",
+    workspaceId: "workspace_sdk",
+    runId: null,
+    requestId: "workflow-list-1",
+    runs: [],
+    error: null,
+  });
+  await client.close();
+});

@@ -485,6 +485,22 @@ export interface PaseoConfigActions {
   ): Promise<{ requestId: string; config: MutableDaemonConfig }>;
 }
 
+export interface PaseoWorkflowActions {
+  definitionList: DaemonClient["workflowDefinitionList"];
+  definitionInspect: DaemonClient["workflowDefinitionInspect"];
+  runCreate: DaemonClient["workflowRunCreate"];
+  runList: DaemonClient["workflowRunList"];
+  runInspect: DaemonClient["workflowRunInspect"];
+  runCancel: DaemonClient["workflowRunCancel"];
+  runRetry: DaemonClient["workflowRunRetry"];
+  runResume: DaemonClient["workflowRunResume"];
+  approvalList: DaemonClient["workflowApprovalList"];
+  approvalApprove: DaemonClient["workflowApprovalApprove"];
+  approvalDeny: DaemonClient["workflowApprovalDeny"];
+  artifactList: DaemonClient["workflowArtifactList"];
+  artifactGet: DaemonClient["workflowArtifactGet"];
+}
+
 export interface PaseoApi {
   dispose(): Promise<void>;
   observeEvents: DaemonClient["observeEvents"];
@@ -493,6 +509,7 @@ export interface PaseoApi {
   readonly projects: PaseoProjectActions;
   readonly agents: PaseoAgentActions;
   readonly providers: PaseoProviderActions;
+  readonly workflows: PaseoWorkflowActions;
   readonly config: PaseoConfigActions;
 }
 
@@ -756,6 +773,21 @@ export function createPaseoApi(
           if (message.type === "providers_snapshot_update") handler(message.payload);
         });
       },
+    },
+    workflows: {
+      definitionList: (options) => daemonClient.workflowDefinitionList(options),
+      definitionInspect: (options) => daemonClient.workflowDefinitionInspect(options),
+      runCreate: (options) => daemonClient.workflowRunCreate(options),
+      runList: (options) => daemonClient.workflowRunList(options),
+      runInspect: (options) => daemonClient.workflowRunInspect(options),
+      runCancel: (options) => daemonClient.workflowRunCancel(options),
+      runRetry: (options) => daemonClient.workflowRunRetry(options),
+      runResume: (options) => daemonClient.workflowRunResume(options),
+      approvalList: (options) => daemonClient.workflowApprovalList(options),
+      approvalApprove: (options) => daemonClient.workflowApprovalApprove(options),
+      approvalDeny: (options) => daemonClient.workflowApprovalDeny(options),
+      artifactList: (options) => daemonClient.workflowArtifactList(options),
+      artifactGet: (options) => daemonClient.workflowArtifactGet(options),
     },
     config: {
       get: (requestId) => daemonClient.getDaemonConfig(requestId),

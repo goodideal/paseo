@@ -6899,3 +6899,125 @@ test("reviewed plugin updates gate before requests and preserve exact proposal d
     ]);
   }
 });
+
+test("Workflow Engine actions require a host upgrade without fallback requests", async () => {
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "workflow-gate",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => transport.transport,
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  transport.triggerOpen({ features: { ownedSubscriptions: true } });
+  await connecting;
+
+  const scope = { projectId: "project-1", workspaceId: "workspace-1" };
+  const sentBefore = transport.sent.length;
+  const actions = [
+    () => client.workflowDefinitionList(scope),
+    () => client.workflowDefinitionInspect({ ...scope, workflowId: "workflow-1" }),
+    () => client.workflowRunCreate({ ...scope, workflowId: "workflow-1" }),
+    () => client.workflowRunList(scope),
+    () => client.workflowRunInspect({ ...scope, runId: "run-1" }),
+    () => client.workflowRunCancel({ ...scope, runId: "run-1" }),
+    () => client.workflowRunRetry({ ...scope, runId: "run-1", stepId: "step-1" }),
+    () => client.workflowRunResume({ ...scope, runId: "run-1" }),
+    () => client.workflowApprovalList(scope),
+    () => client.workflowApprovalApprove({ ...scope, runId: "run-1", approvalId: "approval-1" }),
+    () => client.workflowApprovalDeny({ ...scope, runId: "run-1", approvalId: "approval-1" }),
+    () => client.workflowArtifactList({ ...scope, runId: "run-1" }),
+    () => client.workflowArtifactGet({ ...scope, runId: "run-1", artifactId: "artifact-1" }),
+  ];
+
+  for (const action of actions) {
+    await expect(action()).rejects.toThrow("Workflow Engine requires a host upgrade.");
+  }
+  expect(transport.sent.length).toBe(sentBefore);
+});
+
+test("correlates Workflow Run create responses by requestId", async () => {
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "workflow-run-create",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => transport.transport,
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  transport.triggerOpen({ features: { workflowEngine: true } });
+  await connecting;
+
+  const creating = client.workflowRunCreate({
+    projectId: "project-1",
+    workspaceId: "workspace-1",
+    requestId: "workflow-create-1",
+    workflowId: "visual-crawler-fix",
+    input: { directiveId: "directive-1" },
+  });
+  const request = parseSentFrame(transport.sent.at(-1));
+  expect(request).toEqual({
+    type: "workflow.run.create.request",
+    projectId: "project-1",
+    workspaceId: "workspace-1",
+    requestId: "workflow-create-1",
+    workflowId: "visual-crawler-fix",
+    input: { directiveId: "directive-1" },
+  });
+
+  const run = {
+    projectId: "project-1",
+    workspaceId: "workspace-1",
+    runId: "run-1",
+    workflowId: "visual-crawler-fix",
+    name: "Visual crawler fix",
+    sourcePreset: "visual-crawler",
+    definitionRevision: "1",
+    definitionHash: "hash-1",
+    status: "queued" as const,
+    currentStepId: null,
+    executionRisk: "workspace_write" as const,
+    createdAt: "2026-09-25T00:00:00.000Z",
+    updatedAt: "2026-09-25T00:00:00.000Z",
+    completedAt: null,
+  };
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "workflow.run.create.response",
+      payload: {
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        runId: "run-1",
+        requestId: "another-request",
+        run,
+        error: null,
+      },
+    }),
+  );
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "workflow.run.create.response",
+      payload: {
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        runId: "run-1",
+        requestId: "workflow-create-1",
+        run,
+        error: null,
+      },
+    }),
+  );
+
+  await expect(creating).resolves.toEqual({
+    projectId: "project-1",
+    workspaceId: "workspace-1",
+    runId: "run-1",
+    requestId: "workflow-create-1",
+    run,
+    error: null,
+  });
+});

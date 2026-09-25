@@ -578,6 +578,112 @@ type ScheduleUpdatePayload = Extract<
   SessionOutboundMessage,
   { type: "schedule/update/response" }
 >["payload"];
+
+export type WorkflowDefinitionListOptions = Omit<
+  Extract<SessionInboundMessage, { type: "workflow.definition.list.request" }>,
+  "type" | "requestId"
+> & { requestId?: string };
+export type WorkflowDefinitionInspectOptions = Omit<
+  Extract<SessionInboundMessage, { type: "workflow.definition.inspect.request" }>,
+  "type" | "requestId"
+> & { requestId?: string };
+export type WorkflowRunCreateOptions = Omit<
+  Extract<SessionInboundMessage, { type: "workflow.run.create.request" }>,
+  "type" | "requestId"
+> & { requestId?: string };
+export type WorkflowRunListOptions = Omit<
+  Extract<SessionInboundMessage, { type: "workflow.run.list.request" }>,
+  "type" | "requestId"
+> & { requestId?: string };
+export type WorkflowRunInspectOptions = Omit<
+  Extract<SessionInboundMessage, { type: "workflow.run.inspect.request" }>,
+  "type" | "requestId"
+> & { requestId?: string };
+export type WorkflowRunCancelOptions = Omit<
+  Extract<SessionInboundMessage, { type: "workflow.run.cancel.request" }>,
+  "type" | "requestId"
+> & { requestId?: string };
+export type WorkflowRunRetryOptions = Omit<
+  Extract<SessionInboundMessage, { type: "workflow.run.retry.request" }>,
+  "type" | "requestId"
+> & { requestId?: string };
+export type WorkflowRunResumeOptions = Omit<
+  Extract<SessionInboundMessage, { type: "workflow.run.resume.request" }>,
+  "type" | "requestId"
+> & { requestId?: string };
+export type WorkflowApprovalListOptions = Omit<
+  Extract<SessionInboundMessage, { type: "workflow.approval.list.request" }>,
+  "type" | "requestId"
+> & { requestId?: string };
+export type WorkflowApprovalApproveOptions = Omit<
+  Extract<SessionInboundMessage, { type: "workflow.approval.approve.request" }>,
+  "type" | "requestId"
+> & { requestId?: string };
+export type WorkflowApprovalDenyOptions = Omit<
+  Extract<SessionInboundMessage, { type: "workflow.approval.deny.request" }>,
+  "type" | "requestId"
+> & { requestId?: string };
+export type WorkflowArtifactListOptions = Omit<
+  Extract<SessionInboundMessage, { type: "workflow.artifact.list.request" }>,
+  "type" | "requestId"
+> & { requestId?: string };
+export type WorkflowArtifactGetOptions = Omit<
+  Extract<SessionInboundMessage, { type: "workflow.artifact.get.request" }>,
+  "type" | "requestId"
+> & { requestId?: string };
+
+export type WorkflowDefinitionListPayload = Extract<
+  SessionOutboundMessage,
+  { type: "workflow.definition.list.response" }
+>["payload"];
+export type WorkflowDefinitionInspectPayload = Extract<
+  SessionOutboundMessage,
+  { type: "workflow.definition.inspect.response" }
+>["payload"];
+export type WorkflowRunCreatePayload = Extract<
+  SessionOutboundMessage,
+  { type: "workflow.run.create.response" }
+>["payload"];
+export type WorkflowRunListPayload = Extract<
+  SessionOutboundMessage,
+  { type: "workflow.run.list.response" }
+>["payload"];
+export type WorkflowRunInspectPayload = Extract<
+  SessionOutboundMessage,
+  { type: "workflow.run.inspect.response" }
+>["payload"];
+export type WorkflowRunCancelPayload = Extract<
+  SessionOutboundMessage,
+  { type: "workflow.run.cancel.response" }
+>["payload"];
+export type WorkflowRunRetryPayload = Extract<
+  SessionOutboundMessage,
+  { type: "workflow.run.retry.response" }
+>["payload"];
+export type WorkflowRunResumePayload = Extract<
+  SessionOutboundMessage,
+  { type: "workflow.run.resume.response" }
+>["payload"];
+export type WorkflowApprovalListPayload = Extract<
+  SessionOutboundMessage,
+  { type: "workflow.approval.list.response" }
+>["payload"];
+export type WorkflowApprovalApprovePayload = Extract<
+  SessionOutboundMessage,
+  { type: "workflow.approval.approve.response" }
+>["payload"];
+export type WorkflowApprovalDenyPayload = Extract<
+  SessionOutboundMessage,
+  { type: "workflow.approval.deny.response" }
+>["payload"];
+export type WorkflowArtifactListPayload = Extract<
+  SessionOutboundMessage,
+  { type: "workflow.artifact.list.response" }
+>["payload"];
+export type WorkflowArtifactGetPayload = Extract<
+  SessionOutboundMessage,
+  { type: "workflow.artifact.get.response" }
+>["payload"];
 export type FetchAgentTimelinePayload = FetchAgentTimelineResponseMessage["payload"];
 export type AgentForkContextPayload = AgentForkContextResponseMessage["payload"];
 export type AgentMessageSynthesizeBriefPayload = AgentMessageSynthesizeBriefResponse["payload"];
@@ -6029,6 +6135,195 @@ export class DaemonClient {
     });
   }
 
+  async workflowDefinitionList(
+    options: WorkflowDefinitionListOptions,
+  ): Promise<WorkflowDefinitionListPayload> {
+    this.requireWorkflowEngineSupport();
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "workflow.definition.list.request",
+        projectId: options.projectId,
+        workspaceId: options.workspaceId,
+      },
+    });
+  }
+
+  async workflowDefinitionInspect(
+    options: WorkflowDefinitionInspectOptions,
+  ): Promise<WorkflowDefinitionInspectPayload> {
+    this.requireWorkflowEngineSupport();
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "workflow.definition.inspect.request",
+        projectId: options.projectId,
+        workspaceId: options.workspaceId,
+        workflowId: options.workflowId,
+      },
+    });
+  }
+
+  async workflowRunCreate(options: WorkflowRunCreateOptions): Promise<WorkflowRunCreatePayload> {
+    this.requireWorkflowEngineSupport();
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "workflow.run.create.request",
+        projectId: options.projectId,
+        workspaceId: options.workspaceId,
+        workflowId: options.workflowId,
+        ...(options.input !== undefined ? { input: options.input } : {}),
+      },
+    });
+  }
+
+  async workflowRunList(options: WorkflowRunListOptions): Promise<WorkflowRunListPayload> {
+    this.requireWorkflowEngineSupport();
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "workflow.run.list.request",
+        projectId: options.projectId,
+        workspaceId: options.workspaceId,
+        ...(options.status !== undefined ? { status: options.status } : {}),
+      },
+    });
+  }
+
+  async workflowRunInspect(options: WorkflowRunInspectOptions): Promise<WorkflowRunInspectPayload> {
+    this.requireWorkflowEngineSupport();
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "workflow.run.inspect.request",
+        projectId: options.projectId,
+        workspaceId: options.workspaceId,
+        runId: options.runId,
+      },
+    });
+  }
+
+  async workflowRunCancel(options: WorkflowRunCancelOptions): Promise<WorkflowRunCancelPayload> {
+    this.requireWorkflowEngineSupport();
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "workflow.run.cancel.request",
+        projectId: options.projectId,
+        workspaceId: options.workspaceId,
+        runId: options.runId,
+        ...(options.reason !== undefined ? { reason: options.reason } : {}),
+      },
+    });
+  }
+
+  async workflowRunRetry(options: WorkflowRunRetryOptions): Promise<WorkflowRunRetryPayload> {
+    this.requireWorkflowEngineSupport();
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "workflow.run.retry.request",
+        projectId: options.projectId,
+        workspaceId: options.workspaceId,
+        runId: options.runId,
+        stepId: options.stepId,
+      },
+    });
+  }
+
+  async workflowRunResume(options: WorkflowRunResumeOptions): Promise<WorkflowRunResumePayload> {
+    this.requireWorkflowEngineSupport();
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "workflow.run.resume.request",
+        projectId: options.projectId,
+        workspaceId: options.workspaceId,
+        runId: options.runId,
+      },
+    });
+  }
+
+  async workflowApprovalList(
+    options: WorkflowApprovalListOptions,
+  ): Promise<WorkflowApprovalListPayload> {
+    this.requireWorkflowEngineSupport();
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "workflow.approval.list.request",
+        projectId: options.projectId,
+        workspaceId: options.workspaceId,
+        ...(options.runId !== undefined ? { runId: options.runId } : {}),
+      },
+    });
+  }
+
+  async workflowApprovalApprove(
+    options: WorkflowApprovalApproveOptions,
+  ): Promise<WorkflowApprovalApprovePayload> {
+    this.requireWorkflowEngineSupport();
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "workflow.approval.approve.request",
+        projectId: options.projectId,
+        workspaceId: options.workspaceId,
+        runId: options.runId,
+        approvalId: options.approvalId,
+      },
+    });
+  }
+
+  async workflowApprovalDeny(
+    options: WorkflowApprovalDenyOptions,
+  ): Promise<WorkflowApprovalDenyPayload> {
+    this.requireWorkflowEngineSupport();
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "workflow.approval.deny.request",
+        projectId: options.projectId,
+        workspaceId: options.workspaceId,
+        runId: options.runId,
+        approvalId: options.approvalId,
+        ...(options.reason !== undefined ? { reason: options.reason } : {}),
+      },
+    });
+  }
+
+  async workflowArtifactList(
+    options: WorkflowArtifactListOptions,
+  ): Promise<WorkflowArtifactListPayload> {
+    this.requireWorkflowEngineSupport();
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "workflow.artifact.list.request",
+        projectId: options.projectId,
+        workspaceId: options.workspaceId,
+        runId: options.runId,
+      },
+    });
+  }
+
+  async workflowArtifactGet(
+    options: WorkflowArtifactGetOptions,
+  ): Promise<WorkflowArtifactGetPayload> {
+    this.requireWorkflowEngineSupport();
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "workflow.artifact.get.request",
+        projectId: options.projectId,
+        workspaceId: options.workspaceId,
+        runId: options.runId,
+        artifactId: options.artifactId,
+      },
+    });
+  }
+
   onTerminalStreamEvent(handler: (event: TerminalStreamEvent) => void): () => void {
     return this.terminalStreams.onEvent(handler);
   }
@@ -6077,6 +6372,13 @@ export class DaemonClient {
     // COMPAT(daemonConfigReload): added in v0.4.0, remove gate after 2027-02-14.
     if (this.lastServerInfoMessage?.features?.daemonConfigReload !== true) {
       throw new Error("Update the host to reload daemon configuration.");
+    }
+  }
+
+  private requireWorkflowEngineSupport(): void {
+    // COMPAT(workflowEngine): added in v0.8.0, remove gate after 2027-03-25 once daemon floor supports Workflow Engine.
+    if (this.lastServerInfoMessage?.features?.workflowEngine !== true) {
+      throw new Error("Workflow Engine requires a host upgrade.");
     }
   }
 
