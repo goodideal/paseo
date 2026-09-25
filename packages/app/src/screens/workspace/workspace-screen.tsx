@@ -393,6 +393,9 @@ function getFallbackTabOptionDescription(
   if (tab.target.kind === "pull_request") {
     return labels.pullRequest;
   }
+  if (tab.target.kind === "workflow_runs") {
+    return "Workflow Runs";
+  }
   if (tab.target.kind === "plugin") {
     return tab.target.panelId;
   }
@@ -2273,7 +2276,11 @@ function WorkspaceScreenContent({
         }
       };
       if (selection.kind === "target") {
-        openTarget(selection.target);
+        const target =
+          selection.target.kind === "workflow_runs"
+            ? { ...selection.target, workspaceId: normalizedWorkspaceId }
+            : selection.target;
+        openTarget(target);
         return;
       }
       if (selection.kind === "agent") {
@@ -2293,7 +2300,13 @@ function WorkspaceScreenContent({
       const { browserId } = createWorkspaceBrowser();
       openTarget({ kind: "browser", browserId });
     },
-    [createTerminal, createWorkspaceTab, persistenceKey, replaceWorkspaceTabTarget],
+    [
+      createTerminal,
+      createWorkspaceTab,
+      normalizedWorkspaceId,
+      persistenceKey,
+      replaceWorkspaceTabTarget,
+    ],
   );
 
   const handleOpenUrlInBrowserTab = useCallback(
