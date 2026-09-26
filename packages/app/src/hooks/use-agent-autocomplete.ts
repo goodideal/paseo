@@ -13,7 +13,6 @@ import { useAutocomplete } from "./use-autocomplete";
 import { useSessionStore } from "@/stores/session-store";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { CLIENT_SLASH_COMMANDS, type ClientSlashCommand } from "@/client-slash-commands";
-import { useQuickPromptsStore, type QuickPromptItem } from "@/stores/quick-prompts-store";
 import type { PluginClientSlashCommand } from "@/plugins/client-slash-commands";
 import { mergeSlashCommandSources } from "@/plugins/client-slash-commands/model";
 import {
@@ -40,7 +39,6 @@ interface UseAgentAutocompleteInput {
   onClientSlashCommand?: (command: ClientSlashCommand) => void;
   canExecuteClientSlashCommand?: boolean;
   pluginClientSlashCommands?: readonly PluginClientSlashCommand[];
-  quickPrompts?: readonly QuickPromptItem[];
 }
 
 interface AgentAutocompleteKeyPressEvent {
@@ -61,10 +59,6 @@ type AgentAutocompleteOption =
       command: PluginClientSlashCommand;
     })
   | (AutocompleteOption & { type: "provider_command" })
-  | (AutocompleteOption & {
-      type: "quick_prompt";
-      item: QuickPromptItem;
-    })
   | (AutocompleteOption & {
       type: "workspace_entry";
       entryPath: string;
@@ -118,19 +112,11 @@ interface DirectorySuggestionEntry {
   kind: "file" | "directory";
 }
 
-export interface QuickPromptSlashCommand {
-  name: string;
-  aliases?: readonly string[];
-  description: string;
-  argumentHint?: string;
-  kind?: string;
-}
-
 type AvailableCommand =
   | { source: "client"; command: ClientSlashCommand }
   | { source: "plugin"; command: PluginClientSlashCommand }
   | { source: "provider"; command: AgentSlashCommand }
-  | { source: "quick_prompt"; command: QuickPromptSlashCommand; item: QuickPromptItem };
+  | { source: "provider"; command: AgentSlashCommand };
 
 function normalizeDraftCommandConfig(
   draftConfig?: DraftCommandConfig,
@@ -201,15 +187,6 @@ function mapCommandToOption(entry: AvailableCommand, t: TFunction): AgentAutocom
   if (entry.source === "plugin") {
     return { ...base, type: "plugin_command", command: entry.command };
   }
-  if (entry.source === "quick_prompt") {
-    return {
-      ...base,
-      type: "quick_prompt",
-      description: entry.item.content,
-      detail: entry.item.label !== entry.command.name ? entry.item.label : undefined,
-      item: entry.item,
-    };
-  }
   return {
     ...base,
     type: "provider_command",
@@ -223,7 +200,6 @@ export interface BuildAutocompleteOptionsInput {
   mode: AutocompleteMode;
   commands: AgentSlashCommand[];
   pluginCommands: readonly PluginClientSlashCommand[];
-  quickPrompts: readonly QuickPromptItem[];
   isDraftContext: boolean;
   commandFilterQuery: string;
   activeSlashCommand: SlashCommandRange | null;
@@ -242,47 +218,26 @@ export function buildCommandAutocompleteOptions(input: BuildAutocompleteOptionsI
       source: "provider" as const,
       command,
     }));
-    const quickPromptCommands: AvailableCommand[] = input.quickPrompts
-      .filter((item) => item.enabled)
-      .map((item) => {
-        const name = (item.shortcut?.trim() || item.label.trim()).replace(/^\//, "");
-        const aliases = [item.label.trim(), item.shortcut?.trim()]
-          .map((s) => s?.replace(/^\//, ""))
-          .filter((a): a is string => Boolean(a) && a !== name);
-        return {
-          source: "quick_prompt" as const,
-          command: {
-            name,
-            aliases,
-            description: item.content,
-            argumentHint: "",
-            kind: "quick_prompt",
-          },
-          item,
-        };
+
+    const rootCommands: AvailableCommand[] = mergeSlashCommandSources({
+      builtIn: CLIENT_SLASH_COMMANDS,
+      plugins: input.pluginCommands,
+      provider: input.commands,
+      onPluginCollision(command, winner) {
+        console.warn(
+          `[Plugins] Client slash command /${command.name} from ${command.pluginId} ignored; ${winner} command wins`,
+        );
+      },
+    })
+      .filter((entry) => !input.isDraftContext || entry.source !== "built-in")
+      .map((entry): AvailableCommand => {
+        if (entry.source === "built-in") return { source: "client", command: entry.command };
+        return entry;
       });
 
-    const rootCommands: AvailableCommand[] = [
-      ...mergeSlashCommandSources({
-        builtIn: CLIENT_SLASH_COMMANDS,
-        plugins: input.pluginCommands,
-        provider: input.commands,
-        onPluginCollision(command, winner) {
-          console.warn(
-            `[Plugins] Client slash command /${command.name} from ${command.pluginId} ignored; ${winner} command wins`,
-          );
-        },
-      })
-        .filter((entry) => !input.isDraftContext || entry.source !== "built-in")
-        .map((entry): AvailableCommand => {
-          if (entry.source === "built-in") return { source: "client", command: entry.command };
-          return entry;
-        }),
-      ...quickPromptCommands,
-    ];
     const availableCommands: AvailableCommand[] =
       input.activeSlashCommand?.position === "inline"
-        ? [...filterInlineSkillCommandEntries(providerCommands), ...quickPromptCommands]
+        ? filterInlineSkillCommandEntries(providerCommands)
         : rootCommands;
     const matches = filterAndRankCommandAutocompleteEntries(
       availableCommands,
@@ -385,17 +340,6 @@ function resolveAutocompleteErrorMessage(args: {
   return undefined;
 }
 
-function applyQuickPromptReplacement(input: {
-  text: string;
-  slashCommand: SlashCommandRange | null;
-  content: string;
-}): string {
-  if (!input.slashCommand) return input.content;
-  const before = input.text.slice(0, input.slashCommand.start);
-  const after = input.text.slice(input.slashCommand.end);
-  return `${before}${input.content}${after}`;
-}
-
 export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAutocompleteResult {
   const { t } = useTranslation();
   const {
@@ -409,11 +353,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     onClientSlashCommand,
     canExecuteClientSlashCommand,
     pluginClientSlashCommands = [],
-    quickPrompts: quickPromptsProp,
   } = input;
-
-  const quickPromptsStoreItems = useQuickPromptsStore((state) => state.items);
-  const quickPrompts = quickPromptsProp ?? quickPromptsStoreItems;
 
   const activeSlashCommand = useMemo(
     () =>
@@ -530,7 +470,6 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
         commandFilterQuery,
         commands,
         pluginCommands: pluginClientSlashCommands,
-        quickPrompts,
         activeSlashCommand,
         fileSuggestions: fileSuggestionsQuery.data ?? [],
         isDraftContext,
@@ -544,7 +483,6 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
       commandFilterQuery,
       commands,
       pluginClientSlashCommands,
-      quickPrompts,
       fileSuggestionsQuery.data,
       isDraftContext,
       isVisible,
@@ -566,8 +504,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
       const selectedIsCommand =
         selected.type === "client_command" ||
         selected.type === "plugin_command" ||
-        selected.type === "provider_command" ||
-        selected.type === "quick_prompt";
+        selected.type === "provider_command";
       if (snapshot && selectedIsCommand && !current.slashCommand) return;
       if (
         selected.type === "client_command" &&
@@ -576,17 +513,6 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
         onClientSlashCommand
       ) {
         onClientSlashCommand(selected.command);
-        return;
-      }
-
-      if (selected.type === "quick_prompt") {
-        const nextInput = applyQuickPromptReplacement({
-          text: current.text,
-          slashCommand: current.slashCommand,
-          content: selected.item.content,
-        });
-        setUserInput(nextInput);
-        onAutocompleteApplied?.();
         return;
       }
 

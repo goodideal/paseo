@@ -9,6 +9,8 @@ import type {
   PluginCommandCenterItemContribution,
   PluginClientSlashCommandContribution,
   PluginComposerPillContribution,
+  PluginComposerAccessoryContribution,
+  PluginTurnActionContribution,
   PluginSidebarContribution,
   PluginSurfaceContribution,
   PluginSettingsScreenContribution,
@@ -35,6 +37,8 @@ export interface EvaluatedPlugin {
   themes: PluginThemeContribution[];
   timelineTransformers: PluginTimelineTransformerContribution[];
   timelineRenderers: PluginTimelineRendererContribution[];
+  composerAccessories: PluginComposerAccessoryContribution[];
+  turnActions: PluginTurnActionContribution[];
 }
 
 export interface InstalledPlugin extends EvaluatedPlugin {

@@ -22,6 +22,8 @@ function installation(): InstalledPlugin {
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    composerAccessories: [],
+    turnActions: [],
   };
 }
 

@@ -38,10 +38,10 @@ describe("getProviderIcon", () => {
     expect(icon.displayName).toBe("SvgProviderIcon(agy)");
   });
 
-  it("resolves antigravity catalog icon to its SVG", () => {
-    const icon = getProviderIcon("antigravity");
+  it("resolves cursor catalog icon to its SVG", () => {
+    const icon = getProviderIcon("cursor");
     expect(icon).not.toBe(Bot);
-    expect(icon.displayName).toBe("SvgProviderIcon(antigravity)");
+    expect(icon.displayName).toBe("SvgProviderIcon(cursor)");
   });
 
   it("resolves every registered terminal-profile icon to its shipped SVG, not the Bot", () => {

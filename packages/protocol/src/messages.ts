@@ -25,17 +25,6 @@ import { AgentProviderSchema } from "./provider-manifest.js";
 import { ProviderPaseoToolsPolicySchema } from "./provider-config.js";
 import { TOOL_CALL_ICON_NAMES } from "./agent-types.js";
 import { WORKSPACE_LABEL_COLORS } from "./workspace-labels.js";
-import { QuickPromptItemSchema } from "./quick-prompts.js";
-export {
-  QuickPromptItemSchema,
-  type QuickPromptItem,
-  type QuickPromptTriggerType,
-  type QuickPromptAgentStatus,
-  type QuickPromptRuleCondition,
-  type GlobalQuickPromptsRecord,
-  type ProjectQuickPromptsRecord,
-  DEFAULT_QUICK_PROMPT_ITEMS,
-} from "./quick-prompts.js";
 import {
   ChatCreateRequestSchema,
   ChatListRequestSchema,
@@ -1080,32 +1069,6 @@ export const WorkspaceRecoveryRestoreRequestSchema = z.object({
   requestId: z.string(),
 });
 
-export const QuickPromptsGlobalGetRequestSchema = z.object({
-  type: z.literal("quick_prompts.global.get.request"),
-  requestId: z.string(),
-});
-
-export const QuickPromptsGlobalSetRequestSchema = z.object({
-  type: z.literal("quick_prompts.global.set.request"),
-  requestId: z.string(),
-  items: z.array(QuickPromptItemSchema),
-});
-
-export const QuickPromptsProjectGetRequestSchema = z.object({
-  type: z.literal("quick_prompts.project.get.request"),
-  requestId: z.string(),
-  projectId: z.string(),
-});
-
-export const QuickPromptsProjectSetRequestSchema = z.object({
-  type: z.literal("quick_prompts.project.set.request"),
-  requestId: z.string(),
-  projectId: z.string(),
-  items: z.array(QuickPromptItemSchema),
-  disabledGlobalIds: z.array(z.string()),
-  order: z.array(z.string()).optional(),
-});
-
 export const SetVoiceModeMessageSchema = z.object({
   type: z.literal("set_voice_mode"),
   enabled: z.boolean(),
@@ -1943,16 +1906,6 @@ export const ProviderSubagentTimelineRequestMessageSchema = z.object({
 export const SetAgentTimelineSubscriptionRequestMessageSchema = z.object({
   type: z.literal("agent.timeline.set_subscription.request"),
   agentIds: z.array(z.string()),
-  requestId: z.string(),
-});
-
-export const AgentMessageSynthesizeBriefRequestSchema = z.object({
-  type: z.literal("agent.message.synthesize_brief.request"),
-  agentId: z.string(),
-  turnId: z.string(),
-  text: z.string().max(200_000),
-  customPrompt: z.string().optional(),
-  forceRefresh: z.boolean().optional(),
   requestId: z.string(),
 });
 
@@ -3277,10 +3230,6 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceLabelDeleteInspectRequestSchema,
   WorkspaceRecoveryInspectRequestSchema,
   WorkspaceRecoveryRestoreRequestSchema,
-  QuickPromptsGlobalGetRequestSchema,
-  QuickPromptsGlobalSetRequestSchema,
-  QuickPromptsProjectGetRequestSchema,
-  QuickPromptsProjectSetRequestSchema,
   SetVoiceModeMessageSchema,
   SendAgentMessageRequestSchema,
   WaitForFinishRequestSchema,
@@ -3344,7 +3293,6 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProviderSubagentTimelineRequestMessageSchema,
   SetAgentTimelineSubscriptionRequestMessageSchema,
   AgentForkContextRequestMessageSchema,
-  AgentMessageSynthesizeBriefRequestSchema,
   SetAgentModeRequestMessageSchema,
   SetAgentModelRequestMessageSchema,
   SetAgentThinkingRequestMessageSchema,
@@ -4409,52 +4357,6 @@ export const WorkspaceLabelDeleteInspectResponseSchema = z.object({
   }),
 });
 
-export const QuickPromptsGlobalGetResponseSchema = z.object({
-  type: z.literal("quick_prompts.global.get.response"),
-  payload: z.object({
-    requestId: z.string(),
-    items: z.array(QuickPromptItemSchema),
-  }),
-});
-
-export const QuickPromptsGlobalSetResponseSchema = z.object({
-  type: z.literal("quick_prompts.global.set.response"),
-  payload: z.object({
-    requestId: z.string(),
-    items: z.array(QuickPromptItemSchema),
-    success: z.boolean(),
-  }),
-});
-
-export const QuickPromptsProjectGetResponseSchema = z.object({
-  type: z.literal("quick_prompts.project.get.response"),
-  payload: z.object({
-    requestId: z.string(),
-    projectId: z.string(),
-    items: z.array(QuickPromptItemSchema),
-    disabledGlobalIds: z.array(z.string()),
-    order: z.array(z.string()).optional(),
-  }),
-});
-
-export const QuickPromptsProjectSetResponseSchema = z.object({
-  type: z.literal("quick_prompts.project.set.response"),
-  payload: z.object({
-    requestId: z.string(),
-    projectId: z.string(),
-    items: z.array(QuickPromptItemSchema),
-    disabledGlobalIds: z.array(z.string()),
-    order: z.array(z.string()).optional(),
-    success: z.boolean(),
-  }),
-});
-
-export const QuickPromptsChangedEventSchema = z.object({
-  type: z.literal("quick_prompts.changed"),
-  scope: z.enum(["global", "project"]),
-  projectId: z.string().optional(),
-});
-
 export const ProjectUpdateMessageSchema = z.object({
   type: z.literal("project.update"),
   payload: z.discriminatedUnion("kind", [
@@ -4933,20 +4835,6 @@ export const AgentAttentionRequiredMessageSchema = z.object({
         }),
       })
       .optional(),
-  }),
-});
-
-export const AgentMessageSynthesizeBriefResponseSchema = z.object({
-  type: z.literal("agent.message.synthesize_brief.response"),
-  payload: z.object({
-    requestId: z.string(),
-    agentId: z.string(),
-    turnId: z.string(),
-    briefText: z.string(),
-    audioBase64: z.string().optional(),
-    mimeType: z.string().optional(),
-    durationMs: z.number().optional(),
-    error: z.string().nullable(),
   }),
 });
 
@@ -7029,7 +6917,6 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentTimelineSubscriptionResponseMessageSchema,
   AgentAttentionRequiredMessageSchema,
   AgentForkContextResponseMessageSchema,
-  AgentMessageSynthesizeBriefResponseSchema,
   CancelAgentResponseMessageSchema,
   ClearAgentAttentionResponseMessageSchema,
   WorkspaceCreateResponseSchema,
@@ -7178,11 +7065,6 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkflowArtifactGetResponseSchema,
   DaemonUpdateProgressMessageSchema,
   DaemonUpdateResponseSchema,
-  QuickPromptsGlobalGetResponseSchema,
-  QuickPromptsGlobalSetResponseSchema,
-  QuickPromptsProjectGetResponseSchema,
-  QuickPromptsProjectSetResponseSchema,
-  QuickPromptsChangedEventSchema,
 ]);
 
 export type SessionOutboundMessage = z.infer<typeof SessionOutboundMessageSchema>;
@@ -7273,9 +7155,6 @@ export type AgentTimelineListPromptsResponseMessage = z.infer<
   typeof AgentTimelineListPromptsResponseMessageSchema
 >;
 export type AgentForkContextResponseMessage = z.infer<typeof AgentForkContextResponseMessageSchema>;
-export type AgentMessageSynthesizeBriefResponse = z.infer<
-  typeof AgentMessageSynthesizeBriefResponseSchema
->;
 export type CancelAgentResponseMessage = z.infer<typeof CancelAgentResponseMessageSchema>;
 export type SendAgentMessageResponseMessage = z.infer<typeof SendAgentMessageResponseMessageSchema>;
 export type SetVoiceModeResponseMessage = z.infer<typeof SetVoiceModeResponseMessageSchema>;
@@ -7380,9 +7259,6 @@ export type FetchWorkspacesRequestMessage = z.infer<typeof FetchWorkspacesReques
 export type ProjectListRequestMessage = z.infer<typeof ProjectListRequestMessageSchema>;
 export type FetchAgentRequestMessage = z.infer<typeof FetchAgentRequestMessageSchema>;
 export type AgentForkContextRequestMessage = z.infer<typeof AgentForkContextRequestMessageSchema>;
-export type AgentMessageSynthesizeBriefRequest = z.infer<
-  typeof AgentMessageSynthesizeBriefRequestSchema
->;
 export type SendAgentMessageRequest = z.infer<typeof SendAgentMessageRequestSchema>;
 export type WaitForFinishRequest = z.infer<typeof WaitForFinishRequestSchema>;
 export type DictationStreamStartMessage = z.infer<typeof DictationStreamStartMessageSchema>;
@@ -7447,15 +7323,6 @@ export type WorkspaceTitleSetRequest = z.infer<typeof WorkspaceTitleSetRequestSc
 export type WorkspacePinSetRequest = z.infer<typeof WorkspacePinSetRequestSchema>;
 export type WorkspaceRecoveryInspectRequest = z.infer<typeof WorkspaceRecoveryInspectRequestSchema>;
 export type WorkspaceRecoveryRestoreRequest = z.infer<typeof WorkspaceRecoveryRestoreRequestSchema>;
-export type QuickPromptsGlobalGetRequest = z.infer<typeof QuickPromptsGlobalGetRequestSchema>;
-export type QuickPromptsGlobalSetRequest = z.infer<typeof QuickPromptsGlobalSetRequestSchema>;
-export type QuickPromptsProjectGetRequest = z.infer<typeof QuickPromptsProjectGetRequestSchema>;
-export type QuickPromptsProjectSetRequest = z.infer<typeof QuickPromptsProjectSetRequestSchema>;
-export type QuickPromptsGlobalGetResponse = z.infer<typeof QuickPromptsGlobalGetResponseSchema>;
-export type QuickPromptsGlobalSetResponse = z.infer<typeof QuickPromptsGlobalSetResponseSchema>;
-export type QuickPromptsProjectGetResponse = z.infer<typeof QuickPromptsProjectGetResponseSchema>;
-export type QuickPromptsProjectSetResponse = z.infer<typeof QuickPromptsProjectSetResponseSchema>;
-export type QuickPromptsChangedEvent = z.infer<typeof QuickPromptsChangedEventSchema>;
 export type SetAgentModeRequestMessage = z.infer<typeof SetAgentModeRequestMessageSchema>;
 export type SetAgentModelRequestMessage = z.infer<typeof SetAgentModelRequestMessageSchema>;
 export type SetAgentThinkingRequestMessage = z.infer<typeof SetAgentThinkingRequestMessageSchema>;

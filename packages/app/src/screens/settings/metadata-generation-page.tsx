@@ -3,7 +3,7 @@ import { Alert, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
-import { DEFAULT_AUDIO_BRIEF_INSTRUCTIONS } from "@getpaseo/protocol/audio-brief";
+import { DEFAULT_AUDIO_BRIEF_INSTRUCTIONS } from "@/utils/audio-brief-defaults";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
 import { ExternalLink } from "@/components/ui/external-link";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";

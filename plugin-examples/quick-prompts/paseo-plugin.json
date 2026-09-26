@@ -1,0 +1,7 @@
+{
+  "id": "quick-prompts",
+  "description": "Hierarchical quick prompts engine and interactive composer accessory",
+  "requirements": {
+    "paseo": ">=0.9.1-custom"
+  }
+}

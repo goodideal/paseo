@@ -21,7 +21,6 @@ function createWorkflowSession(
   });
 }
 
-import { QuickPromptsSession } from "./quick-prompts/quick-prompts-session.js";
 import { WorkflowSession } from "./session/workflow/workflow-session.js";
 import type { WorkflowPresetRegistry } from "./workflows/workflow-preset-registry.js";
 import type { WorkflowService } from "./workflows/workflow-service.js";
@@ -197,8 +196,6 @@ import {
   createWorkspaceGitObserverService,
   type WorkspaceGitObserverService,
 } from "./session/workspace-git-observer/workspace-git-observer-service.js";
-import { toResolver } from "./speech/provider-resolver.js";
-import { AudioBriefService } from "./agent/audio-brief-service.js";
 import {
   createAgentStructuredTextGeneration,
   createGitMetadataGenerator,
@@ -788,7 +785,6 @@ export class Session {
     WorkspaceUpdatesSubscriptionState
   >();
   private readonly workspaceLabelService: WorkspaceLabelService | null;
-  private readonly quickPromptsSession: QuickPromptsSession;
   private readonly eventSubscriptions = new Map<
     string,
     { owner: OwnedSubscription; events: Set<SessionEventSubscription>; notifications: boolean }
@@ -813,7 +809,6 @@ export class Session {
   private readonly checkoutSession: CheckoutSession;
   private readonly scheduleSession: ScheduleSession;
   private readonly workflowSession: WorkflowSession | null;
-  private readonly audioBriefService: AudioBriefService;
   private readonly providerCatalogSession: ProviderCatalogSession;
   private readonly workspaceFilesSession: WorkspaceFilesSession;
   private readonly agentConfigSession: AgentConfigSession;
@@ -924,7 +919,6 @@ export class Session {
     this.workspaceRegistry = workspaceRegistry;
     this.directorySync = resolveDirectorySync(directorySync);
     this.workspaceLabelService = resolveWorkspaceLabelService(workspaceLabelService);
-    this.quickPromptsSession = new QuickPromptsSession(paseoHome, (msg) => this.emit(msg));
     this.filesystem = filesystem ?? nodeSessionFileSystem;
     this.github = github ?? createGitHubService();
     this.renameCurrentBranch = renameCurrentBranch ?? renameCurrentBranchDefault;
@@ -985,14 +979,6 @@ export class Session {
       emitStatusUpdate: (cwd, snapshot) => this.checkoutSession.emitStatusUpdate(cwd, snapshot),
       onBranchChanged,
       logger: this.sessionLogger,
-    });
-    this.audioBriefService = new AudioBriefService({
-      paseoHome: this.paseoHome,
-      generation: structuredTextGeneration,
-      tts: toResolver(tts),
-      logger: this.sessionLogger,
-      readDaemonConfig: () => this.daemonConfigStore.get(),
-      workspaceGitService: this.workspaceGitService,
     });
     this.scheduleSession = new ScheduleSession({
       host: { emit: (msg) => this.emit(msg) },
@@ -2361,7 +2347,6 @@ export class Session {
     return (
       this.dispatchWorkspaceStateMessage(msg) ??
       this.dispatchWorkspaceLabelMessage(msg) ??
-      this.dispatchQuickPromptsMessage(msg) ??
       this.dispatchWorkspaceSetupMessage(msg) ??
       this.dispatchWorkspaceAndProjectMessage(msg)
     );
@@ -2727,8 +2712,6 @@ export class Session {
       }
       case "agent.fork_context.request":
         return this.handleAgentForkContextRequest(msg);
-      case "agent.message.synthesize_brief.request":
-        return this.handleAgentMessageSynthesizeBriefRequest(msg);
       default:
         return undefined;
     }
@@ -2979,25 +2962,6 @@ export class Session {
       return this.handleWorkspaceSetupRunRequest(msg);
     }
     return undefined;
-  }
-
-  private dispatchQuickPromptsMessage(msg: SessionInboundMessage): Promise<void> | undefined {
-    switch (msg.type) {
-      case "quick_prompts.global.get.request":
-        this.quickPromptsSession.handleGlobalGet(msg);
-        return Promise.resolve();
-      case "quick_prompts.global.set.request":
-        this.quickPromptsSession.handleGlobalSet(msg);
-        return Promise.resolve();
-      case "quick_prompts.project.get.request":
-        this.quickPromptsSession.handleProjectGet(msg);
-        return Promise.resolve();
-      case "quick_prompts.project.set.request":
-        this.quickPromptsSession.handleProjectSet(msg);
-        return Promise.resolve();
-      default:
-        return undefined;
-    }
   }
 
   private dispatchWorkspaceLabelMessage(msg: SessionInboundMessage): Promise<void> | undefined {
@@ -8049,60 +8013,6 @@ export class Session {
       );
     }
   }
-
-  private async handleAgentMessageSynthesizeBriefRequest(
-    msg: Extract<SessionInboundMessage, { type: "agent.message.synthesize_brief.request" }>,
-  ): Promise<void> {
-    try {
-      const snapshot = await ensureAgentLoaded(msg.agentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
-
-      const brief = await this.audioBriefService.synthesizeBrief({
-        agentId: msg.agentId,
-        turnId: msg.turnId,
-        text: msg.text,
-        customPrompt: msg.customPrompt,
-        cwd: snapshot.cwd,
-        forceRefresh: msg.forceRefresh,
-      });
-
-      this.emit({
-        type: "agent.message.synthesize_brief.response",
-        payload: {
-          requestId: msg.requestId,
-          agentId: msg.agentId,
-          turnId: msg.turnId,
-          briefText: brief.briefText,
-          audioBase64: brief.audioBase64,
-          mimeType: brief.mimeType,
-          durationMs: brief.durationMs,
-          error: null,
-        },
-      });
-    } catch (error) {
-      this.sessionLogger.error(
-        { err: error, agentId: msg.agentId, turnId: msg.turnId },
-        "Failed to handle agent.message.synthesize_brief.request",
-      );
-      this.emit({
-        type: "agent.message.synthesize_brief.response",
-        payload: {
-          requestId: msg.requestId,
-          agentId: msg.agentId,
-          turnId: msg.turnId,
-          briefText: "",
-          audioBase64: undefined,
-          mimeType: undefined,
-          durationMs: undefined,
-          error: error instanceof Error ? error.message : String(error),
-        },
-      });
-    }
-  }
-
   private async handleAgentForkContextRequest(
     msg: Extract<SessionInboundMessage, { type: "agent.fork_context.request" }>,
   ): Promise<void> {

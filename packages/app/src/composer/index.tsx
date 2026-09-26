@@ -48,7 +48,6 @@ import {
   type DraftAgentControlsProps,
 } from "@/composer/agent-controls";
 import { ContextWindowMeter } from "@/components/context-window-meter";
-import { useAudioBriefStore } from "@/audio-brief/audio-brief-store";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import { selectAgentTurnPresentation, useSessionStore } from "@/stores/session-store";
 import { useFilePicker } from "@/hooks/use-file-picker";
@@ -90,12 +89,7 @@ import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { AutocompletePopover } from "@/components/ui/autocomplete-popover";
 import type { AutocompleteOption } from "@/components/ui/autocomplete";
 import { useAgentAutocomplete } from "@/hooks/use-agent-autocomplete";
-import { QuickPromptBar, QuickPromptsModal } from "./quick-prompts";
-import { useEffectiveQuickPrompts } from "@/hooks/use-quick-prompts";
-import { useAgentProfiles } from "@/agent-profiles";
-import { resolveActiveAgentProfileIds } from "@/utils/quick-prompt-resolver";
-import type { QuickPromptAgentStatus, QuickPromptItem } from "@getpaseo/protocol/quick-prompts";
-import type { StreamItem } from "@/types/stream";
+import { PluginComposerAccessories } from "@/plugins";
 import { usePluginClientSlashCommands } from "@/plugins/client-slash-commands";
 import {
   executePluginClientSlashCommand,
@@ -272,45 +266,16 @@ function buildRealtimeVoiceButtonStyle(
   );
 }
 
-function findLatestAssistantText(streamTail?: readonly StreamItem[]): string | null {
-  if (!streamTail) return null;
-  for (let i = streamTail.length - 1; i >= 0; i--) {
-    const item = streamTail[i];
-    if (item.kind === "assistant_message" && item.text) {
-      return item.text;
-    }
-  }
-  return null;
-}
-
 function buildAgentStateSelector(serverId: string, agentId: string) {
   return (state: ReturnType<typeof useSessionStore.getState>) => {
-    const session = state.sessions[serverId];
-    const agent = session?.agents?.get(agentId);
-    if (!agent) {
-      return {
-        status: null,
-        contextWindowMaxTokens: null,
-        contextWindowUsedTokens: null,
-        totalCostUsd: null,
-        model: null,
-        provider: null,
-        currentModeId: null,
-        thinkingOptionId: null,
-        labels: null,
-      };
-    }
-    const lastUsage = agent.lastUsage;
+    const agent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
     return {
-      status: agent.status,
-      contextWindowMaxTokens: lastUsage?.contextWindowMaxTokens ?? null,
-      contextWindowUsedTokens: lastUsage?.contextWindowUsedTokens ?? null,
-      totalCostUsd: lastUsage?.totalCostUsd ?? null,
-      model: agent.model,
-      provider: agent.provider,
-      currentModeId: agent.currentModeId,
-      thinkingOptionId: agent.thinkingOptionId,
-      labels: agent.labels,
+      status: agent?.status ?? null,
+      contextWindowMaxTokens: agent?.lastUsage?.contextWindowMaxTokens ?? null,
+      contextWindowUsedTokens: agent?.lastUsage?.contextWindowUsedTokens ?? null,
+      totalCostUsd: agent?.lastUsage?.totalCostUsd ?? null,
+      model: agent?.model ?? null,
+      provider: agent?.provider ?? null,
     };
   };
 }
@@ -1318,7 +1283,7 @@ function ComposerContentImpl({
   placeholder,
 }: ComposerContentProps) {
   const mode = resolveComposerInputMode(inputMode);
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const buttonIconSize = resolveComposerButtonIconSize();
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
@@ -1345,54 +1310,6 @@ function ComposerContentImpl({
   const queuedMessages = queuedMessagesRaw ?? EMPTY_ARRAY;
 
   const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
-
-  const streamTail = useSessionStore((state) =>
-    state.sessions[serverId]?.agentStreamTail?.get(agentId),
-  );
-  const lastAssistantText = useMemo(() => findLatestAssistantText(streamTail), [streamTail]);
-  const { profiles } = useAgentProfiles(serverId);
-  const activeAgentProfileIds = useMemo(() => {
-    return resolveActiveAgentProfileIds(
-      {
-        provider: agentState.provider ?? agentControls?.selectedProvider ?? null,
-        model: agentState.model ?? agentControls?.selectedModel ?? null,
-        currentModeId: agentState.currentModeId ?? agentControls?.selectedMode ?? null,
-        thinkingOptionId:
-          agentState.thinkingOptionId ?? agentControls?.selectedThinkingOptionId ?? null,
-        labels: agentState.labels,
-      },
-      profiles,
-    );
-  }, [
-    agentState.provider,
-    agentState.model,
-    agentState.currentModeId,
-    agentState.thinkingOptionId,
-    agentState.labels,
-    agentControls?.selectedProvider,
-    agentControls?.selectedModel,
-    agentControls?.selectedMode,
-    agentControls?.selectedThinkingOptionId,
-    profiles,
-  ]);
-  const { effectiveItems: activeQuickPrompts } = useEffectiveQuickPrompts({
-    serverId,
-    workspaceId,
-    lastAssistantText,
-    agentStatus: (agentState.status as QuickPromptAgentStatus) ?? null,
-    agentProfileId: activeAgentProfileIds,
-    locale: i18n.language,
-  });
-
-  const [isQuickPromptsModalOpen, setIsQuickPromptsModalOpen] = useState(false);
-
-  const handleOpenQuickPromptsManage = useCallback(() => {
-    setIsQuickPromptsModalOpen(true);
-  }, []);
-
-  const handleCloseQuickPromptsManage = useCallback(() => {
-    setIsQuickPromptsModalOpen(false);
-  }, []);
 
   const isCompactFormFactor = useIsCompactFormFactor();
   const isCompactLayout = resolveCompactLayout(isCompactLayoutOverride, isCompactFormFactor);
@@ -1796,7 +1713,6 @@ function ComposerContentImpl({
 
   const handleSubmit = useCallback(
     (payload: MessagePayload) => {
-      useAudioBriefStore.getState().stopBrief();
       const outgoingAttachments = buildOutgoingAttachments(attachments);
       const clientSlashCommand = resolveClientSlashCommand({
         text: payload.text,
@@ -1826,27 +1742,6 @@ function ComposerContentImpl({
       runPluginClientSlashCommand,
       sendMessageWithContent,
     ],
-  );
-
-  const handleSelectQuickPrompt = useCallback(
-    (item: QuickPromptItem) => {
-      handleSubmit({
-        text: item.content,
-        attachments: [],
-        cwd,
-      });
-    },
-    [cwd, handleSubmit],
-  );
-
-  const handleSelectQuickPromptForEdit = useCallback(
-    (item: QuickPromptItem) => {
-      const current = textSource.getSnapshot();
-      const nextText = current.trim().length > 0 ? `${current}\n${item.content}` : item.content;
-      replaceUserInput(nextText, { start: nextText.length, end: nextText.length });
-      messageInputRef.current?.focus();
-    },
-    [replaceUserInput, textSource],
   );
 
   const handlePickImage = useCallback(async () => {
@@ -2459,7 +2354,6 @@ function ComposerContentImpl({
       canExecuteClientSlashCommand: buildOutgoingAttachments(attachments).length === 0,
       onClientSlashCommand: runClientSlashCommand,
       pluginClientSlashCommands,
-      quickPrompts: activeQuickPrompts,
     }),
     [
       replaceUserInput,
@@ -2470,7 +2364,6 @@ function ComposerContentImpl({
       attachments,
       runClientSlashCommand,
       pluginClientSlashCommands,
-      activeQuickPrompts,
     ],
   );
   const messageInputContainerRef = useRef<View>(null);
@@ -2507,6 +2400,26 @@ function ComposerContentImpl({
     ? t("composer.github.searching")
     : t("composer.github.noResults");
 
+  const composerApi = useMemo(
+    () => ({
+      insertText: (text: string) => {
+        const current = textSource.getSnapshot();
+        const nextText = current.trim().length > 0 ? `${current}\n${text}` : text;
+        replaceUserInput(nextText, { start: nextText.length, end: nextText.length });
+        messageInputRef.current?.focus();
+      },
+      submitText: (text: string) => {
+        handleSubmit({
+          text,
+          attachments: [],
+          cwd,
+        });
+      },
+      isSubmitDisabled,
+    }),
+    [cwd, handleSubmit, isSubmitDisabled, replaceUserInput, textSource],
+  );
+
   return (
     <>
       <ComposerKeyboardRegistration
@@ -2527,12 +2440,11 @@ function ComposerContentImpl({
             {queueList}
             {sendErrorNode}
 
-            <QuickPromptBar
-              items={activeQuickPrompts}
-              onSelectPrompt={handleSelectQuickPrompt}
-              onSelectForEdit={handleSelectQuickPromptForEdit}
-              onOpenManage={handleOpenQuickPromptsManage}
-              isSubmitDisabled={isSubmitDisabled}
+            <PluginComposerAccessories
+              workspaceId={workspaceId}
+              agentId={agentId}
+              serverId={serverId}
+              composerApi={composerApi}
             />
 
             <View ref={messageInputContainerRef} style={styles.messageInputContainer}>
@@ -2626,12 +2538,6 @@ function ComposerContentImpl({
           </View>
         </View>
       </View>
-      <QuickPromptsModal
-        visible={isQuickPromptsModalOpen}
-        onClose={handleCloseQuickPromptsManage}
-        serverId={serverId}
-        workspaceId={workspaceId}
-      />
     </>
   );
 }

@@ -19,7 +19,7 @@ export interface ProjectGiteaResolverOptions {
   resolveSshHost?: (host: string) => Promise<string | null>;
   probeUrl?: (url: string) => Promise<boolean>;
   readTeaConfig?: () => TeaLoginEntry[];
-  env?: NodeJS.ProcessEnv;
+  env?: Record<string, string | undefined>;
 }
 
 interface TeaLoginEntry {
@@ -35,7 +35,7 @@ export class ProjectGiteaResolver {
   private readonly resolveSshHost: (host: string) => Promise<string | null>;
   private readonly probeUrl: (url: string) => Promise<boolean>;
   private readonly readTeaConfig?: () => TeaLoginEntry[];
-  private readonly env: NodeJS.ProcessEnv;
+  private readonly env: Record<string, string | undefined>;
 
   constructor(options: ProjectGiteaResolverOptions = {}) {
     this.env = options.env ?? process.env;

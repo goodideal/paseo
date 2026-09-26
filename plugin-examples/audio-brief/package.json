@@ -1,0 +1,11 @@
+{
+  "name": "@paseo-plugin/audio-brief",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@getpaseo/plugin": "*",
+    "typescript": "^5.0.0",
+    "zod": "^3.23.8"
+  }
+}

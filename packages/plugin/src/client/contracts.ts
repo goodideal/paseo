@@ -81,7 +81,30 @@ export interface PluginAgentPanelProps extends PluginNavigableHostProps {
 
 export interface PluginClientOpenPanelOptions extends PluginOpenPanelOptions {
   workspaceId: string;
-  agentId?: string;
+  agentId?: string | null;
+}
+
+export interface PluginComposerAccessoryProps extends PluginNavigableHostProps {
+  workspaceId: string;
+  agentId?: string | null;
+}
+
+export interface PluginComposerAccessoryContribution {
+  id: string;
+  order?: number;
+  Component: ComponentType<PluginComposerAccessoryProps>;
+}
+
+export interface PluginTurnActionProps extends PluginNavigableHostProps {
+  turnId: string;
+  agentId: string;
+}
+
+export interface PluginTurnActionContribution {
+  id: string;
+  type: "button" | "card";
+  order?: number;
+  Component: ComponentType<PluginTurnActionProps>;
 }
 
 export interface PluginClientContext extends PluginCommandCapabilities {
@@ -95,6 +118,8 @@ export interface PluginClientContext extends PluginCommandCapabilities {
   addComposerPill(contribution: PluginComposerPillContribution): PluginButtonRegistration;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution): PluginCleanup;
   addTheme(contribution: PluginThemeContribution): PluginCleanup;
+  addComposerAccessory(contribution: PluginComposerAccessoryContribution): PluginCleanup;
+  addTurnAction(contribution: PluginTurnActionContribution): PluginCleanup;
   addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(
     contribution: PluginTimelineTransformerContribution<ItemType>,
   ): PluginCleanup;

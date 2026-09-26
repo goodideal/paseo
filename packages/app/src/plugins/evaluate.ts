@@ -25,6 +25,8 @@ import {
   type PluginTimelineRendererContribution,
   type PluginTimelineTransformerContribution,
   type PluginWorkspacePanelContribution,
+  type PluginComposerAccessoryContribution,
+  type PluginTurnActionContribution,
   type PluginButtonRegistration,
 } from "@getpaseo/plugin/client";
 import type { EvaluatedPlugin } from "./types";
@@ -99,6 +101,8 @@ export function runPluginClientBundle(
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    composerAccessories: [],
+    turnActions: [],
   };
   const surfaceIds = new Set<string>();
   const settingsScreenIds = new Set<string>();
@@ -110,6 +114,8 @@ export function runPluginClientBundle(
   const themeIds = new Set<string>();
   const timelineTransformerIds = new Set<string>();
   const timelineRendererIds = new Set<string>();
+  const composerAccessoryIds = new Set<string>();
+  const turnActionIds = new Set<string>();
   const removals = new Set<PluginCleanup>();
   let setupComplete = false;
   let stopped = false;
@@ -361,6 +367,37 @@ export function runPluginClientBundle(
         timelineRendererIds.delete(rendererId),
       );
     },
+    addComposerAccessory(contribution: PluginComposerAccessoryContribution) {
+      const normalizedId = requireId(contribution.id, "composer accessory id");
+      if (composerAccessoryIds.has(normalizedId)) {
+        throw new Error(`Duplicate composer accessory id: ${normalizedId}`);
+      }
+      if (typeof contribution.Component !== "function") {
+        throw new Error(`Composer accessory ${normalizedId} is not a component`);
+      }
+      composerAccessoryIds.add(normalizedId);
+      return register(collector.composerAccessories, { ...contribution, id: normalizedId }, () =>
+        composerAccessoryIds.delete(normalizedId),
+      );
+    },
+    addTurnAction(contribution: PluginTurnActionContribution) {
+      const normalizedId = requireId(contribution.id, "turn action id");
+      if (turnActionIds.has(normalizedId)) {
+        throw new Error(`Duplicate turn action id: ${normalizedId}`);
+      }
+      if (typeof contribution.Component !== "function") {
+        throw new Error(`Turn action ${normalizedId} is not a component`);
+      }
+      if (contribution.type !== "button" && contribution.type !== "card") {
+        throw new Error(
+          `Turn action ${normalizedId} has invalid type: ${String(contribution.type)}`,
+        );
+      }
+      turnActionIds.add(normalizedId);
+      return register(collector.turnActions, { ...contribution, id: normalizedId }, () =>
+        turnActionIds.delete(normalizedId),
+      );
+    },
     addComposerPill(contribution) {
       if (stopped) throw new Error("Plugin has stopped");
       return trackButton(runtime.addComposerPill(contribution));
@@ -455,5 +492,7 @@ export function runPluginClientBundle(
     themes: collector.themes,
     timelineTransformers: collector.timelineTransformers,
     timelineRenderers: collector.timelineRenderers,
+    composerAccessories: collector.composerAccessories,
+    turnActions: collector.turnActions,
   };
 }

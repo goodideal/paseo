@@ -8,7 +8,6 @@ import {
 } from "./connection/index.js";
 import { CreationClient } from "./creation/index.js";
 import type { CreationSnapshot } from "@getpaseo/protocol/messages";
-import type { QuickPromptItem } from "@getpaseo/protocol/quick-prompts";
 import type { z } from "zod";
 import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
 import type { ClientCapability } from "@getpaseo/protocol/client-capabilities";
@@ -43,7 +42,6 @@ import type {
   FileWriteResult,
   FetchAgentTimelineResponseMessage,
   AgentForkContextResponseMessage,
-  AgentMessageSynthesizeBriefResponse,
   GitSetupOptions,
   CheckoutStatusResponse,
   CheckoutCommit,
@@ -687,7 +685,6 @@ export type WorkflowArtifactGetPayload = Extract<
 >["payload"];
 export type FetchAgentTimelinePayload = FetchAgentTimelineResponseMessage["payload"];
 export type AgentForkContextPayload = AgentForkContextResponseMessage["payload"];
-export type AgentMessageSynthesizeBriefPayload = AgentMessageSynthesizeBriefResponse["payload"];
 
 export type FetchAgentTimelineDirection = FetchAgentTimelinePayload["direction"];
 export type FetchAgentTimelineProjection = FetchAgentTimelinePayload["projection"];
@@ -3412,26 +3409,6 @@ export class DaemonClient {
     );
   }
 
-  async synthesizeAgentMessageBrief(
-    agentId: string,
-    turnId: string,
-    text: string,
-    options: { customPrompt?: string; forceRefresh?: boolean; requestId?: string } = {},
-  ): Promise<AgentMessageSynthesizeBriefPayload> {
-    return this.sendNamespacedCorrelatedSessionRequest<"agent.message.synthesize_brief.response">({
-      requestId: options.requestId,
-      message: {
-        type: "agent.message.synthesize_brief.request",
-        agentId,
-        turnId,
-        text,
-        ...(options.customPrompt !== undefined ? { customPrompt: options.customPrompt } : {}),
-        ...(options.forceRefresh !== undefined ? { forceRefresh: options.forceRefresh } : {}),
-      },
-      timeout: 60000,
-    });
-  }
-
   async buildAgentForkContext(
     agentId: string,
     options: AgentForkContextOptions = {},
@@ -5268,75 +5245,6 @@ export class DaemonClient {
         expectedRevision: input.expectedRevision,
       },
       responseType: "write_project_config_response",
-    });
-  }
-
-  async quickPromptsGlobalGet(requestId?: string): Promise<{ items: QuickPromptItem[] }> {
-    return this.sendCorrelatedSessionRequest({
-      requestId,
-      message: {
-        type: "quick_prompts.global.get.request",
-      },
-      responseType: "quick_prompts.global.get.response",
-    });
-  }
-
-  async quickPromptsGlobalSet(
-    items: QuickPromptItem[],
-    requestId?: string,
-  ): Promise<{ items: QuickPromptItem[]; success: boolean }> {
-    return this.sendCorrelatedSessionRequest({
-      requestId,
-      message: {
-        type: "quick_prompts.global.set.request",
-        items,
-      },
-      responseType: "quick_prompts.global.set.response",
-    });
-  }
-
-  async quickPromptsProjectGet(
-    projectId: string,
-    requestId?: string,
-  ): Promise<{
-    projectId: string;
-    items: QuickPromptItem[];
-    disabledGlobalIds: string[];
-    order?: string[];
-  }> {
-    return this.sendCorrelatedSessionRequest({
-      requestId,
-      message: {
-        type: "quick_prompts.project.get.request",
-        projectId,
-      },
-      responseType: "quick_prompts.project.get.response",
-    });
-  }
-
-  async quickPromptsProjectSet(input: {
-    projectId: string;
-    items: QuickPromptItem[];
-    disabledGlobalIds: string[];
-    order?: string[];
-    requestId?: string;
-  }): Promise<{
-    projectId: string;
-    items: QuickPromptItem[];
-    disabledGlobalIds: string[];
-    order?: string[];
-    success: boolean;
-  }> {
-    return this.sendCorrelatedSessionRequest({
-      requestId: input.requestId,
-      message: {
-        type: "quick_prompts.project.set.request",
-        projectId: input.projectId,
-        items: input.items,
-        disabledGlobalIds: input.disabledGlobalIds,
-        order: input.order,
-      },
-      responseType: "quick_prompts.project.set.response",
     });
   }
 

@@ -652,3 +652,31 @@ it("binds imported getters to each originating installation across delayed callb
   await first.cleanup();
   await second.cleanup();
 });
+
+it("registers and cleans up composer accessories and turn actions", async () => {
+  const source = bundle(`
+    plugin.addComposerAccessory({
+      id: "quick-prompts",
+      order: 1,
+      Component: () => null,
+    });
+    plugin.addTurnAction({
+      id: "audio-brief",
+      type: "button",
+      order: 2,
+      Component: () => null,
+    });
+  `);
+  const evaluated = runPluginClientBundle("test-plugin", source, runtime);
+  expect(evaluated.composerAccessories).toHaveLength(1);
+  expect(evaluated.composerAccessories[0].id).toBe("quick-prompts");
+  expect(evaluated.composerAccessories[0].order).toBe(1);
+
+  expect(evaluated.turnActions).toHaveLength(1);
+  expect(evaluated.turnActions[0].id).toBe("audio-brief");
+  expect(evaluated.turnActions[0].type).toBe("button");
+
+  await evaluated.cleanup();
+  expect(evaluated.composerAccessories).toHaveLength(0);
+  expect(evaluated.turnActions).toHaveLength(0);
+});

@@ -37,7 +37,7 @@ import { useProjectIcons } from "@/projects/icons";
 import { createProjectIconTarget } from "@/projects/icon-target";
 import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
 import { useHostFeature } from "@/runtime/host-features";
-import { DEFAULT_AUDIO_BRIEF_INSTRUCTIONS } from "@getpaseo/protocol/audio-brief";
+import { DEFAULT_AUDIO_BRIEF_INSTRUCTIONS } from "@/utils/audio-brief-defaults";
 import { useToast } from "@/contexts/toast-context";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import {
