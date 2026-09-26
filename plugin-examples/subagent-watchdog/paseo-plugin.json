@@ -1,7 +1,0 @@
-{
-  "id": "subagent-watchdog",
-  "description": "In-flight heartbeat monitoring, heuristic auto-propelling, and interactive blocker decision card for subagents",
-  "requirements": {
-    "paseo": ">=0.8.0"
-  }
-}
