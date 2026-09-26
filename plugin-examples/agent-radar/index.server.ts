@@ -3,7 +3,14 @@ import { StreamWatcher } from "./server/stream-watcher.js";
 import { ManagedGovernor } from "./server/managed-governor.js";
 import { Synthesizer } from "./server/synthesizer.js";
 import { Executor } from "./server/executor.js";
-import { resolveDecisionRpc, interruptAgentRpc, getWatchdogStatusRpc } from "./shared/rpc.js";
+import { RadarEngine } from "./server/radar-engine.js";
+import {
+  resolveDecisionRpc,
+  interruptAgentRpc,
+  getWatchdogStatusRpc,
+  radarGetSnapshotRpc,
+  radarResolveDecisionRpc,
+} from "./shared/rpc.js";
 import { watchdogSettings } from "./shared/settings.js";
 import type { BlockerReport } from "./shared/types.js";
 
@@ -17,6 +24,15 @@ export default function contribute(server: PluginServerContext) {
   const governor = new ManagedGovernor(configuredMaxAutoTurns);
   const synthesizer = new Synthesizer();
   const executor = new Executor();
+  const activeBlockers = new Map<string, BlockerReport>();
+  const activeSubscriptions = new Map<string, () => void>();
+
+  const radarEngine = new RadarEngine({
+    workspaceCwd: process.cwd(),
+    streamWatcher,
+    governor,
+    activeBlockers,
+  });
 
   settings.read().then((state) => {
     if (state.status === "ready") {
@@ -35,9 +51,6 @@ export default function contribute(server: PluginServerContext) {
       streamWatcher.setHeartbeatThresholdSeconds(configuredHeartbeatThreshold);
     }
   });
-
-  const activeBlockers = new Map<string, BlockerReport>();
-  const activeSubscriptions = new Map<string, () => void>();
 
   server.on("agent.turn_started", (event, context) => {
     const agentId = event.agent.id;
@@ -168,7 +181,10 @@ export default function contribute(server: PluginServerContext) {
     }
   });
 
-  server.handle(resolveDecisionRpc, async (input, context) => {
+  const handleResolveDecision = async (
+    input: { agentId: string; optionId: string; customFeedback?: string },
+    context: any,
+  ) => {
     const report = activeBlockers.get(input.agentId);
     if (!report) {
       return { success: false, message: "No active blocker found for this agent" };
@@ -189,7 +205,10 @@ export default function contribute(server: PluginServerContext) {
     }
 
     return { success: true, message: `Resolved with option: ${option.label}` };
-  });
+  };
+
+  server.handle(resolveDecisionRpc, handleResolveDecision);
+  server.handle(radarResolveDecisionRpc, handleResolveDecision);
 
   server.handle(interruptAgentRpc, async (input, context) => {
     try {
@@ -207,6 +226,17 @@ export default function contribute(server: PluginServerContext) {
       blocker: activeBlockers.get(input.agentId) ?? null,
       autoTurnCount: governor.getAutoTurnCount(input.agentId),
     };
+  });
+
+  server.handle(radarGetSnapshotRpc, async (input, context) => {
+    let agentsList: any[] = [];
+    try {
+      if (typeof context?.paseo?.agents?.list === "function") {
+        agentsList = await context.paseo.agents.list();
+      }
+    } catch {}
+
+    return await radarEngine.getSnapshot(input.agentId, agentsList);
   });
 
   return () => {

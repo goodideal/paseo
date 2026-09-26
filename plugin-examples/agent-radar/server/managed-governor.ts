@@ -13,6 +13,10 @@ export class ManagedGovernor {
     this.maxAutoTurns = turns;
   }
 
+  public getMaxAutoTurns(): number {
+    return this.maxAutoTurns;
+  }
+
   public getAutoTurnCount(agentId: string): number {
     return this.turnCounts.get(agentId) || 0;
   }
