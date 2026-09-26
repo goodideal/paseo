@@ -343,6 +343,9 @@ function getFallbackTabOptionLabel(
   if (tab.target.kind === "commit_diff") {
     return tab.target.sha.slice(0, 7);
   }
+  if (tab.target.kind === "workflow_runs") {
+    return "Workflow Runs";
+  }
   return labels.agent;
 }
 
