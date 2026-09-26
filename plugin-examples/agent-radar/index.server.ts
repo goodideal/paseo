@@ -232,7 +232,12 @@ export default function contribute(server: PluginServerContext) {
     let agentsList: any[] = [];
     try {
       if (typeof context?.paseo?.agents?.list === "function") {
-        agentsList = await context.paseo.agents.list();
+        const res: any = await context.paseo.agents.list();
+        if (res && Array.isArray(res.entries)) {
+          agentsList = res.entries.map((e: any) => e.agent ?? e);
+        } else if (Array.isArray(res)) {
+          agentsList = res;
+        }
       }
     } catch {}
 

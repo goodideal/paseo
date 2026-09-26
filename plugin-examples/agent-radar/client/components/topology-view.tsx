@@ -54,8 +54,10 @@ export function TopologyView({ topology, onSelectNode, selectedNodeId }: Topolog
               <Text style={styles.toolName} numberOfLines={1}>
                 {node.runningTool}
               </Text>
-              {node.durationMs > 0 && (
-                <Text style={styles.toolDuration}>({Math.round(node.durationMs / 1000)}s)</Text>
+              {(node.durationMs ?? 0) > 0 && (
+                <Text style={styles.toolDuration}>
+                  ({Math.round((node.durationMs ?? 0) / 1000)}s)
+                </Text>
               )}
             </View>
           )}

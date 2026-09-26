@@ -49,6 +49,11 @@ export function RadarPanelHost(props: PluginAgentPanelProps) {
     activeTab === "pipeline" ||
     (activeTab === "auto" && snapshot?.mode === "superpower" && Boolean(snapshot.superpower));
 
+  const showTopology =
+    activeTab === "topology" ||
+    (activeTab === "auto" && snapshot?.mode !== "superpower") ||
+    !snapshot?.superpower;
+
   return (
     <ScrollView style={styles.container}>
       {/* Top Header Mode Bar */}
@@ -96,7 +101,7 @@ export function RadarPanelHost(props: PluginAgentPanelProps) {
         />
       )}
 
-      {(!showPipeline || activeTab === "topology") && snapshot?.topology && (
+      {showTopology && snapshot?.topology && (
         <TopologyView
           topology={snapshot.topology}
           onSelectNode={(id) => setSelectedId(id)}
