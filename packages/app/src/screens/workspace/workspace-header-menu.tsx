@@ -3,10 +3,12 @@ import { View } from "react-native";
 import { useRouter, type Href } from "expo-router";
 import { useTranslation } from "react-i18next";
 import {
+  Activity,
   Copy,
   Ellipsis,
   Globe,
   Import as ImportIcon,
+  Plus,
   Settings,
   SquarePen,
 } from "lucide-react-native";
@@ -40,10 +42,14 @@ const ThemedSquarePen = withUnistyles(SquarePen);
 const ThemedGlobe = withUnistyles(Globe);
 const ThemedImport = withUnistyles(ImportIcon);
 const ThemedSettings = withUnistyles(Settings);
+const ThemedActivity = withUnistyles(Activity);
+const ThemedPlus = withUnistyles(Plus);
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 const MENU_NEW_AGENT_ICON = <ThemedSquarePen size={16} uniProps={mutedColorMapping} />;
+const MENU_NEW_TAB_ICON = <ThemedPlus size={16} uniProps={mutedColorMapping} />;
+const MENU_WORKFLOW_RUNS_ICON = <ThemedActivity size={16} uniProps={mutedColorMapping} />;
 const MENU_NEW_BROWSER_ICON = <ThemedGlobe size={16} uniProps={mutedColorMapping} />;
 const MENU_NEW_TERMINAL_ICON = <TerminalProfileIcon iconKey={undefined} size={16} />;
 const MENU_IMPORT_ICON = <ThemedImport size={16} uniProps={mutedColorMapping} />;
@@ -203,10 +209,13 @@ export interface WorkspaceHeaderMenuMobileProps extends WorkspaceHeaderWorkspace
   normalizedServerId: string;
   showCreateBrowserTab: boolean;
   createTerminalDisabled: boolean;
+  showWorkflowRuns?: boolean;
   onCreateDraftTab: () => void;
+  onCreateNewTab?: () => void;
   onCreateTerminal: () => void;
   onCreateTerminalWithProfile: (profile: TerminalProfile) => void;
   onCreateBrowser: () => void;
+  onOpenWorkflowRuns?: () => void;
 }
 
 /**
@@ -217,10 +226,13 @@ export function WorkspaceHeaderMenuMobile({
   normalizedServerId,
   showCreateBrowserTab,
   createTerminalDisabled,
+  showWorkflowRuns = false,
   onCreateDraftTab,
+  onCreateNewTab,
   onCreateTerminal,
   onCreateTerminalWithProfile,
   onCreateBrowser,
+  onOpenWorkflowRuns,
   ...workspaceActions
 }: WorkspaceHeaderMenuMobileProps) {
   const { t } = useTranslation();
@@ -259,6 +271,24 @@ export function WorkspaceHeaderMenuMobile({
         >
           {t("workspace.header.actions.newAgent")}
         </DropdownMenuItem>
+        {onCreateNewTab ? (
+          <DropdownMenuItem
+            testID="workspace-header-new-tab"
+            leading={MENU_NEW_TAB_ICON}
+            onSelect={onCreateNewTab}
+          >
+            {t("workspace.tabs.actions.newTab")}
+          </DropdownMenuItem>
+        ) : null}
+        {showWorkflowRuns && onOpenWorkflowRuns ? (
+          <DropdownMenuItem
+            testID="workspace-header-workflow-runs"
+            leading={MENU_WORKFLOW_RUNS_ICON}
+            onSelect={onOpenWorkflowRuns}
+          >
+            {t("panels.workflowRuns.label", "Workflow Runs")}
+          </DropdownMenuItem>
+        ) : null}
         {showCreateBrowserTab ? (
           <DropdownMenuItem
             testID="workspace-header-new-browser"

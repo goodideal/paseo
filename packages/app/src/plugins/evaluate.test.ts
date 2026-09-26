@@ -576,6 +576,20 @@ describe("evaluatePluginClientBundle", () => {
     expect(plugin.attachmentSources.map((source) => source.search.name)).toEqual(["issues.search"]);
   });
 
+  it("accepts valid timeline renderer and workspace panel with PascalCase icon", () => {
+    const plugin = evaluatePluginClientBundle(
+      "agent-radar",
+      bundle(`
+        function Component() { return null; }
+        const schema = { safeParse(value) { return { success: true, data: value }; } };
+        plugin.addTimelineRenderer({ kind: "radar-blocker", version: 1, schema, Component });
+        plugin.addWorkspacePanel({ id: "agent-radar-panel", title: "Agent Radar", icon: "Activity", context: "agent", Component });
+      `),
+    );
+    expect(plugin.timelineRenderers.map((r) => r.kind)).toEqual(["radar-blocker"]);
+    expect(plugin.workspacePanels.map((p) => p.icon)).toEqual(["Activity"]);
+  });
+
   it("rejects modules that are not part of the client runtime", () => {
     expect(() =>
       evaluatePluginClientBundle(

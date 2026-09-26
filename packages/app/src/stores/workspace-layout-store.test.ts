@@ -828,6 +828,32 @@ describe("workspace-layout-store actions", () => {
     ).toHaveLength(2);
   });
 
+  it("opens and reveals workflow_runs tab instances", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    const tabId = store.openTab({
+      workspaceKey,
+      target: { kind: "workflow_runs", workspaceId: "ws-1" },
+      intent: "new",
+    });
+    expect(tabId).toBeTruthy();
+
+    const tabs = collectAllTabs(
+      workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey].root,
+    );
+    const workflowTab = tabs.find((tab) => tab.target.kind === "workflow_runs");
+    expect(workflowTab).toBeDefined();
+    expect(workflowTab?.tabId).toBe(tabId);
+
+    // Reveal should reuse the existing tab
+    const revealed = store.openTab({
+      workspaceKey,
+      target: { kind: "workflow_runs", workspaceId: "ws-1" },
+      intent: "reveal",
+    });
+    expect(revealed).toBe(tabId);
+  });
+
   it("preserves same-kind state, clears cross-kind state, and accepts an explicit override", () => {
     const workspaceKey = createWorkspaceKey();
     const store = workspaceLayoutStore.getState();

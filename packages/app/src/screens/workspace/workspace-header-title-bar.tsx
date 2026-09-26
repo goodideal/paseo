@@ -62,12 +62,14 @@ export interface WorkspaceHeaderTitleBarProps {
   workspaceScripts: WorkspaceDescriptor["scripts"];
   liveTerminalIds: string[];
   showWorkspaceSetup: boolean;
+  showWorkflowRuns?: boolean;
   showCreateBrowserTab: boolean;
   isMobile: boolean;
   createTerminalDisabled: boolean;
   importAgentDisabled: boolean;
   copyPathDisabled: boolean;
   onCreateDraftTab: () => void;
+  onCreateNewTab?: () => void;
   onCreateTerminal: () => void;
   onCreateTerminalWithProfile: (profile: TerminalProfile) => void;
   onCreateBrowser: () => void;
@@ -75,6 +77,7 @@ export interface WorkspaceHeaderTitleBarProps {
   onCopyWorkspacePath: () => void;
   onCopyBranchName: () => void;
   onOpenSetupTab: () => void;
+  onOpenWorkflowRuns?: () => void;
   onScriptTerminalStarted: (terminalId: string) => void;
   onViewScriptTerminal: (terminalId: string) => void;
   onOpenUrlInBrowserTab: (url: string) => void;
@@ -92,12 +95,14 @@ export function WorkspaceHeaderTitleBar({
   workspaceScripts,
   liveTerminalIds,
   showWorkspaceSetup,
+  showWorkflowRuns = false,
   showCreateBrowserTab,
   isMobile,
   createTerminalDisabled,
   importAgentDisabled,
   copyPathDisabled,
   onCreateDraftTab,
+  onCreateNewTab,
   onCreateTerminal,
   onCreateTerminalWithProfile,
   onCreateBrowser,
@@ -105,6 +110,7 @@ export function WorkspaceHeaderTitleBar({
   onCopyWorkspacePath,
   onCopyBranchName,
   onOpenSetupTab,
+  onOpenWorkflowRuns,
   onScriptTerminalStarted,
   onViewScriptTerminal,
   onOpenUrlInBrowserTab,
@@ -142,11 +148,13 @@ export function WorkspaceHeaderTitleBar({
             normalizedServerId={normalizedServerId}
             currentBranchName={currentBranchName}
             showWorkspaceSetup={showWorkspaceSetup}
+            showWorkflowRuns={showWorkflowRuns}
             showCreateBrowserTab={showCreateBrowserTab}
             createTerminalDisabled={createTerminalDisabled}
             importAgentDisabled={importAgentDisabled}
             copyPathDisabled={copyPathDisabled}
             onCreateDraftTab={onCreateDraftTab}
+            onCreateNewTab={onCreateNewTab}
             onCreateTerminal={onCreateTerminal}
             onCreateTerminalWithProfile={onCreateTerminalWithProfile}
             onCreateBrowser={onCreateBrowser}
@@ -154,6 +162,7 @@ export function WorkspaceHeaderTitleBar({
             onCopyWorkspacePath={onCopyWorkspacePath}
             onCopyBranchName={onCopyBranchName}
             onOpenSetupTab={onOpenSetupTab}
+            onOpenWorkflowRuns={onOpenWorkflowRuns}
           />
         ) : (
           <WorkspaceHeaderMenuDesktop

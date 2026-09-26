@@ -1,0 +1,7 @@
+{
+  "id": "agent-radar",
+  "description": "Visual execution roadmap, Superpowers SDD pipeline tracker, subagent watchdog, and in-situ blocker decision card",
+  "requirements": {
+    "paseo": ">=0.8.0"
+  }
+}
