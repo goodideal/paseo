@@ -674,6 +674,7 @@ export const en = {
         browser: "Browser",
         agent: "Agent",
         workspace: "Workspace",
+        workflowRuns: "Agent Radar",
       },
       switcher: {
         trigger: "Switch tabs ({{count}} open)",
@@ -1950,6 +1951,14 @@ export const en = {
       empty: "No changes",
       loadError: "Failed to load diff",
       capabilityMissing: "Update the host to view commit diffs.",
+    },
+    workflowRuns: {
+      label: "Agent Radar",
+      subtitle: "Agent runs and sessions",
+      emptyDescription: "No active or completed agent runs found in this workspace.",
+      viewChat: "View Chat",
+      viewSubagent: "View Sub-agent",
+      sessionCancelled: "Session cancelled",
     },
   },
   toolCallDetails: {

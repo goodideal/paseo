@@ -677,6 +677,7 @@ export const zhCN: TranslationResources = {
         browser: "浏览器",
         agent: "Agent",
         workspace: "Workspace",
+        workflowRuns: "Agent Radar",
       },
       switcher: {
         trigger: "切换标签（已打开 {{count}} 个）",
@@ -1904,6 +1905,14 @@ export const zhCN: TranslationResources = {
       empty: "没有更改",
       loadError: "加载差异失败",
       capabilityMissing: "请更新主机以查看提交差异。",
+    },
+    workflowRuns: {
+      label: "Agent Radar",
+      subtitle: "Agent 运行状态与会话",
+      emptyDescription: "此工作区中未找到活跃或已完成的 Agent 运行。",
+      viewChat: "查看对话",
+      viewSubagent: "查看子代理",
+      sessionCancelled: "会话已取消",
     },
   },
   toolCallDetails: {

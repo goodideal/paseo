@@ -685,6 +685,7 @@ export const ru: TranslationResources = {
         browser: "Браузер",
         agent: "Агент",
         workspace: "Рабочее пространство",
+        workflowRuns: "Agent Radar",
       },
       switcher: {
         trigger: "Переключить вкладки (открыто: {{count}})",
@@ -1959,6 +1960,15 @@ export const ru: TranslationResources = {
       empty: "Нет изменений",
       loadError: "Не удалось загрузить список изменений",
       capabilityMissing: "Обновите хост, чтобы просматривать изменения в коммитах.",
+    },
+    workflowRuns: {
+      label: "Agent Radar",
+      subtitle: "Запуски рабочих процессов и сессии",
+      emptyDescription:
+        "В этом рабочем пространстве не найдено активных или завершенных рабочих процессов.",
+      viewChat: "Просмотреть чат",
+      viewSubagent: "Просмотреть подагента",
+      sessionCancelled: "Сессия отменена",
     },
   },
   toolCallDetails: {

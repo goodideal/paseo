@@ -683,6 +683,7 @@ export const es: TranslationResources = {
         browser: "Navegador",
         agent: "Agent",
         workspace: "Workspace",
+        workflowRuns: "Agent Radar",
       },
       switcher: {
         trigger: "Cambiar pestañas ({{count}}abierto)",
@@ -1973,6 +1974,15 @@ export const es: TranslationResources = {
       empty: "Sin cambios",
       loadError: "No se pudieron cargar las diferencias",
       capabilityMissing: "Actualiza el host para ver las diferencias de los commits.",
+    },
+    workflowRuns: {
+      label: "Agent Radar",
+      subtitle: "Ejecuciones y sesiones de flujo de trabajo",
+      emptyDescription:
+        "No se encontraron flujos de trabajo activos o completados en este espacio de trabajo.",
+      viewChat: "Ver chat",
+      viewSubagent: "Ver subagente",
+      sessionCancelled: "Sesión cancelada",
     },
   },
   toolCallDetails: {

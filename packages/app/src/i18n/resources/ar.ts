@@ -678,6 +678,7 @@ export const ar: TranslationResources = {
         browser: "المتصفح",
         agent: "Agent",
         workspace: "Workspace",
+        workflowRuns: "Agent Radar",
       },
       switcher: {
         trigger: "تبديل علامات التبويب (فتح{{count}})",
@@ -1926,6 +1927,14 @@ export const ar: TranslationResources = {
       empty: "لا توجد تغييرات",
       loadError: "فشل تحميل الفروقات",
       capabilityMissing: "حدّث المضيف لعرض فروقات الالتزامات.",
+    },
+    workflowRuns: {
+      label: "Agent Radar",
+      subtitle: "تشغيلات سير العمل والجلسات",
+      emptyDescription: "لم يتم العثور على تدفقات عمل نشطة أو مكتملة في مساحة العمل هذه.",
+      viewChat: "عرض الدردشة",
+      viewSubagent: "عرض الوكيل الفرعي",
+      sessionCancelled: "تم إلغاء الجلسة",
     },
   },
   toolCallDetails: {

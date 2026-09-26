@@ -286,7 +286,7 @@ export function WorkspaceHeaderMenuMobile({
             leading={MENU_WORKFLOW_RUNS_ICON}
             onSelect={onOpenWorkflowRuns}
           >
-            {t("panels.workflowRuns.label", "Workflow Runs")}
+            {t("panels.workflowRuns.label", "Agent Radar")}
           </DropdownMenuItem>
         ) : null}
         {showCreateBrowserTab ? (

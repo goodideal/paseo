@@ -15,6 +15,20 @@ import {
 } from "./workflow-runs-panel";
 import { getPanelRegistration, registerPanel } from "./panel-registry";
 
+Object.defineProperty(window, "matchMedia", {
+  writable: true,
+  value: vi.fn().mockImplementation((query) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: vi.fn(), // Deprecated
+    removeListener: vi.fn(), // Deprecated
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  })),
+});
+
 const scope = { projectId: "p1", workspaceId: "ws-1" };
 
 function TestComponent({ client }: { client: WorkflowEngineClient | null }) {
@@ -236,7 +250,7 @@ describe("useWorkflowRuns", () => {
       workflowRunsPanelRegistration.presentation?.label(
         ((key: string, fallback?: string) => fallback ?? key) as never,
       ),
-    ).toBe("Workflow Runs");
+    ).toBe("Agent Radar");
     expect(workflowRunsPanelRegistration.presentation?.icon).toBeDefined();
 
     registerPanel(workflowRunsPanelRegistration);

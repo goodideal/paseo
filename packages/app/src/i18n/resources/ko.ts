@@ -678,6 +678,7 @@ export const ko: TranslationResources = {
         browser: "브라우저",
         agent: "에이전트",
         workspace: "워크스페이스",
+        workflowRuns: "Agent Radar",
       },
       switcher: {
         trigger: "탭 전환 ({{count}}개 열림)",
@@ -1935,6 +1936,14 @@ export const ko: TranslationResources = {
       empty: "변경사항 없음",
       loadError: "Diff를 불러오지 못했습니다.",
       capabilityMissing: "커밋 diff를 보려면 호스트를 업데이트하세요.",
+    },
+    workflowRuns: {
+      label: "Agent Radar",
+      subtitle: "워크플로 실행 및 세션",
+      emptyDescription: "이 워크스페이스에서 활성 또는 완료된 워크플로를 찾을 수 없습니다.",
+      viewChat: "대화 보기",
+      viewSubagent: "서브 에이전트 보기",
+      sessionCancelled: "세션이 취소되었습니다",
     },
   },
   toolCallDetails: {

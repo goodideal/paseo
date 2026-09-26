@@ -312,6 +312,7 @@ function getFallbackTabOptionLabel(
     changes: string;
     files: string;
     pullRequest: string;
+    workflowRuns: string;
   },
 ): string {
   if (tab.target.kind === "new_tab") {
@@ -345,7 +346,7 @@ function getFallbackTabOptionLabel(
     return tab.target.sha.slice(0, 7);
   }
   if (tab.target.kind === "workflow_runs") {
-    return "Workflow Runs";
+    return labels.workflowRuns;
   }
   return labels.agent;
 }
@@ -362,6 +363,7 @@ function getFallbackTabOptionDescription(
     changes: string;
     files: string;
     pullRequest: string;
+    workflowRuns: string;
   },
 ): string {
   if (tab.target.kind === "new_tab") {
@@ -398,7 +400,7 @@ function getFallbackTabOptionDescription(
     return labels.pullRequest;
   }
   if (tab.target.kind === "workflow_runs") {
-    return "Workflow Runs";
+    return labels.workflowRuns;
   }
   if (tab.target.kind === "plugin") {
     return tab.target.panelId;
@@ -603,6 +605,7 @@ function MobileWorkspaceTabOption({
       changes: t("panels.diff.changesLabel"),
       files: t("panels.files.label"),
       pullRequest: t("panels.pullRequest.label"),
+      workflowRuns: t("workspace.tabs.fallback.workflowRuns"),
     }),
     [t],
   );
@@ -2225,6 +2228,7 @@ function WorkspaceScreenContent({
       changes: t("panels.diff.changesLabel"),
       files: t("panels.files.label"),
       pullRequest: t("panels.pullRequest.label"),
+      workflowRuns: t("workspace.tabs.fallback.workflowRuns"),
     }),
     [t],
   );
@@ -3741,6 +3745,7 @@ function WorkspaceScreenContent({
       showChanges: isGitCheckout,
       showPullRequest: hasPullRequest,
       showBrowser: showCreateBrowserTab,
+      showWorkflowRuns: supportsWorkflowEngine,
       terminalDisabled: createTerminalDisabled,
       launch: launchWorkspaceTab,
     }),
@@ -3750,6 +3755,7 @@ function WorkspaceScreenContent({
       isGitCheckout,
       launchWorkspaceTab,
       showCreateBrowserTab,
+      supportsWorkflowEngine,
     ],
   );
   const focusedPaneIdOrUndefined = useMemo(() => focusedPaneId ?? undefined, [focusedPaneId]);

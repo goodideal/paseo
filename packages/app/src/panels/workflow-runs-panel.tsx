@@ -21,6 +21,14 @@ import type {
   WorkflowRunSummary,
   WorkflowRunDetail,
 } from "@getpaseo/protocol/workflow/rpc-schemas";
+import {
+  useProjectedWorkflowRuns,
+  isProjectedRunId,
+  isProjectedStepAttempt,
+  type ProjectedWorkflowRunDetail,
+  type ProjectedWorkflowStepAttempt,
+} from "./projected-workflow-runs";
+import { navigateToAgent } from "@/utils/navigate-to-agent";
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
@@ -51,10 +59,17 @@ function resolveStatusVariant(status: string): "success" | "error" | "warning" |
   return "muted";
 }
 
-// Hook model layer with real typed client dependency
+export interface UseWorkflowRunsOptions {
+  projectedRuns?: WorkflowRunSummary[];
+  getProjectedDetail?: (runId: string) => (WorkflowRunDetail | ProjectedWorkflowRunDetail) | null;
+  onCancelAgent?: (agentId: string) => Promise<void>;
+}
+
+// Hook model layer with real typed client dependency and dynamic session projection
 export function useWorkflowRuns(
   client: WorkflowEngineClient | null,
   scope: { projectId: string; workspaceId: string } | null,
+  options?: UseWorkflowRunsOptions,
 ) {
   const [rawRuns, setRawRuns] = useState<WorkflowRunSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -63,15 +78,31 @@ export function useWorkflowRuns(
   const [isLoading, setIsLoading] = useState(false);
   const [isActionPending, setIsActionPending] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
-  const [detail, setDetail] = useState<WorkflowRunDetail | null>(null);
+  const [remoteDetail, setRemoteDetail] = useState<WorkflowRunDetail | null>(null);
+  const projectedDetail = useMemo(() => {
+    if (!selectedRunId || !isProjectedRunId(selectedRunId)) return null;
+    return options?.getProjectedDetail?.(selectedRunId) ?? null;
+  }, [selectedRunId, options]);
+  const detail = isProjectedRunId(selectedRunId ?? "") ? projectedDetail : remoteDetail;
   const [approvals, setApprovals] = useState<
     import("@getpaseo/protocol/workflow/rpc-schemas").WorkflowApproval[]
   >([]);
 
+  const projectedRuns = options?.projectedRuns;
+
   // Pin waiting_approval and failed runs to the top, then sort by createdAt descending
   const runs = useMemo(() => {
-    if (!rawRuns) return null;
-    return [...rawRuns].sort((a, b) => {
+    const combined: WorkflowRunSummary[] = [];
+    if (rawRuns) combined.push(...rawRuns);
+    if (projectedRuns) combined.push(...projectedRuns);
+    if (
+      combined.length === 0 &&
+      rawRuns === null &&
+      (!projectedRuns || projectedRuns.length === 0)
+    ) {
+      return null;
+    }
+    return combined.sort((a, b) => {
       const priority = (status: string) => {
         if (status === "waiting_approval") return 0;
         if (status === "failed") return 1;
@@ -82,7 +113,7 @@ export function useWorkflowRuns(
       if (diff !== 0) return diff;
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
-  }, [rawRuns]);
+  }, [rawRuns, projectedRuns]);
 
   const fetchRuns = useCallback(async () => {
     if (!client || !scope) return;
@@ -101,11 +132,14 @@ export function useWorkflowRuns(
 
   const reloadDetail = useCallback(
     async (runId: string) => {
+      if (isProjectedRunId(runId)) {
+        return;
+      }
       if (!client || !scope) return;
       try {
         const res = await client.workflowRunInspect({ ...scope, runId });
         if (res.error) throw new Error(res.error);
-        setDetail(res.run);
+        setRemoteDetail(res.run);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       }
@@ -136,22 +170,32 @@ export function useWorkflowRuns(
 
   useEffect(() => {
     let isMounted = true;
-    if (client && scope && selectedRunId) {
-      setDetail(null);
-      client
-        .workflowRunInspect({ ...scope, runId: selectedRunId })
-        .then(async (res) => {
-          if (isMounted) setDetail(res.run);
-          const approvalRes = await client.workflowApprovalList({ ...scope, runId: selectedRunId });
-          if (approvalRes.error) throw new Error(approvalRes.error);
-          if (isMounted) setApprovals(approvalRes.approvals);
-          return null;
-        })
-        .catch((err) => {
-          if (isMounted) setError(err instanceof Error ? err.message : String(err));
-        });
+    if (selectedRunId) {
+      if (isProjectedRunId(selectedRunId)) {
+        setRemoteDetail(null);
+        setApprovals([]);
+        return;
+      }
+      if (client && scope) {
+        setRemoteDetail(null);
+        client
+          .workflowRunInspect({ ...scope, runId: selectedRunId })
+          .then(async (res) => {
+            if (isMounted) setRemoteDetail(res.run);
+            const approvalRes = await client.workflowApprovalList({
+              ...scope,
+              runId: selectedRunId,
+            });
+            if (approvalRes.error) throw new Error(approvalRes.error);
+            if (isMounted) setApprovals(approvalRes.approvals);
+            return null;
+          })
+          .catch((err) => {
+            if (isMounted) setError(err instanceof Error ? err.message : String(err));
+          });
+      }
     } else {
-      setDetail(null);
+      setRemoteDetail(null);
       setApprovals([]);
     }
     return () => {
@@ -161,6 +205,23 @@ export function useWorkflowRuns(
 
   const cancelRun = useCallback(
     async (runId: string) => {
+      if (isProjectedRunId(runId)) {
+        const agentId = runId.replace("virtual:session:", "");
+        setIsActionPending(true);
+        setActionError(null);
+        try {
+          if (!options?.onCancelAgent) {
+            throw new Error("Cancelling agent is not supported");
+          }
+          await options.onCancelAgent(agentId);
+          setActionSuccess("Session cancelled");
+        } catch (err) {
+          setActionError(err instanceof Error ? err.message : "Failed to cancel agent");
+        } finally {
+          setIsActionPending(false);
+        }
+        return;
+      }
       if (!client || !scope) return;
       setIsActionPending(true);
       setActionError(null);
@@ -178,7 +239,7 @@ export function useWorkflowRuns(
         setIsActionPending(false);
       }
     },
-    [client, scope, fetchRuns, selectedRunId, reloadDetail],
+    [client, scope, fetchRuns, selectedRunId, reloadDetail, options],
   );
 
   const approveRun = useCallback(
@@ -297,9 +358,9 @@ export function useWorkflowRuns(
 const ThemedActivity = withUnistyles(Activity);
 
 export const workflowRunsPanelPresentation = {
-  label: (t) => t("panels.workflowRuns.label", "Workflow Runs"),
+  label: (t) => t("panels.workflowRuns.label", "Agent Radar"),
   subtitle: (t) => t("panels.workflowRuns.subtitle", "Workspace"),
-  tooltip: (t) => t("panels.workflowRuns.label", "Workflow Runs"),
+  tooltip: (t) => t("panels.workflowRuns.label", "Agent Radar"),
   icon: ThemedActivity,
 } satisfies PanelPresentation;
 
@@ -321,7 +382,7 @@ interface RunRowProps {
   onSelect: (id: string) => void;
 }
 
-function RunRow({ run, isSelected, onSelect }: RunRowProps) {
+const RunRow = React.memo(function RunRow({ run, isSelected, onSelect }: RunRowProps) {
   const [isHovered, setIsHovered] = useState(false);
 
   const handlePointerEnter = useCallback(() => setIsHovered(true), []);
@@ -347,6 +408,8 @@ function RunRow({ run, isSelected, onSelect }: RunRowProps) {
     return run.status.charAt(0).toUpperCase() + run.status.slice(1);
   }, [run.status]);
 
+  const isProjected = isProjectedRunId(run.runId);
+
   return (
     <View
       style={styles.runRowWrapper}
@@ -355,21 +418,25 @@ function RunRow({ run, isSelected, onSelect }: RunRowProps) {
     >
       <Pressable onPress={handlePress} style={containerStyle}>
         <View style={styles.runRowMain}>
-          <Text style={styles.runName}>{run.name}</Text>
+          <View style={styles.runRowTitleContainer}>
+            <Text style={styles.runName}>{run.name}</Text>
+            {isProjected && <StatusBadge variant="muted" label="Session" />}
+          </View>
           <StatusBadge variant={statusVariant} label={displayStatus} />
         </View>
       </Pressable>
     </View>
   );
-}
+});
 
 interface StepCardItemProps {
-  step: WorkflowRunDetail["stepAttempts"][number];
+  step: WorkflowRunDetail["stepAttempts"][number] | ProjectedWorkflowStepAttempt;
   index: number;
   isActionPending: boolean;
   onApprove: (stepId: string) => void;
   onDeny: (stepId: string) => void;
   onRetry: (stepId: string) => void;
+  onNavigateAgent?: (agentId: string) => void;
 }
 
 const StepCardItem = React.memo(function StepCardItem({
@@ -379,7 +446,9 @@ const StepCardItem = React.memo(function StepCardItem({
   onApprove,
   onDeny,
   onRetry,
+  onNavigateAgent,
 }: StepCardItemProps) {
+  const { t } = useTranslation();
   const handleApprove = useCallback(() => onApprove(step.stepId), [onApprove, step.stepId]);
   const handleDeny = useCallback(() => onDeny(step.stepId), [onDeny, step.stepId]);
   const handleRetry = useCallback(() => onRetry(step.stepId), [onRetry, step.stepId]);
@@ -387,6 +456,13 @@ const StepCardItem = React.memo(function StepCardItem({
   const isBlocking =
     step.status === "waiting_approval" || step.status === "failed" || step.status === "running";
   const stepVariant = resolveStatusVariant(step.status);
+
+  const projectedStep = isProjectedStepAttempt(step) ? step : null;
+  const handleNavigate = useCallback(() => {
+    if (projectedStep?.agentId && onNavigateAgent) {
+      onNavigateAgent(projectedStep.agentId);
+    }
+  }, [projectedStep, onNavigateAgent]);
 
   return (
     <View
@@ -405,12 +481,25 @@ const StepCardItem = React.memo(function StepCardItem({
         <StatusBadge variant={stepVariant} label={step.status} />
       </View>
 
+      {projectedStep?.description ? (
+        <Text style={styles.stepDescription} numberOfLines={2}>
+          {projectedStep.description}
+        </Text>
+      ) : null}
+
       {step.failureReason ? (
         <Text style={styles.stepFailureText}>Reason: {step.failureReason}</Text>
       ) : null}
       {step.skipReason ? <Text style={styles.stepSkipText}>Skipped: {step.skipReason}</Text> : null}
 
       <View style={styles.stepActionsRow}>
+        {projectedStep?.agentId && onNavigateAgent && (
+          <Button variant="secondary" onPress={handleNavigate} disabled={isActionPending}>
+            {projectedStep.subagentId
+              ? t("panels.workflowRuns.viewSubagent", "View Sub-agent")
+              : t("panels.workflowRuns.viewChat", "View Chat")}
+          </Button>
+        )}
         {step.status === "waiting_approval" && (
           <>
             <Button variant="default" onPress={handleApprove} disabled={isActionPending}>
@@ -421,7 +510,7 @@ const StepCardItem = React.memo(function StepCardItem({
             </Button>
           </>
         )}
-        {step.status === "failed" && (
+        {step.status === "failed" && !projectedStep && (
           <Button variant="secondary" onPress={handleRetry} disabled={isActionPending}>
             Retry Step
           </Button>
@@ -440,6 +529,7 @@ export function WorkflowRunsContent({
   workspaceId: string;
   injectedClient?: WorkflowEngineClient;
 }) {
+  const { t } = useTranslation();
   const baseClient = useHostRuntimeClient(serverId);
   const workflowClient = injectedClient ?? (isWorkflowEngineClient(baseClient) ? baseClient : null);
   const projectId = useSessionStore(
@@ -459,6 +549,22 @@ export function WorkflowRunsContent({
     );
   });
 
+  const { projectedRuns, getProjectedDetail } = useProjectedWorkflowRuns({
+    serverId,
+    workspaceId,
+    projectId: projectId ?? "default",
+  });
+
+  const handleCancelAgent = useCallback(
+    async (agentId: string) => {
+      if (!baseClient) {
+        throw new Error("Client unavailable");
+      }
+      await baseClient.cancelAgent(agentId);
+    },
+    [baseClient],
+  );
+
   const {
     runs,
     error,
@@ -474,7 +580,18 @@ export function WorkflowRunsContent({
     denyRun,
     retryRun,
     resumeRun,
-  } = useWorkflowRuns(workflowClient, workflowScope);
+  } = useWorkflowRuns(workflowClient, workflowScope, {
+    projectedRuns,
+    getProjectedDetail,
+    onCancelAgent: handleCancelAgent,
+  });
+
+  const handleNavigateAgent = useCallback(
+    (agentId: string) => {
+      navigateToAgent({ serverId, agentId });
+    },
+    [serverId],
+  );
 
   const isCompact = useIsCompactFormFactor();
 
@@ -560,7 +677,7 @@ export function WorkflowRunsContent({
     void resumeRun(detail.runId);
   }, [detail, resumeRun]);
 
-  if (!supportsWorkflowEngine) {
+  if (!supportsWorkflowEngine && projectedRuns.length === 0) {
     return (
       <View style={styles.container}>
         <View style={styles.contentContainer}>
@@ -574,7 +691,7 @@ export function WorkflowRunsContent({
     );
   }
 
-  if (!workflowClient) {
+  if (!workflowClient && projectedRuns.length === 0) {
     return (
       <View style={styles.container}>
         <View style={styles.contentContainer}>
@@ -610,7 +727,12 @@ export function WorkflowRunsContent({
     if (runs.length === 0) {
       return (
         <View style={styles.centerContainer}>
-          <Text style={styles.emptyText}>No workflow runs found.</Text>
+          <Text style={styles.emptyText}>
+            {t(
+              "panels.workflowRuns.emptyDescription",
+              "No active or completed workflows found in this workspace.",
+            )}
+          </Text>
         </View>
       );
     }
@@ -686,6 +808,7 @@ export function WorkflowRunsContent({
               onApprove={handleApproveStep}
               onDeny={handleDenyStep}
               onRetry={handleRetryStep}
+              onNavigateAgent={handleNavigateAgent}
             />
           ))}
         </ScrollView>
@@ -709,7 +832,7 @@ export function WorkflowRunsContent({
     return (
       <View style={styles.container}>
         <View style={styles.compactHeader}>
-          <ScreenTitle>Workflow Runs</ScreenTitle>
+          <ScreenTitle>{t("panels.workflowRuns.label", "Agent Radar")}</ScreenTitle>
         </View>
         {renderList()}
       </View>
@@ -721,7 +844,7 @@ export function WorkflowRunsContent({
       <View style={styles.splitContainer}>
         <View style={styles.leftPane}>
           <View style={styles.compactHeader}>
-            <ScreenTitle>Workflow Runs</ScreenTitle>
+            <ScreenTitle>{t("panels.workflowRuns.label", "Agent Radar")}</ScreenTitle>
           </View>
           {renderList()}
         </View>
@@ -798,11 +921,20 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  runRowTitleContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    flex: 1,
+    minWidth: 0,
   },
   runName: {
     fontSize: theme.fontSize.base,
     color: theme.colors.foreground,
     fontWeight: theme.fontWeight.medium,
+    flexShrink: 1,
   },
   emptyText: {
     fontSize: theme.fontSize.base,
@@ -876,6 +1008,11 @@ const styles = StyleSheet.create((theme) => ({
   stepAttempt: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
+  },
+  stepDescription: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+    lineHeight: 18,
   },
   stepFailureText: {
     fontSize: theme.fontSize.sm,

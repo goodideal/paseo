@@ -683,6 +683,7 @@ export const fr: TranslationResources = {
         browser: "Navigateur",
         agent: "Agent",
         workspace: "Workspace",
+        workflowRuns: "Agent Radar",
       },
       switcher: {
         trigger: "Changer d'onglet ({{count}}ouvert)",
@@ -1978,6 +1979,14 @@ export const fr: TranslationResources = {
       empty: "Aucune modification",
       loadError: "Échec du chargement des différences",
       capabilityMissing: "Mettez à jour l'hôte pour voir les différences des commits.",
+    },
+    workflowRuns: {
+      label: "Agent Radar",
+      subtitle: "Exécutions de workflow et sessions",
+      emptyDescription: "Aucun workflow actif ou terminé trouvé dans cet espace de travail.",
+      viewChat: "Voir la discussion",
+      viewSubagent: "Voir le sous-agent",
+      sessionCancelled: "Session annulée",
     },
   },
   toolCallDetails: {

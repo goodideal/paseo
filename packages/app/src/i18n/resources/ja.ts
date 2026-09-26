@@ -683,6 +683,7 @@ export const ja: TranslationResources = {
         browser: "ブラウザ",
         agent: "エージェント",
         workspace: "ワークスペース",
+        workflowRuns: "Agent Radar",
       },
       switcher: {
         trigger: "タブを切り替え（{{count}}件開いています）",
@@ -1945,6 +1946,15 @@ export const ja: TranslationResources = {
       empty: "変更はありません",
       loadError: "差分の読み込みに失敗しました",
       capabilityMissing: "コミット差分を表示するにはホストを更新してください。",
+    },
+    workflowRuns: {
+      label: "Agent Radar",
+      subtitle: "ワークフローの実行とセッション",
+      emptyDescription:
+        "このワークスペースにはアクティブまたは完了したワークフローは見つかりませんでした。",
+      viewChat: "チャットを表示",
+      viewSubagent: "サブエージェントを表示",
+      sessionCancelled: "セッションがキャンセルされました",
     },
   },
   toolCallDetails: {

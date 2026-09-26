@@ -683,6 +683,7 @@ export const ptBR: TranslationResources = {
         browser: "Navegador",
         agent: "Agente",
         workspace: "Workspace",
+        workflowRuns: "Agent Radar",
       },
       switcher: {
         trigger: "Alternar abas ({{count}} abertas)",
@@ -1959,6 +1960,15 @@ export const ptBR: TranslationResources = {
       empty: "Nenhuma alteração",
       loadError: "Falha ao carregar diff",
       capabilityMissing: "Atualize o host para ver diffs de commits.",
+    },
+    workflowRuns: {
+      label: "Agent Radar",
+      subtitle: "Execuções e sessões de fluxo de trabalho",
+      emptyDescription:
+        "Nenhum fluxo de trabalho ativo ou concluído encontrado neste espaço de trabalho.",
+      viewChat: "Ver chat",
+      viewSubagent: "Ver subagente",
+      sessionCancelled: "Sessão cancelada",
     },
   },
   toolCallDetails: {

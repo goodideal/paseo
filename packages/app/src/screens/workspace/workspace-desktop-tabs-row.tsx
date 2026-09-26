@@ -588,6 +588,7 @@ function getFallbackTabLabel(
     changes: string;
     files: string;
     pullRequest: string;
+    workflowRuns: string;
   },
 ): string {
   if (tab.target.kind === "new_tab") {
@@ -615,7 +616,7 @@ function getFallbackTabLabel(
     return labels.pullRequest;
   }
   if (tab.target.kind === "workflow_runs") {
-    return "Workflow Runs";
+    return labels.workflowRuns;
   }
   return labels.agent;
 }
@@ -1078,6 +1079,7 @@ function ResolvedWorkspaceDesktopTabsRow({
       changes: t("panels.diff.changesLabel"),
       files: t("panels.files.label"),
       pullRequest: t("panels.pullRequest.label"),
+      workflowRuns: t("workspace.tabs.fallback.workflowRuns"),
     }),
     [t],
   );

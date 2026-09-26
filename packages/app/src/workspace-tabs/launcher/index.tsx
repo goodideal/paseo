@@ -41,6 +41,7 @@ export interface NewTabLauncher {
   showChanges: boolean;
   showPullRequest: boolean;
   showBrowser: boolean;
+  showWorkflowRuns?: boolean;
   terminalDisabled: boolean;
   launch: (selection: NewTabSelection, destination: WorkspaceTabLaunchDestination) => void;
 }
@@ -204,6 +205,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
         disabled: false,
         panelKind: "workflow_runs",
         toggleTarget: null,
+        hidden: launcher.showWorkflowRuns === false,
         launch: (destination) =>
           launcher.launch(
             { kind: "target", target: { kind: "workflow_runs", workspaceId: "" } },
