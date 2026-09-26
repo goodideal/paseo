@@ -978,9 +978,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         supportsAgentForkContextCursor,
       ],
     );
-    useEffect(() => {
-      return () => {};
-    }, [agentId]);
 
     const renderModel = useMemo<AgentStreamRenderModel>(() => {
       return {

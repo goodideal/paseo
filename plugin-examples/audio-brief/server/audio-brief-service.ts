@@ -101,6 +101,9 @@ export function extractFallbackBrief(markdown: string): string {
   return `${text.slice(0, 150).trim()}...`;
 }
 
+const MAX_MEMORY_ENTRIES = 200;
+const MAX_DISK_ENTRIES = 200;
+
 export class AudioBriefService {
   private readonly memoryCache = new Map<string, AudioBriefResult>();
   private readonly inflight = new Map<string, Promise<AudioBriefResult>>();
@@ -146,6 +149,7 @@ export class AudioBriefService {
 
   private async writeToCache(hash: string, data: AudioBriefResult): Promise<void> {
     this.memoryCache.set(hash, data);
+    this.pruneMemoryCache();
 
     const filePath = this.getCacheFilePath(hash);
     if (!filePath) {
@@ -155,8 +159,47 @@ export class AudioBriefService {
     try {
       await fs.mkdir(path.dirname(filePath), { recursive: true });
       await fs.writeFile(filePath, JSON.stringify(data), "utf-8");
+      void this.pruneDiskCacheIfNeeded();
     } catch (err) {
       this.options.logger?.warn?.("Failed to write audio brief cache file", err);
+    }
+  }
+
+  private pruneMemoryCache(): void {
+    if (this.memoryCache.size <= MAX_MEMORY_ENTRIES) {
+      return;
+    }
+    const keys = Array.from(this.memoryCache.keys());
+    const removeCount = keys.length - MAX_MEMORY_ENTRIES;
+    for (let i = 0; i < removeCount; i++) {
+      this.memoryCache.delete(keys[i]);
+    }
+  }
+
+  private async pruneDiskCacheIfNeeded(): Promise<void> {
+    if (!this.cacheDir) {
+      return;
+    }
+    try {
+      const files = await fs.readdir(this.cacheDir);
+      const jsonFiles = files.filter((f) => f.endsWith(".json"));
+      if (jsonFiles.length <= MAX_DISK_ENTRIES) {
+        return;
+      }
+      const fileStats = await Promise.all(
+        jsonFiles.map(async (file) => {
+          const fullPath = path.join(this.cacheDir!, file);
+          const stat = await fs.stat(fullPath);
+          return { file: fullPath, mtimeMs: stat.mtimeMs };
+        }),
+      );
+      fileStats.sort((a, b) => a.mtimeMs - b.mtimeMs);
+      const removeCount = fileStats.length - MAX_DISK_ENTRIES;
+      for (let i = 0; i < removeCount; i++) {
+        await fs.unlink(fileStats[i].file).catch(() => undefined);
+      }
+    } catch (err) {
+      this.options.logger?.warn?.("Failed to prune audio brief disk cache", err);
     }
   }
 

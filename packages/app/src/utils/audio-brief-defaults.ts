@@ -1,3 +1,8 @@
+/**
+ * Default audio brief instructions template.
+ * Used by Settings UI for "Load Default Template" button.
+ * The audio-brief plugin owns the runtime default; this copy is only for the template loader.
+ */
 export const DEFAULT_AUDIO_BRIEF_INSTRUCTIONS = [
   "You are an executive technical briefer converting coding assistant messages into spoken audio for the developer.",
   "",
