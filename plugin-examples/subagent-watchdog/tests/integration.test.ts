@@ -6,21 +6,29 @@ import type { PluginServerContext, PluginHookContext } from "@getpaseo/plugin/se
 describe("Subagent Watchdog Integration Test", () => {
   it("orchestrates turn monitoring, auto-continuation, blocker escalation, and decision RPC", async () => {
     const listeners: Record<string, Function[]> = {};
-    const rpcHandlers = new Map<unknown, Function>();
+    const rpcHandlers = new Map<any, Function>();
 
-    const fakeServer = {
-      on(name: string, handler: Function) {
+    const fakeServer: PluginServerContext = {
+      on(name: any, handler: any) {
         if (!listeners[name]) listeners[name] = [];
         listeners[name]!.push(handler);
         return () => {};
       },
       before: vi.fn(),
-      registerSettings: vi.fn(),
-      handle(contract: unknown, handler: Function) {
+      registerSettings: vi.fn().mockReturnValue({
+        read: vi
+          .fn()
+          .mockResolvedValue({
+            status: "ready",
+            values: { maxAutoTurns: 5, heartbeatThresholdSeconds: 15 },
+          }),
+        subscribe: vi.fn().mockReturnValue(() => {}),
+      }) as any,
+      handle(contract: any, handler: any) {
         rpcHandlers.set(contract, handler);
       },
       registerProvider: vi.fn(),
-    } as unknown as PluginServerContext;
+    };
 
     // Initialize plugin
     const cleanup = contribute(fakeServer);
@@ -28,7 +36,7 @@ describe("Subagent Watchdog Integration Test", () => {
     const mockSend = vi.fn().mockResolvedValue(undefined);
     const mockRespondToPermission = vi.fn().mockResolvedValue(undefined);
 
-    const fakePaseoApi = {
+    const fakePaseoApi: any = {
       agents: {
         ref: (id: string) => ({
           send: mockSend,
@@ -37,10 +45,10 @@ describe("Subagent Watchdog Integration Test", () => {
       },
     };
 
-    const hookContext = {
+    const hookContext: PluginHookContext = {
       paseo: fakePaseoApi,
       signal: new AbortController().signal,
-    } as unknown as PluginHookContext;
+    };
 
     // 1. Simulate a turn with incomplete tasks (- [ ])
     const turnEndedListeners = listeners["agent.turn_ended"] || [];

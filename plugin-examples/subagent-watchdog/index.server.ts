@@ -4,11 +4,31 @@ import { ManagedGovernor } from "./server/managed-governor.js";
 import { Synthesizer } from "./server/synthesizer.js";
 import { Executor } from "./server/executor.js";
 import { resolveDecisionRpc, interruptAgentRpc, getWatchdogStatusRpc } from "./shared/rpc.js";
+import { watchdogSettings } from "./shared/settings.js";
 import type { BlockerReport } from "./shared/types.js";
 
 export default function contribute(server: PluginServerContext) {
-  const streamWatcher = new StreamWatcher();
-  const governor = new ManagedGovernor();
+  // Register host settings configurable in Paseo UI
+  const settings = server.registerSettings(watchdogSettings);
+  let configuredMaxAutoTurns = 5;
+  let configuredHeartbeatThreshold = 15;
+
+  settings.read().then((state) => {
+    if (state.status === "ready") {
+      configuredMaxAutoTurns = state.values.maxAutoTurns;
+      configuredHeartbeatThreshold = state.values.heartbeatThresholdSeconds;
+    }
+  });
+
+  settings.subscribe((state) => {
+    if (state.status === "ready") {
+      configuredMaxAutoTurns = state.values.maxAutoTurns;
+      configuredHeartbeatThreshold = state.values.heartbeatThresholdSeconds;
+    }
+  });
+
+  const streamWatcher = new StreamWatcher(configuredHeartbeatThreshold);
+  const governor = new ManagedGovernor(configuredMaxAutoTurns);
   const synthesizer = new Synthesizer();
   const executor = new Executor();
 
@@ -16,7 +36,7 @@ export default function contribute(server: PluginServerContext) {
 
   server.on("agent.turn_started", (event) => {
     streamWatcher.onToolCall(event.agent.id, "wait_agent", (hb) => {
-      // Heartbeat logged via RPC polling
+      // In-flight progress observed
     });
   });
 
