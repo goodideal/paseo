@@ -33,7 +33,7 @@
 - Consumes: None
 - Produces: 规范的 `agent-radar` 插件结构与清单描述
 
-- [ ] **Step 1: 重命名目录与更新插件清单**
+- [x] **Step 1: 重命名目录与更新插件清单**
 
 将目录从 `subagent-watchdog` 迁移为 `agent-radar`，并将 `package.json` 的 `name` 更新为 `@getpaseo/agent-radar-plugin`，`paseo-plugin.json` 更新为：
 
@@ -47,16 +47,16 @@
 }
 ```
 
-- [ ] **Step 2: 更新 evaluate.test.ts 验证用例**
+- [x] **Step 2: 更新 evaluate.test.ts 验证用例**
 
 在 `packages/app/src/plugins/evaluate.test.ts` 中同步断言 `agent-radar` 插件的注册。
 
-- [ ] **Step 3: 运行 evaluate 测试确保加载器兼容**
+- [x] **Step 3: 运行 evaluate 测试确保加载器兼容**
 
 运行: `npx vitest run packages/app/src/plugins/evaluate.test.ts`
 Expected: PASS
 
-- [ ] **Step 4: 提交变更**
+- [x] **Step 4: 提交变更**
 
 ```bash
 git add plugin-examples/ packages/app/src/plugins/evaluate.test.ts
@@ -78,25 +78,25 @@ git commit -m "refactor(radar): rename plugin to agent-radar and update manifest
 - Consumes: `BlockerReportSchema`, `InFlightHeartbeatSchema`
 - Produces: `RadarSnapshotSchema`, `SuperpowerTaskStepSchema`, `AgentTopologyNodeSchema`, `radarGetSnapshotRpc`, `radarResolveDecisionRpc`
 
-- [ ] **Step 1: 编写数据模型契约单测**
+- [x] **Step 1: 编写数据模型契约单测**
 
 创建 `plugin-examples/agent-radar/tests/types.test.ts`，验证 `RadarSnapshotSchema` 对 Superpower 模式与 Generic 拓扑模式的校验与默认值解析。
 
-- [ ] **Step 2: 运行测试验证失败**
+- [x] **Step 2: 运行测试验证失败**
 
 运行: `npx vitest run plugin-examples/agent-radar/tests/types.test.ts`
 Expected: FAIL (缺少相关 Schema 定义)
 
-- [ ] **Step 3: 实现 shared/types.ts 与 shared/rpc.ts**
+- [x] **Step 3: 实现 shared/types.ts 与 shared/rpc.ts**
 
 在 `types.ts` 中定义 `RadarNodeStatus`、`SuperpowerTaskStep`、`AgentTopologyNode`、`RadarSnapshot` 及其 Zod Schema；在 `rpc.ts` 中注册 `radar.get_snapshot` 与 `radar.resolve_decision` RPC 定义。
 
-- [ ] **Step 4: 运行测试验证通过**
+- [x] **Step 4: 运行测试验证通过**
 
 运行: `npx vitest run plugin-examples/agent-radar/tests/types.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: 提交变更**
+- [x] **Step 5: 提交变更**
 
 ```bash
 git add plugin-examples/agent-radar/shared/ plugin-examples/agent-radar/tests/types.test.ts
@@ -117,16 +117,16 @@ git commit -m "feat(radar): define radar snapshot schemas and rpc contracts"
 - Consumes: 工作区文件系统（`docs/superpowers/plans/`, `.superpowers/sdd/`）
 - Produces: `parseSuperpowerStatus(workspaceCwd: string): Promise<SuperpowerPlanStatus | null>`
 
-- [ ] **Step 1: 编写针对真实 Plan 与 Ledger 格式的单测**
+- [x] **Step 1: 编写针对真实 Plan 与 Ledger 格式的单测**
 
 在 `tests/sdd-parser.test.ts` 中构造临时测试目录，包含标准的 plan markdown 任务列表（`- [ ] Task 1: ...`、`- [x] Task 2: ...`）与 `ledger.md`（包含 fix rounds、commits 与 rulings），验证解析器能否提取任务、当前正在执行的步骤、轮次以及裁决信息。
 
-- [ ] **Step 2: 运行测试验证失败**
+- [x] **Step 2: 运行测试验证失败**
 
 运行: `npx vitest run plugin-examples/agent-radar/tests/sdd-parser.test.ts`
 Expected: FAIL (模块不存在)
 
-- [ ] **Step 3: 实现 server/sdd-parser.ts**
+- [x] **Step 3: 实现 server/sdd-parser.ts**
 
 实现 `parseSuperpowerStatus`：
 
@@ -135,12 +135,12 @@ Expected: FAIL (模块不存在)
 3. 解析 `ledger.md`，提取完成标记、当前 Fix round（如 `fix round 2/5`）、关联 commit 与 `Ruling:` 记录；
 4. 容错处理：文件不存在或格式不合规时返回 `null`。
 
-- [ ] **Step 4: 运行测试验证通过**
+- [x] **Step 4: 运行测试验证通过**
 
 运行: `npx vitest run plugin-examples/agent-radar/tests/sdd-parser.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: 提交变更**
+- [x] **Step 5: 提交变更**
 
 ```bash
 git add plugin-examples/agent-radar/server/sdd-parser.ts plugin-examples/agent-radar/tests/sdd-parser.test.ts
@@ -161,25 +161,25 @@ git commit -m "feat(radar): implement superpowers sdd plan and ledger parser"
 - Consumes: Paseo Agent 实体列表（`labels["paseo.parent-agent-id"]`, `lastStatus`）
 - Produces: `buildAgentTopology(rootAgentId: string, agents: AgentRecord[]): AgentTopology`
 
-- [ ] **Step 1: 编写拓扑生成单测**
+- [x] **Step 1: 编写拓扑生成单测**
 
 在 `tests/topology-builder.test.ts` 中构造带有父子关系、嵌套子孙（Grandchild）、不同状态（running / idle / error）的 Mock Agent 列表，验证拓扑树的正确收敛。
 
-- [ ] **Step 2: 运行测试验证失败**
+- [x] **Step 2: 运行测试验证失败**
 
 运行: `npx vitest run plugin-examples/agent-radar/tests/topology-builder.test.ts`
 Expected: FAIL
 
-- [ ] **Step 3: 实现 server/topology-builder.ts**
+- [x] **Step 3: 实现 server/topology-builder.ts**
 
 实现拓扑算法：递归或迭代索引 `parent-agent-id`，解析当前正在运行的工具名称与耗时，输出根节点与节点字典。
 
-- [ ] **Step 4: 运行测试验证通过**
+- [x] **Step 4: 运行测试验证通过**
 
 运行: `npx vitest run plugin-examples/agent-radar/tests/topology-builder.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: 提交变更**
+- [x] **Step 5: 提交变更**
 
 ```bash
 git add plugin-examples/agent-radar/server/topology-builder.ts plugin-examples/agent-radar/tests/topology-builder.test.ts
@@ -201,7 +201,7 @@ git commit -m "feat(radar): implement hierarchical agent topology builder"
 - Consumes: `parseSuperpowerStatus`, `buildAgentTopology`, `StreamWatcher`, `ManagedGovernor`
 - Produces: `getRadarSnapshot(agentId: string)`, 挂载 `radar.get_snapshot` 与 `radar.resolve_decision` RPC
 
-- [ ] **Step 1: 编写 RadarEngine 聚合单测**
+- [x] **Step 1: 编写 RadarEngine 聚合单测**
 
 在 `tests/server.test.ts` 中增加测试用例：
 
@@ -209,12 +209,12 @@ git commit -m "feat(radar): implement hierarchical agent topology builder"
 2. 验证普通多 Agent 时回退至 `mode: "generic"` 拓扑；
 3. 验证阻断发生时 `activeBlocker` 绑定到快照中。
 
-- [ ] **Step 2: 运行测试验证失败**
+- [x] **Step 2: 运行测试验证失败**
 
 运行: `npx vitest run plugin-examples/agent-radar/tests/server.test.ts`
 Expected: FAIL
 
-- [ ] **Step 3: 实现 server/radar-engine.ts 与 index.server.ts**
+- [x] **Step 3: 实现 server/radar-engine.ts 与 index.server.ts**
 
 聚合逻辑：
 
@@ -222,12 +222,12 @@ Expected: FAIL
 2. 组装 `RadarSnapshot`；
 3. 在 `index.server.ts` 中注册 `radar.get_snapshot` 与 `radar.resolve_decision` RPC，并保持心跳/治理器持续工作。
 
-- [ ] **Step 4: 运行测试验证通过**
+- [x] **Step 4: 运行测试验证通过**
 
 运行: `npx vitest run plugin-examples/agent-radar/tests/server.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: 提交变更**
+- [x] **Step 5: 提交变更**
 
 ```bash
 git add plugin-examples/agent-radar/server/radar-engine.ts plugin-examples/agent-radar/index.server.ts plugin-examples/agent-radar/tests/server.test.ts
@@ -252,16 +252,16 @@ git commit -m "feat(radar): integrate radar engine with dual-mode snapshot rpc"
 - Consumes: `useRpc(radarGetSnapshotRpc)`, `useRpc(radarResolveDecisionRpc)`
 - Produces: `Agent Radar` Workspace Panel 及其子视图组件
 
-- [ ] **Step 1: 编写客户端组件渲染单测**
+- [x] **Step 1: 编写客户端组件渲染单测**
 
 在 `tests/client.test.tsx` 中编写测试，模拟返回 Superpower 流水线快照与通用拓扑快照，断言 `RadarPanel` 正确渲染任务节点、心跳胶囊与阻断卡。
 
-- [ ] **Step 2: 运行测试验证失败**
+- [x] **Step 2: 运行测试验证失败**
 
 运行: `npx vitest run plugin-examples/agent-radar/tests/client.test.tsx`
 Expected: FAIL
 
-- [ ] **Step 3: 实现流水线、拓扑与态势抽屉组件**
+- [x] **Step 3: 实现流水线、拓扑与态势抽屉组件**
 
 1. `pipeline-view.tsx`：横向/纵向展示 Task 卡片，展示标题、状态图标、Fix 轮次徽章（如 `Fix 2/5`）、Commit 哈希与裁决摘要；
 2. `topology-view.tsx`：树状展示主 Agent 与各 Subagent 节点、运行状态与耗时；
@@ -269,12 +269,12 @@ Expected: FAIL
 4. `radar-panel.tsx`：组合视图，并支持手动刷新与自动轮询（正常 3s，报警/运行中 1.5s）；
 5. `index.client.tsx`：注册 `agent-radar-panel` 工作区面板（标题 `Agent Radar`，图标 `Compass`）与 Timeline 渲染器。
 
-- [ ] **Step 4: 运行测试验证通过**
+- [x] **Step 4: 运行测试验证通过**
 
 运行: `npx vitest run plugin-examples/agent-radar/tests/client.test.tsx`
 Expected: PASS
 
-- [ ] **Step 5: 提交变更**
+- [x] **Step 5: 提交变更**
 
 ```bash
 git add plugin-examples/agent-radar/client/ plugin-examples/agent-radar/index.client.tsx plugin-examples/agent-radar/tests/client.test.tsx
@@ -290,16 +290,16 @@ git commit -m "feat(radar): implement client radar panel, pipeline view, and nod
 - Modify: `plugin-examples/agent-radar/tests/integration.test.ts`
 - Cleanups & Checks
 
-- [ ] **Step 1: 编写端到端集成测试**
+- [x] **Step 1: 编写端到端集成测试**
 
 在 `tests/integration.test.ts` 中模拟从主 Agent 派生子代理、触发长耗时心跳、在雷达快照中实时体现节点耗时、模拟子代理阻断、并在雷达面板下发决策卡恢复执行的完整链路。
 
-- [ ] **Step 2: 运行插件全量单元与集成测试**
+- [x] **Step 2: 运行插件全量单元与集成测试**
 
 运行: `npx vitest run plugin-examples/agent-radar/tests/`
 Expected: ALL PASS
 
-- [ ] **Step 3: 执行全局类型检查与代码格式化**
+- [x] **Step 3: 执行全局类型检查与代码格式化**
 
 ```bash
 npm run typecheck
@@ -309,7 +309,7 @@ npm run lint -- plugin-examples/agent-radar
 
 Expected: 0 errors, 0 warnings
 
-- [ ] **Step 4: 提交完整交付变更**
+- [x] **Step 4: 提交完整交付变更**
 
 ```bash
 git add plugin-examples/agent-radar/ docs/superpowers/
