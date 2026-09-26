@@ -105,6 +105,15 @@ describe("workspace utility panel identity", () => {
   );
 });
 
+describe("workflow runs tab identity", () => {
+  it("normalizes and deterministically keys workflow_runs", () => {
+    const target = { kind: "workflow_runs" as const, workspaceId: "ws-1" };
+    expect(normalizeWorkspaceTabTarget(target)).toEqual(target);
+    expect(buildDeterministicWorkspaceTabId(target)).toBe("workflow_runs_ws-1");
+    expect(workspaceTabTargetsEqual(target, target)).toBe(true);
+  });
+});
+
 describe("commit diff tab identity", () => {
   it("keys a commit diff tab by its sha", () => {
     expect(buildDeterministicWorkspaceTabId({ kind: "commit_diff", sha: "abc123" })).toBe(

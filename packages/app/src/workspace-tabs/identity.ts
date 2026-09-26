@@ -67,6 +67,10 @@ function normalizeSimpleWorkspaceTabTarget(value: WorkspaceTabTarget): Workspace
       const sha = trimNonEmpty(value.sha);
       return sha ? { kind: "commit_diff", sha } : null;
     }
+    case "workflow_runs": {
+      const workspaceId = trimNonEmpty(value.workspaceId);
+      return workspaceId ? { kind: "workflow_runs", workspaceId } : null;
+    }
     default:
       return null;
   }
@@ -154,6 +158,9 @@ function secondaryWorkspaceTabTargetsEqual(
   }
   if (left.kind === "commit_diff" && right.kind === "commit_diff") {
     return left.sha === right.sha;
+  }
+  if (left.kind === "workflow_runs" && right.kind === "workflow_runs") {
+    return left.workspaceId === right.workspaceId;
   }
   return false;
 }
