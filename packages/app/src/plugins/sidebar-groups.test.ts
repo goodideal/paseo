@@ -28,6 +28,8 @@ function installed(serverId: string, contributionId = "main"): InstalledPlugin {
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    composerAccessories: [],
+    turnActions: [],
   };
 }
 

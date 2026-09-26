@@ -8,3 +8,5 @@ export {
   PluginHeaderButtons,
   useHasPluginComposerPills,
 } from "./buttons/view";
+export { PluginComposerAccessories } from "./composer-accessories/view";
+export { PluginTurnActions } from "./turn-actions/view";

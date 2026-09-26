@@ -104,7 +104,7 @@ import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
 import { RewindMenu, type RewindMode } from "@/components/rewind/rewind-menu";
 import { useRewindAgentMutation } from "@/components/rewind/use-rewind-agent-mutation";
 import { AssistantForkMenu, type AssistantForkTarget } from "@/components/assistant-fork-menu";
-import { TurnAudioBriefButton, AudioBriefCard } from "@/components/turn-audio-brief-button";
+import { PluginTurnActions } from "@/plugins";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import {
   markdownCopyDataSet,
@@ -689,19 +689,27 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
 
   return (
     <View style={assistantTurnFooterStylesheet.wrapper}>
-      {turnId ? <AudioBriefCard turnId={turnId} /> : null}
+      {turnId && agentId ? (
+        <PluginTurnActions
+          turnId={turnId}
+          agentId={agentId}
+          serverId={serverId}
+          type="card"
+          getContent={getContent}
+        />
+      ) : null}
       <View style={assistantTurnFooterStylesheet.container}>
         <TurnCopyButton
           getContent={getContent}
           containerStyle={assistantTurnFooterStylesheet.copyButton}
         />
         {agentId && turnId ? (
-          <TurnAudioBriefButton
-            agentId={agentId}
+          <PluginTurnActions
             turnId={turnId}
-            getContent={getContent}
+            agentId={agentId}
             serverId={serverId}
-            containerStyle={assistantTurnFooterStylesheet.copyButton}
+            type="button"
+            getContent={getContent}
           />
         ) : null}
         {canFork ? <AssistantForkMenu onFork={handleFork} /> : null}

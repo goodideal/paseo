@@ -33,6 +33,8 @@ function plugin(input: {
       },
     ],
     timelineRenderers: [],
+    composerAccessories: [],
+    turnActions: [],
   };
 }
 

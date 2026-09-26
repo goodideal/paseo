@@ -594,6 +594,28 @@ Ref: [Gemini CLI ACP mode docs](https://github.com/google-gemini/gemini-cli/blob
 
 Ref: [Hermes ACP docs](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp)
 
+### Example: Antigravity CLI
+
+[Antigravity CLI](https://github.com/tiezbro/paseo-agy-acp) is a Google Antigravity bridge via the community paseo-agy-acp wrapper. It requires the official Antigravity ACP kernel to be installed separately.
+
+1. Install the official Antigravity ACP kernel
+2. Add to config.json:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "antigravity": {
+        "extends": "acp",
+        "label": "Antigravity CLI",
+        "description": "Google Antigravity via the community paseo-agy-acp bridge",
+        "command": ["npx", "-y", "paseo-agy-acp@2.3.1"]
+      }
+    }
+  }
+}
+```
+
 ### How ACP providers work in Paseo
 
 When you launch an agent with an ACP provider:
