@@ -27,6 +27,17 @@ describe("StreamWatcher", () => {
     );
   });
 
+  it("should support dynamic threshold update", () => {
+    const watcher = new StreamWatcher(15000);
+    watcher.setHeartbeatThresholdSeconds(10);
+    const cb = vi.fn();
+
+    watcher.onToolCall("agent-1", "long_running_tool", cb);
+
+    vi.advanceTimersByTime(10000);
+    expect(cb).toHaveBeenCalled();
+  });
+
   it("should clear watcher on tool result", () => {
     const watcher = new StreamWatcher(15000);
     const cb = vi.fn();
@@ -57,6 +68,26 @@ describe("ManagedGovernor", () => {
     expect(governor.getAutoTurnCount("agent-1")).toBe(0);
   });
 
+  it("should properly identify dangerous commands", () => {
+    const governor = new ManagedGovernor();
+    expect(governor.isSafeCommand("rm -rf /")).toBe(false);
+    expect(governor.isSafeCommand("git push origin main")).toBe(false);
+    expect(governor.isSafeCommand("chmod +x script.sh")).toBe(false);
+    expect(governor.isSafeCommand("sudo apt install")).toBe(false);
+    expect(governor.isSafeCommand("echo hello > out.txt")).toBe(false);
+    expect(governor.isSafeCommand("git status")).toBe(true);
+    expect(governor.isSafeCommand("ls -la")).toBe(true);
+  });
+
+  it("should identify English completed text", () => {
+    const governor = new ManagedGovernor();
+    const intent1 = governor.evaluateOutput("agent-1", "All tasks completed successfully", []);
+    expect(intent1).toBe("COMPLETED");
+
+    const intent2 = governor.evaluateOutput("agent-1", "Delivery COMPLETE", []);
+    expect(intent2).toBe("COMPLETED");
+  });
+
   it("should escalate on flapping", () => {
     const governor = new ManagedGovernor();
     governor.evaluateOutput("agent-1", "Same output", []);
@@ -70,13 +101,18 @@ describe("ManagedGovernor", () => {
     expect(intent).toBe("AUTO_CONTINUE");
   });
 
-  it("should escalate after max auto turns", () => {
+  it("should escalate after max auto turns and support dynamic update", () => {
     const governor = new ManagedGovernor(2);
     governor.incrementTurn("agent-1");
     governor.incrementTurn("agent-1");
 
-    const intent = governor.evaluateOutput("agent-1", "Check status", ["git status"]);
+    let intent = governor.evaluateOutput("agent-1", "Check status", ["git status"]);
     expect(intent).toBe("BLOCKER_ESCALATE");
+
+    // Dynamic update
+    governor.setMaxAutoTurns(4);
+    intent = governor.evaluateOutput("agent-1", "Check status again", ["git status"]);
+    expect(intent).toBe("AUTO_CONTINUE");
   });
 });
 

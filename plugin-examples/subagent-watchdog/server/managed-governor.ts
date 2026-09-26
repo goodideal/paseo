@@ -9,6 +9,10 @@ export class ManagedGovernor {
     this.maxAutoTurns = maxAutoTurns;
   }
 
+  public setMaxAutoTurns(turns: number) {
+    this.maxAutoTurns = turns;
+  }
+
   public getAutoTurnCount(agentId: string): number {
     return this.turnCounts.get(agentId) || 0;
   }
@@ -23,8 +27,31 @@ export class ManagedGovernor {
     this.lastOutput.delete(agentId);
   }
 
+  public isSafeCommand(command: string): boolean {
+    const cmd = command.trim();
+    // Blacklist check
+    const dangerousPatterns = [/rm\s/, /git\s+push/, /chmod/, /sudo/, />/];
+    if (dangerousPatterns.some((p) => p.test(cmd))) {
+      return false;
+    }
+
+    // Whitelist check
+    const safePrefixes = [
+      "git status",
+      "git diff",
+      "git log",
+      "cat ",
+      "ls ",
+      "grep ",
+      "npm test",
+      "vitest",
+    ];
+    return safePrefixes.some((prefix) => cmd.startsWith(prefix));
+  }
+
   public evaluateOutput(agentId: string, outputText: string, toolCalls: string[]): WatchdogIntent {
     const trimmedOutput = outputText.trim();
+    const lowerOutput = trimmedOutput.toLowerCase();
 
     // 1. Check for thread limit failure or explicit errors
     if (
@@ -39,7 +66,11 @@ export class ManagedGovernor {
     if (
       (trimmedOutput.includes("STATUS: DONE") ||
         trimmedOutput.includes("所有任务已全部完成") ||
-        trimmedOutput.includes("交付完成")) &&
+        trimmedOutput.includes("交付完成") ||
+        lowerOutput.includes("all tasks completed") ||
+        lowerOutput.includes("all tasks complete") ||
+        lowerOutput.includes("delivery complete") ||
+        lowerOutput.includes("task complete")) &&
       !trimmedOutput.includes("- [ ]")
     ) {
       return "COMPLETED";
@@ -64,18 +95,7 @@ export class ManagedGovernor {
     );
 
     // 6. Safe read-only commands
-    const readOnlyCommands = [
-      "git status",
-      "git diff",
-      "cat ",
-      "ls ",
-      "grep ",
-      "npm test",
-      "vitest",
-    ];
-    const hasSafeCommand = toolCalls.some((call) =>
-      readOnlyCommands.some((cmd) => call.includes(cmd)),
-    );
+    const hasSafeCommand = toolCalls.some((call) => this.isSafeCommand(call));
 
     if (hasUncheckedTodo || hasContinuationPrompt || hasSafeCommand) {
       return "AUTO_CONTINUE";

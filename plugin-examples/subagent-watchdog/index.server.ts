@@ -13,10 +13,17 @@ export default function contribute(server: PluginServerContext) {
   let configuredMaxAutoTurns = 5;
   let configuredHeartbeatThreshold = 15;
 
+  const streamWatcher = new StreamWatcher(configuredHeartbeatThreshold);
+  const governor = new ManagedGovernor(configuredMaxAutoTurns);
+  const synthesizer = new Synthesizer();
+  const executor = new Executor();
+
   settings.read().then((state) => {
     if (state.status === "ready") {
       configuredMaxAutoTurns = state.values.maxAutoTurns;
       configuredHeartbeatThreshold = state.values.heartbeatThresholdSeconds;
+      governor.setMaxAutoTurns(configuredMaxAutoTurns);
+      streamWatcher.setHeartbeatThresholdSeconds(configuredHeartbeatThreshold);
     }
   });
 
@@ -24,13 +31,10 @@ export default function contribute(server: PluginServerContext) {
     if (state.status === "ready") {
       configuredMaxAutoTurns = state.values.maxAutoTurns;
       configuredHeartbeatThreshold = state.values.heartbeatThresholdSeconds;
+      governor.setMaxAutoTurns(configuredMaxAutoTurns);
+      streamWatcher.setHeartbeatThresholdSeconds(configuredHeartbeatThreshold);
     }
   });
-
-  const streamWatcher = new StreamWatcher(configuredHeartbeatThreshold);
-  const governor = new ManagedGovernor(configuredMaxAutoTurns);
-  const synthesizer = new Synthesizer();
-  const executor = new Executor();
 
   const activeBlockers = new Map<string, BlockerReport>();
 
@@ -53,13 +57,13 @@ export default function contribute(server: PluginServerContext) {
         }
         if (item.type === "tool_call") {
           toolCalls.push(item.name);
-          if (
-            item.name === "exec_command" &&
-            item.input &&
-            typeof item.input === "object" &&
-            "cmd" in item.input
-          ) {
-            toolCalls.push((item.input as { cmd: string }).cmd);
+          const detailAny = item.detail as any;
+          const inputAny = item.input as any;
+          const itemInput = detailAny?.input ?? inputAny;
+          const cmd = itemInput?.cmd ?? itemInput?.command ?? detailAny?.command;
+
+          if (item.name === "exec_command" && cmd) {
+            toolCalls.push(cmd);
           }
         }
       }
@@ -108,7 +112,11 @@ export default function contribute(server: PluginServerContext) {
   server.on("agent.permission_requested", async (event, context) => {
     const { agent, request } = event;
     if (governor.getAutoTurnCount(agent.id) > 0) {
-      await executor.allowPermission(agent.id, request.id, context);
+      const input = request.input as any;
+      const cmd = input?.cmd ?? input?.command ?? request.title;
+      if (cmd && governor.isSafeCommand(cmd)) {
+        await executor.allowPermission(agent.id, request.id, context);
+      }
     }
   });
 

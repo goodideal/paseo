@@ -17,17 +17,21 @@ function WatchdogOverlay({ agentId }: { agentId: string }) {
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     const poll = async () => {
+      let interval = 5000;
       try {
         const status = await getStatus({ agentId });
         if (mounted) {
           setInFlight(status.inFlight);
+          if (status.inFlight) {
+            interval = 2000;
+          }
         }
       } catch (err) {
         // Silent catch during transient connection
       }
 
       if (mounted) {
-        timer = setTimeout(poll, 2000);
+        timer = setTimeout(poll, interval);
       }
     };
 

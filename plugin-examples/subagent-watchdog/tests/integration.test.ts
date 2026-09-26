@@ -16,12 +16,10 @@ describe("Subagent Watchdog Integration Test", () => {
       },
       before: vi.fn(),
       registerSettings: vi.fn().mockReturnValue({
-        read: vi
-          .fn()
-          .mockResolvedValue({
-            status: "ready",
-            values: { maxAutoTurns: 5, heartbeatThresholdSeconds: 15 },
-          }),
+        read: vi.fn().mockResolvedValue({
+          status: "ready",
+          values: { maxAutoTurns: 5, heartbeatThresholdSeconds: 15 },
+        }),
         subscribe: vi.fn().mockReturnValue(() => {}),
       }) as any,
       handle(contract: any, handler: any) {
@@ -83,20 +81,38 @@ describe("Subagent Watchdog Integration Test", () => {
 
     // 2. Simulate permission request while auto-turn is active
     const permListeners = listeners["agent.permission_requested"] || [];
+
+    // Dangerous command - should not be allowed
     await permListeners[0]!(
       {
         agent: agentA,
         request: {
-          id: "req-1",
+          id: "req-danger",
+          kind: "command",
+          title: "Run rm -rf /",
+          input: { cmd: "rm -rf /" },
+        },
+      },
+      hookContext,
+    );
+    expect(mockRespondToPermission).not.toHaveBeenCalled();
+
+    // Safe command - should be allowed
+    await permListeners[0]!(
+      {
+        agent: agentA,
+        request: {
+          id: "req-safe",
           kind: "command",
           title: "Run git status",
+          input: { cmd: "git status" },
         },
       },
       hookContext,
     );
 
     expect(mockRespondToPermission).toHaveBeenCalledWith({
-      requestId: "req-1",
+      requestId: "req-safe",
       response: { behavior: "allow" },
     });
 

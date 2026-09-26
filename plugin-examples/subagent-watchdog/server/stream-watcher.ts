@@ -14,7 +14,11 @@ export class StreamWatcher {
     }
   >();
 
-  constructor(private readonly heartbeatThresholdMs = 15000) {}
+  constructor(private heartbeatThresholdMs = 15000) {}
+
+  public setHeartbeatThresholdSeconds(seconds: number) {
+    this.heartbeatThresholdMs = seconds * 1000;
+  }
 
   public onToolCall(
     agentId: string,
