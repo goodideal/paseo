@@ -4,6 +4,7 @@ import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/re
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { DecisionCard } from "../client/components/decision-card.js";
 import { ActionButtons } from "../client/components/action-buttons.js";
+import contribute from "../index.client.js";
 
 const mockSubmit = vi.fn().mockResolvedValue({ success: true });
 
@@ -41,7 +42,7 @@ describe("ActionButtons Component", () => {
 describe("DecisionCard Component", () => {
   const mockItem = {
     type: "plugin" as const,
-    kind: "watchdog_blocker",
+    kind: "watchdog-blocker",
     version: 1,
     data: {
       agentId: "agent-123",
@@ -102,6 +103,46 @@ describe("DecisionCard Component", () => {
       expect(screen.getByText("已恢复")).toBeDefined();
       expect(screen.getByText(/已选择执行: Fix it/)).toBeDefined();
     });
+  });
+});
+
+describe("Subagent Watchdog Client Contribution", () => {
+  it("registers valid timeline renderer and workspace panel with valid ID and PascalCase Lucide icon", () => {
+    const renderers: any[] = [];
+    const panels: any[] = [];
+
+    const mockClient: any = {
+      addTimelineRenderer: vi.fn((r) => {
+        renderers.push(r);
+        return () => {};
+      }),
+      addWorkspacePanel: vi.fn((p) => {
+        panels.push(p);
+        return () => {};
+      }),
+    };
+
+    const cleanupFn = contribute(mockClient);
+    expect(mockClient.addTimelineRenderer).toHaveBeenCalled();
+    expect(mockClient.addWorkspacePanel).toHaveBeenCalled();
+
+    // Verify timeline renderer kind complies with Paseo CONTRIBUTION_ID regex /^[a-z][a-z0-9-]*$/
+    const renderer = renderers[0];
+    expect(renderer).toBeDefined();
+    expect(renderer.kind).toMatch(/^[a-z][a-z0-9-]*$/);
+    expect(renderer.kind).toBe("watchdog-blocker");
+    expect(renderer.version).toBe(1);
+
+    // Verify workspace panel ID complies with CONTRIBUTION_ID
+    const panel = panels[0];
+    expect(panel).toBeDefined();
+    expect(panel.id).toMatch(/^[a-z][a-z0-9-]*$/);
+    // Lucide icon in React Native MUST be PascalCase (not kebab-case)
+    expect(panel.icon).toMatch(/^[A-Z][a-zA-Z0-9]*$/);
+    expect(panel.icon).toBe("ShieldAlert");
+
+    expect(typeof cleanupFn).toBe("function");
+    expect(() => cleanupFn()).not.toThrow();
   });
 });
 

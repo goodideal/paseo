@@ -50,3 +50,10 @@ export const ResolveDecisionOutputSchema = z.object({
   message: z.string(),
 });
 export type ResolveDecisionOutput = z.infer<typeof ResolveDecisionOutputSchema>;
+
+export const WatchdogStatusOutputSchema = z.object({
+  inFlight: InFlightHeartbeatSchema.nullable(),
+  blocker: BlockerReportSchema.nullable(),
+  autoTurnCount: z.number(),
+});
+export type WatchdogStatusOutput = z.infer<typeof WatchdogStatusOutputSchema>;

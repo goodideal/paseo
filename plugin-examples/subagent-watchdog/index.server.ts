@@ -37,15 +37,51 @@ export default function contribute(server: PluginServerContext) {
   });
 
   const activeBlockers = new Map<string, BlockerReport>();
+  const activeSubscriptions = new Map<string, () => void>();
 
-  server.on("agent.turn_started", (event) => {
-    streamWatcher.onToolCall(event.agent.id, "wait_agent", (hb) => {
-      // In-flight progress observed
-    });
+  server.on("agent.turn_started", (event, context) => {
+    const agentId = event.agent.id;
+    try {
+      const agentRef = context.paseo?.agents?.ref(agentId);
+      if (agentRef?.timeline?.subscribe) {
+        const sub = agentRef.timeline.subscribe((streamEvent: any) => {
+          if (
+            streamEvent &&
+            "event" in streamEvent &&
+            streamEvent.event?.type === "timeline" &&
+            streamEvent.event.item?.type === "tool_call"
+          ) {
+            const item = streamEvent.event.item;
+            if (item.status === "running") {
+              streamWatcher.onToolCall(agentId, item.name, () => {
+                // Heartbeat triggered for long running tool
+              });
+            } else if (
+              item.status === "completed" ||
+              item.status === "failed" ||
+              item.status === "canceled"
+            ) {
+              streamWatcher.onToolResult(agentId);
+            }
+          }
+        });
+        activeSubscriptions.set(agentId, () => {
+          if (typeof sub === "function") sub();
+          else if (typeof (sub as any).release === "function") (sub as any).release();
+        });
+      }
+    } catch {
+      streamWatcher.clearWatcher(agentId);
+    }
   });
 
   server.on("agent.turn_ended", async (event, context) => {
     const agentId = event.agent.id;
+    const unsub = activeSubscriptions.get(agentId);
+    if (unsub) {
+      unsub();
+      activeSubscriptions.delete(agentId);
+    }
     streamWatcher.onToolResult(agentId);
 
     let outputText = "";
@@ -103,6 +139,18 @@ export default function contribute(server: PluginServerContext) {
         "ERR_BLOCKED",
       );
       activeBlockers.set(agentId, report);
+
+      try {
+        await context.paseo?.agents?.ref(agentId)?.timeline?.append({
+          type: "plugin",
+          id: `watchdog-blocker-${Date.now()}`,
+          kind: "watchdog-blocker",
+          version: 1,
+          data: report,
+        });
+      } catch (err) {
+        console.error("Failed to append watchdog blocker to timeline", err);
+      }
     } else if (intent === "COMPLETED") {
       governor.resetTurn(agentId);
       activeBlockers.delete(agentId);
@@ -162,6 +210,10 @@ export default function contribute(server: PluginServerContext) {
   });
 
   return () => {
+    for (const unsub of activeSubscriptions.values()) {
+      unsub();
+    }
+    activeSubscriptions.clear();
     streamWatcher.clearAll();
   };
 }

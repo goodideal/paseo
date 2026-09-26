@@ -4,7 +4,7 @@ import { resolveDecisionRpc, interruptAgentRpc, getWatchdogStatusRpc } from "../
 import type { PluginServerContext, PluginHookContext } from "@getpaseo/plugin/server";
 
 describe("Subagent Watchdog Integration Test", () => {
-  it("orchestrates turn monitoring, auto-continuation, blocker escalation, and decision RPC", async () => {
+  it("orchestrates turn monitoring, auto-continuation, blocker escalation, timeline append, and decision RPC", async () => {
     const listeners: Record<string, Function[]> = {};
     const rpcHandlers = new Map<any, Function>();
 
@@ -33,12 +33,18 @@ describe("Subagent Watchdog Integration Test", () => {
 
     const mockSend = vi.fn().mockResolvedValue(undefined);
     const mockRespondToPermission = vi.fn().mockResolvedValue(undefined);
+    const mockAppend = vi.fn().mockResolvedValue({ seq: 1, epoch: "epoch-1" });
+    const mockSubscribe = vi.fn().mockReturnValue(() => {});
 
     const fakePaseoApi: any = {
       agents: {
         ref: (id: string) => ({
           send: mockSend,
           respondToPermission: mockRespondToPermission,
+          timeline: {
+            append: mockAppend,
+            subscribe: mockSubscribe,
+          },
         }),
       },
     };
@@ -48,10 +54,6 @@ describe("Subagent Watchdog Integration Test", () => {
       signal: new AbortController().signal,
     };
 
-    // 1. Simulate a turn with incomplete tasks (- [ ])
-    const turnEndedListeners = listeners["agent.turn_ended"] || [];
-    expect(turnEndedListeners.length).toBeGreaterThan(0);
-
     const agentA = {
       id: "agent-task-1",
       workspaceId: "wks-1",
@@ -60,6 +62,16 @@ describe("Subagent Watchdog Integration Test", () => {
       cwd: "/repo",
       title: "Task 1",
     };
+
+    // 0. Test turn started subscribes to timeline stream
+    const turnStartedListeners = listeners["agent.turn_started"] || [];
+    expect(turnStartedListeners.length).toBeGreaterThan(0);
+    turnStartedListeners[0]!({ agent: agentA, turnId: "turn-1" }, hookContext);
+    expect(mockSubscribe).toHaveBeenCalled();
+
+    // 1. Simulate a turn with incomplete tasks (- [ ])
+    const turnEndedListeners = listeners["agent.turn_ended"] || [];
+    expect(turnEndedListeners.length).toBeGreaterThan(0);
 
     await turnEndedListeners[0]!(
       {
@@ -130,6 +142,19 @@ describe("Subagent Watchdog Integration Test", () => {
         ],
       },
       hookContext,
+    );
+
+    // Verify timeline.append was invoked to render DecisionCard on timeline
+    expect(mockAppend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "plugin",
+        kind: "watchdog-blocker",
+        version: 1,
+        data: expect.objectContaining({
+          agentId: "agent-task-1",
+          rootCause: expect.stringContaining("Agent thread limit reached"),
+        }),
+      }),
     );
 
     // Query status via getWatchdogStatusRpc

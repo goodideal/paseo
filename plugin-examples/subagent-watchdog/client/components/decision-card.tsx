@@ -3,9 +3,20 @@ import { View, Text, StyleSheet } from "react-native";
 import type { BlockerReport } from "../../shared/types.js";
 import { ActionButtons } from "./action-buttons.js";
 import { useDecisionRpc } from "../hooks/use-decision-rpc.js";
-import type { PluginTimelineItemProps } from "@getpaseo/plugin/client";
+import type { PluginTimelineItemProps, PluginHostProps } from "@getpaseo/plugin/client";
 
-export function DecisionCard({ item, agentId, layout }: PluginTimelineItemProps<BlockerReport>) {
+export interface DecisionCardProps extends Partial<PluginHostProps> {
+  agentId: string;
+  item: {
+    type: "plugin";
+    kind: string;
+    version: number;
+    data: BlockerReport;
+  };
+  timestamp?: Date;
+}
+
+export function DecisionCard({ item, agentId }: DecisionCardProps) {
   const data = item.data;
   const { submitDecision, isSubmitting, error } = useDecisionRpc();
   const [resolvedOptionId, setResolvedOptionId] = useState<string | null>(null);

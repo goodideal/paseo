@@ -1,16 +1,16 @@
 import React, { useEffect, useState } from "react";
 import type { PluginClientContext, PluginAgentPanelProps } from "@getpaseo/plugin/client";
 import { BlockerReportSchema } from "./shared/types.js";
-import type { InFlightHeartbeat } from "./shared/types.js";
+import type { InFlightHeartbeat, WatchdogStatusOutput } from "./shared/types.js";
 import { DecisionCard } from "./client/components/decision-card.js";
 import { InFlightPill } from "./client/components/in-flight-pill.js";
 import { getWatchdogStatusRpc } from "./shared/rpc.js";
 import { useRpc } from "@getpaseo/plugin/client";
-import { View, StyleSheet } from "react-native";
+import { View, Text, StyleSheet } from "react-native";
 
-function WatchdogOverlay({ agentId }: { agentId: string }) {
+function WatchdogPanelHost(props: PluginAgentPanelProps) {
   const getStatus = useRpc(getWatchdogStatusRpc);
-  const [inFlight, setInFlight] = useState<InFlightHeartbeat | null>(null);
+  const [status, setStatus] = useState<WatchdogStatusOutput | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -19,10 +19,10 @@ function WatchdogOverlay({ agentId }: { agentId: string }) {
     const poll = async () => {
       let interval = 5000;
       try {
-        const status = await getStatus({ agentId });
+        const res = await getStatus({ agentId: props.agentId });
         if (mounted) {
-          setInFlight(status.inFlight);
-          if (status.inFlight) {
+          setStatus(res);
+          if (res.inFlight || res.blocker) {
             interval = 2000;
           }
         }
@@ -41,49 +41,88 @@ function WatchdogOverlay({ agentId }: { agentId: string }) {
       mounted = false;
       if (timer) clearTimeout(timer);
     };
-  }, [agentId, getStatus]);
-
-  if (!inFlight) return null;
+  }, [props.agentId, getStatus]);
 
   return (
-    <View style={overlayStyles.container} pointerEvents="box-none">
-      <InFlightPill heartbeat={inFlight} />
+    <View style={panelStyles.container}>
+      {status?.inFlight && <InFlightPill heartbeat={status.inFlight} />}
+      {status?.blocker && (
+        <DecisionCard
+          item={{
+            type: "plugin",
+            kind: "watchdog-blocker",
+            version: 1,
+            data: status.blocker,
+          }}
+          agentId={props.agentId}
+        />
+      )}
+      {!status?.inFlight && !status?.blocker && (
+        <View style={panelStyles.emptyState}>
+          <Text style={panelStyles.emptyTitle}>🛡️ Watchdog 运行中</Text>
+          <Text style={panelStyles.emptyDesc}>
+            实时监控子代理执行进度与长耗时工具调用，当前状态正常。
+          </Text>
+          {status && status.autoTurnCount > 0 && (
+            <Text style={panelStyles.autoTurnText}>
+              当前连续自动续推轮次: {status.autoTurnCount}
+            </Text>
+          )}
+        </View>
+      )}
     </View>
   );
 }
 
-const overlayStyles = StyleSheet.create({
+const panelStyles = StyleSheet.create({
   container: {
-    position: "absolute",
-    bottom: 16,
-    left: 0,
-    right: 0,
-    alignItems: "center",
-    zIndex: 100,
+    padding: 16,
+    flex: 1,
+  },
+  emptyState: {
+    backgroundColor: "#f8f9fa",
+    borderRadius: 8,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#e9ecef",
+    marginTop: 8,
+  },
+  emptyTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#212529",
+    marginBottom: 6,
+  },
+  emptyDesc: {
+    fontSize: 12,
+    color: "#6c757d",
+    lineHeight: 18,
+  },
+  autoTurnText: {
+    fontSize: 12,
+    color: "#0a7ea4",
+    marginTop: 8,
+    fontWeight: "500",
   },
 });
-
-function WatchdogPanelHost(props: PluginAgentPanelProps) {
-  return <WatchdogOverlay agentId={props.agentId} />;
-}
 
 export default function contribute(client: PluginClientContext) {
   const cleanups: (() => void)[] = [];
 
-  // Register the blocker decision card as a timeline renderer
+  // Register the blocker decision card as a timeline renderer (must match /^[a-z][a-z0-9-]*$/)
   const cleanupTimeline = client.addTimelineRenderer({
-    kind: "watchdog_blocker",
+    kind: "watchdog-blocker",
     version: 1,
     schema: BlockerReportSchema,
     Component: DecisionCard,
   });
   cleanups.push(cleanupTimeline);
 
-  // Register the watchdog panel for agent status overlay
+  // Register the watchdog panel for agent status overlay (Lucide icon must be PascalCase, e.g. ShieldAlert)
   const cleanupPanel = client.addWorkspacePanel({
     id: "watchdog-overlay",
     title: "Watchdog Status",
-    icon: "shield-alert",
+    icon: "ShieldAlert",
     context: "agent",
     Component: WatchdogPanelHost,
   });
