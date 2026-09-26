@@ -16,7 +16,7 @@ export default function contribute(server: PluginServerContext) {
 
   server.on("agent.turn_started", (event) => {
     streamWatcher.onToolCall(event.agent.id, "wait_agent", (hb) => {
-      console.log(`Watchdog Heartbeat: ${hb.statusDescription}`);
+      // Heartbeat logged via RPC polling
     });
   });
 
@@ -117,12 +117,7 @@ export default function contribute(server: PluginServerContext) {
 
   server.handle(interruptAgentRpc, async (input, context) => {
     try {
-      const daemon = (context.paseo as any)._client || (context.paseo as any);
-      if (typeof daemon?.cancelAgent === "function") {
-        await daemon.cancelAgent(input.agentId);
-      } else {
-        await context.paseo.agents.ref(input.agentId).send("/cancel");
-      }
+      await context.paseo.agents.ref(input.agentId).send("/cancel");
       return { success: true };
     } catch (err) {
       console.error("Failed to interrupt agent", err);

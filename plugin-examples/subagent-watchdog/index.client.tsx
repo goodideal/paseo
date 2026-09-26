@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import type { PluginClientContext, PluginAgentPanelProps } from "@getpaseo/plugin/client";
 import { BlockerReportSchema } from "./shared/types.js";
+import type { InFlightHeartbeat } from "./shared/types.js";
 import { DecisionCard } from "./client/components/decision-card.js";
 import { InFlightPill } from "./client/components/in-flight-pill.js";
 import { getWatchdogStatusRpc } from "./shared/rpc.js";
@@ -9,7 +10,7 @@ import { View, StyleSheet } from "react-native";
 
 function WatchdogOverlay({ agentId }: { agentId: string }) {
   const getStatus = useRpc(getWatchdogStatusRpc);
-  const [inFlight, setInFlight] = useState<any>(null);
+  const [inFlight, setInFlight] = useState<InFlightHeartbeat | null>(null);
 
   useEffect(() => {
     let mounted = true;

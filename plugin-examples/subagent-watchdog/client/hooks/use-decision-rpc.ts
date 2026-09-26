@@ -15,8 +15,8 @@ export function useDecisionRpc() {
       try {
         const result = await resolveDecision(input);
         return result;
-      } catch (err: any) {
-        setError(err.message || "Failed to submit decision");
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Failed to submit decision");
         return null;
       } finally {
         setIsSubmitting(false);

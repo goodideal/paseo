@@ -6,43 +6,41 @@ import type { PluginServerContext, PluginHookContext } from "@getpaseo/plugin/se
 describe("Subagent Watchdog Integration Test", () => {
   it("orchestrates turn monitoring, auto-continuation, blocker escalation, and decision RPC", async () => {
     const listeners: Record<string, Function[]> = {};
-    const rpcHandlers = new Map<any, Function>();
+    const rpcHandlers = new Map<unknown, Function>();
 
-    const fakeServer: PluginServerContext = {
-      on(name: any, handler: any) {
+    const fakeServer = {
+      on(name: string, handler: Function) {
         if (!listeners[name]) listeners[name] = [];
         listeners[name]!.push(handler);
         return () => {};
       },
       before: vi.fn(),
-      registerSettings: vi.fn() as any,
-      handle(contract: any, handler: any) {
+      registerSettings: vi.fn(),
+      handle(contract: unknown, handler: Function) {
         rpcHandlers.set(contract, handler);
       },
       registerProvider: vi.fn(),
-    };
+    } as unknown as PluginServerContext;
 
     // Initialize plugin
     const cleanup = contribute(fakeServer);
 
     const mockSend = vi.fn().mockResolvedValue(undefined);
     const mockRespondToPermission = vi.fn().mockResolvedValue(undefined);
-    const mockCancelAgent = vi.fn().mockResolvedValue(undefined);
 
-    const fakePaseoApi: any = {
+    const fakePaseoApi = {
       agents: {
         ref: (id: string) => ({
           send: mockSend,
           respondToPermission: mockRespondToPermission,
         }),
       },
-      cancelAgent: mockCancelAgent,
     };
 
-    const hookContext: PluginHookContext = {
+    const hookContext = {
       paseo: fakePaseoApi,
       signal: new AbortController().signal,
-    };
+    } as unknown as PluginHookContext;
 
     // 1. Simulate a turn with incomplete tasks (- [ ])
     const turnEndedListeners = listeners["agent.turn_ended"] || [];

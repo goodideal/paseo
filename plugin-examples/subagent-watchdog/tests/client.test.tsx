@@ -61,7 +61,7 @@ describe("DecisionCard Component", () => {
 
   const layout = { platform: "web" as const, compact: false };
   const host = { id: "host", label: "Host" };
-  const theme = {} as any;
+  const theme: Parameters<typeof DecisionCard>[0]["theme"] = null!;
 
   it("renders pending state initially", () => {
     render(
