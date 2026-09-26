@@ -1946,16 +1946,6 @@ export const SetAgentTimelineSubscriptionRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
-export const AgentMessageSynthesizeBriefRequestSchema = z.object({
-  type: z.literal("agent.message.synthesize_brief.request"),
-  agentId: z.string(),
-  turnId: z.string(),
-  text: z.string().max(200_000),
-  customPrompt: z.string().optional(),
-  forceRefresh: z.boolean().optional(),
-  requestId: z.string(),
-});
-
 export const AgentForkContextRequestMessageSchema = z.object({
   type: z.literal("agent.fork_context.request"),
   agentId: z.string(),
@@ -3344,7 +3334,6 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProviderSubagentTimelineRequestMessageSchema,
   SetAgentTimelineSubscriptionRequestMessageSchema,
   AgentForkContextRequestMessageSchema,
-  AgentMessageSynthesizeBriefRequestSchema,
   SetAgentModeRequestMessageSchema,
   SetAgentModelRequestMessageSchema,
   SetAgentThinkingRequestMessageSchema,
@@ -4933,20 +4922,6 @@ export const AgentAttentionRequiredMessageSchema = z.object({
         }),
       })
       .optional(),
-  }),
-});
-
-export const AgentMessageSynthesizeBriefResponseSchema = z.object({
-  type: z.literal("agent.message.synthesize_brief.response"),
-  payload: z.object({
-    requestId: z.string(),
-    agentId: z.string(),
-    turnId: z.string(),
-    briefText: z.string(),
-    audioBase64: z.string().optional(),
-    mimeType: z.string().optional(),
-    durationMs: z.number().optional(),
-    error: z.string().nullable(),
   }),
 });
 
@@ -7029,7 +7004,6 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentTimelineSubscriptionResponseMessageSchema,
   AgentAttentionRequiredMessageSchema,
   AgentForkContextResponseMessageSchema,
-  AgentMessageSynthesizeBriefResponseSchema,
   CancelAgentResponseMessageSchema,
   ClearAgentAttentionResponseMessageSchema,
   WorkspaceCreateResponseSchema,
@@ -7273,9 +7247,6 @@ export type AgentTimelineListPromptsResponseMessage = z.infer<
   typeof AgentTimelineListPromptsResponseMessageSchema
 >;
 export type AgentForkContextResponseMessage = z.infer<typeof AgentForkContextResponseMessageSchema>;
-export type AgentMessageSynthesizeBriefResponse = z.infer<
-  typeof AgentMessageSynthesizeBriefResponseSchema
->;
 export type CancelAgentResponseMessage = z.infer<typeof CancelAgentResponseMessageSchema>;
 export type SendAgentMessageResponseMessage = z.infer<typeof SendAgentMessageResponseMessageSchema>;
 export type SetVoiceModeResponseMessage = z.infer<typeof SetVoiceModeResponseMessageSchema>;
@@ -7380,9 +7351,6 @@ export type FetchWorkspacesRequestMessage = z.infer<typeof FetchWorkspacesReques
 export type ProjectListRequestMessage = z.infer<typeof ProjectListRequestMessageSchema>;
 export type FetchAgentRequestMessage = z.infer<typeof FetchAgentRequestMessageSchema>;
 export type AgentForkContextRequestMessage = z.infer<typeof AgentForkContextRequestMessageSchema>;
-export type AgentMessageSynthesizeBriefRequest = z.infer<
-  typeof AgentMessageSynthesizeBriefRequestSchema
->;
 export type SendAgentMessageRequest = z.infer<typeof SendAgentMessageRequestSchema>;
 export type WaitForFinishRequest = z.infer<typeof WaitForFinishRequestSchema>;
 export type DictationStreamStartMessage = z.infer<typeof DictationStreamStartMessageSchema>;
