@@ -19,7 +19,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useRouter, type Href } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import { useTranslation } from "react-i18next";
-import { ChevronDown } from "lucide-react-native";
+import { ChevronDown, Plus } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
@@ -245,6 +245,7 @@ function buildWorkspaceFileLocation(
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedChevronDown = withUnistyles(ChevronDown);
+const ThemedPlus = withUnistyles(Plus);
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
@@ -424,6 +425,7 @@ interface MobileWorkspaceTabSwitcherProps {
   onCloseTabsAbove: (tabId: string) => Promise<void> | void;
   onCloseTabsBelow: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
+  onCreateNewTab?: () => void;
 }
 
 function MobileActiveTabTrigger({
@@ -659,6 +661,7 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
   onCloseTabsAbove,
   onCloseTabsBelow,
   onCloseOtherTabs,
+  onCreateNewTab,
 }: MobileWorkspaceTabSwitcherProps) {
   const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
@@ -762,6 +765,18 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
           </>
         )}
       </Pressable>
+
+      {onCreateNewTab ? (
+        <Pressable
+          testID="workspace-mobile-new-tab"
+          accessibilityRole="button"
+          accessibilityLabel={t("workspace.tabs.actions.newTab")}
+          style={styles.mobileNewTabButton}
+          onPress={onCreateNewTab}
+        >
+          <ThemedPlus size={16} uniProps={mutedColorMapping} />
+        </Pressable>
+      ) : null}
 
       <Combobox
         options={tabSwitcherOptions}
@@ -1419,6 +1434,9 @@ function WorkspaceScreenContent({
   const isConnected = useHostRuntimeIsConnected(normalizedServerId);
   const supportsProvidersSnapshot = useSessionStore(
     (state) => state.sessions[normalizedServerId]?.serverInfo?.features?.providersSnapshot === true,
+  );
+  const supportsWorkflowEngine = useSessionStore(
+    (state) => state.sessions[normalizedServerId]?.serverInfo?.features?.workflowEngine === true,
   );
   const workspaceDirectory = workspaceDescriptor?.workspaceDirectory || null;
   const isMissingWorkspaceDirectory = Boolean(workspaceDescriptor) && !workspaceDirectory;
@@ -2672,6 +2690,20 @@ function WorkspaceScreenContent({
     openWorkspaceTabFocused(persistenceKey, target, FOCUSED_PANE_PLACEMENT);
   }, [normalizedWorkspaceId, openWorkspaceTabFocused, persistenceKey]);
 
+  const handleOpenWorkflowRuns = useCallback(() => {
+    if (!persistenceKey) {
+      return;
+    }
+    const target = normalizeWorkspaceTabTarget({
+      kind: "workflow_runs",
+      workspaceId: normalizedWorkspaceId,
+    });
+    if (!target) {
+      return;
+    }
+    openWorkspaceTabFocused(persistenceKey, target, FOCUSED_PANE_PLACEMENT);
+  }, [normalizedWorkspaceId, openWorkspaceTabFocused, persistenceKey]);
+
   const handleBulkCloseTabs = useCallback(
     async (input: {
       tabsToClose: WorkspaceTabDescriptor[];
@@ -3749,12 +3781,14 @@ function WorkspaceScreenContent({
                 workspaceScripts={workspaceScripts}
                 liveTerminalIds={liveTerminalIds}
                 showWorkspaceSetup={showWorkspaceSetup}
+                showWorkflowRuns={supportsWorkflowEngine}
                 showCreateBrowserTab={showCreateBrowserTab}
                 isMobile={isMobile}
                 createTerminalDisabled={createTerminalDisabled}
                 importAgentDisabled={!canOpenImportSheet}
                 copyPathDisabled={!workspaceDirectory}
                 onCreateDraftTab={handleCreateDraftTab}
+                onCreateNewTab={handleCreateNewTab}
                 onCreateTerminal={handleCreateTerminal}
                 onCreateTerminalWithProfile={handleCreateTerminalWithProfile}
                 onCreateBrowser={handleCreateBrowserTab}
@@ -3762,6 +3796,7 @@ function WorkspaceScreenContent({
                 onCopyWorkspacePath={handleCopyWorkspacePath}
                 onCopyBranchName={handleCopyBranchName}
                 onOpenSetupTab={handleOpenSetupTab}
+                onOpenWorkflowRuns={handleOpenWorkflowRuns}
                 onScriptTerminalStarted={handleScriptTerminalStarted}
                 onViewScriptTerminal={handleViewScriptTerminal}
                 onOpenUrlInBrowserTab={handleOpenUrlInBrowserTab}
@@ -3779,9 +3814,11 @@ function WorkspaceScreenContent({
       handleCopyWorkspacePath,
       handleCreateBrowserTab,
       handleCreateDraftTab,
+      handleCreateNewTab,
       handleCreateTerminal,
       handleCreateTerminalWithProfile,
       handleOpenSetupTab,
+      handleOpenWorkflowRuns,
       handleOpenUrlInBrowserTab,
       handleScriptTerminalStarted,
       handleViewScriptTerminal,
@@ -3795,6 +3832,7 @@ function WorkspaceScreenContent({
       showCreateBrowserTab,
       showScreenHeader,
       showWorkspaceSetup,
+      supportsWorkflowEngine,
       workspaceDirectory,
       workspaceHeaderSubtitle,
       workspaceHeaderTitle,
@@ -3913,6 +3951,7 @@ function WorkspaceScreenContent({
           onCloseTabsAbove={handleCloseTabsToLeft}
           onCloseTabsBelow={handleCloseTabsToRight}
           onCloseOtherTabs={handleCloseOtherTabs}
+          onCreateNewTab={handleCreateNewTab}
         />
       ) : null}
 
@@ -4056,8 +4095,11 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface0,
     borderBottomWidth: theme.borderWidth[1],
     borderBottomColor: theme.colors.border,
+    flexDirection: "row",
+    alignItems: "center",
   },
   switcherTrigger: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
@@ -4066,6 +4108,12 @@ const styles = StyleSheet.create((theme) => ({
   },
   switcherTriggerPressed: {
     backgroundColor: theme.colors.surface1,
+  },
+  mobileNewTabButton: {
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    alignItems: "center",
+    justifyContent: "center",
   },
   switcherTriggerLeft: {
     flexDirection: "row",
