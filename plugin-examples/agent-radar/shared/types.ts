@@ -57,3 +57,62 @@ export const WatchdogStatusOutputSchema = z.object({
   autoTurnCount: z.number(),
 });
 export type WatchdogStatusOutput = z.infer<typeof WatchdogStatusOutputSchema>;
+
+// Radar Specific Schemas
+export const RadarNodeStatusSchema = z.enum([
+  "pending",
+  "running",
+  "reviewing",
+  "fixing",
+  "completed",
+  "blocked",
+  "error",
+]);
+export type RadarNodeStatus = z.infer<typeof RadarNodeStatusSchema>;
+
+export const SuperpowerTaskStepSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  status: RadarNodeStatusSchema,
+  currentRound: z.number().optional(),
+  maxRounds: z.number().optional(),
+  agentId: z.string().optional(),
+  commits: z.array(z.string()).optional(),
+  rulings: z.array(z.string()).optional(),
+  durationMs: z.number().optional(),
+});
+export type SuperpowerTaskStep = z.infer<typeof SuperpowerTaskStepSchema>;
+
+export const AgentTopologyNodeSchema = z.object({
+  agentId: z.string(),
+  parentAgentId: z.string().nullable().optional(),
+  title: z.string(),
+  status: z.enum(["initializing", "idle", "running", "error", "closed"]),
+  runningTool: z.string().optional(),
+  durationMs: z.number().optional(),
+  childAgentIds: z.array(z.string()),
+});
+export type AgentTopologyNode = z.infer<typeof AgentTopologyNodeSchema>;
+
+export const RadarSnapshotSchema = z.object({
+  mode: z.enum(["superpower", "generic"]),
+  superpower: z
+    .object({
+      planSlug: z.string(),
+      planPath: z.string(),
+      tasks: z.array(SuperpowerTaskStepSchema),
+      currentTaskId: z.string().optional(),
+    })
+    .optional(),
+  topology: z.object({
+    rootAgentId: z.string(),
+    nodes: z.record(z.string(), AgentTopologyNodeSchema),
+  }),
+  watchdog: z.object({
+    activeHeartbeat: InFlightHeartbeatSchema.nullable().optional(),
+    activeBlocker: BlockerReportSchema.nullable().optional(),
+    autoTurnCount: z.number(),
+    maxAutoTurns: z.number(),
+  }),
+});
+export type RadarSnapshot = z.infer<typeof RadarSnapshotSchema>;
