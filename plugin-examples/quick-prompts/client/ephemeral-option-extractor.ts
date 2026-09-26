@@ -1,4 +1,4 @@
-import type { QuickPromptItem } from "@/stores/quick-prompts-store";
+import type { QuickPromptItem } from "../shared/contracts.js";
 
 export interface ExtractedOption {
   index: string;
@@ -185,9 +185,6 @@ export function extractEphemeralOptions(
     const { indexStr, body } = candidate;
     const { title } = extractConciseTitle(body);
 
-    // Build ultra-compact button label
-    // If title is short (<= 10 chars), show `[1. Title]` or `[A. Title]`
-    // Otherwise fallback to `[Option 1]` or `[选项 1]`
     let label: string;
     if (title && title.length > 0 && title.length <= 10) {
       label = `${indexStr}. ${title}`;
@@ -195,7 +192,6 @@ export function extractEphemeralOptions(
       label = isZh ? `选项 ${indexStr}` : `Option ${indexStr}`;
     }
 
-    // Build comprehensive full prompt payload
     let content: string;
     if (isZh) {
       content = title

@@ -1,9 +1,9 @@
-import { extractEphemeralOptions } from "./ephemeral-option-extractor";
+import { extractEphemeralOptions } from "./ephemeral-option-extractor.js";
 import type {
   QuickPromptAgentStatus,
   QuickPromptItem,
   QuickPromptRuleCondition,
-} from "@/stores/quick-prompts-store";
+} from "../shared/contracts.js";
 
 export interface EvaluateQuickPromptsInput {
   items: readonly QuickPromptItem[];

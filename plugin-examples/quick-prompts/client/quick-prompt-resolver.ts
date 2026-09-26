@@ -1,5 +1,5 @@
-import { evaluateQuickPrompts } from "./quick-prompt-matcher";
-import type { QuickPromptItem, QuickPromptAgentStatus } from "@getpaseo/protocol/quick-prompts";
+import { evaluateQuickPrompts } from "./quick-prompt-matcher.js";
+import type { QuickPromptItem, QuickPromptAgentStatus } from "../shared/contracts.js";
 
 export interface ResolveEffectiveQuickPromptsInput {
   globalItems: readonly QuickPromptItem[];
@@ -87,8 +87,6 @@ export function resolveEffectiveQuickPrompts(
   });
 
   // Project items first, then global items.
-  // Re-index orders sequentially so that evaluateQuickPrompts's internal sort
-  // preserves project items strictly before global items and preserves their respective orders!
   const combined = [
     ...activeProject.map((item, index) => Object.assign({}, item, { order: index })),
     ...activeGlobals.map((item, index) =>

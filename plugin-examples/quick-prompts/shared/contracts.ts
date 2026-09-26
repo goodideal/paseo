@@ -1,3 +1,4 @@
+import { defineRpc, defineSettings } from "@getpaseo/plugin";
 import { z } from "zod";
 
 export const QuickPromptTriggerTypeSchema = z.enum(["fixed", "rule", "ephemeral"]);
@@ -112,3 +113,70 @@ export const DEFAULT_QUICK_PROMPT_ITEMS: readonly QuickPromptItem[] = [
     order: 4,
   },
 ];
+
+export const quickPromptsGlobalGetRpc = defineRpc({
+  name: "quick_prompts.global.get.request",
+  input: z.object({}).optional().default({}),
+  output: z.object({
+    items: z.array(QuickPromptItemSchema),
+  }),
+});
+
+export const quickPromptsGlobalSetRpc = defineRpc({
+  name: "quick_prompts.global.set.request",
+  input: z.object({
+    items: z.array(QuickPromptItemSchema),
+  }),
+  output: z.object({
+    items: z.array(QuickPromptItemSchema),
+    success: z.boolean(),
+  }),
+});
+
+export const quickPromptsProjectGetRpc = defineRpc({
+  name: "quick_prompts.project.get.request",
+  input: z.object({
+    projectId: z.string(),
+  }),
+  output: z.object({
+    projectId: z.string(),
+    items: z.array(QuickPromptItemSchema),
+    disabledGlobalIds: z.array(z.string()),
+    order: z.array(z.string()).optional(),
+  }),
+});
+
+export const quickPromptsProjectSetRpc = defineRpc({
+  name: "quick_prompts.project.set.request",
+  input: z.object({
+    projectId: z.string(),
+    items: z.array(QuickPromptItemSchema).optional(),
+    disabledGlobalIds: z.array(z.string()).optional(),
+    order: z.array(z.string()).optional(),
+  }),
+  output: z.object({
+    projectId: z.string(),
+    items: z.array(QuickPromptItemSchema),
+    disabledGlobalIds: z.array(z.string()),
+    order: z.array(z.string()).optional(),
+    success: z.boolean(),
+  }),
+});
+
+export type QuickPromptsGlobalGetInput = z.infer<typeof quickPromptsGlobalGetRpc.input>;
+export type QuickPromptsGlobalGetOutput = z.infer<typeof quickPromptsGlobalGetRpc.output>;
+export type QuickPromptsGlobalSetInput = z.infer<typeof quickPromptsGlobalSetRpc.input>;
+export type QuickPromptsGlobalSetOutput = z.infer<typeof quickPromptsGlobalSetRpc.output>;
+export type QuickPromptsProjectGetInput = z.infer<typeof quickPromptsProjectGetRpc.input>;
+export type QuickPromptsProjectGetOutput = z.infer<typeof quickPromptsProjectGetRpc.output>;
+export type QuickPromptsProjectSetInput = z.infer<typeof quickPromptsProjectSetRpc.input>;
+export type QuickPromptsProjectSetOutput = z.infer<typeof quickPromptsProjectSetRpc.output>;
+
+export const quickPromptsSettings = defineSettings({
+  id: "quick-prompts",
+  scope: "host",
+  version: 1,
+  schema: z.object({
+    aiSuggestions: z.boolean().default(true),
+  }),
+});

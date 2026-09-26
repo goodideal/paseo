@@ -7,6 +7,7 @@ import type {
   ComposerApi,
 } from "@getpaseo/plugin/client";
 import { ComposerApiProvider } from "@getpaseo/plugin/client";
+import { PluginClientStateProvider } from "@getpaseo/plugin/client/host";
 import type { PluginTheme } from "@getpaseo/plugin";
 import type { Theme } from "@/styles/theme";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -16,7 +17,7 @@ import { toPluginTheme } from "../theme";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { PluginRuntimeBoundary } from "../runtime-boundary";
 import { usePluginHostNavigation } from "../host-navigation";
-import { QuickPromptsAccessory } from "@/composer/quick-prompts/accessory";
+import { createPluginClientStateSource } from "../client-state/source";
 import type { InstalledPlugin } from "../types";
 
 export interface PluginComposerAccessoriesProps {
@@ -64,6 +65,7 @@ const ThemedAccessoriesView = memo(function ThemedAccessoriesView({
   const navigation = usePluginHostNavigation(serverId);
   const compact = useIsCompactFormFactor();
   const platform = resolvePlatform();
+  const stateSource = useMemo(() => createPluginClientStateSource(serverId), [serverId]);
 
   const hostProps: PluginComposerAccessoryProps = useMemo(
     () => ({
@@ -85,28 +87,26 @@ const ThemedAccessoriesView = memo(function ThemedAccessoriesView({
 
   const accessories = useMemo(() => collectAccessories(plugins, serverId), [plugins, serverId]);
 
-  if (!client) {
+  if (!client || accessories.length === 0) {
     return null;
   }
 
   return (
     <ComposerApiProvider value={composerApi}>
-      {accessories.length > 0 ? (
-        accessories.map(({ plugin, accessory }) => (
-          <SurfaceErrorBoundary
-            key={`${plugin.id}/${accessory.id}`}
-            installation={plugin}
-            Surface={accessory.Component}
-            resetKey={accessory.id}
-          >
-            <PluginRuntimeBoundary plugin={plugin} client={client}>
+      {accessories.map(({ plugin, accessory }) => (
+        <SurfaceErrorBoundary
+          key={`${plugin.id}/${accessory.id}`}
+          installation={plugin}
+          Surface={accessory.Component}
+          resetKey={accessory.id}
+        >
+          <PluginRuntimeBoundary plugin={plugin} client={client}>
+            <PluginClientStateProvider source={stateSource}>
               <accessory.Component {...hostProps} />
-            </PluginRuntimeBoundary>
-          </SurfaceErrorBoundary>
-        ))
-      ) : (
-        <QuickPromptsAccessory {...hostProps} />
-      )}
+            </PluginClientStateProvider>
+          </PluginRuntimeBoundary>
+        </SurfaceErrorBoundary>
+      ))}
     </ComposerApiProvider>
   );
 });
