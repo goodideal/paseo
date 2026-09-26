@@ -106,7 +106,6 @@ import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useStreamHistoryWindow } from "./use-stream-history-window";
 import { PluginTimelineItemView, useInstalledTimelineTransform } from "@/plugins/timeline";
-import { useAudioBriefStore } from "@/audio-brief/audio-brief-store";
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -980,9 +979,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       ],
     );
     useEffect(() => {
-      return () => {
-        useAudioBriefStore.getState().stopBrief();
-      };
+      return () => {};
     }, [agentId]);
 
     const renderModel = useMemo<AgentStreamRenderModel>(() => {

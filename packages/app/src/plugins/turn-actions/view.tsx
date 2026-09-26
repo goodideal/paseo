@@ -16,7 +16,6 @@ import { toPluginTheme } from "../theme";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { PluginRuntimeBoundary } from "../runtime-boundary";
 import { usePluginHostNavigation } from "../host-navigation";
-import { AudioBriefCard, TurnAudioBriefButton } from "@/components/turn-audio-brief-button";
 import type { InstalledPlugin } from "../types";
 
 export interface PluginTurnActionsProps {
@@ -131,18 +130,7 @@ const ThemedTurnActionsView = memo(function ThemedTurnActionsView({
     );
   }
 
-  if (type === "card") {
-    return <AudioBriefCard turnId={turnId} />;
-  }
-
-  return (
-    <TurnAudioBriefButton
-      agentId={agentId}
-      turnId={turnId}
-      getContent={getContent}
-      serverId={serverId}
-    />
-  );
+  return null;
 });
 
 export const PluginTurnActions: React.ComponentType<PluginTurnActionsProps> = withUnistyles(
