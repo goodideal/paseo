@@ -1,6 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
 import contribute from "../index.server.js";
-import { resolveDecisionRpc, interruptAgentRpc, getWatchdogStatusRpc } from "../shared/rpc.js";
+import {
+  resolveDecisionRpc,
+  interruptAgentRpc,
+  getWatchdogStatusRpc,
+  radarGetSnapshotRpc,
+  radarResolveDecisionRpc,
+} from "../shared/rpc.js";
 import type { PluginServerContext, PluginHookContext } from "@getpaseo/plugin/server";
 
 describe("Subagent Watchdog Integration Test", () => {
@@ -188,6 +194,20 @@ describe("Subagent Watchdog Integration Test", () => {
 
     const interruptRes = await interruptHandler!({ agentId: "agent-task-1" }, hookContext);
     expect(interruptRes.success).toBe(true);
+
+    // 6. Test Radar Snapshot RPC
+    const radarSnapshotHandler = rpcHandlers.get(radarGetSnapshotRpc);
+    expect(radarSnapshotHandler).toBeDefined();
+
+    const radarSnapshot = await radarSnapshotHandler!({ agentId: "agent-task-1" }, hookContext);
+    expect(radarSnapshot).toBeDefined();
+    expect(radarSnapshot.mode).toBe("superpower");
+    expect(radarSnapshot.topology.rootAgentId).toBe("agent-task-1");
+    expect(radarSnapshot.watchdog.maxAutoTurns).toBe(5);
+
+    // 7. Test Radar Resolve Decision RPC
+    const radarResolveHandler = rpcHandlers.get(radarResolveDecisionRpc);
+    expect(radarResolveHandler).toBeDefined();
 
     cleanup();
   });

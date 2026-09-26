@@ -1,8 +1,8 @@
 {
-  "name": "@getpaseo/subagent-watchdog-plugin",
+  "name": "@getpaseo/agent-radar-plugin",
   "version": "0.1.0",
   "private": true,
-  "description": "In-flight heartbeat monitoring, heuristic auto-propelling, and interactive blocker decision card for subagents",
+  "description": "Visual execution roadmap, Superpowers SDD pipeline tracker, subagent watchdog, and in-situ blocker decision card",
   "type": "module",
   "main": "./index.server.ts",
   "devDependencies": {

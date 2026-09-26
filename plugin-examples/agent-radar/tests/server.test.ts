@@ -146,3 +146,35 @@ describe("Synthesizer", () => {
     expect(card).toContain("Option 1**: Desc 1");
   });
 });
+
+describe("RadarEngine", () => {
+  it("should generate a dual-mode snapshot with topology and watchdog status", async () => {
+    const { RadarEngine } = await import("../server/radar-engine.js");
+    const streamWatcher = new StreamWatcher(15000);
+    const governor = new ManagedGovernor(5);
+    const activeBlockers = new Map();
+
+    const engine = new RadarEngine({
+      workspaceCwd: "/non-existent-dir",
+      streamWatcher,
+      governor,
+      activeBlockers,
+    });
+
+    const snapshot = await engine.getSnapshot("agent-root", [
+      { id: "agent-root", title: "Root", lastStatus: "running" },
+      {
+        id: "agent-sub",
+        title: "Sub",
+        lastStatus: "running",
+        labels: { "paseo.parent-agent-id": "agent-root" },
+      },
+    ]);
+
+    expect(snapshot.mode).toBe("generic");
+    expect(snapshot.topology.rootAgentId).toBe("agent-root");
+    expect(snapshot.topology.nodes["agent-sub"].parentAgentId).toBe("agent-root");
+    expect(snapshot.watchdog.autoTurnCount).toBe(0);
+    expect(snapshot.watchdog.maxAutoTurns).toBe(5);
+  });
+});
