@@ -12,7 +12,7 @@ export default function contribute(client: PluginClientContext) {
       client.addComposerAccessory({
         id: "quick-prompts",
         order: 0,
-        Component: QuickPromptsAccessory,
+        Component: (props) => <QuickPromptsAccessory {...props} />,
       }),
     );
   }

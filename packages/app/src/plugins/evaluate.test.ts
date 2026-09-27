@@ -64,6 +64,27 @@ describe("evaluatePluginClientBundle", () => {
     expect(plugin.settingsScreens.map((screen) => screen.id)).toEqual(["display"]);
   });
 
+  it("accepts memoized components for all plugin contributions", () => {
+    const plugin = evaluatePluginClientBundle(
+      "memoized",
+      bundle(`
+        const React = require("react");
+        const Component = React.memo(function Comp() { return null; });
+        const schema = { safeParse: (data) => ({ success: true, data }) };
+        plugin.addSurface("memo-surface", Component);
+        plugin.addWorkspacePanel({ id: "memo-panel", title: "Panel", icon: "Blocks", context: "workspace", Component });
+        plugin.addTimelineRenderer({ kind: "memo-timeline", version: 1, schema, Component });
+        plugin.addComposerAccessory({ id: "memo-accessory", order: 0, Component });
+        plugin.addTurnAction({ id: "memo-action", type: "button", Component });
+      `),
+    );
+    expect(plugin.surfaces.map((s) => s.id)).toEqual(["memo-surface"]);
+    expect(plugin.workspacePanels.map((p) => p.id)).toEqual(["memo-panel"]);
+    expect(plugin.timelineRenderers.map((r) => r.kind)).toEqual(["memo-timeline"]);
+    expect(plugin.composerAccessories.map((a) => a.id)).toEqual(["memo-accessory"]);
+    expect(plugin.turnActions.map((t) => t.id)).toEqual(["memo-action"]);
+  });
+
   it("returns idempotent removers for every client registration", () => {
     let pillCount = 0;
     const plugin = runPluginClientBundle(

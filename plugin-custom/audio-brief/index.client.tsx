@@ -12,7 +12,7 @@ export default function contribute(client: PluginClientContext) {
         id: "audio-brief-button",
         type: "button",
         order: 10,
-        Component: TurnAudioBriefButton,
+        Component: (props) => <TurnAudioBriefButton {...props} />,
       }),
     );
 
@@ -21,7 +21,7 @@ export default function contribute(client: PluginClientContext) {
         id: "audio-brief-card",
         type: "card",
         order: 10,
-        Component: AudioBriefCard,
+        Component: (props) => <AudioBriefCard {...props} />,
       }),
     );
   }

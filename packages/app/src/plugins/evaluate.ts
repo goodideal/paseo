@@ -73,6 +73,13 @@ function requireId(value: string, label: string): string {
   return id;
 }
 
+function isComponent(candidate: unknown): boolean {
+  return (
+    typeof candidate === "function" ||
+    (typeof candidate === "object" && candidate !== null && "$$typeof" in candidate)
+  );
+}
+
 export type PluginClientRuntime = Pick<
   PluginClientContext,
   | "paseo"
@@ -162,6 +169,9 @@ export function runPluginClientBundle(
         throw new Error(`Duplicate settings screen: ${screenId}`);
       if (!contribution.title.trim()) throw new Error(`Invalid settings screen: ${screenId}`);
       resolvePluginIcon(contribution.icon);
+      if (!isComponent(contribution.Component)) {
+        throw new Error(`Settings screen ${screenId} is not a component`);
+      }
       settingsScreenIds.add(screenId);
       return register(collector.settingsScreens, { ...contribution, id: screenId }, () =>
         settingsScreenIds.delete(screenId),
@@ -170,8 +180,7 @@ export function runPluginClientBundle(
     addSurface(surfaceId: string, Component: ComponentType<PluginSurfaceProps>) {
       const normalizedId = requireId(surfaceId, "surface id");
       if (surfaceIds.has(normalizedId)) throw new Error(`Duplicate surface: ${normalizedId}`);
-      if (typeof Component !== "function")
-        throw new Error(`Surface ${normalizedId} is not a component`);
+      if (!isComponent(Component)) throw new Error(`Surface ${normalizedId} is not a component`);
       surfaceIds.add(normalizedId);
       return register(collector.surfaces, { id: normalizedId, Component }, () =>
         surfaceIds.delete(normalizedId),
@@ -208,7 +217,7 @@ export function runPluginClientBundle(
       if (contribution.context !== "workspace" && contribution.context !== "agent") {
         throw new Error(`Workspace panel ${normalizedId} has invalid context`);
       }
-      if (typeof contribution.Component !== "function") {
+      if (!isComponent(contribution.Component)) {
         throw new Error(`Workspace panel ${normalizedId} is not a component`);
       }
       resolvePluginIcon(icon);
@@ -359,7 +368,7 @@ export function runPluginClientBundle(
       if (!contribution.schema || typeof contribution.schema.safeParse !== "function") {
         throw new Error(`Timeline renderer ${rendererId} has no schema`);
       }
-      if (typeof contribution.Component !== "function") {
+      if (!isComponent(contribution.Component)) {
         throw new Error(`Timeline renderer ${rendererId} is not a component`);
       }
       timelineRendererIds.add(rendererId);
@@ -372,7 +381,7 @@ export function runPluginClientBundle(
       if (composerAccessoryIds.has(normalizedId)) {
         throw new Error(`Duplicate composer accessory id: ${normalizedId}`);
       }
-      if (typeof contribution.Component !== "function") {
+      if (!isComponent(contribution.Component)) {
         throw new Error(`Composer accessory ${normalizedId} is not a component`);
       }
       composerAccessoryIds.add(normalizedId);
@@ -385,7 +394,7 @@ export function runPluginClientBundle(
       if (turnActionIds.has(normalizedId)) {
         throw new Error(`Duplicate turn action id: ${normalizedId}`);
       }
-      if (typeof contribution.Component !== "function") {
+      if (!isComponent(contribution.Component)) {
         throw new Error(`Turn action ${normalizedId} is not a component`);
       }
       if (contribution.type !== "button" && contribution.type !== "card") {
