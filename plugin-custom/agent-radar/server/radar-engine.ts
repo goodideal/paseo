@@ -32,7 +32,11 @@ export class RadarEngine {
     this.workspaceCwd = cwd;
   }
 
-  async getSnapshot(agentId: string, agentList: RawAgentSummary[] = []): Promise<RadarSnapshot> {
+  async getSnapshot(
+    agentId: string,
+    agentList: RawAgentSummary[] = [],
+    globalAutoContinue = false,
+  ): Promise<RadarSnapshot> {
     // 1. Detect Superpower SDD mode
     let superpowerStatus: SuperpowerPlanStatus | null = null;
     try {
@@ -105,6 +109,10 @@ export class RadarEngine {
         activeBlocker: activeBlocker ?? null,
         autoTurnCount: this.governor.getAutoTurnCount(agentId),
         maxAutoTurns: this.governor.getMaxAutoTurns(),
+        agentAutoContinueEnabled: this.governor.isAgentAutoContinueEnabled(
+          agentId,
+          globalAutoContinue,
+        ),
       },
     };
   }

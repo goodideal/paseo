@@ -67,6 +67,7 @@ describe("agent-radar shared types and contracts", () => {
         activeBlocker: null,
         autoTurnCount: 1,
         maxAutoTurns: 5,
+        agentAutoContinueEnabled: true,
       },
     };
 
@@ -109,6 +110,7 @@ describe("agent-radar shared types and contracts", () => {
         },
         autoTurnCount: 0,
         maxAutoTurns: 5,
+        agentAutoContinueEnabled: false,
       },
     };
 
@@ -117,9 +119,11 @@ describe("agent-radar shared types and contracts", () => {
     expect(parsed.watchdog.activeBlocker?.errorCode).toBe("THREAD_LIMIT");
   });
 
-  it("exports valid radar RPC descriptors", () => {
+  it("exports valid radar RPC descriptors including toggle auto-continue", async () => {
+    const { radarToggleAutoContinueRpc } = await import("../shared/rpc.js");
     expect(radarGetSnapshotRpc.name).toBe("radar.get_snapshot");
     expect(radarResolveDecisionRpc.name).toBe("radar.resolve_decision");
+    expect(radarToggleAutoContinueRpc.name).toBe("radar.toggle_auto_continue");
   });
 
   it("validates watchdogSettings schema defaults and custom values", async () => {
@@ -128,20 +132,30 @@ describe("agent-radar shared types and contracts", () => {
     expect(watchdogSettings.scope).toBe("host");
 
     const defaultValues = watchdogSettings.schema.parse({});
-    expect(defaultValues.autoContinue).toBe(true);
+    expect(defaultValues.autoContinue).toBe(false);
     expect(defaultValues.autoApprovePermissions).toBe(true);
     expect(defaultValues.maxAutoTurns).toBe(5);
     expect(defaultValues.heartbeatThresholdSeconds).toBe(15);
+    expect(defaultValues.autoContinuePrompt).toBe("请继续执行下一步任务，直到交付并验证完成。");
+    expect(defaultValues.safeCommandWhitelist).toContain("git status");
+    expect(defaultValues.safeCommandWhitelist).toContain("npm test");
+    expect(defaultValues.consecutiveErrorTolerance).toBe(2);
 
     const customValues = watchdogSettings.schema.parse({
       autoContinue: false,
       autoApprovePermissions: false,
       maxAutoTurns: 10,
       heartbeatThresholdSeconds: 30,
+      autoContinuePrompt: "Custom prompt",
+      safeCommandWhitelist: ["cargo test", "pnpm test"],
+      consecutiveErrorTolerance: 3,
     });
     expect(customValues.autoContinue).toBe(false);
     expect(customValues.autoApprovePermissions).toBe(false);
     expect(customValues.maxAutoTurns).toBe(10);
     expect(customValues.heartbeatThresholdSeconds).toBe(30);
+    expect(customValues.autoContinuePrompt).toBe("Custom prompt");
+    expect(customValues.safeCommandWhitelist).toEqual(["cargo test", "pnpm test"]);
+    expect(customValues.consecutiveErrorTolerance).toBe(3);
   });
 });

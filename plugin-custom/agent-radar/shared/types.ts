@@ -58,6 +58,18 @@ export const WatchdogStatusOutputSchema = z.object({
 });
 export type WatchdogStatusOutput = z.infer<typeof WatchdogStatusOutputSchema>;
 
+export const ToggleAutoContinueInputSchema = z.object({
+  agentId: z.string(),
+  enabled: z.boolean().optional(),
+});
+export type ToggleAutoContinueInput = z.infer<typeof ToggleAutoContinueInputSchema>;
+
+export const ToggleAutoContinueOutputSchema = z.object({
+  agentId: z.string(),
+  enabled: z.boolean(),
+});
+export type ToggleAutoContinueOutput = z.infer<typeof ToggleAutoContinueOutputSchema>;
+
 // Radar Specific Schemas
 export const RadarNodeStatusSchema = z.enum([
   "pending",
@@ -113,6 +125,7 @@ export const RadarSnapshotSchema = z.object({
     activeBlocker: BlockerReportSchema.nullable().optional(),
     autoTurnCount: z.number(),
     maxAutoTurns: z.number(),
+    agentAutoContinueEnabled: z.boolean().default(false),
   }),
 });
 export type RadarSnapshot = z.infer<typeof RadarSnapshotSchema>;

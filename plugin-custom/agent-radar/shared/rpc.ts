@@ -37,3 +37,15 @@ export const radarResolveDecisionRpc = defineRpc({
   input: ResolveDecisionInputSchema,
   output: ResolveDecisionOutputSchema,
 });
+
+export const radarToggleAutoContinueRpc = defineRpc({
+  name: "radar.toggle_auto_continue",
+  input: z.object({
+    agentId: z.string(),
+    enabled: z.boolean().optional(),
+  }),
+  output: z.object({
+    agentId: z.string(),
+    enabled: z.boolean(),
+  }),
+});

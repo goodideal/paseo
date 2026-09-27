@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable } from "react-native";
 import type { PluginAgentPanelProps } from "@getpaseo/plugin/client";
 import { useRpc } from "@getpaseo/plugin/client";
-import { radarGetSnapshotRpc } from "../../shared/rpc.js";
+import { radarGetSnapshotRpc, radarToggleAutoContinueRpc } from "../../shared/rpc.js";
 import type { RadarSnapshot } from "../../shared/types.js";
 import { PipelineView } from "./pipeline-view.js";
 import { TopologyView } from "./topology-view.js";
@@ -10,9 +10,33 @@ import { NodeInspector } from "./node-inspector.js";
 
 export function RadarPanelHost(props: PluginAgentPanelProps) {
   const getSnapshot = useRpc(radarGetSnapshotRpc);
+  const toggleAutoContinue = useRpc(radarToggleAutoContinueRpc);
   const [snapshot, setSnapshot] = useState<RadarSnapshot | null>(null);
   const [selectedId, setSelectedId] = useState<string>(props.agentId);
   const [activeTab, setActiveTab] = useState<"auto" | "pipeline" | "topology">("auto");
+  const [isToggling, setIsToggling] = useState(false);
+
+  const handleToggleAutoContinue = async () => {
+    if (!props.agentId || isToggling) return;
+    setIsToggling(true);
+    try {
+      const res = await toggleAutoContinue({ agentId: props.agentId });
+      setSnapshot((prev) => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          watchdog: {
+            ...prev.watchdog,
+            agentAutoContinueEnabled: res.enabled,
+          },
+        };
+      });
+    } catch (err) {
+      console.error("Failed to toggle auto-continue", err);
+    } finally {
+      setIsToggling(false);
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -58,10 +82,36 @@ export function RadarPanelHost(props: PluginAgentPanelProps) {
     <ScrollView style={styles.container}>
       {/* Top Header Mode Bar */}
       <View style={styles.topBar}>
-        <View style={styles.modeTag}>
-          <Text style={styles.modeTagText}>
-            {snapshot?.mode === "superpower" ? "⚡ Superpowers SDD 模式" : "🌐 通用拓扑模式"}
-          </Text>
+        <View style={styles.leftBar}>
+          <View style={styles.modeTag}>
+            <Text style={styles.modeTagText}>
+              {snapshot?.mode === "superpower" ? "⚡ Superpowers SDD 模式" : "🌐 通用拓扑模式"}
+            </Text>
+          </View>
+
+          {snapshot && (
+            <Pressable
+              onPress={handleToggleAutoContinue}
+              style={[
+                styles.autoPill,
+                snapshot.watchdog.agentAutoContinueEnabled
+                  ? styles.autoPillActive
+                  : styles.autoPillInactive,
+              ]}
+              testID="radar-auto-continue-toggle"
+            >
+              <Text
+                style={[
+                  styles.autoPillText,
+                  snapshot.watchdog.agentAutoContinueEnabled
+                    ? styles.autoPillTextActive
+                    : styles.autoPillTextInactive,
+                ]}
+              >
+                {snapshot.watchdog.agentAutoContinueEnabled ? "⚡ 自动推进：开" : "⏸️ 自动推进：关"}
+              </Text>
+            </Pressable>
+          )}
         </View>
 
         <View style={styles.tabButtons}>
@@ -137,6 +187,11 @@ const styles = StyleSheet.create({
     borderBottomColor: "#e9ecef",
     paddingBottom: 8,
   },
+  leftBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
   modeTag: {
     backgroundColor: "#e8f4fd",
     paddingHorizontal: 8,
@@ -147,6 +202,30 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "600",
     color: "#0a7ea4",
+  },
+  autoPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  autoPillActive: {
+    backgroundColor: "#e6f4ea",
+    borderColor: "#34a853",
+  },
+  autoPillInactive: {
+    backgroundColor: "#f1f3f5",
+    borderColor: "#ced4da",
+  },
+  autoPillText: {
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  autoPillTextActive: {
+    color: "#1e7e34",
+  },
+  autoPillTextInactive: {
+    color: "#6c757d",
   },
   tabButtons: {
     flexDirection: "row",

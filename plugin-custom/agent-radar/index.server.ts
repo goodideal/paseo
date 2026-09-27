@@ -10,17 +10,19 @@ import {
   getWatchdogStatusRpc,
   radarGetSnapshotRpc,
   radarResolveDecisionRpc,
+  radarToggleAutoContinueRpc,
 } from "./shared/rpc.js";
 import { watchdogSettings } from "./shared/settings.js";
-import type { BlockerReport } from "./shared/types.js";
+import type { BlockerReport, DecisionOption } from "./shared/types.js";
 
 export default function contribute(server: PluginServerContext) {
   // Register host settings configurable in Paseo UI
   const settings = server.registerSettings(watchdogSettings);
   let configuredMaxAutoTurns = 5;
   let configuredHeartbeatThreshold = 15;
-  let configuredAutoContinue = true;
+  let configuredAutoContinue = false;
   let configuredAutoApprovePermissions = true;
+  let configuredAutoContinuePrompt = "请继续执行下一步任务，直到交付并验证完成。";
 
   const streamWatcher = new StreamWatcher(configuredHeartbeatThreshold);
   const governor = new ManagedGovernor(configuredMaxAutoTurns);
@@ -51,6 +53,18 @@ export default function contribute(server: PluginServerContext) {
     }
     if (typeof values.autoApprovePermissions === "boolean") {
       configuredAutoApprovePermissions = values.autoApprovePermissions;
+    }
+    if (
+      typeof values.autoContinuePrompt === "string" &&
+      values.autoContinuePrompt.trim().length > 0
+    ) {
+      configuredAutoContinuePrompt = values.autoContinuePrompt;
+    }
+    if (Array.isArray(values.safeCommandWhitelist)) {
+      governor.setSafeCommandWhitelist(values.safeCommandWhitelist);
+    }
+    if (typeof values.consecutiveErrorTolerance === "number") {
+      governor.setConsecutiveErrorTolerance(values.consecutiveErrorTolerance);
     }
   };
 
@@ -137,34 +151,58 @@ export default function contribute(server: PluginServerContext) {
     const intent = governor.evaluateOutput(agentId, outputText, toolCalls);
 
     if (intent === "AUTO_CONTINUE") {
-      if (configuredAutoContinue) {
+      const isAutoContinueEnabled = governor.isAgentAutoContinueEnabled(
+        agentId,
+        configuredAutoContinue,
+      );
+      if (isAutoContinueEnabled) {
         governor.incrementTurn(agentId);
-        await executor.autoContinue(agentId, context);
+        await executor.autoContinue(agentId, context, configuredAutoContinuePrompt);
       }
     } else if (intent === "BLOCKER_ESCALATE") {
-      let rootCause = "Reached auto-turn limit or detected flapping";
+      let rootCause =
+        governor.getLastBlockerReason(agentId) ?? "Reached auto-turn limit or detected flapping";
       if (outputText.includes("collab spawn failed: agent thread limit reached")) {
         rootCause = "Agent thread limit reached (collab spawn failed)";
+      }
+
+      let options: DecisionOption[] = [
+        {
+          id: "retry",
+          label: "Retry",
+          description: "Retry the last action",
+          actionType: "retry_with_tip",
+        },
+        {
+          id: "pause",
+          label: "Pause",
+          description: "Pause execution for manual review",
+          actionType: "pause",
+        },
+      ];
+
+      if (rootCause.includes("PR merge")) {
+        options = [
+          {
+            id: "approve_pr",
+            label: "Approve & Merge",
+            description: "Authorize and proceed with PR merge",
+            actionType: "retry_with_tip",
+          },
+          {
+            id: "pause",
+            label: "Pause for Review",
+            description: "Keep PR open and review manually",
+            actionType: "pause",
+          },
+        ];
       }
 
       const report = synthesizer.createBlockerReport(
         agentId,
         "Agent execution blocked",
         rootCause,
-        [
-          {
-            id: "retry",
-            label: "Retry",
-            description: "Retry the last action",
-            actionType: "retry_with_tip",
-          },
-          {
-            id: "pause",
-            label: "Pause",
-            description: "Pause execution for manual review",
-            actionType: "pause",
-          },
-        ],
+        options,
         "ERR_BLOCKED",
       );
       activeBlockers.set(agentId, report);
@@ -192,7 +230,8 @@ export default function contribute(server: PluginServerContext) {
     if (governor.getAutoTurnCount(agent.id) > 0) {
       const input = request.input as any;
       const cmd = input?.cmd ?? input?.command ?? request.title;
-      if (cmd && governor.isSafeCommand(cmd)) {
+      // Strict guard: never allow PR merge or unsafe commands automatically
+      if (cmd && governor.isSafeCommand(cmd) && !governor.isPrMergeIntent(cmd, [cmd])) {
         await executor.allowPermission(agent.id, request.id, context);
       }
     }
@@ -216,9 +255,11 @@ export default function contribute(server: PluginServerContext) {
     governor.resetTurn(input.agentId);
 
     if (option.actionType === "retry_with_tip") {
-      await context.paseo.agents
-        .ref(input.agentId)
-        .send("已由 Watchdog 批准继续执行，请重试该步骤并继续前进。");
+      const prompt =
+        option.id === "approve_pr"
+          ? "已由用户在 Agent Radar 手动批准 PR 合并，请继续执行合并与验证。"
+          : "已由 Watchdog 批准继续执行，请重试该步骤并继续前进。";
+      await context.paseo.agents.ref(input.agentId).send(prompt);
     }
 
     return { success: true, message: `Resolved with option: ${option.label}` };
@@ -245,6 +286,13 @@ export default function contribute(server: PluginServerContext) {
     };
   });
 
+  server.handle(radarToggleAutoContinueRpc, async (input) => {
+    const current = governor.isAgentAutoContinueEnabled(input.agentId, configuredAutoContinue);
+    const next = input.enabled !== undefined ? input.enabled : !current;
+    governor.setAgentAutoContinue(input.agentId, next);
+    return { agentId: input.agentId, enabled: next };
+  });
+
   server.handle(radarGetSnapshotRpc, async (input, context) => {
     let agentsList: any[] = [];
     try {
@@ -258,7 +306,7 @@ export default function contribute(server: PluginServerContext) {
       }
     } catch {}
 
-    return await radarEngine.getSnapshot(input.agentId, agentsList);
+    return await radarEngine.getSnapshot(input.agentId, agentsList, configuredAutoContinue);
   });
 
   return () => {
