@@ -35,7 +35,7 @@ describe("quick-prompts plugin end-to-end", () => {
     await client.connect();
 
     const pluginDirectory = fileURLToPath(
-      new URL("../../../../../plugin-examples/quick-prompts", import.meta.url),
+      new URL("../../../../../plugin-custom/quick-prompts", import.meta.url),
     );
 
     // 1. Install directory plugin

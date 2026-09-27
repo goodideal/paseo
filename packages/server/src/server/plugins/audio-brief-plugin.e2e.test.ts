@@ -27,7 +27,7 @@ describe("audio-brief plugin end-to-end", () => {
     await client.connect();
 
     const pluginDirectory = fileURLToPath(
-      new URL("../../../../../plugin-examples/audio-brief", import.meta.url),
+      new URL("../../../../../plugin-custom/audio-brief", import.meta.url),
     );
 
     // 1. Install directory plugin
