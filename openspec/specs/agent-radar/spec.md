@@ -65,3 +65,12 @@
 
 - **WHEN** 用户点击决策卡片上的操作按钮（如“执行选项 A”）
 - **THEN** 客户端通过 RPC 将选定决策下发至服务端，服务端注入对应指令并恢复代理推进
+
+### Requirement: 图形化设置界面与看门狗控制 (Graphical Settings Screen & Watchdog Controls)
+
+系统 SHALL 通过客户端设置扩展槽（`addSettingsScreen`）提供独立的 Agent Radar 图形化配置界面，并支持全局命令中心（`addCommandCenterItem`）检索唤出，允许用户动态调节自动推进、权限自动放行、轮数上限与心跳阈值。
+
+#### Scenario: 动态配置与参数维护
+
+- **WHEN** 用户在客户端设置中打开 Agent Radar 配置面板调整自动推进开关或轮数上限
+- **THEN** 系统实时持久化配置变更并动态下发至服务端 Watchdog 守护引擎生效，支持一键重置出厂默认值
