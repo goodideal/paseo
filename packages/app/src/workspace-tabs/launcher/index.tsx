@@ -87,6 +87,7 @@ const BUILT_IN_SELECTIONS = {
   browser: { kind: "browser" },
   pullRequest: { kind: "target", target: { kind: "pull_request" } },
   workflowRuns: { kind: "target", target: { kind: "workflow_runs", workspaceId: "" } },
+  reader: { kind: "target", target: { kind: "reader", workspaceId: "" } },
 } satisfies Record<BuiltInLaunchItemId, NewTabSelection>;
 
 function getLaunchPresentation(kind: WorkspaceTabTarget["kind"]): PanelPresentation {
@@ -125,6 +126,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
     const filesPresentation = getLaunchPresentation("files");
     const pullRequestPresentation = getLaunchPresentation("pull_request");
     const workflowRunsPresentation = getLaunchPresentation("workflow_runs");
+    const readerPresentation = getLaunchPresentation("reader");
     const builtIns: Record<BuiltInLaunchItemId, WorkspaceTabLaunchItem & { hidden?: boolean }> = {
       agent: {
         id: "agent",
@@ -209,6 +211,19 @@ export function useWorkspaceTabLaunchCatalog(input: {
         launch: (destination) =>
           launcher.launch(
             { kind: "target", target: { kind: "workflow_runs", workspaceId: "" } },
+            destination,
+          ),
+      },
+      reader: {
+        id: "reader",
+        label: readerPresentation.label(t),
+        Icon: readerPresentation.icon,
+        disabled: false,
+        panelKind: "reader",
+        toggleTarget: null,
+        launch: (destination) =>
+          launcher.launch(
+            { kind: "target", target: { kind: "reader", workspaceId: "" } },
             destination,
           ),
       },
