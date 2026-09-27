@@ -174,9 +174,11 @@ describe("PipelineView & TopologyView Components", () => {
 });
 
 describe("Agent Radar Client Contribution", () => {
-  it("registers valid timeline renderers and workspace panel with PascalCase Lucide icon", () => {
+  it("registers valid timeline renderers, workspace panel, settings screen, and command center item", () => {
     const renderers: any[] = [];
     const panels: any[] = [];
+    const settingsScreens: any[] = [];
+    const commandCenterItems: any[] = [];
 
     const mockClient: any = {
       addTimelineRenderer: vi.fn((r) => {
@@ -187,11 +189,21 @@ describe("Agent Radar Client Contribution", () => {
         panels.push(p);
         return () => {};
       }),
+      addSettingsScreen: vi.fn((s) => {
+        settingsScreens.push(s);
+        return () => {};
+      }),
+      addCommandCenterItem: vi.fn((c) => {
+        commandCenterItems.push(c);
+        return () => {};
+      }),
     };
 
     const cleanupFn = contribute(mockClient);
     expect(mockClient.addTimelineRenderer).toHaveBeenCalled();
     expect(mockClient.addWorkspacePanel).toHaveBeenCalled();
+    expect(mockClient.addSettingsScreen).toHaveBeenCalled();
+    expect(mockClient.addCommandCenterItem).toHaveBeenCalled();
 
     // Verify timeline renderers
     expect(renderers.length).toBe(2);
@@ -202,6 +214,23 @@ describe("Agent Radar Client Contribution", () => {
     expect(panel).toBeDefined();
     expect(panel.id).toBe("agent-radar-panel");
     expect(panel.icon).toBe("Activity");
+
+    // Verify settings screen
+    const settingsScreen = settingsScreens[0];
+    expect(settingsScreen).toBeDefined();
+    expect(settingsScreen.id).toBe("agent-radar-settings");
+    expect(settingsScreen.title).toBe("Agent Radar");
+    expect(settingsScreen.icon).toBe("Activity");
+
+    // Verify command center item
+    const commandItem = commandCenterItems[0];
+    expect(commandItem).toBeDefined();
+    expect(commandItem.id).toBe("agent-radar-settings-command");
+    expect(commandItem.icon).toBe("Activity");
+
+    const mockOpenSettings = vi.fn();
+    commandItem.onSelect({ openSettings: mockOpenSettings });
+    expect(mockOpenSettings).toHaveBeenCalledWith("agent-radar-settings");
 
     expect(typeof cleanupFn).toBe("function");
     expect(() => cleanupFn()).not.toThrow();

@@ -19,6 +19,8 @@ export default function contribute(server: PluginServerContext) {
   const settings = server.registerSettings(watchdogSettings);
   let configuredMaxAutoTurns = 5;
   let configuredHeartbeatThreshold = 15;
+  let configuredAutoContinue = true;
+  let configuredAutoApprovePermissions = true;
 
   const streamWatcher = new StreamWatcher(configuredHeartbeatThreshold);
   const governor = new ManagedGovernor(configuredMaxAutoTurns);
@@ -34,21 +36,33 @@ export default function contribute(server: PluginServerContext) {
     activeBlockers,
   });
 
+  const updateFromSettings = (values: any) => {
+    if (!values) return;
+    if (typeof values.maxAutoTurns === "number") {
+      configuredMaxAutoTurns = values.maxAutoTurns;
+      governor.setMaxAutoTurns(configuredMaxAutoTurns);
+    }
+    if (typeof values.heartbeatThresholdSeconds === "number") {
+      configuredHeartbeatThreshold = values.heartbeatThresholdSeconds;
+      streamWatcher.setHeartbeatThresholdSeconds(configuredHeartbeatThreshold);
+    }
+    if (typeof values.autoContinue === "boolean") {
+      configuredAutoContinue = values.autoContinue;
+    }
+    if (typeof values.autoApprovePermissions === "boolean") {
+      configuredAutoApprovePermissions = values.autoApprovePermissions;
+    }
+  };
+
   settings.read().then((state) => {
     if (state.status === "ready") {
-      configuredMaxAutoTurns = state.values.maxAutoTurns;
-      configuredHeartbeatThreshold = state.values.heartbeatThresholdSeconds;
-      governor.setMaxAutoTurns(configuredMaxAutoTurns);
-      streamWatcher.setHeartbeatThresholdSeconds(configuredHeartbeatThreshold);
+      updateFromSettings(state.values);
     }
   });
 
   settings.subscribe((state) => {
     if (state.status === "ready") {
-      configuredMaxAutoTurns = state.values.maxAutoTurns;
-      configuredHeartbeatThreshold = state.values.heartbeatThresholdSeconds;
-      governor.setMaxAutoTurns(configuredMaxAutoTurns);
-      streamWatcher.setHeartbeatThresholdSeconds(configuredHeartbeatThreshold);
+      updateFromSettings(state.values);
     }
   });
 
@@ -123,8 +137,10 @@ export default function contribute(server: PluginServerContext) {
     const intent = governor.evaluateOutput(agentId, outputText, toolCalls);
 
     if (intent === "AUTO_CONTINUE") {
-      governor.incrementTurn(agentId);
-      await executor.autoContinue(agentId, context);
+      if (configuredAutoContinue) {
+        governor.incrementTurn(agentId);
+        await executor.autoContinue(agentId, context);
+      }
     } else if (intent === "BLOCKER_ESCALATE") {
       let rootCause = "Reached auto-turn limit or detected flapping";
       if (outputText.includes("collab spawn failed: agent thread limit reached")) {
@@ -171,6 +187,7 @@ export default function contribute(server: PluginServerContext) {
   });
 
   server.on("agent.permission_requested", async (event, context) => {
+    if (!configuredAutoApprovePermissions) return;
     const { agent, request } = event;
     if (governor.getAutoTurnCount(agent.id) > 0) {
       const input = request.input as any;

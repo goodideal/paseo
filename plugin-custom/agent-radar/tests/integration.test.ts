@@ -211,4 +211,109 @@ describe("Subagent Watchdog Integration Test", () => {
 
     cleanup();
   });
+
+  it("respects dynamic settings for autoContinue and autoApprovePermissions", async () => {
+    const listeners: Record<string, Function[]> = {};
+    let settingsSubscriber: ((state: any) => void) | null = null;
+
+    const fakeServer: PluginServerContext = {
+      on(name: any, handler: any) {
+        if (!listeners[name]) listeners[name] = [];
+        listeners[name]!.push(handler);
+        return () => {};
+      },
+      before: vi.fn(),
+      registerSettings: vi.fn().mockReturnValue({
+        read: vi.fn().mockResolvedValue({
+          status: "ready",
+          values: {
+            autoContinue: false,
+            autoApprovePermissions: false,
+            maxAutoTurns: 3,
+            heartbeatThresholdSeconds: 10,
+          },
+        }),
+        subscribe: vi.fn().mockImplementation((fn) => {
+          settingsSubscriber = fn;
+          return () => {};
+        }),
+      }) as any,
+      handle: vi.fn(),
+      registerProvider: vi.fn(),
+    };
+
+    const cleanup = contribute(fakeServer);
+
+    const mockSend = vi.fn().mockResolvedValue(undefined);
+    const mockRespondToPermission = vi.fn().mockResolvedValue(undefined);
+
+    const hookContext: PluginHookContext = {
+      paseo: {
+        agents: {
+          ref: () => ({
+            send: mockSend,
+            respondToPermission: mockRespondToPermission,
+          }),
+        },
+      } as any,
+      signal: new AbortController().signal,
+    };
+
+    const agentB = {
+      id: "agent-disabled-settings",
+      workspaceId: "wks-1",
+      provider: "codex",
+      cwd: "/repo",
+      title: "Task B",
+    };
+
+    // Trigger settings update to disable autoContinue and autoApprovePermissions
+    settingsSubscriber!({
+      status: "ready",
+      values: {
+        autoContinue: false,
+        autoApprovePermissions: false,
+        maxAutoTurns: 3,
+        heartbeatThresholdSeconds: 10,
+      },
+    });
+
+    const turnEndedListeners = listeners["agent.turn_ended"] || [];
+    await turnEndedListeners[0]!(
+      {
+        agent: agentB,
+        turnId: "turn-1",
+        outcome: { kind: "completed" },
+        timeline: [
+          {
+            type: "assistant_message",
+            text: "Unfinished:\n- [ ] Step 2",
+          },
+        ],
+      },
+      hookContext,
+    );
+
+    // autoContinue is disabled, so mockSend should NOT be called
+    expect(mockSend).not.toHaveBeenCalled();
+
+    // Permission requested with safe command, but autoApprovePermissions is false
+    const permListeners = listeners["agent.permission_requested"] || [];
+    await permListeners[0]!(
+      {
+        agent: agentB,
+        request: {
+          id: "req-safe-disabled",
+          kind: "command",
+          title: "Run git status",
+          input: { cmd: "git status" },
+        },
+      },
+      hookContext,
+    );
+
+    expect(mockRespondToPermission).not.toHaveBeenCalled();
+
+    cleanup();
+  });
 });

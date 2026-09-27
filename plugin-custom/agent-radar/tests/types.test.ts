@@ -121,4 +121,27 @@ describe("agent-radar shared types and contracts", () => {
     expect(radarGetSnapshotRpc.name).toBe("radar.get_snapshot");
     expect(radarResolveDecisionRpc.name).toBe("radar.resolve_decision");
   });
+
+  it("validates watchdogSettings schema defaults and custom values", async () => {
+    const { watchdogSettings } = await import("../shared/settings.js");
+    expect(watchdogSettings.id).toBe("watchdog-settings");
+    expect(watchdogSettings.scope).toBe("host");
+
+    const defaultValues = watchdogSettings.schema.parse({});
+    expect(defaultValues.autoContinue).toBe(true);
+    expect(defaultValues.autoApprovePermissions).toBe(true);
+    expect(defaultValues.maxAutoTurns).toBe(5);
+    expect(defaultValues.heartbeatThresholdSeconds).toBe(15);
+
+    const customValues = watchdogSettings.schema.parse({
+      autoContinue: false,
+      autoApprovePermissions: false,
+      maxAutoTurns: 10,
+      heartbeatThresholdSeconds: 30,
+    });
+    expect(customValues.autoContinue).toBe(false);
+    expect(customValues.autoApprovePermissions).toBe(false);
+    expect(customValues.maxAutoTurns).toBe(10);
+    expect(customValues.heartbeatThresholdSeconds).toBe(30);
+  });
 });
