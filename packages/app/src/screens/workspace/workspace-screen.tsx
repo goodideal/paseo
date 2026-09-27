@@ -348,6 +348,9 @@ function getFallbackTabOptionLabel(
   if (tab.target.kind === "workflow_runs") {
     return labels.workflowRuns;
   }
+  if (tab.target.kind === "reader") {
+    return "Reader";
+  }
   return labels.agent;
 }
 
@@ -404,6 +407,9 @@ function getFallbackTabOptionDescription(
   }
   if (tab.target.kind === "plugin") {
     return tab.target.panelId;
+  }
+  if (tab.target.kind === "reader") {
+    return "Reader";
   }
   return tab.target.path;
 }
@@ -2302,7 +2308,7 @@ function WorkspaceScreenContent({
       };
       if (selection.kind === "target") {
         const target =
-          selection.target.kind === "workflow_runs"
+          selection.target.kind === "workflow_runs" || selection.target.kind === "reader"
             ? { ...selection.target, workspaceId: normalizedWorkspaceId }
             : selection.target;
         openTarget(target);

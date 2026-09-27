@@ -2774,6 +2774,23 @@ export class DaemonClient {
     });
   }
 
+  async getWorkspaceEvolutionDigest(
+    workspaceId: string,
+    options?: { forceRefresh?: boolean; requestId?: string },
+  ): Promise<
+    Extract<SessionOutboundMessage, { type: "workspace.evolution.get_digest.response" }>["payload"]
+  > {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options?.requestId,
+      message: {
+        type: "workspace.evolution.get_digest.request",
+        workspaceId,
+        forceRefresh: options?.forceRefresh,
+      },
+      responseType: "workspace.evolution.get_digest.response",
+    });
+  }
+
   async listWorkspaceScripts(
     workspaceId: string,
     requestId?: string,

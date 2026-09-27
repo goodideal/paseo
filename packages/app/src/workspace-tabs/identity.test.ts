@@ -1,3 +1,4 @@
+import type { WorkspaceTabTarget } from "./model";
 import { describe, expect, it, test } from "vitest";
 import {
   buildDeterministicWorkspaceTabId,
@@ -184,6 +185,27 @@ describe("plugin panel tab identity", () => {
       context: "agent",
       agentId: "agent-1",
     });
+  });
+
+  it("handles reader tab normalization, equality and stable id", () => {
+    const raw = { kind: "reader", workspaceId: " wks_123 " };
+    const normalized = normalizeWorkspaceTabTarget(raw as unknown as WorkspaceTabTarget);
+    expect(normalized).toEqual({ kind: "reader", workspaceId: "wks_123" });
+    expect(
+      workspaceTabTargetsEqual(
+        { kind: "reader", workspaceId: "wks_123" },
+        { kind: "reader", workspaceId: "wks_123" },
+      ),
+    ).toBe(true);
+    expect(
+      workspaceTabTargetsEqual(
+        { kind: "reader", workspaceId: "wks_123" },
+        { kind: "reader", workspaceId: "wks_456" },
+      ),
+    ).toBe(false);
+    expect(buildDeterministicWorkspaceTabId({ kind: "reader", workspaceId: "wks_123" })).toBe(
+      "reader_wks_123",
+    );
   });
 
   it("gives workspace and agent instances distinct stable ids", () => {
