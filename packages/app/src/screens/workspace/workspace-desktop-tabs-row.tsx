@@ -618,6 +618,9 @@ function getFallbackTabLabel(
   if (tab.target.kind === "workflow_runs") {
     return labels.workflowRuns;
   }
+  if (tab.target.kind === "reader") {
+    return "Reader";
+  }
   return labels.agent;
 }
 
