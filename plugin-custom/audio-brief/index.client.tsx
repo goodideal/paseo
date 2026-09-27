@@ -3,22 +3,30 @@ import { TurnAudioBriefButton } from "./client/turn-audio-brief-button.js";
 import { AudioBriefCard } from "./client/audio-brief-card.js";
 
 export default function contribute(client: PluginClientContext) {
-  const cleanupButton = client.addTurnAction({
-    id: "audio-brief-button",
-    type: "button",
-    order: 10,
-    Component: TurnAudioBriefButton,
-  });
+  const cleanups: Array<() => void> = [];
 
-  const cleanupCard = client.addTurnAction({
-    id: "audio-brief-card",
-    type: "card",
-    order: 10,
-    Component: AudioBriefCard,
-  });
+  // Safely guard turn actions for older or official baseline clients
+  if (typeof client.addTurnAction === "function") {
+    cleanups.push(
+      client.addTurnAction({
+        id: "audio-brief-button",
+        type: "button",
+        order: 10,
+        Component: TurnAudioBriefButton,
+      }),
+    );
+
+    cleanups.push(
+      client.addTurnAction({
+        id: "audio-brief-card",
+        type: "card",
+        order: 10,
+        Component: AudioBriefCard,
+      }),
+    );
+  }
 
   return () => {
-    cleanupButton();
-    cleanupCard();
+    for (const cleanup of cleanups) cleanup();
   };
 }

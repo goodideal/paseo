@@ -6,14 +6,16 @@ import { quickPromptsGlobalGetRpc, type QuickPromptItem } from "./shared/contrac
 export default function contribute(client: PluginClientContext) {
   const cleanups: Array<() => void> = [];
 
-  // 1. Register composer accessory bar
-  cleanups.push(
-    client.addComposerAccessory({
-      id: "quick-prompts",
-      order: 0,
-      Component: QuickPromptsAccessory,
-    }),
-  );
+  // 1. Register composer accessory bar (safely guarded for compatible clients)
+  if (typeof client.addComposerAccessory === "function") {
+    cleanups.push(
+      client.addComposerAccessory({
+        id: "quick-prompts",
+        order: 0,
+        Component: QuickPromptsAccessory,
+      }),
+    );
+  }
 
   // 2. Register settings screen
   cleanups.push(

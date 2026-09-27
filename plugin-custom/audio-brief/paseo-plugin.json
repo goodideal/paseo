@@ -2,6 +2,6 @@
   "id": "audio-brief",
   "description": "Intelligent audio summaries and voice player for assistant message turns",
   "requirements": {
-    "paseo": ">=0.9.1-custom"
+    "paseo": ">=0.8.0"
   }
 }
