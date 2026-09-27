@@ -1,4 +1,15 @@
-import { chromium } from "playwright";
+import type { BrowserContextOptions, ConsoleMessage, Response } from "playwright";
+async function loadChromium() {
+  const pkg = "playwright";
+  try {
+    const playwright = require(pkg);
+    return playwright.chromium;
+  } catch (err) {
+    throw new Error(
+      `Failed to load playwright runtime: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
 import { searchInspectorRpc, type InspectOutput } from "../shared/inspect";
 import type { PluginAttachmentSearchPayload } from "@getpaseo/plugin";
 import type { PluginSettings } from "@getpaseo/plugin/server";
@@ -10,8 +21,9 @@ export async function handleInspectUrl(
   input: { url: string },
   settings: PluginSettings<AuthSettings>,
 ): Promise<InspectOutput> {
+  const chromium = await loadChromium();
   const browser = await chromium.launch({ headless: true });
-  const contextOptions: Parameters<typeof browser.newContext>[0] = {};
+  const contextOptions: BrowserContextOptions = {};
 
   const state = await settings.read();
   if (state.status === "ready") {
@@ -51,7 +63,7 @@ export async function handleInspectUrl(
   const consoleLogs: InspectOutput["consoleLogs"] = [];
   const networkErrors: InspectOutput["networkErrors"] = [];
 
-  page.on("console", (msg) => {
+  page.on("console", (msg: ConsoleMessage) => {
     const type = msg.type();
     let mappedType: "log" | "warn" | "error" | "info" | "debug" = "log";
     if (["warning"].includes(type)) mappedType = "warn";
@@ -68,7 +80,7 @@ export async function handleInspectUrl(
     });
   });
 
-  page.on("response", (res) => {
+  page.on("response", (res: Response) => {
     if (res.status() >= 400) {
       networkErrors.push({
         url: res.url(),
