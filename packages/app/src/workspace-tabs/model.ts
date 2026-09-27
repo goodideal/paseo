@@ -47,7 +47,8 @@ export type WorkspaceTabTarget =
   | PluginWorkspaceTabTarget
   | { kind: "setup"; workspaceId: string }
   | { kind: "commit_diff"; sha: string }
-  | { kind: "workflow_runs"; workspaceId: string };
+  | { kind: "workflow_runs"; workspaceId: string }
+  | { kind: "reader"; workspaceId: string };
 
 export interface WorkspaceTab {
   tabId: string;

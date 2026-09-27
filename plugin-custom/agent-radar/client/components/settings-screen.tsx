@@ -6,6 +6,7 @@ import {
   SettingsCard,
   SettingsSwitch,
   SettingsSelect,
+  SettingsInput,
   SettingsAction,
   SettingsRow,
 } from "@getpaseo/plugin/client/ui";
@@ -18,6 +19,14 @@ const TURN_OPTIONS = [
   { label: "10 轮", value: "10" },
   { label: "15 轮", value: "15" },
   { label: "20 轮 (上限)", value: "20" },
+] as const;
+
+const ERROR_TOLERANCE_OPTIONS = [
+  { label: "1 次 (严格熔断，重复 1 次即阻断)", value: "1" },
+  { label: "2 次 (默认推荐，允许初次尝试修复)", value: "2" },
+  { label: "3 次 (较宽松)", value: "3" },
+  { label: "4 次", value: "4" },
+  { label: "5 次", value: "5" },
 ] as const;
 
 const HEARTBEAT_OPTIONS = [
@@ -83,6 +92,43 @@ export function RadarSettingsScreen({ theme }: PluginSurfaceProps) {
     [settings],
   );
 
+  const handleChangeAutoContinuePrompt = useCallback(
+    (value: string) => {
+      if (settings.status === "ready") {
+        void settings.save({ ...settings.values, autoContinuePrompt: value }, settings.revision);
+      }
+    },
+    [settings],
+  );
+
+  const handleChangeSafeCommandWhitelist = useCallback(
+    (value: string) => {
+      if (settings.status === "ready") {
+        const list = value
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+        void settings.save({ ...settings.values, safeCommandWhitelist: list }, settings.revision);
+      }
+    },
+    [settings],
+  );
+
+  const handleChangeErrorTolerance = useCallback(
+    (value: string) => {
+      if (settings.status === "ready") {
+        const num = parseInt(value, 10);
+        if (!isNaN(num)) {
+          void settings.save(
+            { ...settings.values, consecutiveErrorTolerance: num },
+            settings.revision,
+          );
+        }
+      }
+    },
+    [settings],
+  );
+
   if (settings.status === "loading") {
     return (
       <View style={styles.container}>
@@ -113,18 +159,34 @@ export function RadarSettingsScreen({ theme }: PluginSurfaceProps) {
       >
         <SettingsCard>
           <SettingsSwitch
-            label="自动推进任务 (Auto Continue)"
-            hint="检测到未勾选 Markdown 任务 [- ] 或继续提示词时，自动发送推进指令"
+            label="默认自动推进任务 (Auto Continue Default)"
+            hint="检测到未勾选任务 [- ] 时是否默认自动发送推进指令（可进入雷达面板针对单个任务单独开启/关闭）"
             value={settings.values.autoContinue}
             disabled={settings.saving}
             onValueChange={handleToggleAutoContinue}
           />
           <SettingsSwitch
             label="安全只读权限自动审批 (Safe Permission Auto-Approve)"
-            hint="自动放行 git status/diff、cat、ls、npm test 等安全只读指令的权限申请"
+            hint="自动放行白名单只读指令的权限申请（PR 合并及高危指令强制人工确认）"
             value={settings.values.autoApprovePermissions}
             disabled={settings.saving}
             onValueChange={handleToggleAutoApprove}
+          />
+          <SettingsInput
+            label="自动推进指令模板 (Auto Continue Prompt)"
+            hint="自动推进时发送给 Agent 的引导指令"
+            initialValue={settings.values.autoContinuePrompt}
+            placeholder="请继续执行下一步任务..."
+            disabled={settings.saving}
+            onChangeText={handleChangeAutoContinuePrompt}
+          />
+          <SettingsInput
+            label="安全命令白名单 (Safe Command Whitelist)"
+            hint="允许自动批准的命令前缀，以英文逗号分隔"
+            initialValue={settings.values.safeCommandWhitelist.join(", ")}
+            placeholder="git status, npm test, cargo check"
+            disabled={settings.saving}
+            onChangeText={handleChangeSafeCommandWhitelist}
           />
         </SettingsCard>
       </SettingsSection>
@@ -141,6 +203,14 @@ export function RadarSettingsScreen({ theme }: PluginSurfaceProps) {
             options={TURN_OPTIONS}
             disabled={settings.saving}
             onValueChange={handleChangeMaxAutoTurns}
+          />
+          <SettingsSelect
+            label="连续相同错误容忍度 (Consecutive Error Tolerance)"
+            hint="同一核心错误指纹连续出现几次后触发提前熔断，避免盲目重试"
+            value={String(settings.values.consecutiveErrorTolerance)}
+            options={ERROR_TOLERANCE_OPTIONS}
+            disabled={settings.saving}
+            onValueChange={handleChangeErrorTolerance}
           />
           <SettingsSelect
             label="工具调用心跳探测阈值 (Heartbeat Threshold)"

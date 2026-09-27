@@ -6,6 +6,7 @@ import {
   getWatchdogStatusRpc,
   radarGetSnapshotRpc,
   radarResolveDecisionRpc,
+  radarToggleAutoContinueRpc,
 } from "../shared/rpc.js";
 import type { PluginServerContext, PluginHookContext } from "@getpaseo/plugin/server";
 
@@ -24,7 +25,7 @@ describe("Subagent Watchdog Integration Test", () => {
       registerSettings: vi.fn().mockReturnValue({
         read: vi.fn().mockResolvedValue({
           status: "ready",
-          values: { maxAutoTurns: 5, heartbeatThresholdSeconds: 15 },
+          values: { autoContinue: true, maxAutoTurns: 5, heartbeatThresholdSeconds: 15 },
         }),
         subscribe: vi.fn().mockReturnValue(() => {}),
       }) as any,
@@ -76,6 +77,7 @@ describe("Subagent Watchdog Integration Test", () => {
     expect(mockSubscribe).toHaveBeenCalled();
 
     // 1. Simulate a turn with incomplete tasks (- [ ])
+    await Promise.resolve();
     const turnEndedListeners = listeners["agent.turn_ended"] || [];
     expect(turnEndedListeners.length).toBeGreaterThan(0);
 
@@ -313,6 +315,312 @@ describe("Subagent Watchdog Integration Test", () => {
     );
 
     expect(mockRespondToPermission).not.toHaveBeenCalled();
+
+    cleanup();
+  });
+
+  it("blocks PR merge from auto-approval and escalates with PR review card", async () => {
+    const listeners: Record<string, Function[]> = {};
+
+    const fakeServer: PluginServerContext = {
+      on(name: any, handler: any) {
+        if (!listeners[name]) listeners[name] = [];
+        listeners[name]!.push(handler);
+        return () => {};
+      },
+      before: vi.fn(),
+      registerSettings: vi.fn().mockReturnValue({
+        read: vi.fn().mockResolvedValue({
+          status: "ready",
+          values: {
+            autoContinue: true,
+            autoApprovePermissions: true,
+            maxAutoTurns: 5,
+            heartbeatThresholdSeconds: 15,
+          },
+        }),
+        subscribe: vi.fn().mockReturnValue(() => {}),
+      }) as any,
+      handle: vi.fn(),
+      registerProvider: vi.fn(),
+    };
+
+    const cleanup = contribute(fakeServer);
+
+    const mockSend = vi.fn().mockResolvedValue(undefined);
+    const mockRespondToPermission = vi.fn().mockResolvedValue(undefined);
+    const mockAppend = vi.fn().mockResolvedValue({ seq: 1 });
+
+    const hookContext: PluginHookContext = {
+      paseo: {
+        agents: {
+          ref: () => ({
+            send: mockSend,
+            respondToPermission: mockRespondToPermission,
+            timeline: { append: mockAppend },
+          }),
+        },
+      } as any,
+      signal: new AbortController().signal,
+    };
+
+    const agentPR = {
+      id: "agent-pr-merge",
+      workspaceId: "wks-1",
+      provider: "codex",
+      cwd: "/repo",
+      title: "PR Merge Task",
+    };
+
+    await Promise.resolve();
+    const turnEndedListeners = listeners["agent.turn_ended"] || [];
+    const permListeners = listeners["agent.permission_requested"] || [];
+
+    // First, start an auto-turn by regular incomplete task
+    await turnEndedListeners[0]!(
+      {
+        agent: agentPR,
+        turnId: "turn-1",
+        outcome: { kind: "completed" },
+        timeline: [
+          {
+            type: "assistant_message",
+            text: "Testing completed:\n- [ ] Step 2: Merge PR",
+          },
+        ],
+      },
+      hookContext,
+    );
+
+    // Auto-continue sent prompt
+    expect(mockSend).toHaveBeenCalledWith(expect.stringContaining("请继续执行下一步任务"));
+    mockSend.mockClear();
+
+    // Now permission requested for PR merge: even though autoApprovePermissions is true, PR merge MUST NOT be auto-approved!
+    await permListeners[0]!(
+      {
+        agent: agentPR,
+        request: {
+          id: "req-pr-merge",
+          kind: "command",
+          title: "Run gh pr merge 123 --squash",
+          input: { cmd: "gh pr merge 123 --squash" },
+        },
+      },
+      hookContext,
+    );
+
+    expect(mockRespondToPermission).not.toHaveBeenCalled();
+
+    // Next turn: agent indicates intent to merge PR
+    await turnEndedListeners[0]!(
+      {
+        agent: agentPR,
+        turnId: "turn-2",
+        outcome: { kind: "completed" },
+        timeline: [
+          {
+            type: "assistant_message",
+            text: "All checks passed. 准备合并 PR #123 到 main 分支并发布。",
+          },
+        ],
+      },
+      hookContext,
+    );
+
+    // Must NOT auto-continue
+    expect(mockSend).not.toHaveBeenCalled();
+
+    // Must append PR review card to timeline
+    expect(mockAppend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "plugin",
+        kind: "watchdog-blocker",
+        data: expect.objectContaining({
+          agentId: "agent-pr-merge",
+          rootCause: expect.stringContaining("PR merge"),
+          options: expect.arrayContaining([
+            expect.objectContaining({ id: "approve_pr", label: "Approve & Merge" }),
+          ]),
+        }),
+      }),
+    );
+
+    cleanup();
+  });
+
+  it("supports per-agent auto-continue toggle and custom prompt from settings", async () => {
+    const listeners: Record<string, Function[]> = {};
+    const rpcHandlers = new Map<any, Function>();
+
+    const fakeServer: PluginServerContext = {
+      on(name: any, handler: any) {
+        if (!listeners[name]) listeners[name] = [];
+        listeners[name]!.push(handler);
+        return () => {};
+      },
+      before: vi.fn(),
+      registerSettings: vi.fn().mockReturnValue({
+        read: vi.fn().mockResolvedValue({
+          status: "ready",
+          values: {
+            autoContinue: true,
+            autoApprovePermissions: true,
+            maxAutoTurns: 5,
+            autoContinuePrompt: "Custom steering prompt: proceed with TDD.",
+            safeCommandWhitelist: ["git status", "npm test"],
+            consecutiveErrorTolerance: 2,
+          },
+        }),
+        subscribe: vi.fn().mockReturnValue(() => {}),
+      }) as any,
+      handle(contract: any, handler: any) {
+        rpcHandlers.set(contract, handler);
+      },
+      registerProvider: vi.fn(),
+    };
+
+    const cleanup = contribute(fakeServer);
+
+    const mockSend = vi.fn().mockResolvedValue(undefined);
+    const hookContext: PluginHookContext = {
+      paseo: {
+        agents: {
+          ref: () => ({ send: mockSend }),
+        },
+      } as any,
+      signal: new AbortController().signal,
+    };
+
+    const agentToggle = {
+      id: "agent-toggle-test",
+      workspaceId: "wks-1",
+      provider: "codex",
+      cwd: "/repo",
+      title: "Toggle Task",
+    };
+
+    // Wait for settings.read() promise to settle
+    await Promise.resolve();
+
+    const turnEndedListeners = listeners["agent.turn_ended"] || [];
+    const toggleHandler = rpcHandlers.get(radarToggleAutoContinueRpc);
+    expect(toggleHandler).toBeDefined();
+
+    // 1. Initially enabled via global default; should send custom prompt
+    await turnEndedListeners[0]!(
+      {
+        agent: agentToggle,
+        turnId: "turn-1",
+        outcome: { kind: "completed" },
+        timeline: [
+          {
+            type: "assistant_message",
+            text: "Done step 1:\n- [ ] Step 2: Next",
+          },
+        ],
+      },
+      hookContext,
+    );
+
+    expect(mockSend).toHaveBeenCalledWith("Custom steering prompt: proceed with TDD.");
+    mockSend.mockClear();
+
+    // 2. Toggle off for this agent specifically via RPC
+    const toggleResult = await toggleHandler!(
+      { agentId: "agent-toggle-test", enabled: false },
+      hookContext,
+    );
+    expect(toggleResult).toEqual({ agentId: "agent-toggle-test", enabled: false });
+
+    // 3. Next turn: should NOT auto-continue because agent override is false
+    await turnEndedListeners[0]!(
+      {
+        agent: agentToggle,
+        turnId: "turn-2",
+        outcome: { kind: "completed" },
+        timeline: [
+          {
+            type: "assistant_message",
+            text: "Done step 2:\n- [ ] Step 3: Next",
+          },
+        ],
+      },
+      hookContext,
+    );
+
+    expect(mockSend).not.toHaveBeenCalled();
+
+    // 4. Verify snapshot returns agentAutoContinueEnabled as false
+    const snapshotHandler = rpcHandlers.get(radarGetSnapshotRpc);
+    const snapshot = await snapshotHandler!({ agentId: "agent-toggle-test" }, hookContext);
+    expect(snapshot.watchdog.agentAutoContinueEnabled).toBe(false);
+
+    cleanup();
+  });
+
+  it("defaults auto-continue to disabled unless explicitly turned on", async () => {
+    const listeners: Record<string, Function[]> = {};
+
+    const fakeServer: PluginServerContext = {
+      on(name: any, handler: any) {
+        if (!listeners[name]) listeners[name] = [];
+        listeners[name]!.push(handler);
+        return () => {};
+      },
+      before: vi.fn(),
+      registerSettings: vi.fn().mockReturnValue({
+        read: vi.fn().mockResolvedValue({
+          status: "ready",
+          values: {
+            maxAutoTurns: 5,
+            heartbeatThresholdSeconds: 15,
+          },
+        }),
+        subscribe: vi.fn().mockReturnValue(() => {}),
+      }) as any,
+      handle: vi.fn(),
+      registerProvider: vi.fn(),
+    };
+
+    const cleanup = contribute(fakeServer);
+    const mockSend = vi.fn().mockResolvedValue(undefined);
+    const hookContext: PluginHookContext = {
+      paseo: {
+        agents: {
+          ref: () => ({ send: mockSend }),
+        },
+      } as any,
+      signal: new AbortController().signal,
+    };
+
+    const agentDefault = {
+      id: "agent-default-test",
+      workspaceId: "wks-1",
+      provider: "codex",
+      cwd: "/repo",
+      title: "Default Task",
+    };
+
+    await Promise.resolve();
+    const turnEndedListeners = listeners["agent.turn_ended"] || [];
+    await turnEndedListeners[0]!(
+      {
+        agent: agentDefault,
+        turnId: "turn-1",
+        outcome: { kind: "completed" },
+        timeline: [
+          {
+            type: "assistant_message",
+            text: "Unfinished:\n- [ ] Step 2",
+          },
+        ],
+      },
+      hookContext,
+    );
+
+    // Because autoContinue defaults to false, mockSend MUST NOT be called!
+    expect(mockSend).not.toHaveBeenCalled();
 
     cleanup();
   });

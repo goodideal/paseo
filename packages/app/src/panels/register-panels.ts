@@ -1,3 +1,4 @@
+import { readerPanelRegistration } from "@/panels/reader-panel";
 import { agentPanelRegistration } from "@/panels/agent-panel";
 import { browserPanelRegistration } from "@/desktop/browser/panel";
 import {
@@ -29,6 +30,7 @@ export function ensurePanelsRegistered(): void {
   registerPanel(providerSubagentPanelRegistration);
   registerPanel(setupPanelRegistration);
   registerPanel(workflowRunsPanelRegistration);
+  registerPanel(readerPanelRegistration);
   registerPanel(terminalPanelRegistration);
   registerPanel(browserPanelRegistration);
   registerPanel(filePanelRegistration);

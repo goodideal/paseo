@@ -71,6 +71,10 @@ function normalizeSimpleWorkspaceTabTarget(value: WorkspaceTabTarget): Workspace
       const workspaceId = trimNonEmpty(value.workspaceId);
       return workspaceId ? { kind: "workflow_runs", workspaceId } : null;
     }
+    case "reader": {
+      const workspaceId = trimNonEmpty(value.workspaceId);
+      return workspaceId ? { kind: "reader", workspaceId } : null;
+    }
     default:
       return null;
   }
@@ -135,34 +139,30 @@ function secondaryWorkspaceTabTargetsEqual(
   left: WorkspaceTabTarget,
   right: WorkspaceTabTarget,
 ): boolean {
-  if (left.kind === "browser" && right.kind === "browser") {
-    return left.browserId === right.browserId;
+  if (left.kind !== right.kind) return false;
+  switch (left.kind) {
+    case "browser":
+      return left.browserId === (right as typeof left).browserId;
+    case "file":
+      return workspaceFileLocationsEqual(left, right as typeof left);
+    case "working_diff":
+      return (
+        left.focusPath === (right as typeof left).focusPath &&
+        left.focusRequestId === (right as typeof left).focusRequestId
+      );
+    case "files":
+    case "changes_tree":
+    case "pull_request":
+      return true;
+    case "setup":
+    case "workflow_runs":
+    case "reader":
+      return left.workspaceId === (right as typeof left).workspaceId;
+    case "commit_diff":
+      return left.sha === (right as typeof left).sha;
+    default:
+      return false;
   }
-  if (left.kind === "file" && right.kind === "file") {
-    return workspaceFileLocationsEqual(left, right);
-  }
-  if (left.kind === "working_diff" && right.kind === "working_diff") {
-    return left.focusPath === right.focusPath && left.focusRequestId === right.focusRequestId;
-  }
-  if (left.kind === "files" && right.kind === "files") {
-    return true;
-  }
-  if (left.kind === "changes_tree" && right.kind === "changes_tree") {
-    return true;
-  }
-  if (left.kind === "pull_request" && right.kind === "pull_request") {
-    return true;
-  }
-  if (left.kind === "setup" && right.kind === "setup") {
-    return left.workspaceId === right.workspaceId;
-  }
-  if (left.kind === "commit_diff" && right.kind === "commit_diff") {
-    return left.sha === right.sha;
-  }
-  if (left.kind === "workflow_runs" && right.kind === "workflow_runs") {
-    return left.workspaceId === right.workspaceId;
-  }
-  return false;
 }
 
 function workspaceDraftTabSetupsEqual(
@@ -237,6 +237,9 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
   }
   if (target.kind === "workflow_runs") {
     return `workflow_runs_${target.workspaceId}`;
+  }
+  if (target.kind === "reader") {
+    return `reader_${target.workspaceId}`;
   }
   return `file_${target.path}`;
 }

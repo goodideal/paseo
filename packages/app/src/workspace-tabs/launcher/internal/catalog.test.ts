@@ -12,6 +12,8 @@ describe("getBuiltInLaunchOrder", () => {
       "browser",
       "pullRequest",
       "workflowRuns",
+      "reader",
+      "reader",
     ]);
   });
 

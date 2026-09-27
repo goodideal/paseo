@@ -9,6 +9,8 @@ import { TopologyView } from "../client/components/topology-view.js";
 import contribute from "../index.client.js";
 
 const mockSubmit = vi.fn().mockResolvedValue({ success: true });
+const mockGetSnapshot = vi.fn();
+const mockToggleAutoContinue = vi.fn();
 
 vi.mock("../client/hooks/use-decision-rpc.js", () => ({
   useDecisionRpc: () => ({
@@ -17,6 +19,17 @@ vi.mock("../client/hooks/use-decision-rpc.js", () => ({
     error: null,
   }),
 }));
+
+vi.mock("@getpaseo/plugin/client", async () => {
+  return {
+    useRpc: (contract: any) => {
+      if (contract?.name === "radar.get_snapshot") return mockGetSnapshot;
+      if (contract?.name === "radar.toggle_auto_continue") return mockToggleAutoContinue;
+      return vi.fn();
+    },
+    useSettings: vi.fn(),
+  };
+});
 
 describe("ActionButtons Component", () => {
   const options = [
@@ -104,6 +117,63 @@ describe("DecisionCard Component", () => {
       });
       expect(screen.getByText("已恢复")).toBeDefined();
       expect(screen.getByText(/已选择执行: Fix it/)).toBeDefined();
+    });
+  });
+});
+
+describe("RadarPanelHost Component", () => {
+  it("renders per-agent auto-continue toggle and triggers toggle RPC on press", async () => {
+    const { RadarPanelHost } = await import("../client/components/radar-panel.js");
+
+    mockGetSnapshot.mockResolvedValue({
+      mode: "generic",
+      topology: {
+        rootAgentId: "agent-test-1",
+        nodes: {
+          "agent-test-1": {
+            agentId: "agent-test-1",
+            title: "Test Agent",
+            status: "running",
+            childAgentIds: [],
+          },
+        },
+      },
+      watchdog: {
+        activeHeartbeat: null,
+        activeBlocker: null,
+        autoTurnCount: 1,
+        maxAutoTurns: 5,
+        agentAutoContinueEnabled: true,
+      },
+    });
+
+    mockToggleAutoContinue.mockResolvedValue({
+      agentId: "agent-test-1",
+      enabled: false,
+    });
+
+    render(
+      <RadarPanelHost
+        agentId="agent-test-1"
+        workspaceId="wks-1"
+        layout={{ platform: "web", compact: false }}
+        host={{ id: "host", label: "Host" }}
+        theme={null!}
+        context={{} as any}
+      />,
+    );
+
+    // Verify initial auto-continue pill renders with enabled text
+    await waitFor(() => {
+      expect(screen.getByText("⚡ 自动推进：开")).toBeDefined();
+    });
+
+    // Click toggle
+    fireEvent.click(screen.getByText("⚡ 自动推进：开"));
+
+    await waitFor(() => {
+      expect(mockToggleAutoContinue).toHaveBeenCalledWith({ agentId: "agent-test-1" });
+      expect(screen.getByText("⏸️ 自动推进：关")).toBeDefined();
     });
   });
 });
