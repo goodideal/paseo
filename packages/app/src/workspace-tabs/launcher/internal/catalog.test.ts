@@ -13,7 +13,6 @@ describe("getBuiltInLaunchOrder", () => {
       "pullRequest",
       "workflowRuns",
       "reader",
-      "reader",
     ]);
   });
 
@@ -27,6 +26,7 @@ describe("getBuiltInLaunchOrder", () => {
       "browser",
       "pullRequest",
       "workflowRuns",
+      "reader",
     ]);
   });
 });

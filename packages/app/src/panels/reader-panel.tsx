@@ -11,9 +11,9 @@ import { navigateToAgent } from "@/utils/navigate-to-agent";
 const ThemedBookOpen = withUnistyles(BookOpen);
 
 export const readerPanelPresentation = {
-  label: (t) => t("panels.reader.label", "Reader"),
-  subtitle: (t) => t("panels.reader.subtitle", "Workspace"),
-  tooltip: (t) => t("panels.reader.label", "Agent Reader"),
+  label: (t) => t("panels.reader.label", "Agent Reader (演进大盘)"),
+  subtitle: (t) => t("panels.reader.subtitle", "演进脉络与架构纪要"),
+  tooltip: (t) => t("panels.reader.label", "Agent Reader (全景演进大盘)"),
   icon: ThemedBookOpen,
 } satisfies PanelPresentation;
 

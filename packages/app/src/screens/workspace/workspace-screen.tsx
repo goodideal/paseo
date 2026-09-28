@@ -349,7 +349,7 @@ function getFallbackTabOptionLabel(
     return labels.workflowRuns;
   }
   if (tab.target.kind === "reader") {
-    return "Reader";
+    return "Agent Reader";
   }
   return labels.agent;
 }
@@ -409,7 +409,7 @@ function getFallbackTabOptionDescription(
     return tab.target.panelId;
   }
   if (tab.target.kind === "reader") {
-    return "Reader";
+    return "Agent Reader";
   }
   return tab.target.path;
 }

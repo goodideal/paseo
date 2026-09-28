@@ -619,7 +619,7 @@ function getFallbackTabLabel(
     return labels.workflowRuns;
   }
   if (tab.target.kind === "reader") {
-    return "Reader";
+    return "Agent Reader";
   }
   return labels.agent;
 }
