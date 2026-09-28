@@ -38,7 +38,7 @@
   - `milestones` sorted descending by `createdAt` (newest at index 0)
   - `currentStage` derived from `milestones[0]` (the latest active stage)
 
-- [ ] **Step 1: Write the failing tests for root filtering and reverse chronological sorting**
+- [x] **Step 1: Write the failing tests for root filtering and reverse chronological sorting**
 
 ```typescript
 // Add to packages/server/src/server/evolution/workspace-evolution-service.test.ts
@@ -96,12 +96,12 @@ it("filters out subagents and sorts milestones descending by createdAt", async (
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run packages/server/src/server/evolution/workspace-evolution-service.test.ts --bail=1`
 Expected: FAIL due to missing `parentAgentId` in type / ascending order.
 
-- [ ] **Step 3: Update `StoredAgentLike` and `WorkspaceEvolutionService`**
+- [x] **Step 3: Update `StoredAgentLike` and `WorkspaceEvolutionService`**
 
 1. In `packages/server/src/server/evolution/agent-milestone-summarizer.ts`, add:
 
@@ -168,12 +168,12 @@ if (milestones.length > 0) {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run packages/server/src/server/evolution/workspace-evolution-service.test.ts --bail=1`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/server/src/server/evolution/agent-milestone-summarizer.ts packages/server/src/server/evolution/workspace-evolution-service.ts packages/server/src/server/evolution/workspace-evolution-service.test.ts
@@ -198,7 +198,7 @@ git commit -m "feat(server): filter out subagents and sort evolution milestones 
   - Topmost node formatted as "当前推进阶段" (if running) or "阶段 N (最新)"
   - Pass `serverId` to `EvolutionTimeline` and `MilestoneCard`
 
-- [ ] **Step 1: Write the failing test for inverted timeline presentation**
+- [x] **Step 1: Write the failing test for inverted timeline presentation**
 
 ```typescript
 // In packages/app/src/screens/workspace/reader/workspace-reader-screen.test.tsx
@@ -252,12 +252,12 @@ it("renders reverse timeline with top stage highlighted as current", async () =>
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run packages/app/src/screens/workspace/reader/workspace-reader-screen.test.tsx --bail=1`
 Expected: FAIL
 
-- [ ] **Step 3: Update `evolution-timeline.tsx` and `milestone-card.tsx`**
+- [x] **Step 3: Update `evolution-timeline.tsx` and `milestone-card.tsx`**
 
 1. In `milestone-card.tsx`:
    - Accept `totalCount: number`, `displayIndex: number`, `serverId?: string | null`.
@@ -270,12 +270,12 @@ Expected: FAIL
 3. In `workspace-reader-screen.tsx`:
    - Forward `serverId` to `EvolutionTimeline`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run packages/app/src/screens/workspace/reader/workspace-reader-screen.test.tsx --bail=1`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/app/src/screens/workspace/reader/evolution-timeline.tsx packages/app/src/screens/workspace/reader/milestone-card.tsx packages/app/src/screens/workspace/reader/workspace-reader-screen.tsx packages/app/src/screens/workspace/reader/workspace-reader-screen.test.tsx
@@ -300,7 +300,7 @@ git commit -m "feat(app): support reverse visual stem and active stage highlight
   - Collapsible subagent section with header summary `子任务流 (N) · X 执行中 · Y 异常 · Z 已完成`
   - Subagent item with Provider Icon, description, elapsed duration, status badge, and jump-to-agent action
 
-- [ ] **Step 1: Write failing test for `MilestoneSubagentsSection`**
+- [x] **Step 1: Write failing test for `MilestoneSubagentsSection`**
 
 ```typescript
 // packages/app/src/screens/workspace/reader/subagents/milestone-subagents-section.test.tsx
@@ -365,12 +365,12 @@ describe("MilestoneSubagentsSection", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run packages/app/src/screens/workspace/reader/subagents/milestone-subagents-section.test.tsx --bail=1`
 Expected: FAIL (file not found)
 
-- [ ] **Step 3: Implement `SubagentItemRow` and `MilestoneSubagentsSection`**
+- [x] **Step 3: Implement `SubagentItemRow` and `MilestoneSubagentsSection`**
 
 1. Create `packages/app/src/screens/workspace/reader/subagents/subagent-item-row.tsx`:
    - Render provider icon via `getProviderIcon`.
@@ -387,12 +387,12 @@ Expected: FAIL (file not found)
 3. In `packages/app/src/screens/workspace/reader/milestone-card.tsx`:
    - Mount `<MilestoneSubagentsSection serverId={serverId} parentAgentId={milestone.agentId} onNavigateToAgent={onNavigateToAgent} />` right below the summary block.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run packages/app/src/screens/workspace/reader/subagents/milestone-subagents-section.test.tsx --bail=1`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/app/src/screens/workspace/reader/subagents/ packages/app/src/screens/workspace/reader/milestone-card.tsx
@@ -422,7 +422,7 @@ git commit -m "feat(app): add nested subagent observability section to milestone
   - [Archive] button when finished/failed
   - [Bulk Archive] in section header when finished count > 1
 
-- [ ] **Step 1: Write failing test for subagent actions and 1+3 retry flow**
+- [x] **Step 1: Write failing test for subagent actions and 1+3 retry flow**
 
 ```typescript
 // packages/app/src/screens/workspace/reader/subagents/subagent-actions.test.tsx
@@ -527,12 +527,12 @@ describe("SubagentItemRow actions", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run packages/app/src/screens/workspace/reader/subagents/subagent-actions.test.tsx --bail=1`
 Expected: FAIL
 
-- [ ] **Step 3: Implement `SubagentInlineRetryBar` and wire actions into `SubagentItemRow`**
+- [x] **Step 3: Implement `SubagentInlineRetryBar` and wire actions into `SubagentItemRow`**
 
 1. Create `subagent-inline-retry-bar.tsx`:
    - TextInput with prefilled default prompt: `"请分析刚才执行失败的原因，调整方案并重新尝试完成任务。"`
@@ -545,12 +545,12 @@ Expected: FAIL
 3. In `milestone-subagents-section.tsx`:
    - Add `ArchiveFinishedRow` / bulk archive button in header when finished count > 1.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run packages/app/src/screens/workspace/reader/subagents/subagent-actions.test.tsx --bail=1`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/app/src/screens/workspace/reader/subagents/
@@ -571,12 +571,12 @@ git commit -m "feat(app): add interrupt, 1+3 promptable retry, and archive contr
 
 - Ensures `serverId` is cleanly propagated from `usePaneContext()` down through `WorkspaceReaderScreen` -> `EvolutionTimeline` -> `MilestoneCard` -> `MilestoneSubagentsSection`.
 
-- [ ] **Step 1: Verify typecheck across all modified packages**
+- [x] **Step 1: Verify typecheck across all modified packages**
 
 Run: `npm run typecheck`
 Expected: PASS without errors.
 
-- [ ] **Step 2: Run targeted test suite for reader and evolution services**
+- [x] **Step 2: Run targeted test suite for reader and evolution services**
 
 Run:
 
@@ -589,7 +589,7 @@ npx vitest run packages/app/src/screens/workspace/reader/subagents/subagent-acti
 
 Expected: ALL PASS
 
-- [ ] **Step 3: Run linter and formatting**
+- [x] **Step 3: Run linter and formatting**
 
 Run:
 
@@ -600,7 +600,7 @@ npm run format:check
 
 Expected: PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add packages/app/src/panels/workflow-runs-panel.tsx packages/app/src/screens/workspace/reader/
