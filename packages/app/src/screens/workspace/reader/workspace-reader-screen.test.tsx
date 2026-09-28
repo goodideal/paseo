@@ -152,4 +152,55 @@ describe("WorkspaceReaderScreen", () => {
     expect(container.textContent).toContain("调研 DocDB 集群部署方式");
     expect(container.textContent).toContain("使用 S3 共享存储");
   });
+
+  it("renders reverse timeline with top stage highlighted as current", async () => {
+    evolutionState.current = {
+      digest: {
+        workspaceId: "wks_1",
+        workspaceTitle: "glorious-eagle",
+        branch: "feat/cluster",
+        executiveSummary: "完成架构调研与核心代码改造",
+        currentStage: "正在推进: 调试集群节点通信",
+        overallStatus: "in_progress",
+        updatedAt: new Date().toISOString(),
+        milestones: [
+          {
+            agentId: "agent-2",
+            provider: "codex",
+            startedAt: "2026-09-27T02:00:00.000Z",
+            durationMs: 60000,
+            status: "running",
+            intentPrompt: "调试集群节点通信",
+            executiveSummary: "正在启动 3 个容器节点并测试 Raft 握手",
+            keyDecisions: [],
+            modifiedFiles: [],
+          },
+          {
+            agentId: "agent-1",
+            provider: "claude",
+            startedAt: "2026-09-27T01:00:00.000Z",
+            durationMs: 1800000,
+            status: "completed",
+            intentPrompt: "调研 DocDB 集群部署方式",
+            executiveSummary: "完成技术选型",
+            keyDecisions: [],
+            modifiedFiles: [],
+          },
+        ],
+      },
+      isLoading: false,
+      isAnalyzing: false,
+      error: null,
+      refresh: vi.fn(),
+    };
+
+    await act(async () => {
+      root.render(<WorkspaceReaderScreen serverId="test-server" workspaceId="wks_1" />);
+    });
+
+    expect(container.textContent).toContain("阶段 2: 当前推进中 (执行中)");
+    expect(container.textContent).toContain("阶段 1: 已完成");
+    expect(container.textContent).toContain("当前推进中 (执行中)");
+    expect(container.textContent).toContain("调试集群节点通信");
+  });
 });

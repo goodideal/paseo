@@ -64,7 +64,11 @@ export function WorkspaceReaderScreen({
           milestoneCount={milestones.length}
         />
 
-        <EvolutionTimeline milestones={milestones} onNavigateToAgent={onNavigateToAgent} />
+        <EvolutionTimeline
+          milestones={milestones}
+          serverId={serverId}
+          onNavigateToAgent={onNavigateToAgent}
+        />
       </ScrollView>
     </View>
   );

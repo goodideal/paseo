@@ -14,7 +14,10 @@ import type { AgentMilestoneRecord } from "@getpaseo/protocol/evolution";
 
 interface MilestoneCardProps {
   milestone: AgentMilestoneRecord;
-  index: number;
+  index?: number;
+  totalCount?: number;
+  displayIndex?: number;
+  serverId?: string | null;
   onNavigateToAgent?: (agentId: string) => void;
 }
 
@@ -38,18 +41,40 @@ function StatusIcon({ status }: { status: AgentMilestoneRecord["status"] }) {
   return <CheckCircle2 size={16} color="#10b981" />;
 }
 
-export function MilestoneCard({ milestone, index, onNavigateToAgent }: MilestoneCardProps) {
+export function MilestoneCard({
+  milestone,
+  index,
+  totalCount,
+  displayIndex,
+  serverId: _serverId,
+  onNavigateToAgent,
+}: MilestoneCardProps) {
   const handleJump = useCallback(() => {
     onNavigateToAgent?.(milestone.agentId);
   }, [onNavigateToAgent, milestone.agentId]);
 
+  let stageNum = 1;
+  if (totalCount !== undefined && displayIndex !== undefined) {
+    stageNum = totalCount - displayIndex;
+  } else if (index !== undefined) {
+    stageNum = index + 1;
+  }
+
+  const isCurrentActive = displayIndex === 0 && milestone.status === "running";
+  let stageStatusText = "已完成";
+  if (isCurrentActive) {
+    stageStatusText = "当前推进中 (执行中)";
+  } else if (milestone.status === "running") {
+    stageStatusText = "执行中";
+  }
+
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, isCurrentActive && styles.activeCard]}>
       <View style={styles.headerRow}>
         <View style={styles.headerLeft}>
           <StatusIcon status={milestone.status} />
-          <Text style={styles.stageLabel}>
-            阶段 {index + 1}: {milestone.status === "running" ? "执行中" : "已完成"}
+          <Text style={[styles.stageLabel, isCurrentActive && styles.activeStageLabel]}>
+            阶段 {stageNum}: {stageStatusText}
           </Text>
         </View>
 
@@ -117,6 +142,10 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.spacing[3],
     gap: theme.spacing[2],
   },
+  activeCard: {
+    borderColor: theme.colors.accent,
+    borderWidth: 1.5,
+  },
   headerRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -133,6 +162,9 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.semibold,
     color: theme.colors.foreground,
+  },
+  activeStageLabel: {
+    color: theme.colors.accent,
   },
   metaRow: {
     flexDirection: "row",

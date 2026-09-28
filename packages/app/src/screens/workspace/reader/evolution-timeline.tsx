@@ -5,10 +5,15 @@ import { MilestoneCard } from "./milestone-card";
 
 interface EvolutionTimelineProps {
   milestones: AgentMilestoneRecord[];
+  serverId?: string | null;
   onNavigateToAgent?: (agentId: string) => void;
 }
 
-export function EvolutionTimeline({ milestones, onNavigateToAgent }: EvolutionTimelineProps) {
+export function EvolutionTimeline({
+  milestones,
+  serverId,
+  onNavigateToAgent,
+}: EvolutionTimelineProps) {
   if (milestones.length === 0) {
     return (
       <View style={styles.emptyContainer}>
@@ -28,12 +33,17 @@ export function EvolutionTimeline({ milestones, onNavigateToAgent }: EvolutionTi
         {milestones.map((milestone, idx) => {
           const isLast = idx === milestones.length - 1;
           const isRunning = milestone.status === "running";
+          const isTopActive = idx === 0 && isRunning;
 
           return (
             <View key={milestone.agentId} style={styles.timelineRow}>
               <View style={styles.trackCol}>
                 <View
-                  style={[styles.nodeDot, isRunning ? styles.runningDot : styles.completedDot]}
+                  style={[
+                    styles.nodeDot,
+                    isRunning ? styles.runningDot : styles.completedDot,
+                    isTopActive && styles.activeGlowDot,
+                  ]}
                 />
                 {!isLast && <View style={styles.trackLine} />}
               </View>
@@ -42,6 +52,9 @@ export function EvolutionTimeline({ milestones, onNavigateToAgent }: EvolutionTi
                 <MilestoneCard
                   milestone={milestone}
                   index={idx}
+                  totalCount={milestones.length}
+                  displayIndex={idx}
+                  serverId={serverId}
                   onNavigateToAgent={onNavigateToAgent}
                 />
               </View>
@@ -90,6 +103,17 @@ const styles = StyleSheet.create((theme) => ({
   runningDot: {
     borderColor: "#3b82f6",
     backgroundColor: "#3b82f6",
+  },
+  activeGlowDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderColor: theme.colors.accent,
+    backgroundColor: theme.colors.accent,
+    shadowColor: theme.colors.accent,
+    shadowOpacity: 0.6,
+    shadowRadius: 6,
+    elevation: 3,
   },
   trackLine: {
     flex: 1,
