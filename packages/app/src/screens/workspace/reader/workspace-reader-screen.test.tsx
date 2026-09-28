@@ -204,3 +204,6 @@ describe("WorkspaceReaderScreen", () => {
     expect(container.textContent).toContain("调试集群节点通信");
   });
 });
+vi.mock("./subagents/milestone-subagents-section", () => ({
+  MilestoneSubagentsSection: () => null,
+}));

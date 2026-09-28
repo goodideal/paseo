@@ -11,6 +11,7 @@ import {
   FileCode,
 } from "lucide-react-native";
 import type { AgentMilestoneRecord } from "@getpaseo/protocol/evolution";
+import { MilestoneSubagentsSection } from "./subagents/milestone-subagents-section";
 
 interface MilestoneCardProps {
   milestone: AgentMilestoneRecord;
@@ -46,7 +47,7 @@ export function MilestoneCard({
   index,
   totalCount,
   displayIndex,
-  serverId: _serverId,
+  serverId,
   onNavigateToAgent,
 }: MilestoneCardProps) {
   const handleJump = useCallback(() => {
@@ -108,6 +109,12 @@ export function MilestoneCard({
           </View>
         ))}
       </View>
+
+      <MilestoneSubagentsSection
+        serverId={serverId}
+        parentAgentId={milestone.agentId}
+        onNavigateToAgent={onNavigateToAgent}
+      />
 
       {milestone.modifiedFiles.length > 0 && (
         <View style={styles.filesBlock}>
