@@ -29,6 +29,8 @@ import {
   type ProjectedWorkflowStepAttempt,
 } from "./projected-workflow-runs";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
+import { SegmentedControl } from "@/components/ui/segmented-control";
+import { WorkspaceReaderScreen } from "@/screens/workspace/reader/workspace-reader-screen";
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
@@ -530,6 +532,14 @@ export function WorkflowRunsContent({
   injectedClient?: WorkflowEngineClient;
 }) {
   const { t } = useTranslation();
+  const [activeView, setActiveView] = useState<"evolution" | "workflows">("evolution");
+  const radarViewOptions = useMemo(
+    () => [
+      { value: "evolution" as const, label: "演进脉络 (Evolution)" },
+      { value: "workflows" as const, label: "运行流水线 (Pipelines)" },
+    ],
+    [],
+  );
   const baseClient = useHostRuntimeClient(serverId);
   const workflowClient = injectedClient ?? (isWorkflowEngineClient(baseClient) ? baseClient : null);
   const projectId = useSessionStore(
@@ -677,23 +687,21 @@ export function WorkflowRunsContent({
     void resumeRun(detail.runId);
   }, [detail, resumeRun]);
 
-  if (!supportsWorkflowEngine && projectedRuns.length === 0) {
-    return (
-      <View style={styles.container}>
+  const renderWorkflowContent = () => {
+    if (!supportsWorkflowEngine && projectedRuns.length === 0) {
+      return (
         <View style={styles.contentContainer}>
           <Alert
-            variant="warning"
-            title="Feature Not Supported"
-            description="The workflow engine feature is not supported by the current host daemon."
+            variant="info"
+            title="暂无工作流运行"
+            description="当前工作区未配置或运行自动化 DAG 工作流流水线。"
           />
         </View>
-      </View>
-    );
-  }
+      );
+    }
 
-  if (!workflowClient && projectedRuns.length === 0) {
-    return (
-      <View style={styles.container}>
+    if (!workflowClient && projectedRuns.length === 0) {
+      return (
         <View style={styles.contentContainer}>
           <Alert
             variant="info"
@@ -701,19 +709,40 @@ export function WorkflowRunsContent({
             description="The workflow engine client API is not yet available."
           />
         </View>
-      </View>
-    );
-  }
+      );
+    }
 
-  if (error) {
-    return (
-      <View style={styles.container}>
+    if (error) {
+      return (
         <View style={styles.contentContainer}>
           <Alert variant="error" title="Workflow Error" description={error} />
         </View>
+      );
+    }
+
+    if (isCompact) {
+      if (selectedRunId) {
+        return (
+          <View style={styles.container}>
+            <View style={styles.compactHeader}>
+              <Button variant="ghost" onPress={handleClearSelection}>
+                Back to List
+              </Button>
+            </View>
+            {renderDetail()}
+          </View>
+        );
+      }
+      return <View style={styles.container}>{renderList()}</View>;
+    }
+
+    return (
+      <View style={styles.splitContainer}>
+        <View style={styles.leftPane}>{renderList()}</View>
+        <View style={styles.rightPane}>{renderDetail()}</View>
       </View>
     );
-  }
+  };
 
   const renderList = () => {
     if (!runs) {
@@ -816,40 +845,30 @@ export function WorkflowRunsContent({
     );
   };
 
-  if (isCompact) {
-    if (selectedRunId) {
-      return (
-        <View style={styles.container}>
-          <View style={styles.compactHeader}>
-            <Button variant="ghost" onPress={handleClearSelection}>
-              Back to List
-            </Button>
-          </View>
-          {renderDetail()}
-        </View>
-      );
-    }
-    return (
-      <View style={styles.container}>
-        <View style={styles.compactHeader}>
-          <ScreenTitle>{t("panels.workflowRuns.label", "Agent Radar")}</ScreenTitle>
-        </View>
-        {renderList()}
-      </View>
-    );
-  }
-
   return (
     <View style={styles.container}>
-      <View style={styles.splitContainer}>
-        <View style={styles.leftPane}>
-          <View style={styles.compactHeader}>
-            <ScreenTitle>{t("panels.workflowRuns.label", "Agent Radar")}</ScreenTitle>
-          </View>
-          {renderList()}
+      <View style={styles.radarHeaderBar}>
+        <View style={styles.radarTitleGroup}>
+          <ThemedActivity size={18} uniProps={foregroundColorMapping} />
+          <ScreenTitle>{t("panels.workflowRuns.label", "Agent Radar")}</ScreenTitle>
         </View>
-        <View style={styles.rightPane}>{renderDetail()}</View>
+        <SegmentedControl
+          options={radarViewOptions}
+          value={activeView}
+          onValueChange={setActiveView}
+          size="sm"
+        />
       </View>
+
+      {activeView === "evolution" ? (
+        <WorkspaceReaderScreen
+          serverId={serverId}
+          workspaceId={workspaceId}
+          onNavigateToAgent={handleNavigateAgent}
+        />
+      ) : (
+        renderWorkflowContent()
+      )}
     </View>
   );
 }
@@ -872,6 +891,21 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minHeight: 0,
     backgroundColor: theme.colors.surface0,
+  },
+  radarHeaderBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[2],
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+    backgroundColor: theme.colors.surface0,
+  },
+  radarTitleGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
   },
   contentContainer: {
     padding: theme.spacing[4],

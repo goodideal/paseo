@@ -7,7 +7,6 @@ export const PRIMARY_LAUNCH_ORDER = [
   "browser",
   "pullRequest",
   "workflowRuns",
-  "reader",
 ] as const;
 
 export const SUPPORTING_LAUNCH_ORDER = [
@@ -19,7 +18,6 @@ export const SUPPORTING_LAUNCH_ORDER = [
   "browser",
   "pullRequest",
   "workflowRuns",
-  "reader",
 ] as const;
 
 export type BuiltInLaunchItemId = (typeof PRIMARY_LAUNCH_ORDER)[number];
