@@ -6,9 +6,32 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MilestoneSubagentsSection } from "./milestone-subagents-section";
 
+vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+
 const mockSubagents = vi.fn();
+vi.mock("@/subagents", () => ({
+  useArchiveSubagent: () => vi.fn(),
+  useArchiveFinishedSubagents: () => ({
+    archiveFinished: vi.fn(),
+    eligibleCount: 0,
+    status: { kind: "idle" },
+  }),
+}));
 vi.mock("@/subagents/select", () => ({
   useSubagentsForParent: () => mockSubagents(),
+}));
+
+vi.mock("@/runtime/host-runtime", () => ({
+  useHostRuntimeClient: () => null,
+}));
+
+vi.mock("@/subagents", () => ({
+  useArchiveSubagent: () => vi.fn(),
+  useArchiveFinishedSubagents: () => ({
+    archiveFinished: vi.fn(),
+    eligibleCount: 0,
+    status: { kind: "idle" },
+  }),
 }));
 
 describe("MilestoneSubagentsSection", () => {
@@ -44,6 +67,7 @@ describe("MilestoneSubagentsSection", () => {
         provider: "claude",
         title: "研究文档",
         description: null,
+        subtitle: null,
         status: "running",
         requiresAttention: false,
         createdAt: new Date(),
@@ -67,6 +91,7 @@ describe("MilestoneSubagentsSection", () => {
         provider: "codex",
         title: "编译代码",
         description: null,
+        subtitle: null,
         status: "idle",
         turn: { phase: "idle" },
         requiresAttention: false,
@@ -92,6 +117,7 @@ describe("MilestoneSubagentsSection", () => {
         provider: "claude",
         title: "单元测试",
         description: null,
+        subtitle: null,
         status: "running",
         requiresAttention: false,
         createdAt: new Date(),

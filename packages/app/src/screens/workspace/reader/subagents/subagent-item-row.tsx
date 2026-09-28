@@ -1,19 +1,45 @@
-import { useCallback, useMemo } from "react";
-import { View, Text, Pressable } from "react-native";
+import { useCallback, useMemo, useState } from "react";
+import { View, Text, Pressable, type GestureResponderEvent } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { CheckCircle2, AlertCircle, Loader2, Clock, AlertTriangle } from "lucide-react-native";
+import {
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
+  Clock,
+  AlertTriangle,
+  Square,
+  RefreshCw,
+  Archive,
+} from "lucide-react-native";
 import { getProviderIcon } from "@/components/provider-icons";
+import { useHostRuntimeClient } from "@/runtime/host-runtime";
+import { useArchiveSubagent } from "@/subagents";
 import type { SubagentRow } from "@/subagents/select";
 import type { Theme } from "@/styles/theme";
+import { SubagentInlineRetryBar } from "./subagent-inline-retry-bar";
 
 const ThemedLoader2 = withUnistyles(Loader2);
 const ThemedAlertCircle = withUnistyles(AlertCircle);
 const ThemedAlertTriangle = withUnistyles(AlertTriangle);
 const ThemedCheckCircle2 = withUnistyles(CheckCircle2);
+const ThemedSquare = withUnistyles(Square);
+const ThemedRefreshCw = withUnistyles(RefreshCw);
+const ThemedArchive = withUnistyles(Archive);
+
 const runningColorMapping = (theme: Theme) => ({ color: theme.colors.statusDotRunning });
 const warningColorMapping = (theme: Theme) => ({ color: theme.colors.statusDotWarning });
 const dangerColorMapping = (theme: Theme) => ({ color: theme.colors.statusDotDanger });
 const successColorMapping = (theme: Theme) => ({ color: theme.colors.statusDotSuccess });
+const dangerSquareColorMapping = (theme: Theme) => ({
+  color: theme.colors.statusDotDanger,
+  fill: theme.colors.statusDotDanger,
+});
+const blueRetryColorMapping = (theme: Theme) => ({
+  color: theme.colors.palette.blue[500],
+});
+const mutedArchiveColorMapping = (theme: Theme) => ({
+  color: theme.colors.foregroundMuted,
+});
 
 export interface SubagentItemRowProps {
   row: SubagentRow;
@@ -32,6 +58,10 @@ function formatElapsed(createdAt: Date): string {
 }
 
 export function SubagentItemRow({ row, serverId, onNavigateToAgent }: SubagentItemRowProps) {
+  const client = useHostRuntimeClient(serverId ?? "");
+  const archiveSubagent = useArchiveSubagent({ serverId: serverId ?? "" });
+  const [isRetrying, setIsRetrying] = useState<boolean>(false);
+
   const ProviderIcon = useMemo(
     () => getProviderIcon(row.provider, serverId ?? ""),
     [row.provider, serverId],
@@ -40,6 +70,43 @@ export function SubagentItemRow({ row, serverId, onNavigateToAgent }: SubagentIt
   const handleClick = useCallback(() => {
     onNavigateToAgent?.(row.id);
   }, [onNavigateToAgent, row.id]);
+
+  const handleInterrupt = useCallback(
+    (e: GestureResponderEvent) => {
+      (e as unknown as { stopPropagation?: () => void })?.stopPropagation?.();
+      if (client) {
+        void client.cancelAgent(row.id);
+      }
+    },
+    [client, row.id],
+  );
+
+  const handleRetryPress = useCallback((e: GestureResponderEvent) => {
+    (e as unknown as { stopPropagation?: () => void })?.stopPropagation?.();
+    setIsRetrying((prev) => !prev);
+  }, []);
+
+  const handleArchivePress = useCallback(
+    (e: GestureResponderEvent) => {
+      (e as unknown as { stopPropagation?: () => void })?.stopPropagation?.();
+      archiveSubagent(row.id);
+    },
+    [archiveSubagent, row.id],
+  );
+
+  const handleConfirmRetry = useCallback(
+    (prompt: string) => {
+      if (client) {
+        void client.sendMessage(row.id, prompt);
+      }
+      setIsRetrying(false);
+    },
+    [client, row.id],
+  );
+
+  const handleCancelRetry = useCallback(() => {
+    setIsRetrying(false);
+  }, []);
 
   const displayTitle = row.title || row.description || "子任务";
   const durationText = useMemo(() => formatElapsed(row.createdAt), [row.createdAt]);
@@ -82,33 +149,77 @@ export function SubagentItemRow({ row, serverId, onNavigateToAgent }: SubagentIt
   }, [isRunning, requiresAttention, isFailedOrError]);
 
   return (
-    <Pressable
-      style={styles.container}
-      onPress={handleClick}
-      accessibilityRole="button"
-      accessibilityLabel={`子任务: ${displayTitle}`}
-    >
-      <View style={styles.leftCol}>
-        <View style={styles.iconWrapper}>
-          <ProviderIcon size={14} color="#6b7280" />
+    <View style={styles.rowWrapper}>
+      <Pressable
+        style={styles.container}
+        onPress={handleClick}
+        accessibilityRole="button"
+        accessibilityLabel={`子任务: ${displayTitle}`}
+      >
+        <View style={styles.leftCol}>
+          <View style={styles.iconWrapper}>
+            <ProviderIcon size={14} color="#6b7280" />
+          </View>
+          <Text style={styles.titleText} numberOfLines={1}>
+            {displayTitle}
+          </Text>
         </View>
-        <Text style={styles.titleText} numberOfLines={1}>
-          {displayTitle}
-        </Text>
-      </View>
 
-      <View style={styles.rightCol}>
-        <View style={styles.durationTag}>
-          <Clock size={11} color="#9ca3af" />
-          <Text style={styles.durationText}>{durationText}</Text>
+        <View style={styles.rightCol}>
+          <View style={styles.durationTag}>
+            <Clock size={11} color="#9ca3af" />
+            <Text style={styles.durationText}>{durationText}</Text>
+          </View>
+          {statusPill}
+          <View style={styles.actionsCluster}>
+            {isRunning && (
+              <Pressable
+                style={styles.actionBtn}
+                onPress={handleInterrupt}
+                accessibilityRole="button"
+                accessibilityLabel="中断"
+                hitSlop={6}
+              >
+                <ThemedSquare size={11} uniProps={dangerSquareColorMapping} />
+              </Pressable>
+            )}
+            {isFailedOrError && (
+              <Pressable
+                style={styles.actionBtn}
+                onPress={handleRetryPress}
+                accessibilityRole="button"
+                accessibilityLabel="重试"
+                hitSlop={6}
+              >
+                <ThemedRefreshCw size={11} uniProps={blueRetryColorMapping} />
+              </Pressable>
+            )}
+            {!isRunning && (
+              <Pressable
+                style={styles.actionBtn}
+                onPress={handleArchivePress}
+                accessibilityRole="button"
+                accessibilityLabel="归档"
+                hitSlop={6}
+              >
+                <ThemedArchive size={11} uniProps={mutedArchiveColorMapping} />
+              </Pressable>
+            )}
+          </View>
         </View>
-        {statusPill}
-      </View>
-    </Pressable>
+      </Pressable>
+
+      {isRetrying && (
+        <SubagentInlineRetryBar onConfirm={handleConfirmRetry} onCancel={handleCancelRetry} />
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
+  rowWrapper: {
+    width: "100%",
+  },
   container: {
     flexDirection: "row",
     alignItems: "center",
@@ -188,5 +299,17 @@ const styles = StyleSheet.create((theme) => ({
   },
   statusTextCompleted: {
     color: theme.colors.statusDotSuccess,
+  },
+  actionsCluster: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginLeft: 2,
+  },
+  actionBtn: {
+    padding: 3,
+    borderRadius: theme.borderRadius.sm,
+    alignItems: "center",
+    justifyContent: "center",
   },
 }));

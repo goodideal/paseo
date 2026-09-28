@@ -1,9 +1,14 @@
 import { useCallback, useMemo, useState } from "react";
-import { View, Text, Pressable } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
-import { ChevronDown, ChevronRight, Layers } from "lucide-react-native";
+import { View, Text, Pressable, type GestureResponderEvent } from "react-native";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { ChevronDown, ChevronRight, Layers, Archive } from "lucide-react-native";
 import { useSubagentsForParent } from "@/subagents/select";
+import { useArchiveFinishedSubagents } from "@/subagents";
+import type { Theme } from "@/styles/theme";
 import { SubagentItemRow } from "./subagent-item-row";
+
+const ThemedArchive = withUnistyles(Archive);
+const bulkArchiveColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 export interface MilestoneSubagentsSectionProps {
   serverId?: string | null;
@@ -19,6 +24,12 @@ export function MilestoneSubagentsSection({
   const rows = useSubagentsForParent({
     serverId: serverId ?? "",
     parentAgentId,
+  });
+
+  const { archiveFinished } = useArchiveFinishedSubagents({
+    serverId: serverId ?? "",
+    parentAgentId,
+    rows,
   });
 
   const { runningCount, errorCount, completedCount, hasActiveOrError } = useMemo(() => {
@@ -55,6 +66,14 @@ export function MilestoneSubagentsSection({
     setIsExpanded((prev) => !prev);
   }, []);
 
+  const handleBulkArchive = useCallback(
+    (e: GestureResponderEvent) => {
+      (e as unknown as { stopPropagation?: () => void })?.stopPropagation?.();
+      void archiveFinished();
+    },
+    [archiveFinished],
+  );
+
   if (rows.length === 0) {
     return null;
   }
@@ -79,6 +98,18 @@ export function MilestoneSubagentsSection({
         </View>
 
         <View style={styles.headerRight}>
+          {completedCount > 1 && (
+            <Pressable
+              style={styles.bulkArchiveBtn}
+              onPress={handleBulkArchive}
+              accessibilityRole="button"
+              accessibilityLabel="一键清理已完成"
+              hitSlop={6}
+            >
+              <ThemedArchive size={12} uniProps={bulkArchiveColorMapping} />
+              <Text style={styles.bulkArchiveText}>一键清理已完成</Text>
+            </Pressable>
+          )}
           {isExpanded ? (
             <ChevronDown size={14} color="#6b7280" />
           ) : (
@@ -133,8 +164,23 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
   },
   headerRight: {
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+  },
+  bulkArchiveBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    borderRadius: theme.borderRadius.sm,
+    backgroundColor: theme.colors.surface2,
+    marginRight: 6,
+  },
+  bulkArchiveText: {
+    fontSize: 11,
+    color: theme.colors.foregroundMuted,
   },
   subagentList: {
     padding: theme.spacing[2],
