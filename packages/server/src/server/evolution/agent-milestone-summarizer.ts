@@ -10,6 +10,8 @@ export interface StoredAgentLike {
   lastActivityAt?: string | null;
   title?: string | null;
   lastStatus?: string | null;
+  labels?: Record<string, string> | null;
+  parentAgentId?: string | null;
   config?: {
     model?: string | null;
     systemPrompt?: string | null;

@@ -99,14 +99,16 @@ export class WorkspaceEvolutionService {
 
     const allAgents = await this.agentStorage.list();
     const workspaceAgents = allAgents.filter((a) => {
-      if (a.workspaceId === workspaceId) return true;
-      if (workspace?.cwd && a.cwd === workspace.cwd) return true;
-      return false;
+      const isMatchWorkspace =
+        a.workspaceId === workspaceId || (workspace?.cwd && a.cwd === workspace.cwd);
+      if (!isMatchWorkspace) return false;
+      const isSubagent = Boolean(a.parentAgentId || a.labels?.["paseo.parent-agent-id"]);
+      return !isSubagent;
     });
 
-    // Sort ascending by creation time
+    // Sort descending by creation time (newest at index 0)
     workspaceAgents.sort(
-      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     );
 
     const milestones: AgentMilestoneRecord[] = [];
@@ -143,21 +145,21 @@ export class WorkspaceEvolutionService {
 
     if (milestones.length > 0) {
       const hasRunning = milestones.some((m) => m.status === "running");
-      const last = milestones[milestones.length - 1];
+      const current = milestones[0];
 
       if (hasRunning) {
         overallStatus = "in_progress";
-        currentStage = `正在推进: ${last.intentPrompt}`;
+        currentStage = `正在推进: ${current.intentPrompt}`;
       } else if (
-        last.intentPrompt.toLowerCase().includes("review") ||
-        last.intentPrompt.includes("审查") ||
-        last.intentPrompt.includes("审计")
+        current.intentPrompt.toLowerCase().includes("review") ||
+        current.intentPrompt.includes("审查") ||
+        current.intentPrompt.includes("审计")
       ) {
         overallStatus = "ready_for_review";
         currentStage = "代码质量评审完成，待合流";
       } else {
         overallStatus = "completed";
-        currentStage = `已完成阶段: ${last.intentPrompt}`;
+        currentStage = `已完成阶段: ${current.intentPrompt}`;
       }
     }
 
