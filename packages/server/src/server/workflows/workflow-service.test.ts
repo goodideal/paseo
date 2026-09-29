@@ -427,4 +427,88 @@ describe("WorkflowService", () => {
       }),
     ).rejects.toThrow("is not pending");
   });
+
+  it("approves delivery matching manifest digest and rejects drifted manifest", async () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-workflow-service-delivery-"));
+    temporaryDirectories.push(paseoHome);
+    const registry = makeRegistry();
+    const store = new WorkflowStore({ paseoHome });
+    const service = new WorkflowService({
+      store,
+      registry,
+      now: () => 3000,
+      createId: (kind) => `${kind}_delivery_0001`,
+    });
+    const scope = { projectId: "project_1", workspaceId: "workspace_1" };
+    const { createHash } = await import("node:crypto");
+
+    const validHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const manifest = {
+      sourceBranch: "agent/issue-42-feat",
+      targetBranch: "main",
+      commitSha: validHash,
+      pullRequestTitle: "feat: add feature",
+      pullRequestBodyDigest: validHash,
+      issueReference: "42",
+    };
+    const manifestDigest = createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
+
+    const run = service.create({
+      ...scope,
+      principalId: "principal_1",
+      workspaceRoot: "/repo",
+      definition: makeDefinition(),
+    });
+
+    // 为 run 设置 deliveryApprovalManifest
+    store.update({ ...scope, runId: run.id }, (current) => ({
+      ...current,
+      deliveryApprovalManifest: manifest,
+      status: "waiting_approval",
+      approvals: [
+        {
+          id: "approval_delivery_1",
+          stepId: "ship",
+          attemptId: "attempt_ship_1",
+          status: "pending",
+          requesterId: "principal_1",
+          requestedAt: 3000,
+          expiresAt: 5000,
+          reason: "Approval required for external_write",
+        },
+      ],
+      stepAttempts: [
+        {
+          id: "attempt_ship_1",
+          stepId: "ship",
+          adapterType: "git.push",
+          adapterVersion: "1.0.0",
+          status: "waiting_approval",
+          input: {},
+        },
+      ],
+    }));
+
+    // 1. 如果传入错误的 manifestDigest，必须被拒绝报错
+    expect(() =>
+      service.approveDelivery({
+        ...scope,
+        runId: run.id,
+        approvalId: "approval_delivery_1",
+        approverId: "approver_1",
+        manifestDigest: "bad_digest_000000000000000000000000000000000000000000000000000000000",
+      }),
+    ).toThrow("drifted or does not match");
+
+    // 2. 传入匹配的 manifestDigest，批准成功
+    const approvedRun = service.approveDelivery({
+      ...scope,
+      runId: run.id,
+      approvalId: "approval_delivery_1",
+      approverId: "approver_1",
+      manifestDigest,
+    });
+    expect(approvedRun.approvals[0].status).toBe("approved");
+    expect(approvedRun.approvals[0].manifestDigest).toBe(manifestDigest);
+  });
 });

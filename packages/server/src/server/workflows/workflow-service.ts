@@ -50,6 +50,13 @@ export interface RespondWorkflowApprovalInput extends WorkflowRunInput {
   approverId: string;
   decision: "approved" | "denied";
   denialReason?: string;
+  manifestDigest?: string;
+}
+
+export interface ApproveDeliveryInput extends WorkflowRunInput {
+  approvalId: string;
+  manifestDigest: string;
+  approverId: string;
 }
 
 export interface CreateWorkflowInteractionInput extends WorkflowRunInput {
@@ -286,6 +293,7 @@ export class WorkflowService {
         decidedAt: now,
         consumedAt: input.decision === "approved" ? now : undefined,
         denialReason: input.decision === "denied" ? input.denialReason : undefined,
+        manifestDigest: input.manifestDigest,
       };
       const approvals = current.approvals.map((candidate) =>
         candidate.id === decidedApproval.id ? decidedApproval : candidate,
@@ -307,6 +315,24 @@ export class WorkflowService {
         updatedAt: now,
         status: input.decision === "approved" ? "running" : "failed",
       };
+    });
+  }
+
+  approveDelivery(input: ApproveDeliveryInput): WorkflowRun {
+    const run = this.requireRun(input);
+    if (!run.deliveryApprovalManifest) {
+      throw new Error("Workflow run has no delivery approval manifest defined");
+    }
+    const expectedDigest = createHash("sha256")
+      .update(JSON.stringify(run.deliveryApprovalManifest))
+      .digest("hex");
+    if (expectedDigest !== input.manifestDigest) {
+      throw new Error("Delivery approval manifest has drifted or does not match digest");
+    }
+    return this.respondApproval({
+      ...input,
+      decision: "approved",
+      manifestDigest: input.manifestDigest,
     });
   }
 

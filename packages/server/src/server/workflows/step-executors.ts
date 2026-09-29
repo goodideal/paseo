@@ -186,12 +186,21 @@ export class StepExecutor {
         };
       }
     }
-    const approved = input.run.approvals.some(
+    let approved = input.run.approvals.some(
       (approval) =>
         approval.attemptId === attempt.id &&
         approval.status === "approved" &&
         approval.consumedAt !== undefined,
     );
+    if (approved && input.run.deliveryApprovalManifest) {
+      const expectedDigest = sha256(JSON.stringify(input.run.deliveryApprovalManifest));
+      const hasValidManifestApproval = input.run.approvals.some(
+        (a) => a.status === "approved" && a.manifestDigest === expectedDigest,
+      );
+      if (!hasValidManifestApproval) {
+        approved = false;
+      }
+    }
     if (adapter.executionRisk === "external_write" && !approved) {
       const approval = input.run.approvals.find(
         (candidate) => candidate.attemptId === attempt.id && candidate.status === "pending",
@@ -559,9 +568,9 @@ export class StepExecutor {
       case "approval.wait":
         return { approved: true };
       case "git.push":
-        return this.executePush(input, run.workspaceRoot);
+        return this.executePush(input, run.workspaceRoot, run);
       case "git.create_pr":
-        return this.executePr(input, run.workspaceRoot);
+        return this.executePr(input, run.workspaceRoot, run);
       case "agent.run_until_complete":
         return this.executeRunAgentUntilComplete(input, run, attempt);
       case "agent.continue_until_complete":
@@ -709,10 +718,23 @@ export class StepExecutor {
     return { passed: result.passed, report: result.report ?? "" };
   }
 
+  private assertDeliveryManifestApproved(run?: WorkflowRun): void {
+    if (!run?.deliveryApprovalManifest) return;
+    const expectedDigest = sha256(JSON.stringify(run.deliveryApprovalManifest));
+    const validApproval = run.approvals.find(
+      (a) => a.status === "approved" && a.manifestDigest === expectedDigest,
+    );
+    if (!validApproval) {
+      throw new Error("Delivery approval manifest has drifted or is not approved");
+    }
+  }
+
   private async executePush(
     input: Record<string, unknown>,
     cwd: string,
+    run?: WorkflowRun,
   ): Promise<Record<string, unknown>> {
+    this.assertDeliveryManifestApproved(run);
     if (!this.host.gitPush) throw new Error("Git push adapter host is unavailable");
     const remote = typeof input.remote === "string" ? input.remote : "origin";
     const branch = typeof input.branch === "string" ? input.branch : "HEAD";
@@ -722,7 +744,9 @@ export class StepExecutor {
   private async executePr(
     input: Record<string, unknown>,
     cwd: string,
+    run?: WorkflowRun,
   ): Promise<Record<string, unknown>> {
+    this.assertDeliveryManifestApproved(run);
     const branch = typeof input.branch === "string" ? input.branch : "HEAD";
     const existing = await this.host.findPullRequest?.({ cwd, branch });
     if (existing) return { url: existing.prUrl, prNumber: existing.prNumber };

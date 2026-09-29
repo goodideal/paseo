@@ -26,10 +26,11 @@ function createSession() {
   registerBuiltInWorkflowStepManifests(registry);
   const presets = createWorkflowPresetRegistry(registry);
   const emitted: SessionOutboundMessage[] = [];
+  const store = new WorkflowStore({ paseoHome });
   const session = new WorkflowSession({
     host: { emit: (message) => emitted.push(message) },
     workflowService: new WorkflowService({
-      store: new WorkflowStore({ paseoHome }),
+      store,
       registry,
       now: () => 100,
       createId: (kind) => `${kind}_0000000000000001`,
@@ -42,7 +43,7 @@ function createSession() {
     },
     logger: pino({ level: "silent" }),
   });
-  return { emitted, presets, session };
+  return { emitted, presets, session, store };
 }
 
 describe("WorkflowSession", () => {
@@ -99,5 +100,96 @@ describe("WorkflowSession", () => {
         }),
       }),
     );
+  });
+
+  it("returns content for regular artifacts and null for redacted artifacts in artifact.get", async () => {
+    const { emitted, session, store } = createSession();
+    // 写入测试文件
+    const tmpFileRegular = path.join(temporaryDirectories[0]!, "regular.txt");
+    const tmpFileRedacted = path.join(temporaryDirectories[0]!, "redacted.txt");
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(tmpFileRegular, "public design doc content", "utf-8");
+    writeFileSync(tmpFileRedacted, "sensitive-token-or-secret", "utf-8");
+
+    const validHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const run = store.create({
+      id: "run_art_1",
+      projectId: "project_1",
+      workspaceId: "workspace_1",
+      definitionId: "def_1",
+      definitionRevision: "1",
+      definitionHash: validHash,
+      workspaceRoot: "/workspace/project_1",
+      principalId: "principal_1",
+      status: "running",
+      createdAt: 100,
+      updatedAt: 100,
+      stepAttempts: [],
+      approvals: [],
+      artifacts: [
+        {
+          id: "art_regular",
+          kind: "design_doc",
+          path: tmpFileRegular,
+          contentHash: validHash,
+          bytes: 25,
+          redacted: false,
+          createdAt: 100,
+        },
+        {
+          id: "art_redacted",
+          kind: "secret_answer",
+          path: tmpFileRedacted,
+          contentHash: validHash,
+          bytes: 24,
+          redacted: true,
+          createdAt: 100,
+        },
+      ],
+      intents: [],
+      receipts: [],
+      leases: [],
+      unknownOutcomes: [],
+      interactions: [],
+    });
+
+    await session.handle({
+      type: "workflow.artifact.get.request",
+      projectId: "project_1",
+      workspaceId: "workspace_1",
+      runId: run.id,
+      requestId: "get_reg",
+      artifactId: "art_regular",
+    });
+
+    await session.handle({
+      type: "workflow.artifact.get.request",
+      projectId: "project_1",
+      workspaceId: "workspace_1",
+      runId: run.id,
+      requestId: "get_red",
+      artifactId: "art_redacted",
+    });
+
+    type ArtifactGetResponse = Extract<
+      SessionOutboundMessage,
+      { type: "workflow.artifact.get.response" }
+    >;
+
+    const regResponse = emitted.find(
+      (m): m is ArtifactGetResponse =>
+        m.type === "workflow.artifact.get.response" && m.payload.requestId === "get_reg",
+    );
+    expect(regResponse).toBeDefined();
+    expect(regResponse?.payload.content).toBe("public design doc content");
+    expect(regResponse?.payload.artifact?.redacted).toBe(false);
+
+    const redResponse = emitted.find(
+      (m): m is ArtifactGetResponse =>
+        m.type === "workflow.artifact.get.response" && m.payload.requestId === "get_red",
+    );
+    expect(redResponse).toBeDefined();
+    expect(redResponse?.payload.content).toBe(null);
+    expect(redResponse?.payload.artifact?.redacted).toBe(true);
   });
 });

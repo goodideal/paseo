@@ -121,6 +121,7 @@ export const WorkflowApprovalSchema = WorkflowScopeSchema.extend({
   createdAt: z.string(),
   decidedAt: z.string().nullable(),
   reason: z.string().nullable(),
+  manifestDigest: z.string().nullable().optional(),
 });
 
 export const WorkflowArtifactSchema = WorkflowScopeSchema.extend({
@@ -131,6 +132,7 @@ export const WorkflowArtifactSchema = WorkflowScopeSchema.extend({
   name: z.string().min(1),
   contentType: z.string().min(1),
   sizeBytes: z.number().int().nonnegative(),
+  redacted: z.boolean().optional(),
   createdAt: z.string(),
 });
 

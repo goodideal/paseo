@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from "node:fs";
 import type pino from "pino";
 import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
 import type { WorkflowPresetRegistry } from "../../workflows/workflow-preset-registry.js";
@@ -113,6 +114,7 @@ function toArtifact(run: WorkflowRun, artifact: WorkflowRun["artifacts"][number]
     name: artifact.path.split("/").at(-1) ?? artifact.id,
     contentType: "application/json",
     sizeBytes: artifact.bytes,
+    redacted: artifact.redacted,
     createdAt: new Date(artifact.createdAt).toISOString(),
   };
 }
@@ -309,14 +311,34 @@ export class WorkflowSession {
     if (request.type === "workflow.artifact.get.request") {
       const run = this.options.workflowService.inspect(request);
       const artifact = run.artifacts.find((candidate) => candidate.id === request.artifactId);
+      let content: unknown = null;
+      let error: string | null = null;
+
+      if (!artifact) {
+        error = `Workflow artifact was not found: ${request.artifactId}`;
+      } else if (artifact.redacted) {
+        content = null;
+      } else {
+        try {
+          if (existsSync(artifact.path)) {
+            const raw = readFileSync(artifact.path, "utf-8");
+            content = raw.length > 64 * 1024 ? raw.slice(0, 64 * 1024) : raw;
+          } else {
+            error = `Artifact file not found: ${artifact.path}`;
+          }
+        } catch (readErr) {
+          error = (readErr as Error).message;
+        }
+      }
+
       this.options.host.emit({
         type: "workflow.artifact.get.response",
         payload: {
           ...this.responseScope(request),
           runId: run.id,
           artifact: artifact ? toArtifact(run, artifact) : null,
-          content: null,
-          error: artifact ? null : `Workflow artifact was not found: ${request.artifactId}`,
+          content,
+          error,
         },
       });
     }

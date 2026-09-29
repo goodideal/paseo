@@ -571,4 +571,89 @@ describe("Workflow Core Step Adapters and Execution Lifecycle", () => {
       responderId: "user_1",
     });
   });
+
+  it("blocks git.push when deliveryApprovalManifest is not approved or drifted", async () => {
+    const { executor } = setup();
+    const validHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const manifest = {
+      sourceBranch: "agent/feat",
+      targetBranch: "main",
+      commitSha: validHash,
+      pullRequestTitle: "title",
+      pullRequestBodyDigest: validHash,
+      issueReference: "1",
+    };
+    const run = makeRun("push_step", "git.push", {
+      deliveryApprovalManifest: manifest,
+      approvals: [
+        {
+          id: "app_1",
+          stepId: "push_step",
+          attemptId: "attempt_1",
+          status: "approved",
+          manifestDigest: "different_hash_00000000000000000000000000000000000000000000000000000000",
+          requesterId: "principal_1",
+          requestedAt: 1000,
+          expiresAt: 2000,
+          reason: "delivery",
+        },
+      ],
+    });
+
+    const result = await executor.execute({
+      run,
+      stepId: "push_step",
+      attemptId: "attempt_1",
+      input: { branch: "agent/feat" },
+      principalPermissions: new Set(["workspace.write" as const]),
+      now: 1500,
+    });
+
+    // 缺失或漂移的交付批准导致外部写入步骤停留在 waiting_approval，阻断自动推送
+    expect(result.status).toBe("waiting_approval");
+  });
+
+  it("allows git.push when deliveryApproval matches manifest digest", async () => {
+    const { executor, host } = setup();
+    const { createHash } = await import("node:crypto");
+    const validHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const manifest = {
+      sourceBranch: "agent/feat",
+      targetBranch: "main",
+      commitSha: validHash,
+      pullRequestTitle: "title",
+      pullRequestBodyDigest: validHash,
+      issueReference: "1",
+    };
+    const digest = createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
+    const run = makeRun("push_step", "git.push", {
+      deliveryApprovalManifest: manifest,
+      approvals: [
+        {
+          id: "app_1",
+          stepId: "push_step",
+          attemptId: "attempt_1",
+          status: "approved",
+          manifestDigest: digest,
+          consumedAt: 1000,
+          requesterId: "principal_1",
+          requestedAt: 1000,
+          expiresAt: 2000,
+          reason: "delivery",
+        },
+      ],
+    });
+
+    const result = await executor.execute({
+      run,
+      stepId: "push_step",
+      attemptId: "attempt_1",
+      input: { branch: "agent/feat" },
+      principalPermissions: new Set(["workspace.write" as const]),
+      now: 1500,
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(host.gitPush).toHaveBeenCalledWith(expect.objectContaining({ branch: "agent/feat" }));
+  });
 });

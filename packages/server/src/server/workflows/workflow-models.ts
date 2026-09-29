@@ -83,6 +83,7 @@ export const WorkflowApprovalSchema = z
     reason: z.string().trim().min(1).max(4096),
     denialReason: z.string().trim().min(1).max(4096).optional(),
     consumedAt: TimestampSchema.optional(),
+    manifestDigest: DigestSchema.optional(),
   })
   .strict();
 
