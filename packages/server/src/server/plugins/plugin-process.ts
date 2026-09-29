@@ -301,9 +301,10 @@ export function createPluginWorker(options: {
         .map(async (source) => ({
           id: source.id,
           label: source.label,
-          icon: source.icon
-            ? await readPluginProviderIcon(message.pluginDirectory, source.icon)
-            : undefined,
+          icon:
+            source.icon && message.pluginDirectory
+              ? await readPluginProviderIcon(message.pluginDirectory, source.icon)
+              : undefined,
           discover: !!source.discover,
         })),
     );
@@ -317,7 +318,7 @@ export function createPluginWorker(options: {
       workflowPresets: [...workflowPresets.values()].sort((left, right) =>
         left.workflowId.localeCompare(right.workflowId),
       ),
-      usageSources: usageSourceMetadata,
+      ...(usageSourceMetadata.length > 0 ? { usageSources: usageSourceMetadata } : {}),
     });
   }
 
@@ -568,11 +569,19 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   };
   process.on("message", (raw) => {
     const parsed = PluginProcessRequestSchema.safeParse(raw);
-    if (!worker && parsed.success && parsed.data.type === "initialize") {
-      try {
-        worker = createPluginWorker({ channel, contribute: evaluateBundle(parsed.data.bundle) });
-      } catch (error) {
-        channel.send({ type: "fatal", error: describeError(error) });
+    if (!worker) {
+      if (parsed.success && parsed.data.type === "initialize") {
+        try {
+          worker = createPluginWorker({ channel, contribute: evaluateBundle(parsed.data.bundle) });
+        } catch (error) {
+          channel.send({ type: "fatal", error: describeError(error) });
+          return;
+        }
+      } else {
+        const errorMsg = !parsed.success
+          ? `Plugin worker failed to parse message: ${parsed.error.message}`
+          : `Plugin worker received unexpected message before initialize: ${(raw as { type?: unknown })?.type}`;
+        channel.send({ type: "fatal", error: errorMsg });
         return;
       }
     }

@@ -35,7 +35,7 @@ export type PluginProcessRequest =
       pluginId: string;
       bundle: string;
       appVersion: string;
-      pluginDirectory: string;
+      pluginDirectory?: string;
       settingsDirectory?: string;
     }
   | {
@@ -139,7 +139,7 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
         pluginId: z.string().min(1),
         bundle: z.string(),
         appVersion: z.string(),
-        pluginDirectory: z.string(),
+        pluginDirectory: z.string().optional(),
         settingsDirectory: z.string().optional(),
       })
       .strict(),
