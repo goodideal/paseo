@@ -591,16 +591,6 @@ export class PluginService {
   }
 
   private publishWorkflowRegistrations(pluginId: string): void {
-    const presets = this.runtime.getWorkflowPresetRegistrations?.(pluginId) ?? [];
-    for (const preset of presets) {
-      this.dependencies.workflowPresets?.register({
-        workflowId: preset.workflowId,
-        name: preset.name,
-        sourcePreset: pluginId,
-        definition:
-          preset.definition as import("../workflows/definition-compiler.js").WorkflowDefinition,
-      });
-    }
     const adapters = this.runtime.getWorkflowStepAdapterRegistrations?.(pluginId) ?? [];
     for (const adapter of adapters) {
       this.dependencies.workflowRegistry?.registerPlugin({
@@ -614,6 +604,16 @@ export class PluginService {
         },
       });
     }
+    const presets = this.runtime.getWorkflowPresetRegistrations?.(pluginId) ?? [];
+    for (const preset of presets) {
+      this.dependencies.workflowPresets?.register({
+        workflowId: preset.workflowId,
+        name: preset.name,
+        sourcePreset: pluginId,
+        definition:
+          preset.definition as import("../workflows/definition-compiler.js").WorkflowDefinition,
+      });
+    }
   }
 
   async executeWorkflowStepAdapter(params: {
@@ -624,7 +624,7 @@ export class PluginService {
   }): Promise<Record<string, unknown>> {
     const output = await this.runtime.invoke(
       params.pluginId,
-      `__workflow_step__:${params.adapterType}`,
+      `workflow.step.${params.adapterType}`,
       {
         input: params.input,
         run: {

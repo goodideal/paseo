@@ -167,7 +167,7 @@ export function createPluginWorker(options: {
     workflowStepAdapters.set(type, adapter);
     register(
       {
-        name: `__workflow_step__:${type}`,
+        name: `workflow.step.${type}`,
         input: z.object({
           input: z.record(z.string(), z.unknown()),
           run: z.object({
