@@ -77,7 +77,40 @@ function parseTestLines(combinedOutput: string): TestCaseResult[] {
   return cases;
 }
 
+export interface EvidenceRecord {
+  runId: string;
+  path: string;
+  sizeBytes: number;
+  createdAt: number;
+}
+
+const recordedEvidenceList: EvidenceRecord[] = [];
+
 export const EvidenceManager = {
+  recordEvidence(record: EvidenceRecord): void {
+    recordedEvidenceList.push(record);
+  },
+
+  async listRecordedEvidence(): Promise<EvidenceRecord[]> {
+    return [...recordedEvidenceList];
+  },
+
+  async deleteEvidenceFile(filePath: string): Promise<boolean> {
+    try {
+      if (existsSync(filePath)) {
+        const { unlinkSync } = await import("node:fs");
+        unlinkSync(filePath);
+      }
+      const idx = recordedEvidenceList.findIndex((e) => e.path === filePath);
+      if (idx !== -1) {
+        recordedEvidenceList.splice(idx, 1);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
   /**
    * Ensures .evidence/ is in .gitignore to prevent accidental Git commits & conflicts
    */

@@ -7,6 +7,7 @@ import {
   diagnoseProjectsRpc,
   getTaskDetailRpc,
   listTasksRpc,
+  pruneEvidenceRpc,
   rejectTaskRpc,
 } from "./shared/contracts.js";
 import { giteaSettingsDefinition } from "./shared/settings.js";
@@ -18,6 +19,8 @@ import { ProjectGiteaResolver } from "./server/resolver.js";
 import { MultiProjectPoller } from "./server/poller.js";
 import { createGiteaStepAdapters } from "./server/adapters/index.js";
 import { issueToPrPreset } from "./server/presets/issue-to-pr.js";
+import { EvidenceManager } from "./server/evidence-manager.js";
+import { EvidencePruner } from "./server/cleanup.js";
 
 function getDaemonWsUrl(): string {
   const listen = process.env.PASEO_LISTEN || "127.0.0.1:6767";
@@ -40,6 +43,17 @@ export default function contribute(server: PluginServerContext) {
   const clientPool = new GiteaClientPool();
   const resolver = new ProjectGiteaResolver();
   const diagnosticsService = new DiagnosticsService(resolver, clientPool, settingsManager);
+  let activePaseo: PaseoApi | null = null;
+  let paseoClient: PaseoClient | null = null;
+
+  const pruner = new EvidencePruner(
+    EvidenceManager,
+    {
+      runInspect: (opts: { projectId: string; workspaceId: string; runId: string }) =>
+        (paseoClient ?? activePaseo)!.workflows.runInspect(opts),
+    } as any,
+    settingsManager,
+  );
 
   for (const adapter of createGiteaStepAdapters(clientPool)) {
     server.registerWorkflowStepAdapter?.(adapter);
@@ -47,8 +61,6 @@ export default function contribute(server: PluginServerContext) {
   server.registerWorkflowPreset?.(issueToPrPreset);
 
   let poller: MultiProjectPoller | null = null;
-  let paseoClient: PaseoClient | null = null;
-  let activePaseo: PaseoApi | null = null;
 
   async function initBackgroundPoller(): Promise<void> {
     try {
@@ -189,7 +201,21 @@ export default function contribute(server: PluginServerContext) {
     return { diagnostics };
   });
 
+  server.handle(pruneEvidenceRpc, async ({ olderThanDays }) => {
+    const nowMs = Date.now();
+    const result = await pruner.pruneExpiredEvidence(nowMs);
+    return result;
+  });
+
+  const cleanupTimer = setInterval(
+    () => {
+      void pruner.pruneExpiredEvidence().catch(() => {});
+    },
+    24 * 60 * 60 * 1000,
+  );
+
   return () => {
+    clearInterval(cleanupTimer);
     settingsManager.dispose();
     poller?.stop();
     if (paseoClient) {
