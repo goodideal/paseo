@@ -25,8 +25,10 @@ describe("Server Entry Integration", () => {
     };
 
     const cleanup = contribute(mockServer as any);
+    expect(mockServer.on).toHaveBeenCalledWith("agent.turn_started", expect.any(Function));
     expect(mockServer.on).toHaveBeenCalledWith("agent.turn_ended", expect.any(Function));
     expect(mockServer.on).toHaveBeenCalledWith("agent.permission_requested", expect.any(Function));
+    expect(mockServer.on).toHaveBeenCalledWith("agent.permission_resolved", expect.any(Function));
     expect(registeredRpcs["pet.get_dashboard"]).toBeDefined();
 
     // Call dashboard RPC

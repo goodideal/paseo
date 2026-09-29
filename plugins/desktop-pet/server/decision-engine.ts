@@ -7,46 +7,78 @@ export interface DecisionResult {
   reason: string;
 }
 
-const HIGH_RISK_PATTERNS = [
-  /\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f?|--recursive)\b/i,
-  /\bgit\s+push\b.*(--force|-f)\b/i,
-  /\bgit\s+reset\s+--hard\b/i,
-  /\bcurl\b.*\|\s*(ba)?sh\b/i,
-  /\bchmod\s+(-R\s+)?777\b/i,
-  /\b(\/etc\/|\/var\/root|\/System\/|~?\/\.ssh\/)/i,
+// 1. Sensitive system and credential paths anywhere in arguments
+const SENSITIVE_PATHS = [
+  /(^|[\s"'\`=])(\/etc(\/|\b)|~?\/\.ssh(\/|\b)|\/var\/root|\/System\/|\/proc\/|\/dev\/)/i,
 ];
 
-const SAFE_PATTERNS = [
-  /\bgit\s+(status|diff|log|branch|show)\b/i,
-  /\bnpm\s+(test|run\s+lint|run\s+typecheck|run\s+format:check)\b/i,
-  /\b(ls|dir|cat|head|tail|grep|rg)\b/i,
+// 2. High-risk destructive commands (regardless of flag ordering, correctly matching non-word hyphens)
+const HIGH_RISK_COMMANDS = [
+  /\brm\s+(.*?\s)?(-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)(\s|$)/i,
+  /\bgit\s+push\b.*(^|\s)(--force|-f)(\s|$)/i,
+  /\bgit\s+reset\b.*(^|\s)--hard(\s|$)/i,
+  /\b(curl|wget)\b.*\|\s*(ba)?sh\b/i,
+  /\bchmod\s+.*(^|\s)(-[a-zA-Z]*R[a-zA-Z]*\s+)?(777|a\+rwx)(\s|$)/i,
+  /\b(mkfs|dd\s+if=)\b/i,
+];
+
+// 3. Shell chaining or redirection operators requiring manual inspection
+const CHAINING_OR_REDIRECTION = /[;&|`]|(\$\()|>/;
+
+// 4. Safe read-only & testing commands
+const SAFE_COMMAND_PREFIXES = [
+  /^git\s+(status|diff|log|branch|show)\b/i,
+  /^npm\s+(test|run\s+lint|run\s+typecheck|run\s+format:check)\b/i,
+  /^(ls|dir|cat|head|tail|grep|rg)\b/i,
 ];
 
 export class DecisionEngine {
   public evaluateAction(actionRequested: string, contextDescription?: string): DecisionResult {
     const normalized = actionRequested.trim();
 
-    for (const pattern of HIGH_RISK_PATTERNS) {
+    // Priority 1: Check for sensitive paths
+    for (const pattern of SENSITIVE_PATHS) {
       if (pattern.test(normalized)) {
         return {
           decision: "deny",
           riskLevel: "high",
-          reason: `Destructive or sensitive pattern detected: "${normalized}". Automatically denied for safety.`,
+          reason: `Sensitive path access detected in "${normalized}". Automatically denied for safety.`,
         };
       }
     }
 
-    for (const pattern of SAFE_PATTERNS) {
+    // Priority 2: Check for destructive commands
+    for (const pattern of HIGH_RISK_COMMANDS) {
       if (pattern.test(normalized)) {
+        return {
+          decision: "deny",
+          riskLevel: "high",
+          reason: `Destructive command detected: "${normalized}". Automatically denied for safety.`,
+        };
+      }
+    }
+
+    // Priority 3: Check for chaining / redirection operators
+    if (CHAINING_OR_REDIRECTION.test(normalized)) {
+      return {
+        decision: "deny",
+        riskLevel: "medium",
+        reason: `Command chaining, piping, or redirection detected in "${normalized}". Requires explicit human authorization.`,
+      };
+    }
+
+    // Priority 4: Safe verification / read commands
+    for (const prefix of SAFE_COMMAND_PREFIXES) {
+      if (prefix.test(normalized)) {
         return {
           decision: "allow",
           riskLevel: "low",
-          reason: `Read-only or safe verification command: "${normalized}". Automatically approved.`,
+          reason: `Safe read-only or verification command: "${normalized}". Automatically approved.`,
         };
       }
     }
 
-    // Default to balanced policy: if unknown command, inspect context or deny
+    // Priority 5: Default fallback to deny (balanced policy)
     return {
       decision: "deny",
       riskLevel: "medium",

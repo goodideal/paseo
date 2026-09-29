@@ -26,7 +26,7 @@ export default function contribute(server: PluginServerContext) {
   const decisionEngine = new DecisionEngine();
   const auditLogger = new AuditLogger(auditPath);
   const xpManager = new XpManager(0);
-  const companion = new CompanionService(0);
+  const companion = new CompanionService(6768);
 
   // Sync XP and Level into tracker
   tracker.setXpAndLevel(xpManager.getXp(), xpManager.getLevel());
@@ -67,6 +67,11 @@ export default function contribute(server: PluginServerContext) {
     .catch(() => {});
 
   // Listen to lifecycle events
+  server.on("agent.turn_started", async (event) => {
+    const title = event.agent.title || `Task ${event.agent.id.slice(0, 6)}`;
+    tracker.startTask(event.agent.id, title);
+  });
+
   server.on("agent.permission_requested", async (event) => {
     const actionRequested =
       event.request.kind === "shell" ? event.request.command : JSON.stringify(event.request);
@@ -79,9 +84,13 @@ export default function contribute(server: PluginServerContext) {
     });
   });
 
+  server.on("agent.permission_resolved", async (event) => {
+    tracker.resolvePermission(event.agent.id, event.requestId);
+  });
+
   server.on("agent.turn_ended", async (event) => {
+    tracker.stopTask(event.agent.id);
     if (event.outcome.kind === "completed") {
-      tracker.stopTask(event.agent.id);
       xpManager.awardTaskCompletion();
       tracker.setXpAndLevel(xpManager.getXp(), xpManager.getLevel());
     }
