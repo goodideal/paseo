@@ -41,8 +41,55 @@ export interface AudioBriefServiceOptions {
     warn?: (msg: string, ...args: unknown[]) => void;
     error?: (msg: string, ...args: unknown[]) => void;
   };
-  ttsSynthesizer?: (text: string) => Promise<{ audioBase64: string; mimeType: string }>;
+  ttsSynthesizer?: ((text: string) => Promise<{ audioBase64: string; mimeType: string }>) | null;
   textGenerator?: (params: { prompt: string; text: string }) => Promise<string>;
+}
+
+export interface OpenAiTtsOptions {
+  baseUrl?: string;
+  apiKey?: string;
+  model?: string;
+  voice?: string;
+  timeoutMs?: number;
+}
+
+export function createOpenAiTtsSynthesizer(options: OpenAiTtsOptions = {}) {
+  const baseUrl = (options.baseUrl || "http://127.0.0.1:8001/v1").replace(/\/+$/, "");
+  const apiKey = options.apiKey || "sk-local";
+  const model = options.model || "tts-1";
+  const voice = options.voice || "alloy";
+  const timeoutMs = options.timeoutMs ?? 15000;
+
+  return async (text: string): Promise<{ audioBase64: string; mimeType: string }> => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${baseUrl}/audio/speech`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          input: text,
+          voice,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        throw new Error(`TTS server HTTP ${res.status}: ${res.statusText}`);
+      }
+
+      const arrayBuffer = await res.arrayBuffer();
+      const audioBase64 = Buffer.from(arrayBuffer).toString("base64");
+      const mimeType = res.headers.get("content-type") || "audio/wav";
+      return { audioBase64, mimeType };
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
 }
 
 export function extractFallbackBrief(markdown: string): string {
@@ -110,6 +157,10 @@ export class AudioBriefService {
   private readonly cacheDir?: string;
   private readonly options: AudioBriefServiceOptions;
 
+  private ttsSynthesizerPromise?: Promise<
+    ((text: string) => Promise<{ audioBase64: string; mimeType: string }>) | null
+  >;
+
   constructor(options: AudioBriefServiceOptions = {}) {
     this.options = options;
     this.cacheDir =
@@ -119,6 +170,62 @@ export class AudioBriefService {
         "cache",
         "audio-brief",
       );
+  }
+
+  private async getTtsSynthesizer(): Promise<
+    ((text: string) => Promise<{ audioBase64: string; mimeType: string }>) | null
+  > {
+    if (this.options.ttsSynthesizer !== undefined) {
+      return this.options.ttsSynthesizer;
+    }
+    if (process.env.NODE_ENV === "test") {
+      return null;
+    }
+    if (!this.ttsSynthesizerPromise) {
+      this.ttsSynthesizerPromise = (async () => {
+        try {
+          const paseoHome = process.env.PASEO_HOME || path.join(os.homedir(), ".paseo");
+          const configPath = path.join(paseoHome, "config.json");
+          let baseUrl = process.env.OPENAI_TTS_BASE_URL || process.env.OPENAI_BASE_URL;
+          let apiKey = process.env.OPENAI_TTS_API_KEY || process.env.OPENAI_API_KEY || "sk-local";
+          let model = process.env.TTS_MODEL || "tts-1";
+          let voice = process.env.TTS_VOICE || "alloy";
+
+          try {
+            const raw = await fs.readFile(configPath, "utf-8");
+            const config = JSON.parse(raw) as {
+              providers?: { openai?: { tts?: { baseUrl?: string; apiKey?: string } } };
+              features?: { voiceMode?: { tts?: { model?: string; voice?: string } } };
+            };
+            const ttsProvider = config?.providers?.openai?.tts;
+            if (ttsProvider?.baseUrl && !process.env.OPENAI_TTS_BASE_URL) {
+              baseUrl = ttsProvider.baseUrl;
+            }
+            if (ttsProvider?.apiKey && !process.env.OPENAI_TTS_API_KEY) {
+              apiKey = ttsProvider.apiKey;
+            }
+            const voiceModeTts = config?.features?.voiceMode?.tts;
+            if (voiceModeTts?.model && !process.env.TTS_MODEL) {
+              model = voiceModeTts.model;
+            }
+            if (voiceModeTts?.voice && !process.env.TTS_VOICE) {
+              voice = voiceModeTts.voice;
+            }
+          } catch {
+            // Ignore config read error
+          }
+
+          if (!baseUrl) {
+            baseUrl = "http://127.0.0.1:8001/v1";
+          }
+
+          return createOpenAiTtsSynthesizer({ baseUrl, apiKey, model, voice });
+        } catch {
+          return null;
+        }
+      })();
+    }
+    return this.ttsSynthesizerPromise;
   }
 
   private getCacheFilePath(hash: string): string | null {
@@ -212,7 +319,8 @@ export class AudioBriefService {
   }): Promise<AudioBriefResult> {
     const prompt = params.customPrompt?.trim() || DEFAULT_AUDIO_BRIEF_INSTRUCTIONS;
     const promptHash = crypto.createHash("sha256").update(prompt).digest("hex").slice(0, 16);
-    const ttsKey = this.options.ttsSynthesizer ? "custom-tts" : "none";
+    const synthesizer = await this.getTtsSynthesizer();
+    const ttsKey = synthesizer ? "custom-tts" : "none";
     const textHash = crypto
       .createHash("sha256")
       .update(`${params.text.trim()}\0${ttsKey}\0${promptHash}`)
@@ -295,9 +403,10 @@ export class AudioBriefService {
     let audioBase64: string | undefined;
     let mimeType: string | undefined;
 
-    if (this.options.ttsSynthesizer) {
+    const synthesizer = await this.getTtsSynthesizer();
+    if (synthesizer) {
       try {
-        const speech = await this.options.ttsSynthesizer(briefText);
+        const speech = await synthesizer(briefText);
         audioBase64 = speech.audioBase64;
         mimeType = speech.mimeType;
       } catch (err) {

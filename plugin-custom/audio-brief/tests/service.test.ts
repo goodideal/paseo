@@ -6,6 +6,7 @@ import {
   extractFallbackBrief,
   AudioBriefService,
   DEFAULT_AUDIO_BRIEF_INSTRUCTIONS,
+  createOpenAiTtsSynthesizer,
 } from "../server/audio-brief-service.js";
 import contribute from "../index.server.js";
 import { audioBriefSynthesizeRpc } from "../shared/contracts.js";
@@ -224,6 +225,71 @@ describe("AudioBriefService", () => {
 
     expect(result.audioBase64).toBeDefined();
     expect(result.mimeType).toBe("audio/wav");
+  });
+
+  it("createOpenAiTtsSynthesizer posts correctly and parses audio response", async () => {
+    const mockAudioData = Buffer.from("WAVE_AUDIO_BYTES");
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: {
+        get: (h: string) => (h.toLowerCase() === "content-type" ? "audio/wav" : null),
+      },
+      arrayBuffer: async () => Uint8Array.from(mockAudioData).buffer,
+    });
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch as any;
+
+    try {
+      const synthesizer = createOpenAiTtsSynthesizer({
+        baseUrl: "http://127.0.0.1:8001/v1",
+        apiKey: "sk-local",
+        model: "tts-1",
+        voice: "alloy",
+      });
+
+      const result = await synthesizer("测试语音摘要");
+      expect(mockFetch).toHaveBeenCalledWith(
+        "http://127.0.0.1:8001/v1/audio/speech",
+        expect.objectContaining({
+          method: "POST",
+          headers: {
+            Authorization: "Bearer sk-local",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "tts-1",
+            input: "测试语音摘要",
+            voice: "alloy",
+          }),
+        }),
+      );
+      expect(result.mimeType).toBe("audio/wav");
+      expect(result.audioBase64).toBe(mockAudioData.toString("base64"));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("createOpenAiTtsSynthesizer throws error on HTTP failure", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: "Internal Server Error",
+    });
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch as any;
+
+    try {
+      const synthesizer = createOpenAiTtsSynthesizer({
+        baseUrl: "http://127.0.0.1:8001/v1",
+      });
+
+      await expect(synthesizer("测试错误")).rejects.toThrow("TTS server HTTP 500");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 
