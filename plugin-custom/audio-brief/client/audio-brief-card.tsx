@@ -10,6 +10,12 @@ export const AudioBriefCard = memo(function AudioBriefCard({ turnId }: PluginTur
   const stopBrief = useAudioBriefStore((s) => s.stopBrief);
   const [closed, setClosed] = useState(false);
 
+  React.useEffect(() => {
+    if (status === "loading" || status === "playing") {
+      setClosed(false);
+    }
+  }, [status]);
+
   const handleClose = useCallback(() => {
     stopBrief();
     setClosed(true);

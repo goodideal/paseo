@@ -83,9 +83,6 @@ export const useAudioBriefStore = create<AudioBriefState>((set, get) => ({
           if (get().currentTurnId === turnId) {
             set({
               status: "idle",
-              currentTurnId: null,
-              briefText: null,
-              error: null,
             });
           }
         },
@@ -93,8 +90,6 @@ export const useAudioBriefStore = create<AudioBriefState>((set, get) => ({
           if (get().currentTurnId === turnId) {
             set({
               status: "idle",
-              currentTurnId: null,
-              briefText: null,
               error: err.message,
             });
           }
