@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { PluginLifecycle } from "./lifecycle/index.js";
 import path from "node:path";
 import { stat, rm } from "node:fs/promises";
@@ -27,6 +28,7 @@ import { BuiltinPluginLoader, type BuiltinPlugin } from "./builtin/index.js";
 import type {
   PluginProviderMetadata,
   PluginWorkflowPresetMetadata,
+  PluginWorkflowStepAdapterMetadata,
 } from "./plugin-process-protocol.js";
 import type { WorkflowPresetRegistry } from "../workflows/workflow-preset-registry.js";
 import type { StepAdapterRegistry } from "../workflows/step-adapter-registry.js";
@@ -47,6 +49,9 @@ interface PluginRuntimePort {
   clearLogs(pluginId: string): void;
   getProviderRegistrations?(pluginId: string): readonly PluginProviderMetadata[];
   getWorkflowPresetRegistrations?(pluginId: string): readonly PluginWorkflowPresetMetadata[];
+  getWorkflowStepAdapterRegistrations?(
+    pluginId: string,
+  ): readonly PluginWorkflowStepAdapterMetadata[];
   getUsageSourceRegistrations(pluginId: string): readonly PluginUsageSourceMetadata[];
   identifyUsage: PluginRuntime["identifyUsage"];
   fetchUsage: PluginRuntime["fetchUsage"];
@@ -596,6 +601,40 @@ export class PluginService {
           preset.definition as import("../workflows/definition-compiler.js").WorkflowDefinition,
       });
     }
+    const adapters = this.runtime.getWorkflowStepAdapterRegistrations?.(pluginId) ?? [];
+    for (const adapter of adapters) {
+      this.dependencies.workflowRegistry?.registerPlugin({
+        pluginId,
+        manifest: {
+          ...adapter,
+          requiredPermissions:
+            adapter.requiredPermissions as import("../authorization/index.js").DaemonPermission[],
+          inputSchema: z.record(z.string(), z.unknown()),
+          outputSchema: z.record(z.string(), z.unknown()),
+        },
+      });
+    }
+  }
+
+  async executeWorkflowStepAdapter(params: {
+    pluginId: string;
+    adapterType: string;
+    input: Record<string, unknown>;
+    run: import("../workflows/workflow-models.js").WorkflowRun;
+  }): Promise<Record<string, unknown>> {
+    const output = await this.runtime.invoke(
+      params.pluginId,
+      `__workflow_step__:${params.adapterType}`,
+      {
+        input: params.input,
+        run: {
+          projectId: params.run.projectId,
+          workspaceId: params.run.workspaceId,
+          runId: params.run.id,
+        },
+      },
+    );
+    return (output ?? {}) as Record<string, unknown>;
   }
 
   private removeWorkflowRegistrations(pluginId: string): void {

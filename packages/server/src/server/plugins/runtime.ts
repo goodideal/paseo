@@ -26,6 +26,7 @@ import type {
   PluginProviderMetadata,
   PluginUsageSourceMetadata,
   PluginWorkflowPresetMetadata,
+  PluginWorkflowStepAdapterMetadata,
 } from "./plugin-process-protocol.js";
 import { PluginProcessMessageSchema } from "./plugin-process-protocol.js";
 import { PluginSessionSocket } from "./session-socket.js";
@@ -71,6 +72,7 @@ interface LoadedPlugin {
   providers: readonly PluginProviderMetadata[];
   usageSources: readonly PluginUsageSourceMetadata[];
   workflowPresets: readonly PluginWorkflowPresetMetadata[];
+  workflowStepAdapters: readonly PluginWorkflowStepAdapterMetadata[];
   child: PluginChild | null;
   outputCapture: PluginOutputCapture | null;
   pending: Map<string, PendingInvocation>;
@@ -392,6 +394,12 @@ export class PluginRuntime {
     return this.plugins.get(pluginId)?.workflowPresets ?? [];
   }
 
+  getWorkflowStepAdapterRegistrations(
+    pluginId: string,
+  ): readonly PluginWorkflowStepAdapterMetadata[] {
+    return this.plugins.get(pluginId)?.workflowStepAdapters ?? [];
+  }
+
   getUsageSourceRegistrations(pluginId: string): readonly PluginUsageSourceMetadata[] {
     return this.plugins.get(pluginId)?.usageSources ?? [];
   }
@@ -628,6 +636,7 @@ export class PluginRuntime {
         providers: [],
         usageSources: [],
         workflowPresets: [],
+        workflowStepAdapters: [],
         child: null,
         outputCapture: null,
         pending: new Map(),
@@ -757,6 +766,7 @@ export class PluginRuntime {
       providers: ready.providers ?? [],
       usageSources: ready.usageSources ?? [],
       workflowPresets: ready.workflowPresets ?? [],
+      workflowStepAdapters: ready.workflowStepAdapters ?? [],
       child,
       outputCapture,
       pending,

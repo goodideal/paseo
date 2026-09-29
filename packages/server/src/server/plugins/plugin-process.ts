@@ -11,9 +11,10 @@ import type {
   PluginHandlerContext,
   PluginServerContribution,
   PluginWorkflowPreset,
+  PluginWorkflowStepAdapterRegistration,
 } from "@getpaseo/plugin/server";
 import { fileURLToPath } from "node:url";
-import type { ZodType } from "zod";
+import { z, type ZodType } from "zod";
 import {
   ProviderEventSchema,
   type ProviderConnection,
@@ -68,6 +69,7 @@ export function createPluginWorker(options: {
   const handlers = new Map<string, RegisteredRpc>();
   const providers = new Map<string, ProviderRegistration>();
   const workflowPresets = new Map<string, PluginWorkflowPreset>();
+  const workflowStepAdapters = new Map<string, PluginWorkflowStepAdapterRegistration>();
   const usageSources = new Map<string, UsageSourceRegistration>();
   const providerConnections = new Map<
     string,
@@ -154,6 +156,36 @@ export function createPluginWorker(options: {
       throw new Error(`Duplicate plugin workflow preset: ${workflowId}`);
     }
     workflowPresets.set(workflowId, { ...preset, workflowId });
+  }
+
+  function registerWorkflowStepAdapter(adapter: PluginWorkflowStepAdapterRegistration): void {
+    const type = adapter.type.trim();
+    if (!type) throw new Error("Plugin workflow step adapter requires type");
+    if (workflowStepAdapters.has(type)) {
+      throw new Error(`Duplicate plugin workflow step adapter: ${type}`);
+    }
+    workflowStepAdapters.set(type, adapter);
+    register(
+      {
+        name: `__workflow_step__:${type}`,
+        input: z.object({
+          input: z.record(z.string(), z.unknown()),
+          run: z.object({
+            projectId: z.string(),
+            workspaceId: z.string(),
+            runId: z.string(),
+          }),
+        }),
+        output: z.record(z.string(), z.unknown()),
+      } as unknown as PluginRpcContract,
+      async (rawInput, context) => {
+        const payload = rawInput as {
+          input: Record<string, unknown>;
+          run: { projectId: string; workspaceId: string; runId: string };
+        };
+        return adapter.execute(payload.input, { paseo: context.paseo, run: payload.run });
+      },
+    );
   }
 
   function providerMetadata(provider: ProviderRegistration) {
@@ -287,6 +319,7 @@ export function createPluginWorker(options: {
       registerProvider,
       registerUsageSource,
       registerWorkflowPreset,
+      registerWorkflowStepAdapter,
       registerSettings,
       on: hooks.on,
       before: hooks.before,
@@ -308,6 +341,20 @@ export function createPluginWorker(options: {
           discover: !!source.discover,
         })),
     );
+    const stepAdapterMetadata = [...workflowStepAdapters.values()]
+      .sort((left, right) => left.type.localeCompare(right.type))
+      .map((adapter) => ({
+        type: adapter.type,
+        version: adapter.version,
+        executionRisk: adapter.executionRisk,
+        requiredPermissions: adapter.requiredPermissions,
+        repositoryCallable: adapter.repositoryCallable,
+        idempotency: adapter.idempotency,
+        cancellation: adapter.cancellation,
+        recovery: adapter.recovery,
+        supportedPlatforms: adapter.supportedPlatforms,
+        resourceConflictKey: adapter.resourceConflictKey,
+      }));
     send({
       type: "ready",
       methods: [...handlers.keys()].sort(),
@@ -318,6 +365,7 @@ export function createPluginWorker(options: {
       workflowPresets: [...workflowPresets.values()].sort((left, right) =>
         left.workflowId.localeCompare(right.workflowId),
       ),
+      ...(stepAdapterMetadata.length > 0 ? { workflowStepAdapters: stepAdapterMetadata } : {}),
       ...(usageSourceMetadata.length > 0 ? { usageSources: usageSourceMetadata } : {}),
     });
   }

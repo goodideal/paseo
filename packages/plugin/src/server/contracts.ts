@@ -13,6 +13,19 @@ export interface PluginWorkflowStepAdapterManifest {
   resourceConflictKey: string;
 }
 
+export interface PluginWorkflowRunReference {
+  projectId: string;
+  workspaceId: string;
+  runId: string;
+}
+
+export interface PluginWorkflowStepAdapterRegistration extends PluginWorkflowStepAdapterManifest {
+  execute(
+    input: Record<string, unknown>,
+    context: { paseo: PaseoApi; run: PluginWorkflowRunReference },
+  ): Promise<Record<string, unknown>>;
+}
+
 export interface PluginWorkflowPreset {
   workflowId: string;
   name: string;
@@ -63,7 +76,7 @@ export interface PluginServerContext extends PluginLifecycleRegistration {
   registerProvider(provider: ProviderRegistration): void;
   registerUsageSource(source: UsageSourceRegistration): void;
   registerWorkflowPreset?(preset: PluginWorkflowPreset): void;
-  registerWorkflowStepAdapter?(manifest: PluginWorkflowStepAdapterManifest): void;
+  registerWorkflowStepAdapter?(adapter: PluginWorkflowStepAdapterRegistration): void;
 }
 
 export type PluginServerContribution = (server: PluginServerContext) => PluginCleanup;

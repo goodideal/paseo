@@ -29,6 +29,19 @@ export interface PluginUsageSourceMetadata {
   discover: boolean;
 }
 
+export interface PluginWorkflowStepAdapterMetadata {
+  type: string;
+  version: string;
+  executionRisk: "read" | "workspace_observe" | "workspace_write" | "external_write" | "privileged";
+  requiredPermissions: string[];
+  repositoryCallable: boolean;
+  idempotency: "none" | "required";
+  cancellation: "unsupported" | "supported" | "best_effort";
+  recovery: "not_resumable" | "resumable" | "inspect_before_retry";
+  supportedPlatforms: Array<"darwin" | "linux" | "win32">;
+  resourceConflictKey: string;
+}
+
 export type PluginProcessRequest =
   | {
       type: "initialize";
@@ -75,6 +88,7 @@ export type PluginProcessMessage =
       methods: string[];
       providers: PluginProviderMetadata[];
       workflowPresets?: PluginWorkflowPresetMetadata[];
+      workflowStepAdapters?: PluginWorkflowStepAdapterMetadata[];
       usageSources?: PluginUsageSourceMetadata[];
       hooks?: { events: string[]; before: string[] };
     }
@@ -220,6 +234,27 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
   ],
 );
 
+const workflowStepAdapterMetadataSchema = z
+  .object({
+    type: z.string().min(1),
+    version: z.string().min(1),
+    executionRisk: z.enum([
+      "read",
+      "workspace_observe",
+      "workspace_write",
+      "external_write",
+      "privileged",
+    ]),
+    requiredPermissions: z.array(z.string()),
+    repositoryCallable: z.boolean(),
+    idempotency: z.enum(["none", "required"]),
+    cancellation: z.enum(["unsupported", "supported", "best_effort"]),
+    recovery: z.enum(["not_resumable", "resumable", "inspect_before_retry"]),
+    supportedPlatforms: z.array(z.enum(["darwin", "linux", "win32"])),
+    resourceConflictKey: z.string().min(1),
+  })
+  .strict();
+
 export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.discriminatedUnion(
   "type",
   [
@@ -242,6 +277,7 @@ export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.dis
               .strict(),
           )
           .optional(),
+        workflowStepAdapters: z.array(workflowStepAdapterMetadataSchema).optional(),
         usageSources: z.array(usageSourceMetadataSchema).optional(),
         hooks: hooksSchema.optional(),
       })

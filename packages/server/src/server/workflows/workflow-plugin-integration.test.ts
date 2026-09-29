@@ -204,4 +204,89 @@ describe("Workflow Plugin Contribution and Lifecycle Integration (Task 4.2)", ()
       }),
     ).toThrow("unregistered type: crawler.review_triage");
   });
+
+  it("executes plugin step adapter via executor host and validates output", async () => {
+    const { registry } = setup();
+    const { StepExecutor } = await import("./step-executors.js");
+    const { VerificationProfileRegistry } = await import("./verification-profiles.js");
+
+    registry.registerPlugin({
+      pluginId: "calc-plugin",
+      manifest: {
+        type: "calc.add_one",
+        version: "1.0.0",
+        inputSchema: z.object({ value: z.number() }).strict(),
+        outputSchema: z.object({ result: z.number() }).strict(),
+        executionRisk: "workspace_observe",
+        requiredPermissions: ["workspace.read"],
+        repositoryCallable: true,
+        idempotency: "none",
+        cancellation: "supported",
+        recovery: "not_resumable",
+        supportedPlatforms: ["darwin", "linux", "win32"],
+        resourceConflictKey: "workspace:{{workspaceId}}:calc",
+      },
+    });
+
+    const host: Partial<StepExecutorHost> = {
+      executePluginAdapter: async (params: {
+        pluginId: string;
+        adapterType: string;
+        input: Record<string, unknown>;
+        run: unknown;
+      }) => {
+        expect(params.pluginId).toBe("calc-plugin");
+        expect(params.adapterType).toBe("calc.add_one");
+        const val = params.input.value as number;
+        return { result: val + 1 };
+      },
+    };
+
+    const executor = new StepExecutor(
+      registry,
+      new VerificationProfileRegistry([]),
+      host as StepExecutorHost,
+    );
+
+    const run = {
+      id: "run_calc_1",
+      projectId: "prj_1",
+      workspaceId: "wsp_1",
+      definitionId: "def_1",
+      definitionRevision: "1",
+      definitionHash: "a".repeat(64),
+      workspaceRoot: "/workspace",
+      principalId: "user_1",
+      status: "running" as const,
+      createdAt: 1000,
+      updatedAt: 1000,
+      stepAttempts: [
+        {
+          id: "attempt_1",
+          stepId: "step_calc",
+          adapterType: "calc.add_one",
+          adapterVersion: "1.0.0",
+          status: "ready" as const,
+          input: { value: 2 },
+        },
+      ],
+      approvals: [],
+      artifacts: [],
+      intents: [],
+      receipts: [],
+      leases: [],
+      unknownOutcomes: [],
+      interactions: [],
+    };
+
+    const prepared = executor.prepare({ run, attemptId: "attempt_1", now: 1000 });
+    const outcome = await executor.executePrepared({
+      run: prepared,
+      attemptId: "attempt_1",
+      now: 1000,
+    });
+
+    expect(outcome.status).toBe("succeeded");
+    expect(outcome.declaredOutputs).toEqual({ result: 3 });
+  });
 });
