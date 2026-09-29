@@ -141,6 +141,58 @@ export const WorkflowUnknownOutcomeSchema = z
   })
   .strict();
 
+export const WorkflowInteractionStatusSchema = z.enum([
+  "pending",
+  "answered",
+  "expired",
+  "cancelled",
+]);
+
+export const WorkflowInteractionSchema = z
+  .object({
+    id: IdentifierSchema,
+    runId: IdentifierSchema,
+    stepId: IdentifierSchema,
+    status: WorkflowInteractionStatusSchema,
+    promptArtifactId: IdentifierSchema,
+    answerArtifactId: IdentifierSchema.optional(),
+    requestedAt: TimestampSchema,
+    answeredAt: TimestampSchema.optional(),
+    responderId: IdentifierSchema.optional(),
+  })
+  .strict();
+
+export const WorkflowAgentHandoffActionSchema = z.enum([
+  "ask_user",
+  "await_design_approval",
+  "await_spec_approval",
+  "await_plan_approval",
+  "ready_for_verification",
+  "blocked",
+]);
+
+export const WorkflowAgentHandoffSchema = z
+  .object({
+    version: z.number().int().positive(),
+    phase: IdentifierSchema,
+    nextAction: WorkflowAgentHandoffActionSchema,
+    summary: z.string().trim().min(1).max(16_384),
+    question: z.string().trim().min(1).max(16_384).optional(),
+    artifactReferences: z.array(IdentifierSchema),
+  })
+  .strict();
+
+export const DeliveryApprovalManifestSchema = z
+  .object({
+    sourceBranch: z.string().min(1),
+    targetBranch: z.string().min(1),
+    commitSha: z.string().min(1),
+    pullRequestTitle: z.string().min(1),
+    pullRequestBodyDigest: DigestSchema,
+    issueReference: z.string().min(1),
+  })
+  .strict();
+
 export const WorkflowRunSchema = z
   .object({
     id: IdentifierSchema,
@@ -163,6 +215,8 @@ export const WorkflowRunSchema = z
     receipts: z.array(WorkflowReceiptSchema),
     leases: z.array(WorkflowLeaseSchema),
     unknownOutcomes: z.array(WorkflowUnknownOutcomeSchema),
+    interactions: z.array(WorkflowInteractionSchema).default([]),
+    deliveryApprovalManifest: DeliveryApprovalManifestSchema.optional(),
   })
   .strict();
 
@@ -178,4 +232,9 @@ export type WorkflowIntent = z.infer<typeof WorkflowIntentSchema>;
 export type WorkflowReceipt = z.infer<typeof WorkflowReceiptSchema>;
 export type WorkflowLease = z.infer<typeof WorkflowLeaseSchema>;
 export type WorkflowUnknownOutcome = z.infer<typeof WorkflowUnknownOutcomeSchema>;
+export type WorkflowInteractionStatus = z.infer<typeof WorkflowInteractionStatusSchema>;
+export type WorkflowInteraction = z.infer<typeof WorkflowInteractionSchema>;
+export type WorkflowAgentHandoffAction = z.infer<typeof WorkflowAgentHandoffActionSchema>;
+export type WorkflowAgentHandoff = z.infer<typeof WorkflowAgentHandoffSchema>;
+export type DeliveryApprovalManifest = z.infer<typeof DeliveryApprovalManifestSchema>;
 export type WorkflowRun = z.infer<typeof WorkflowRunSchema>;

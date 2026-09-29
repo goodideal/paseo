@@ -96,6 +96,7 @@ export class WorkflowService {
       receipts: [],
       leases: [],
       unknownOutcomes: [],
+      interactions: [],
     };
     const firstStep = compiled.definition.steps[0];
     const requiresApproval = firstStep.approval === "required";

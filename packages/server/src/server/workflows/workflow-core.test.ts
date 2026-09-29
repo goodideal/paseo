@@ -75,6 +75,7 @@ function makeRun(overrides: Partial<WorkflowRun> = {}): WorkflowRun {
     receipts: [],
     leases: [],
     unknownOutcomes: [],
+    interactions: [],
     ...overrides,
   };
 }

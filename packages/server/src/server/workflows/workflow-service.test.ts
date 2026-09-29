@@ -7,6 +7,11 @@ import type { WorkflowDefinition } from "./definition-compiler.js";
 import { WorkflowService } from "./workflow-service.js";
 import { StepAdapterRegistry } from "./step-adapter-registry.js";
 import { WorkflowStore } from "./workflow-store.js";
+import {
+  DeliveryApprovalManifestSchema,
+  WorkflowInteractionSchema,
+  type WorkflowRun,
+} from "./workflow-models.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -147,5 +152,112 @@ describe("WorkflowService", () => {
         decision: "approved",
       }),
     ).toThrow("is not pending");
+  });
+
+  it("persists pending interactions, answer artifacts, and delivery approval manifests", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-workflow-models-"));
+    temporaryDirectories.push(paseoHome);
+    const store = new WorkflowStore({ paseoHome });
+
+    const validInteraction = {
+      id: "interaction_000000000001",
+      runId: "run_0000000000000001",
+      stepId: "design-input",
+      status: "pending" as const,
+      promptArtifactId: "artifact_question_01",
+      requestedAt: 100,
+    };
+    expect(WorkflowInteractionSchema.parse(validInteraction)).toMatchObject({ status: "pending" });
+
+    expect(() =>
+      WorkflowInteractionSchema.parse({
+        id: "interaction_000000000002",
+        stepId: "design-input",
+        status: "pending",
+        promptArtifactId: "artifact_question_02",
+        requestedAt: 100,
+      }),
+    ).toThrow();
+
+    expect(() =>
+      WorkflowInteractionSchema.parse({
+        id: "interaction_000000000003",
+        runId: "run_0000000000000001",
+        stepId: "design-input",
+        status: "pending",
+        requestedAt: 100,
+      }),
+    ).toThrow();
+
+    const validManifest = {
+      sourceBranch: "agent/42",
+      targetBranch: "main",
+      commitSha: "c0ffee1234567890abcdef1234567890abcdef12",
+      pullRequestTitle: "feat: interactive workflow core",
+      pullRequestBodyDigest: "a".repeat(64),
+      issueReference: "#42",
+    };
+    expect(DeliveryApprovalManifestSchema.parse(validManifest)).toEqual(validManifest);
+
+    expect(() =>
+      DeliveryApprovalManifestSchema.parse({
+        sourceBranch: "agent/42",
+        targetBranch: "main",
+      }),
+    ).toThrow();
+
+    const run: WorkflowRun = {
+      id: "run_0000000000000001",
+      projectId: "prj_1",
+      workspaceId: "wsp_1",
+      definitionId: "interactive-feature",
+      definitionRevision: "rev_1",
+      definitionHash: "b".repeat(64),
+      workspaceRoot: "/repo",
+      principalId: "principal_1",
+      status: "waiting_approval",
+      createdAt: 100,
+      updatedAt: 100,
+      stepAttempts: [],
+      approvals: [],
+      artifacts: [
+        {
+          id: "artifact_answer_0001",
+          kind: "interaction_answer",
+          path: "artifacts/answer.txt",
+          contentHash: "c".repeat(64),
+          bytes: 42,
+          redacted: true,
+          createdAt: 101,
+        },
+      ],
+      intents: [],
+      receipts: [],
+      leases: [],
+      unknownOutcomes: [],
+      interactions: [
+        {
+          ...validInteraction,
+          answerArtifactId: "artifact_answer_0001",
+          answeredAt: 105,
+          responderId: "principal_user",
+        },
+      ],
+      deliveryApprovalManifest: validManifest,
+    };
+
+    store.create(run);
+    const reloaded = store.get({
+      projectId: run.projectId,
+      workspaceId: run.workspaceId,
+      runId: run.id,
+    });
+    expect(reloaded).toEqual(run);
+    expect(reloaded?.interactions).toHaveLength(1);
+    expect(reloaded?.interactions[0]).toMatchObject({
+      id: "interaction_000000000001",
+      answerArtifactId: "artifact_answer_0001",
+    });
+    expect(reloaded?.deliveryApprovalManifest).toEqual(validManifest);
   });
 });

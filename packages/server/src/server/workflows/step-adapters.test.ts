@@ -37,6 +37,7 @@ function makeRun(
     receipts: [],
     leases: [],
     unknownOutcomes: [],
+    interactions: [],
     ...overrides,
   };
 }
