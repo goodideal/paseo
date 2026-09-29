@@ -1,0 +1,9 @@
+{
+  "id": "desktop-pet",
+  "name": "Desktop Pet Companion",
+  "version": "1.0.0",
+  "description": "Desktop pet companion with real-time multi-task tracking, duration monitoring, AI timeout auto-decision, and audit logs.",
+  "requirements": {
+    "paseo": ">=0.8.0"
+  }
+}
