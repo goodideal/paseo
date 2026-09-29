@@ -1,99 +1,78 @@
 import { describe, expect, it, vi } from "vitest";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { MultiProjectPoller } from "../server/poller.js";
-import { ProjectGiteaResolver } from "../server/resolver.js";
-import { WorktreeOrchestrator } from "../server/orchestrator.js";
-import { TaskStore } from "../server/store.js";
-import { GiteaClientPool } from "../server/client-pool.js";
 
 describe("MultiProjectPoller", () => {
-  it("polls across multiple projects discovered from Paseo", async () => {
-    const store = new TaskStore(join(tmpdir(), `test-poller-${Date.now()}.json`));
-    const clientPool = new GiteaClientPool();
-    const orchestrator = new WorktreeOrchestrator({ store, clientPool });
-
-    const resolver = new ProjectGiteaResolver();
-    vi.spyOn(resolver, "resolveProject").mockImplementation(async (project) => ({
-      projectId: project.projectId,
-      projectPath: project.projectRootPath,
-      projectName: project.projectDisplayName || project.projectId,
-      host: "gitea.local",
-      baseUrl: "http://gitea.local",
-      token: "mock-token",
-      repoOwner: "org",
-      repoName: project.projectId,
-      authSource: "tea",
-    }));
-
-    const clientA = orchestrator.getClientForProject({
-      baseUrl: "http://gitea.local",
-      token: "mock-token",
-      repoOwner: "org",
-      repoName: "proj-a",
-    });
-    const clientB = orchestrator.getClientForProject({
-      baseUrl: "http://gitea.local",
-      token: "mock-token",
-      repoOwner: "org",
-      repoName: "proj-b",
-    });
-
-    vi.spyOn(clientA, "fetchReadyIssues").mockResolvedValue([
-      {
-        number: 1,
-        title: "Issue for Proj A",
-        body: "Body A",
-        html_url: "http://gitea.local/org/proj-a/issues/1",
-        labels: [{ name: "agent-ready" }],
-      },
-    ]);
-    vi.spyOn(clientA, "claimIssue").mockResolvedValue(undefined);
-    vi.spyOn(clientA, "createPullRequest").mockResolvedValue({
-      url: "http://gitea.local/org/proj-a/pulls/1",
-    });
-    vi.spyOn(clientA, "markReviewed").mockResolvedValue(undefined);
-
-    vi.spyOn(clientB, "fetchReadyIssues").mockResolvedValue([
-      {
-        number: 2,
-        title: "Issue for Proj B",
-        body: "Body B",
-        html_url: "http://gitea.local/org/proj-b/issues/2",
-        labels: [{ name: "agent-ready" }],
-      },
-    ]);
-    vi.spyOn(clientB, "claimIssue").mockResolvedValue(undefined);
-    vi.spyOn(clientB, "createPullRequest").mockResolvedValue({
-      url: "http://gitea.local/org/proj-b/pulls/2",
-    });
-    vi.spyOn(clientB, "markReviewed").mockResolvedValue(undefined);
-
-    const mockProjectsProvider = {
-      list: async () => ({
-        projects: [
-          {
-            projectId: "proj-a",
-            projectRootPath: "/path/a",
-            projectDisplayName: "Project Alpha",
-            projectKind: "git",
-          },
-          {
-            projectId: "proj-b",
-            projectRootPath: "/path/b",
-            projectDisplayName: "Project Beta",
-            projectKind: "git",
-          },
-        ],
+  it("skips unauthorized projects and creates workflow run for authorized ready issues", async () => {
+    const mockSettings = {
+      current: { enabled: true, pollIntervalSeconds: 60, maxConcurrentRuns: 3 },
+      isProjectAuthorized: vi.fn().mockImplementation((id: string) => id === "proj-auth"),
+      getReadyLabel: vi.fn().mockReturnValue("agent-ready"),
+      getWorkflowPolicy: vi.fn().mockReturnValue("full_superpowers"),
+    };
+    const mockResolver = {
+      resolveProject: vi.fn().mockResolvedValue({
+        projectId: "proj-auth",
+        baseUrl: "https://git.example.com",
+        token: "tok",
+        repoOwner: "org",
+        repoName: "repo",
       }),
     };
+    const mockClient = {
+      fetchReadyIssues: vi
+        .fn()
+        .mockResolvedValue([{ number: 101, title: "Fix bug", labels: [{ name: "agent-ready" }] }]),
+    };
+    const mockIndexStore = {
+      hasActiveRunForIssue: vi.fn().mockResolvedValue(false),
+      recordRun: vi.fn().mockResolvedValue(undefined),
+    };
+    const mockWorkflows = {
+      runCreate: vi.fn().mockResolvedValue({ runId: "run-gitea-101" }),
+      runList: vi.fn().mockResolvedValue({ runs: [] }),
+    };
 
-    const poller = new MultiProjectPoller(resolver, orchestrator, mockProjectsProvider, 1000);
+    const poller = new MultiProjectPoller({
+      settings: mockSettings as any,
+      resolver: mockResolver as any,
+      clientPool: { getClient: () => mockClient } as any,
+      indexStore: mockIndexStore as any,
+      getWorkflows: () => mockWorkflows as any,
+      getProjects: async () => [{ projectId: "proj-auth", projectKind: "git" }] as any,
+    });
+
     await poller.poll();
-    await orchestrator.waitForIdle();
 
-    const tasks = await store.listTasks();
-    expect(tasks).toHaveLength(2);
-    expect(tasks.map((t) => t.projectId).sort()).toEqual(["proj-a", "proj-b"]);
+    expect(mockWorkflows.runCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workflowId: "gitea.issue-to-pr",
+        input: expect.objectContaining({ issueNumber: 101 }),
+      }),
+    );
+    expect(mockIndexStore.recordRun).toHaveBeenCalledWith(
+      expect.objectContaining({ issueNumber: 101, runId: "run-gitea-101" }),
+    );
+  });
+
+  it("does not poll when global automation is disabled", async () => {
+    const mockSettings = {
+      current: { enabled: false, pollIntervalSeconds: 60, maxConcurrentRuns: 3 },
+      isProjectAuthorized: vi.fn().mockReturnValue(true),
+    };
+    const mockWorkflows = {
+      runCreate: vi.fn(),
+    };
+
+    const poller = new MultiProjectPoller({
+      settings: mockSettings as any,
+      resolver: {} as any,
+      clientPool: {} as any,
+      indexStore: {} as any,
+      getWorkflows: () => mockWorkflows as any,
+      getProjects: async () => [] as any,
+    });
+
+    await poller.poll();
+    expect(mockWorkflows.runCreate).not.toHaveBeenCalled();
   });
 });

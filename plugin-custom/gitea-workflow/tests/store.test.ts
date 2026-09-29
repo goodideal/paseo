@@ -2,88 +2,76 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { rm } from "node:fs/promises";
-import { TaskStore } from "../server/store.js";
-import type { GiteaWorkflowTask } from "../shared/types.js";
+import { IssueRunIndexStore } from "../server/store.js";
 
-describe("TaskStore", () => {
+describe("IssueRunIndexStore", () => {
   let testFilePath: string;
-  let store: TaskStore;
-
-  const sampleTask: GiteaWorkflowTask = {
-    id: "task-1",
-    projectId: "proj-alpha",
-    projectPath: "/projects/alpha",
-    issueNumber: 1,
-    issueTitle: "Sample Issue",
-    issueUrl: "http://gitea.local/owner/repo/issues/1",
-    issueBody: "Sample body",
-    giteaBaseUrl: "http://gitea.local",
-    repoOwner: "owner",
-    repoName: "repo",
-    branchName: "agent/issue-1-sample",
-    workspaceId: "ws-alpha-1",
-    agentId: "agent-alpha-1",
-    state: "queued",
-    screenshots: [],
-    diffSummary: null,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-
-  const sampleTaskBeta: GiteaWorkflowTask = {
-    ...sampleTask,
-    id: "task-2",
-    projectId: "proj-beta",
-    workspaceId: "ws-beta-1",
-  };
+  let store: IssueRunIndexStore;
 
   beforeEach(() => {
-    testFilePath = join(tmpdir(), `test-task-store-${Date.now()}-${Math.random()}.json`);
-    store = new TaskStore(testFilePath);
+    testFilePath = join(tmpdir(), `test-issue-index-${Date.now()}-${Math.random()}.json`);
+    store = new IssueRunIndexStore(testFilePath);
   });
 
   afterEach(async () => {
     await rm(testFilePath, { force: true });
   });
 
-  it("saves, lists, and filters tasks by projectId and workspaceId", async () => {
-    await store.saveTask(sampleTask);
-    await store.saveTask(sampleTaskBeta);
+  it("records run for issue and detects active run", async () => {
+    expect(await store.hasActiveRunForIssue("proj-1", "org", "repo", 42)).toBe(false);
 
-    const allTasks = await store.listTasks();
-    expect(allTasks).toHaveLength(2);
-
-    const alphaTasks = await store.listTasks({ projectId: "proj-alpha" });
-    expect(alphaTasks).toHaveLength(1);
-    expect(alphaTasks[0].id).toBe("task-1");
-
-    const betaWsTasks = await store.listTasks({ workspaceId: "ws-beta-1" });
-    expect(betaWsTasks).toHaveLength(1);
-    expect(betaWsTasks[0].id).toBe("task-2");
-  });
-
-  it("updates task state and diffSummary", async () => {
-    await store.saveTask(sampleTask);
-    const updated = await store.updateTask("task-1", {
-      state: "coding",
-      diffSummary: { additions: 10, deletions: 2, filesChanged: 1 },
+    await store.recordRun({
+      projectId: "proj-1",
+      repoOwner: "org",
+      repoName: "repo",
+      issueNumber: 42,
+      runId: "run-gitea-42",
     });
 
-    expect(updated.state).toBe("coding");
-    expect(updated.diffSummary?.additions).toBe(10);
-
-    const reloaded = await store.getTask("task-1");
-    expect(reloaded?.state).toBe("coding");
+    expect(await store.hasActiveRunForIssue("proj-1", "org", "repo", 42)).toBe(true);
+    expect(await store.getRunIdForIssue("proj-1", "org", "repo", 42)).toBe("run-gitea-42");
   });
 
-  it("handles concurrent atomic updates safely", async () => {
-    await store.saveTask(sampleTask);
-    await Promise.all([
-      store.updateTask("task-1", { state: "coding" }),
-      store.updateTask("task-1", { state: "self_review" }),
-    ]);
+  it("lists entries by project", async () => {
+    await store.recordRun({
+      projectId: "proj-1",
+      repoOwner: "org",
+      repoName: "repo",
+      issueNumber: 1,
+      runId: "run-1",
+    });
+    await store.recordRun({
+      projectId: "proj-2",
+      repoOwner: "org",
+      repoName: "other",
+      issueNumber: 2,
+      runId: "run-2",
+    });
 
-    const final = await store.getTask("task-1");
-    expect(["coding", "self_review"]).toContain(final?.state);
+    const all = await store.listEntries();
+    expect(all).toHaveLength(2);
+
+    const proj1 = await store.listEntries("proj-1");
+    expect(proj1).toHaveLength(1);
+    expect(proj1[0].runId).toBe("run-1");
+  });
+
+  it("rebuilds index from workflow runs list", async () => {
+    const runs = [
+      {
+        id: "run-rebuilt-100",
+        projectId: "proj-1",
+        runInput: {
+          repoOwner: "org",
+          repoName: "repo",
+          issueNumber: 100,
+        },
+      },
+    ];
+
+    await store.rebuildFromRuns(runs);
+
+    expect(await store.hasActiveRunForIssue("proj-1", "org", "repo", 100)).toBe(true);
+    expect(await store.getRunIdForIssue("proj-1", "org", "repo", 100)).toBe("run-rebuilt-100");
   });
 });

@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
-import { createPaseoClient, type PaseoClient } from "@getpaseo/client";
+import { createPaseoClient, type PaseoClient, type PaseoApi } from "@getpaseo/client";
 import {
   approveTaskRpc,
   diagnoseProjectsRpc,
@@ -12,10 +12,9 @@ import {
 import { giteaSettingsDefinition } from "./shared/settings.js";
 import { SettingsManager } from "./server/settings-manager.js";
 import { DiagnosticsService } from "./server/diagnostics.js";
-import { TaskStore } from "./server/store.js";
+import { IssueRunIndexStore, TaskStore } from "./server/store.js";
 import { GiteaClientPool } from "./server/client-pool.js";
 import { ProjectGiteaResolver } from "./server/resolver.js";
-import { WorktreeOrchestrator } from "./server/orchestrator.js";
 import { MultiProjectPoller } from "./server/poller.js";
 import { createGiteaStepAdapters } from "./server/adapters/index.js";
 import { issueToPrPreset } from "./server/presets/issue-to-pr.js";
@@ -35,6 +34,9 @@ export default function contribute(server: PluginServerContext) {
 
   const storePath = join(tmpdir(), "paseo-gitea-workflow", "tasks.json");
   const store = new TaskStore(storePath);
+  const indexPath = join(tmpdir(), "paseo-gitea-workflow", "issue-index.json");
+  const indexStore = new IssueRunIndexStore(indexPath);
+
   const clientPool = new GiteaClientPool();
   const resolver = new ProjectGiteaResolver();
   const diagnosticsService = new DiagnosticsService(resolver, clientPool, settingsManager);
@@ -44,14 +46,9 @@ export default function contribute(server: PluginServerContext) {
   }
   server.registerWorkflowPreset?.(issueToPrPreset);
 
-  const orchestrator = new WorktreeOrchestrator({
-    store,
-    clientPool,
-    maxConcurrentWorktrees: 3,
-  });
-
   let poller: MultiProjectPoller | null = null;
   let paseoClient: PaseoClient | null = null;
+  let activePaseo: PaseoApi | null = null;
 
   async function initBackgroundPoller(): Promise<void> {
     try {
@@ -60,10 +57,21 @@ export default function contribute(server: PluginServerContext) {
         reconnect: { enabled: true },
       });
       await paseoClient.connect();
-      orchestrator.setPaseoApi(paseoClient);
 
       if (!poller) {
-        poller = new MultiProjectPoller(resolver, orchestrator, paseoClient.projects, 30_000);
+        poller = new MultiProjectPoller({
+          settings: settingsManager,
+          resolver,
+          clientPool,
+          indexStore,
+          getWorkflows: () => (paseoClient ?? activePaseo)?.workflows,
+          getProjects: async () => {
+            const api = paseoClient ?? activePaseo;
+            if (!api) return [];
+            const list = await api.projects.list();
+            return list.projects;
+          },
+        });
         poller.start();
       }
     } catch (err) {
@@ -74,6 +82,7 @@ export default function contribute(server: PluginServerContext) {
   void initBackgroundPoller();
 
   server.handle(listTasksRpc, async ({ projectId, workspaceId }, context) => {
+    activePaseo = context.paseo;
     let resolvedProjectId = projectId;
     if (!resolvedProjectId && workspaceId) {
       try {
@@ -87,12 +96,18 @@ export default function contribute(server: PluginServerContext) {
       }
     }
 
-    if (!orchestrator.hasPaseoApi && context.paseo) {
-      orchestrator.setPaseoApi(context.paseo);
-    }
-
     if (!poller && context.paseo?.projects) {
-      poller = new MultiProjectPoller(resolver, orchestrator, context.paseo.projects, 30_000);
+      poller = new MultiProjectPoller({
+        settings: settingsManager,
+        resolver,
+        clientPool,
+        indexStore,
+        getWorkflows: () => context.paseo.workflows,
+        getProjects: async () => {
+          const list = await context.paseo.projects.list();
+          return list.projects;
+        },
+      });
       poller.start();
     }
 
@@ -108,15 +123,61 @@ export default function contribute(server: PluginServerContext) {
     return { task };
   });
 
-  server.handle(approveTaskRpc, async ({ taskId }) => {
-    return orchestrator.approveTask(taskId);
+  server.handle(approveTaskRpc, async ({ taskId }, context) => {
+    const workflows = context.paseo.workflows;
+    if (workflows) {
+      try {
+        const list = await workflows.approvalList({
+          projectId: "default",
+          workspaceId: "default",
+          runId: taskId,
+        });
+        const pending = list.approvals.find((a) => a.status === "pending");
+        if (pending) {
+          await workflows.approvalApprove({
+            projectId: "default",
+            workspaceId: "default",
+            runId: taskId,
+            approvalId: pending.approvalId,
+          });
+          return { ok: true };
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return { ok: true };
   });
 
-  server.handle(rejectTaskRpc, async ({ taskId, feedback }) => {
-    return orchestrator.rejectTask(taskId, feedback);
+  server.handle(rejectTaskRpc, async ({ taskId, feedback }, context) => {
+    const workflows = context.paseo.workflows;
+    if (workflows) {
+      try {
+        const list = await workflows.approvalList({
+          projectId: "default",
+          workspaceId: "default",
+          runId: taskId,
+        });
+        const pending = list.approvals.find((a) => a.status === "pending");
+        if (pending) {
+          await workflows.approvalDeny({
+            projectId: "default",
+            workspaceId: "default",
+            runId: taskId,
+            approvalId: pending.approvalId,
+            reason: feedback,
+          });
+          return { ok: true };
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return { ok: true };
   });
 
   server.handle(diagnoseProjectsRpc, async (_input, context) => {
+    activePaseo = context.paseo;
     let projects: any[] = [];
     try {
       const list = await context.paseo.projects.list();

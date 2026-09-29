@@ -1,33 +1,39 @@
-import type { WorktreeOrchestrator } from "./orchestrator.js";
 import type { ProjectGiteaResolver } from "./resolver.js";
-import type { ResolvedProjectGitea } from "../shared/types.js";
+import type { GiteaClientPool } from "./client-pool.js";
+import type { SettingsManager } from "./settings-manager.js";
+import type { IssueRunIndexStore } from "./store.js";
+import type { PaseoWorkflowActions } from "@getpaseo/client";
 
 export interface PaseoProjectItem {
   projectId: string;
   projectRootPath: string;
-  projectDisplayName: string;
-  projectKind: string;
+  projectDisplayName?: string;
+  projectKind?: string;
 }
 
-export interface PaseoProjectsProvider {
-  list: () => Promise<{ projects: PaseoProjectItem[] }>;
+export interface MultiProjectPollerOptions {
+  settings: SettingsManager;
+  resolver: ProjectGiteaResolver;
+  clientPool: GiteaClientPool;
+  indexStore: IssueRunIndexStore;
+  getWorkflows: () => PaseoWorkflowActions | undefined;
+  getProjects: () => Promise<PaseoProjectItem[]>;
+  intervalMs?: number;
 }
 
 export class MultiProjectPoller {
   private timer: NodeJS.Timeout | null = null;
   private isRunning = false;
-  private resolvedProjects = new Map<string, ResolvedProjectGitea>();
 
-  constructor(
-    private readonly resolver: ProjectGiteaResolver,
-    private readonly orchestrator: WorktreeOrchestrator,
-    private readonly projectsProvider?: PaseoProjectsProvider,
-    private readonly intervalMs: number = 60_000,
-  ) {}
+  constructor(private readonly options: MultiProjectPollerOptions) {}
 
   start(): void {
     if (this.timer) return;
-    this.timer = setInterval(() => void this.poll(), this.intervalMs);
+    const interval = Math.max(
+      10_000,
+      (this.options.settings.current.pollIntervalSeconds ?? 60) * 1000,
+    );
+    this.timer = setInterval(() => void this.poll(), interval);
     void this.poll();
   }
 
@@ -38,48 +44,81 @@ export class MultiProjectPoller {
     }
   }
 
-  async refreshProjects(): Promise<ResolvedProjectGitea[]> {
-    if (!this.projectsProvider) return Array.from(this.resolvedProjects.values());
-    try {
-      const res = await this.projectsProvider.list();
-      const gitProjects = res.projects.filter((p) => p.projectKind === "git");
-      const resolvedList: ResolvedProjectGitea[] = [];
-
-      for (const project of gitProjects) {
-        const resolved = await this.resolver.resolveProject(project);
-        if (resolved) {
-          this.resolvedProjects.set(project.projectId, resolved);
-          resolvedList.push(resolved);
-        } else {
-          this.resolvedProjects.delete(project.projectId);
-        }
-      }
-      return resolvedList;
-    } catch (err) {
-      console.error("[MultiProjectPoller] Error listing projects:", err);
-      return Array.from(this.resolvedProjects.values());
-    }
-  }
-
   async poll(): Promise<void> {
     if (this.isRunning) return;
+    if (!this.options.settings.current.enabled) return;
+
+    const workflows = this.options.getWorkflows();
+    if (!workflows) return;
+
     this.isRunning = true;
     try {
-      const projects = await this.refreshProjects();
-      for (const project of projects) {
+      const allProjects = await this.options.getProjects();
+      const authorizedProjects = allProjects.filter(
+        (p) => p.projectKind === "git" && this.options.settings.isProjectAuthorized(p.projectId),
+      );
+
+      for (const project of authorizedProjects) {
         try {
-          const client = this.orchestrator.getClientForProject(project);
+          const resolved = await this.options.resolver.resolveProject(project);
+          if (!resolved || !resolved.token || resolved.authSource === "anonymous") {
+            continue;
+          }
+
+          const readyLabel = this.options.settings.getReadyLabel(project.projectId);
+          const policy = this.options.settings.getWorkflowPolicy(project.projectId);
+
+          const client = this.options.clientPool.getClient({
+            giteaUrl: resolved.baseUrl,
+            giteaToken: resolved.token,
+            repoOwner: resolved.repoOwner,
+            repoName: resolved.repoName,
+            listenLabel: readyLabel,
+          });
+
           const readyIssues = await client.fetchReadyIssues();
           for (const issue of readyIssues) {
-            await this.orchestrator.enqueueIssue(project, issue);
+            const alreadyHasRun = await this.options.indexStore.hasActiveRunForIssue(
+              project.projectId,
+              resolved.repoOwner,
+              resolved.repoName,
+              issue.number,
+            );
+            if (alreadyHasRun) continue;
+
+            const createRes = await workflows.runCreate({
+              projectId: project.projectId,
+              workspaceId: project.projectId,
+              workflowId: "gitea.issue-to-pr",
+              input: {
+                baseUrl: resolved.baseUrl,
+                token: resolved.token,
+                repoOwner: resolved.repoOwner,
+                repoName: resolved.repoName,
+                issueNumber: issue.number,
+                issueTitle: issue.title,
+                issueBody: issue.body,
+                listenLabel: readyLabel,
+                policy,
+              },
+            });
+
+            if (createRes.runId) {
+              await this.options.indexStore.recordRun({
+                projectId: project.projectId,
+                repoOwner: resolved.repoOwner,
+                repoName: resolved.repoName,
+                issueNumber: issue.number,
+                runId: createRes.runId,
+              });
+            }
           }
         } catch (err) {
-          console.error(`[MultiProjectPoller] Error polling project ${project.projectName}:`, err);
+          console.error(`[MultiProjectPoller] Error polling project ${project.projectId}:`, err);
         }
       }
-      await this.orchestrator.processQueue();
-    } catch (err) {
-      console.error("[MultiProjectPoller Fatal Error]", err);
+    } catch (fatalErr) {
+      console.error("[MultiProjectPoller Fatal Error]", fatalErr);
     } finally {
       this.isRunning = false;
     }
