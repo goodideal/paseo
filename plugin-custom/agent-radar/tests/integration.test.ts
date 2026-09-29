@@ -33,6 +33,7 @@ describe("Subagent Watchdog Integration Test", () => {
         rpcHandlers.set(contract, handler);
       },
       registerProvider: vi.fn(),
+      registerUsageSource: vi.fn(),
     };
 
     // Initialize plugin
@@ -242,6 +243,7 @@ describe("Subagent Watchdog Integration Test", () => {
       }) as any,
       handle: vi.fn(),
       registerProvider: vi.fn(),
+      registerUsageSource: vi.fn(),
     };
 
     const cleanup = contribute(fakeServer);
@@ -343,6 +345,7 @@ describe("Subagent Watchdog Integration Test", () => {
       }) as any,
       handle: vi.fn(),
       registerProvider: vi.fn(),
+      registerUsageSource: vi.fn(),
     };
 
     const cleanup = contribute(fakeServer);
@@ -478,6 +481,7 @@ describe("Subagent Watchdog Integration Test", () => {
         rpcHandlers.set(contract, handler);
       },
       registerProvider: vi.fn(),
+      registerUsageSource: vi.fn(),
     };
 
     const cleanup = contribute(fakeServer);
@@ -581,6 +585,7 @@ describe("Subagent Watchdog Integration Test", () => {
       }) as any,
       handle: vi.fn(),
       registerProvider: vi.fn(),
+      registerUsageSource: vi.fn(),
     };
 
     const cleanup = contribute(fakeServer);
