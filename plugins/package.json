@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/builtin-plugins",
-  "version": "0.0.0",
+  "version": "0.10.1-custom.290946",
   "private": true,
   "type": "module",
   "scripts": {
