@@ -3,27 +3,9 @@ import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
 
-export const DEFAULT_AUDIO_BRIEF_INSTRUCTIONS = [
-  "You are an executive technical briefer converting coding assistant messages into spoken audio for the developer.",
-  "",
-  "Analyze the assistant's message and adapt the briefing strategy based on content type:",
-  "",
-  "1. ARCHITECTURAL / PROPOSAL / COMPARISON (Multiple options, trade-offs, design choices):",
-  "   - First, state the problem or goal in one clear spoken sentence.",
-  "   - Then, explain each option's core approach and key trade-off in plain conversational speech. Do not skip options.",
-  "   - Mention the recommended option and why.",
-  "   - End with the specific choice or decision needed from the developer.",
-  "   - Target length: Thorough but spoken-friendly (typically 80-200 words, ~30-60 seconds when read aloud).",
-  "",
-  "2. ACTION / EXECUTION / CONFIRMATION (Task updates, bug fixes, test runs, approval requests):",
-  "   - In 1 to 2 concise spoken sentences: state the key outcome (what was done or fixed), status of checks/tests, and what decision or next step is needed.",
-  "   - Target length: Brief and punchy (under 60 words, ~10-15 seconds).",
-  "",
-  "Spoken Speech Rules:",
-  "- NEVER read code syntax, backticks, raw file paths, diff markers, or URLs aloud.",
-  '- Use natural spoken language (e.g. say "in the user settings component" instead of "src slash components slash user dash settings dot tsx").',
-  "- Match the language of the source text (Chinese if source is Chinese, English if English).",
-].join("\n");
+import { DEFAULT_AUDIO_BRIEF_INSTRUCTIONS, type AudioBriefSettings } from "../shared/settings.js";
+
+export { DEFAULT_AUDIO_BRIEF_INSTRUCTIONS };
 
 export interface AudioBriefResult {
   briefText: string;
@@ -41,6 +23,7 @@ export interface AudioBriefServiceOptions {
     warn?: (msg: string, ...args: unknown[]) => void;
     error?: (msg: string, ...args: unknown[]) => void;
   };
+  getSettings?: () => AudioBriefSettings;
   ttsSynthesizer?: ((text: string) => Promise<{ audioBase64: string; mimeType: string }>) | null;
   textGenerator?: (params: { prompt: string; text: string }) => Promise<string>;
 }
@@ -172,60 +155,34 @@ export class AudioBriefService {
       );
   }
 
-  private async getTtsSynthesizer(): Promise<
-    ((text: string) => Promise<{ audioBase64: string; mimeType: string }>) | null
-  > {
+  private getTtsSynthesizer():
+    | ((text: string) => Promise<{ audioBase64: string; mimeType: string }>)
+    | null {
     if (this.options.ttsSynthesizer !== undefined) {
       return this.options.ttsSynthesizer;
     }
     if (process.env.NODE_ENV === "test") {
       return null;
     }
-    if (!this.ttsSynthesizerPromise) {
-      this.ttsSynthesizerPromise = (async () => {
-        try {
-          const paseoHome = process.env.PASEO_HOME || path.join(os.homedir(), ".paseo");
-          const configPath = path.join(paseoHome, "config.json");
-          let baseUrl = process.env.OPENAI_TTS_BASE_URL || process.env.OPENAI_BASE_URL;
-          let apiKey = process.env.OPENAI_TTS_API_KEY || process.env.OPENAI_API_KEY || "sk-local";
-          let model = process.env.TTS_MODEL || "tts-1";
-          let voice = process.env.TTS_VOICE || "alloy";
 
-          try {
-            const raw = await fs.readFile(configPath, "utf-8");
-            const config = JSON.parse(raw) as {
-              providers?: { openai?: { tts?: { baseUrl?: string; apiKey?: string } } };
-              features?: { voiceMode?: { tts?: { model?: string; voice?: string } } };
-            };
-            const ttsProvider = config?.providers?.openai?.tts;
-            if (ttsProvider?.baseUrl && !process.env.OPENAI_TTS_BASE_URL) {
-              baseUrl = ttsProvider.baseUrl;
-            }
-            if (ttsProvider?.apiKey && !process.env.OPENAI_TTS_API_KEY) {
-              apiKey = ttsProvider.apiKey;
-            }
-            const voiceModeTts = config?.features?.voiceMode?.tts;
-            if (voiceModeTts?.model && !process.env.TTS_MODEL) {
-              model = voiceModeTts.model;
-            }
-            if (voiceModeTts?.voice && !process.env.TTS_VOICE) {
-              voice = voiceModeTts.voice;
-            }
-          } catch {
-            // Ignore config read error
-          }
-
-          if (!baseUrl) {
-            baseUrl = "http://127.0.0.1:8001/v1";
-          }
-
-          return createOpenAiTtsSynthesizer({ baseUrl, apiKey, model, voice });
-        } catch {
-          return null;
-        }
-      })();
+    const s = this.options.getSettings?.();
+    if (s && !s.enableBackendTts) {
+      return null;
     }
-    return this.ttsSynthesizerPromise;
+
+    const baseUrl =
+      s?.ttsBaseUrl ||
+      process.env.OPENAI_TTS_BASE_URL ||
+      process.env.OPENAI_BASE_URL ||
+      "http://127.0.0.1:8001/v1";
+    const apiKey =
+      s?.ttsApiKey || process.env.OPENAI_TTS_API_KEY || process.env.OPENAI_API_KEY || "sk-local";
+    const model = s?.ttsModel || process.env.TTS_MODEL || "tts-1";
+    const voice = s?.ttsVoice || process.env.TTS_VOICE || "alloy";
+    const timeoutSeconds = s?.ttsTimeoutSeconds ?? 60;
+    const timeoutMs = timeoutSeconds * 1000;
+
+    return createOpenAiTtsSynthesizer({ baseUrl, apiKey, model, voice, timeoutMs });
   }
 
   private getCacheFilePath(hash: string): string | null {
@@ -317,9 +274,11 @@ export class AudioBriefService {
     customPrompt?: string;
     forceRefresh?: boolean;
   }): Promise<AudioBriefResult> {
-    const prompt = params.customPrompt?.trim() || DEFAULT_AUDIO_BRIEF_INSTRUCTIONS;
+    const s = this.options.getSettings?.();
+    const prompt =
+      params.customPrompt?.trim() || s?.instructions?.trim() || DEFAULT_AUDIO_BRIEF_INSTRUCTIONS;
     const promptHash = crypto.createHash("sha256").update(prompt).digest("hex").slice(0, 16);
-    const synthesizer = await this.getTtsSynthesizer();
+    const synthesizer = this.getTtsSynthesizer();
     const ttsKey = synthesizer ? "custom-tts" : "none";
     const textHash = crypto
       .createHash("sha256")
@@ -403,7 +362,7 @@ export class AudioBriefService {
     let audioBase64: string | undefined;
     let mimeType: string | undefined;
 
-    const synthesizer = await this.getTtsSynthesizer();
+    const synthesizer = this.getTtsSynthesizer();
     if (synthesizer) {
       try {
         const speech = await synthesizer(briefText);
@@ -422,7 +381,14 @@ export class AudioBriefService {
       error: null,
     };
 
-    await this.writeToCache(textHash, result);
+    // Only persist to disk cache if audio succeeded or no TTS was configured.
+    // If TTS was configured but failed/timed out, do not cache permanently so retry can succeed.
+    const shouldCacheOnDisk = !synthesizer || !!audioBase64;
+    if (shouldCacheOnDisk) {
+      await this.writeToCache(textHash, result);
+    } else {
+      this.memoryCache.set(textHash, result);
+    }
     return result;
   }
 }

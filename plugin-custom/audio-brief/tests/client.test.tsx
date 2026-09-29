@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import React from "react";
 import contribute from "../index.client.js";
-import type { PluginClientContext, PluginTurnActionContribution } from "@getpaseo/plugin/client";
+import type {
+  PluginClientContext,
+  PluginTurnActionContribution,
+  PluginSettingsScreenContribution,
+} from "@getpaseo/plugin/client";
 import { useAudioBriefStore } from "../client/audio-brief-store.js";
 import { playPlatformAudio, stopPlatformAudio } from "../client/platform-player.js";
 import { AudioBriefCard } from "../client/audio-brief-card.js";
@@ -11,9 +15,17 @@ describe("Audio Brief Client", () => {
     useAudioBriefStore.getState().stopBrief();
   });
 
-  it("registers both button and card turn actions with cleanups", () => {
+  it("registers settings screen, button, and card turn actions with cleanups", () => {
     const actions: PluginTurnActionContribution[] = [];
+    const screens: PluginSettingsScreenContribution[] = [];
     const client: Partial<PluginClientContext> = {
+      addSettingsScreen: vi.fn((screen: PluginSettingsScreenContribution) => {
+        screens.push(screen);
+        return () => {
+          const idx = screens.indexOf(screen);
+          if (idx !== -1) screens.splice(idx, 1);
+        };
+      }),
       addTurnAction: vi.fn((action: PluginTurnActionContribution) => {
         actions.push(action);
         return () => {
@@ -24,11 +36,15 @@ describe("Audio Brief Client", () => {
     };
 
     const cleanup = contribute(client as PluginClientContext);
+    expect(client.addSettingsScreen).toHaveBeenCalledTimes(1);
+    expect(screens[0]?.id).toBe("audio-brief-settings");
+    expect(screens[0]?.icon).toBe("Volume2");
     expect(client.addTurnAction).toHaveBeenCalledTimes(2);
     expect(actions.find((a) => a.type === "button")?.id).toBe("audio-brief-button");
     expect(actions.find((a) => a.type === "card")?.id).toBe("audio-brief-card");
 
     cleanup();
+    expect(screens).toHaveLength(0);
     expect(actions).toHaveLength(0);
   });
 
