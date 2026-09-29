@@ -119,6 +119,44 @@ describe("DecisionCard Component", () => {
       expect(screen.getByText(/已选择执行: Fix it/)).toBeDefined();
     });
   });
+
+  it("renders gentle confirmation copy when blocker is an auto-turn limit pause", () => {
+    const turnLimitItem = {
+      type: "plugin" as const,
+      kind: "watchdog-blocker",
+      version: 1,
+      data: {
+        agentId: "agent-123",
+        summary: "Agent execution paused",
+        rootCause: "Reached auto-turn limit of 5 turns",
+        options: [
+          {
+            id: "continue",
+            label: "继续推进",
+            description: "授权继续按原定计划推进",
+            actionType: "retry_with_tip" as const,
+          },
+        ],
+        timestamp: new Date().toISOString(),
+      },
+    };
+
+    render(
+      <DecisionCard
+        item={turnLimitItem}
+        agentId="agent-123"
+        timestamp={new Date()}
+        layout={layout}
+        host={host}
+        theme={theme}
+      />,
+    );
+
+    expect(screen.getByText("⚡ 自动推进 · 阶段性停顿确认")).toBeDefined();
+    expect(screen.getByText("ℹ️ 停顿提示")).toBeDefined();
+    expect(screen.getByText("💡 请选择后续操作：")).toBeDefined();
+    expect(screen.getByText("继续推进")).toBeDefined();
+  });
 });
 
 describe("RadarPanelHost Component", () => {

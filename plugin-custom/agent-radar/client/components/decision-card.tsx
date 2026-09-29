@@ -36,6 +36,27 @@ export function DecisionCard({ item, agentId }: DecisionCardProps) {
 
   const isResolved = resolvedOptionId !== null;
 
+  const isPrMerge = data.rootCause?.includes("PR merge");
+  const isAutoTurnLimit = data.rootCause?.includes("auto-turn limit");
+
+  const headerTitle = isPrMerge
+    ? "🛡️ 门禁守护 · PR 合并确认"
+    : isAutoTurnLimit
+      ? "⚡ 自动推进 · 阶段性停顿确认"
+      : "⚡ WATCHDOG · 推进遇阻决策";
+
+  const causeLabel = isPrMerge
+    ? "⚠️ 敏感操作拦截"
+    : isAutoTurnLimit
+      ? "ℹ️ 停顿提示"
+      : "⚠️ 阻断原因与诊断";
+
+  const optionsPrompt = isPrMerge
+    ? "💡 请确认是否合并 PR："
+    : isAutoTurnLimit
+      ? "💡 请选择后续操作："
+      : "💡 请选择恢复策略：";
+
   return (
     <View
       style={[styles.container, isResolved && styles.resolvedContainer]}
@@ -54,7 +75,7 @@ export function DecisionCard({ item, agentId }: DecisionCardProps) {
           </Text>
         </View>
         <Text style={styles.title} numberOfLines={1}>
-          ⚡ WATCHDOG · 推进遇阻决策
+          {headerTitle}
         </Text>
       </View>
 
@@ -64,7 +85,7 @@ export function DecisionCard({ item, agentId }: DecisionCardProps) {
 
       <View style={styles.body}>
         <View style={styles.rootCauseBox}>
-          <Text style={styles.rootCauseLabel}>⚠️ 阻断原因与诊断</Text>
+          <Text style={styles.rootCauseLabel}>{causeLabel}</Text>
           <Text style={styles.rootCauseText}>{data.rootCause}</Text>
         </View>
 
@@ -72,7 +93,7 @@ export function DecisionCard({ item, agentId }: DecisionCardProps) {
 
         {!isResolved ? (
           <View style={styles.optionsArea}>
-            <Text style={styles.optionsPrompt}>💡 请选择恢复策略：</Text>
+            <Text style={styles.optionsPrompt}>{optionsPrompt}</Text>
             <ActionButtons options={data.options} onSelect={handleSelect} disabled={isSubmitting} />
           </View>
         ) : (
