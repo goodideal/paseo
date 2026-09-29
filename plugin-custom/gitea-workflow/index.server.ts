@@ -18,6 +18,7 @@ import { ProjectGiteaResolver } from "./server/resolver.js";
 import { WorktreeOrchestrator } from "./server/orchestrator.js";
 import { MultiProjectPoller } from "./server/poller.js";
 import { createGiteaStepAdapters } from "./server/adapters/index.js";
+import { issueToPrPreset } from "./server/presets/issue-to-pr.js";
 
 function getDaemonWsUrl(): string {
   const listen = process.env.PASEO_LISTEN || "127.0.0.1:6767";
@@ -41,6 +42,7 @@ export default function contribute(server: PluginServerContext) {
   for (const adapter of createGiteaStepAdapters(clientPool)) {
     server.registerWorkflowStepAdapter?.(adapter);
   }
+  server.registerWorkflowPreset?.(issueToPrPreset);
 
   const orchestrator = new WorktreeOrchestrator({
     store,
