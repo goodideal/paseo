@@ -132,12 +132,13 @@ function evaluateStepCandidate(
     return null;
   }
 
+  const requiresApproval = step.approval === "required";
   return {
     id: `attempt_${step.id}_${nextAttempts.length + 1}`,
     stepId: step.id,
     adapterType: step.type,
     adapterVersion: manifest?.version ?? "resolved",
-    status: "ready",
+    status: requiresApproval ? "waiting_approval" : "ready",
     input: resolveInitialStepInput(
       step,
       run.runInput as Record<string, unknown> | undefined,
@@ -188,6 +189,9 @@ function resolveRunStatus(
     (attempt) => attempt?.status === "succeeded" || attempt?.status === "skipped",
   );
   if (allSuccessful) return "succeeded";
+  if (latestAttempts.some((attempt) => attempt?.status === "waiting_approval")) {
+    return "waiting_approval";
+  }
   if (hasReadyStep || latestAttempts.some((attempt) => attempt?.status === "running")) {
     return "running";
   }
@@ -257,6 +261,7 @@ export function scheduleWorkflow(
 
   let activeConcurrency = nextAttempts.filter((a) => !isTerminal(a.status)).length;
   const maxConcurrency = definition.maxConcurrency ?? 16;
+  const nextApprovals = [...run.approvals];
 
   for (const step of definition.steps) {
     const latest = latestAttempt({ ...run, stepAttempts: nextAttempts }, step.id);
@@ -279,7 +284,20 @@ export function scheduleWorkflow(
     );
     if (scheduled) {
       nextAttempts.push(scheduled);
-      if (scheduled.status === "ready") activeConcurrency += 1;
+      if (scheduled.status === "ready") {
+        activeConcurrency += 1;
+      } else if (scheduled.status === "waiting_approval") {
+        nextApprovals.push({
+          id: `approval_${scheduled.id}_${now}`,
+          stepId: step.id,
+          attemptId: scheduled.id,
+          status: "pending",
+          requesterId: run.principalId,
+          requestedAt: now,
+          expiresAt: now + 15 * 60 * 1000,
+          reason: `Step requires approval: ${step.id}`,
+        });
+      }
     }
   }
 
@@ -288,7 +306,14 @@ export function scheduleWorkflow(
   const status = resolveRunStatus(run.status, nextAttempts, definition, hasReadyStep);
 
   return {
-    run: { ...run, status, updatedAt: now, stepAttempts: nextAttempts, leases },
+    run: {
+      ...run,
+      status,
+      updatedAt: now,
+      stepAttempts: nextAttempts,
+      approvals: nextApprovals,
+      leases,
+    },
     hasReadyStep,
   };
 }

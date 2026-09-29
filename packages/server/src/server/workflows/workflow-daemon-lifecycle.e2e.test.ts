@@ -117,4 +117,89 @@ describe("Workflow Engine daemon bootstrap and restart lifecycle", () => {
     await client2.close();
     await daemon2.close();
   }, 30_000);
+
+  test("runs interactive workflow with question interaction, response continuation and recovery", async () => {
+    const paseoHomeRoot = makeTempDir("workflow-interactive-home-");
+    const cwd = createGitRepo();
+
+    const daemon = await createTestPaseoDaemon({ paseoHomeRoot, cleanup: true });
+    const client = new DaemonClient({
+      url: `ws://127.0.0.1:${daemon.port}/ws`,
+      appVersion: "0.9.1",
+    });
+    try {
+      await client.connect();
+      await client.fetchAgents({ subscribe: {} });
+      expect(client.getLastServerInfoMessage()?.features?.workflowInteractions).toBe(true);
+
+      const agent = await client.createAgent({
+        provider: "codex",
+        cwd,
+        title: "Interactive Agent",
+      });
+      const workspaceId = agent.workspaceId!;
+      const agentsDirectory = await client.fetchAgents();
+      const entry = agentsDirectory.entries.find((item) => item.agent.id === agent.id);
+      const projectId = entry!.project.projectKey;
+
+      const createResult = await client.workflowRunCreate({
+        projectId,
+        workspaceId,
+        workflowId: "core.workflow-interactive",
+      });
+
+      expect(createResult.error).toBeNull();
+      const runId = createResult.runId!;
+      expect(runId).toBeTruthy();
+
+      // Poll until background driveRun creates the pending interaction
+      let interactionId: string | undefined;
+      for (let i = 0; i < 30; i++) {
+        const inspect = await client.workflowRunInspect({
+          projectId,
+          workspaceId,
+          runId,
+        });
+        if (inspect.run?.pendingInteraction) {
+          interactionId = inspect.run.pendingInteraction.id;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(interactionId).toBeDefined();
+
+      // Respond to interaction
+      const respondResult = await client.workflowInteractionRespond({
+        projectId,
+        workspaceId,
+        runId,
+        interactionId: interactionId!,
+        answer: "继续生成计划",
+      });
+      expect(respondResult.error).toBeNull();
+      expect(respondResult.interaction?.status).toBe("answered");
+
+      // Verify that after answering, the step advances to confirm (waiting_approval)
+      let currentStepId: string | null = null;
+      let runStatus: string | null = null;
+      for (let i = 0; i < 30; i++) {
+        const inspect = await client.workflowRunInspect({
+          projectId,
+          workspaceId,
+          runId,
+        });
+        if (inspect.run?.status === "waiting_approval") {
+          currentStepId = inspect.run.currentStepId;
+          runStatus = inspect.run.status;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(runStatus).toBe("waiting_approval");
+      expect(currentStepId).toBe("confirm");
+    } finally {
+      await client.close();
+      await daemon.close();
+    }
+  }, 30_000);
 });

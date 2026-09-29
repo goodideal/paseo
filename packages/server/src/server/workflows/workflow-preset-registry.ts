@@ -97,5 +97,35 @@ export function createWorkflowPresetRegistry(
       ],
     },
   });
+  presets.register({
+    workflowId: "core.workflow-interactive",
+    name: "Core workflow interactive",
+    sourcePreset: "core",
+    definition: {
+      id: "core.workflow-interactive",
+      revision: "1",
+      maxConcurrency: 1,
+      maxArtifactBytes: 1024 * 1024,
+      steps: [
+        {
+          id: "ask",
+          type: "interaction.wait",
+          timeoutMs: 15 * 60 * 1000,
+          retries: 0,
+          concurrency: 1,
+          approval: "automatic",
+        },
+        {
+          id: "confirm",
+          type: "approval.wait",
+          dependsOn: ["ask"],
+          timeoutMs: 15 * 60 * 1000,
+          retries: 0,
+          concurrency: 1,
+          approval: "required",
+        },
+      ],
+    },
+  });
   return presets;
 }

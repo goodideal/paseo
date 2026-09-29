@@ -101,3 +101,12 @@ Open the **Subagents track** near the composer to inspect delegated work.
 A Paseo subagent in another workspace still belongs to its parent's track. It also opens as a tab in its own workspace. To make it a top-level agent, detach it in the app or with [`paseo agent detach`](/docs/cli#agent-modes).
 
 See the [MCP reference](/docs/mcp#mental-model) for workspace and parentage rules.
+
+## Interactive DAG workflows
+
+For complex pipelines involving human gates, design clarifications, and delivery checks, Paseo provides structured Workflow DAG execution:
+
+- **`agent.run_until_complete`**: Dispatches an agent turn and awaits its completion, extracting a structured `paseo-workflow-handoff` JSON block containing the agent's phase, next action, and artifact references.
+- **`agent.continue_until_complete`**: Continues an existing agent session with user answers or subsequent phase instructions.
+- **`interaction.wait`**: Halts DAG execution to request free-text human input in the app, resuming execution when answered.
+- **`approval.wait`**: Enforces binary approvals and gates external side-effects (e.g. `git.push`, `git.create_pr`) with an immutable `DeliveryApprovalManifest`.

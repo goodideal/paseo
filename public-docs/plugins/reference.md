@@ -2076,6 +2076,39 @@ The daemon-wide **Enable plugins** switch lives under **Settings → Plugins**. 
 
 The switch is the root `pluginsEnabled` field in `config.json`. After changing it, run `paseo reload --json`. Enabling starts every configured plugin whose own `enabled` value is not `false`; disabling tears down all plugins. No daemon restart is required. Manual edits to plugin source entries are not reloaded; use the plugin lifecycle commands for those.
 
+## Workflow contributions
+
+Plugins can register Workflow presets and custom `StepAdapter` implementations on `PluginServerContext`:
+
+```typescript
+server.registerWorkflowPreset?.({
+  workflowId: "my-plugin.fix-flow",
+  name: "Plugin Fix Flow",
+  sourcePreset: "my-plugin",
+  definition: { ... }
+});
+
+server.registerWorkflowStepAdapter?.({
+  type: "my_plugin.action",
+  version: "1.0.0",
+  inputSchema: MyInputSchema,
+  outputSchema: MyOutputSchema,
+  executionRisk: "workspace_write",
+  requiredPermissions: ["workspace.write"],
+  repositoryCallable: true,
+  idempotency: "none",
+  cancellation: "supported",
+  recovery: "not_resumable",
+  supportedPlatforms: ["darwin", "linux", "win32"],
+  resourceConflictKey: "workspace:{{workspaceId}}:custom",
+  execute: async (input, { paseo, run }) => {
+    return { ok: true };
+  },
+});
+```
+
+A plugin cannot overwrite Core step adapters (`worktree.create`, `agent.dispatch`, `agent.run_until_complete`, `agent.continue_until_complete`, `interaction.wait`, `verify.command`, `review.agent`, `approval.wait`, `git.push`, `git.create_pr`) or adapters registered by other plugins. When a plugin unloads or reloads, its registered adapters are unregistered; active runs using them transition to `blocked` with `failureClassification: "dependency_unavailable"`, and new runs using them are rejected.
+
 ## Load failures
 
 Use `paseo plugin ls` to read the current status and error.
