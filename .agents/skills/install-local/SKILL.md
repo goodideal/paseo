@@ -12,7 +12,7 @@ user-invocable: true
 
 1. **自动化编译与本地部署 (Auto Build & Local Deploy)**：自动化按 Monorepo 依赖拓扑编译 Paseo 服务端组件、内置 Web UI、Electron 桌面端主进程，并将产物增量同步到本地全局运行时（如 Volta 或全局 npm），使本地终端命令 `paseo` 和后台守护进程立即生效。
 2. **官方更新无缝整合 (Upstream Integration)**：自动追踪官方上游仓库 (`getpaseo/paseo`)，对比版本差异与最新提交，提供一键拉取合并（或变基）、自动维护 `-custom` 自定义版本标识、秒级处理多包版本冲突、刷新第三方依赖及自动化编译安装的一站式流水线。
-3. **定制特性与质量门禁守护 (Custom Features & Quality Gates)**：深度沉淀四大定制特性（纯黑终端、中英双语 STT、中文字体与重测、`-custom` 全链路兼容）的架构要点、编码规范（如 oxlint 圈复杂度与 i18n 多语言类型约束）以及 5 大核心单测回归验证。
+3. **定制特性与质量门禁守护 (Custom Features & Quality Gates)**：深度沉淀五大定制特性（纯黑终端、中英双语 STT、中文字体与重测、`-custom` 全链路兼容、插件化 Usage Source 与 Workflow 引擎整合）的架构要点、编码规范（如 oxlint 圈复杂度、i18n 多语言类型约束与 Monorepo Workspace 依赖构建链）以及核心单测回归验证。
 
 ---
 
@@ -38,13 +38,13 @@ user-invocable: true
   - 全局安装位置：`~/.volta/tools/image/packages/@getpaseo/cli`（或 `npm root -g` 下的 `@getpaseo/cli`）。
   - 官方发布版本升级：`volta install @getpaseo/cli@beta` 或 `@latest`。
   - 本地定制版本生效：在源码根目录下执行 `npm run install:local` 增量覆盖。
-- **插件目录**：`plugins/`（用于存放本地扩展插件）。
+- **插件目录**：`plugins/`（用于存放官方内置插件及本地扩展插件软链接）。
 
 ---
 
 ## 1. 仓库与分支协同架构
 
-Paseo 采用 **Upstream 官方追踪 + GitHub Fork 个人备份 + 本地专属特性分支变基** 的架构模式：
+Paseo 采用 **Upstream 官方追踪 + GitHub Fork 个人备份 + 本地专属特性分支协同** 的架构模式：
 
 ```
 [官方上游 upstream] (getpaseo/paseo)
@@ -52,14 +52,22 @@ Paseo 采用 **Upstream 官方追踪 + GitHub Fork 个人备份 + 本地专属�
         ▼ git fetch / pull --ff-only
 [本地 main 分支] ──(纯净镜像，不含定制提交)──> [个人远端 origin/main] (goodideal/paseo)
         │
-        ▼ git rebase main
+        ▼ git merge upstream/main (或 git rebase main)
 [特性分支 custom-features] ──(承载定制功能提交)──> [个人远端 origin/custom-features]
         ├─ Commit 1: feat(app): add pureBlack and dark terminal appearance options
         ├─ Commit 2: feat(server): default STT to auto and add bilingual prompt
         ├─ Commit 3: feat(app): add chinese fonts and char remeasuring on font load
         ├─ Commit 4: feat(scripts): add local install script and custom version suffix support
-        └─ Commit 5+: 其他特性分支与 PR 开发提交
+        ├─ Commit 5: feat(workflows): integrate workflow preset registry into plugin process
+        └─ Commit 6+: 其他特性分支与 PR 开发提交
 ```
+
+### 同步策略选择 (Merge vs Rebase)
+
+- **推荐策略：`git merge upstream/main`（保留历史追踪）**
+  `custom-features` 分支包含了跨周期演进的多个功能分支合流记录。采用 `merge` 能够自然保留分支拓扑与合并节点，避免变基时对历史 Merge 节点进行平铺而引发反复解冲突，且无需 `--force` 破坏远端备份。
+- **平坦历史策略：`git rebase main`**
+  若当前分支仅承载极少数独立线性提交，且明确需要保持与主干一致的线性历史，方推荐使用 `--rebase`。
 
 ### 远程仓库定义
 
@@ -79,7 +87,7 @@ git remote set-url origin https://github.com/goodideal/paseo.git
 
 ## 2. 现有核心定制特性架构与关键门禁规范
 
-在同步官方更新或合并变基时，必须保护以下四大定制特性不受破坏：
+在同步官方更新或合并变基时，必须保护以下五大定制特性不受破坏：
 
 ### 特性 A：前端纯黑与深色终端外观 (`packages/app`)
 
@@ -145,17 +153,33 @@ git remote set-url origin https://github.com/goodideal/paseo.git
 
 - **核心意图**：
   1. 提供 `scripts/install-local.mjs`（`npm run install:local`），一键将本地定制源码编译并同步到本地全局 Volta 安装路径；
-  2. 在全库 `package.json` 的版本号后追加 `-custom.<DDhhmm>` 后缀（如 `0.9.2-custom.251223`），同时在 App UI（设置面板、侧边栏帮助、欢迎页）、CLI 终端输出中统一展示为友好格式 `v0.9.2 [mod-DDhhmm]`（如 `v0.9.2 [mod-251223]`，DD 代表日期，hhmm 代表小时分钟），精准识别构建时刻；
+  2. 在全库 `package.json` 的版本号后追加 `-custom.<DDhhmm>` 后缀（如 `0.10.1-custom.290946`），同时在 App UI（设置面板、侧边栏帮助、欢迎页）、CLI 终端输出中统一展示为友好格式 `v0.10.1 [mod-290946]`（如 `v0.10.1 [mod-290946]`，DD 代表日期，hhmm 代表小时分钟），精准识别构建时刻；
   3. 让原生版本号转换、桌面更新检测、设置面板及 Changelog 正确识别并剥离该后缀及 `[mod-DDhhmm]` 标签，避免本地客户端与服务端被误判为版本漂移，或在构建原生安装包时正则解析崩溃。
 - **涉及核心文件**：
   - `scripts/install-local.mjs`（本地维护、上游同步、编译与全局 Volta 路径增量覆盖安装，自动维护 `-custom.<DDhhmm>` 及格式化展示）
-  - `.agents/skills/paseo-maintenance/SKILL.md`（本指南）
   - `packages/app/native-release-version.js` & `native-release-version.test.ts`（版本号正则允许 `-custom`、时间戳后缀及 `[mod-...]` 标签）
   - `packages/app/src/desktop/updates/desktop-updates.ts` & `desktop-updates.test.ts`（格式化为 `v<base> [mod-DDhhmm]`，并在版本比对归一化时剥离）
   - `packages/app/src/screens/settings-screen.tsx`（版本比对去除 `-custom` 与 `[mod-...]`，消除误报 mismatch）
   - `packages/app/src/changelog/internal/changelog-sheet.tsx`（更新日志展示时剥离 `-custom` 与 `[mod-...]`）
   - `packages/cli/src/version.ts` & `version.test.ts` & `cli.ts`（CLI `--version` 输出格式化为 `v<base> [mod-DDhhmm]`）
   - 根目录及各子包 `package.json`（版本同步为 `<upstream_version>-custom.<DDhhmm>`）
+
+---
+
+### 特性 E：插件化 Usage Source 与 Workflow 引擎整合及插件目录隔离 (`packages/server` & `packages/plugin` & `plugins/`)
+
+- **核心意图**：
+  1. **官方插件化 Usage 体系融合**：官方自 v0.10.1 起将额度用量抓取重构为独立的 `@getpaseo/builtin-plugins` 体系（位于 `plugins/*-usage-source`），并在 `PluginServerContext` 中引入 `registerUsageSource`；
+  2. **Workflow 引擎注入**：定制分支支持在插件中注册工作流预设（`registerWorkflowPreset`）。在 `packages/server` 插件进程重构为 `createPluginWorker({ channel, contribute })` 工厂模式后，定制逻辑必须通过 `contribute` 函数注入并随 `ready` 消息回传主进程；
+  3. **内置插件与外部扩展插件隔离**：官方将 `plugins` 纳入 monorepo workspaces。由于本地常使用软链接将外部自定义插件（如 `agent-radar`、`gitea-workflow`）挂载到 `plugins/`，必须严格配置 `plugins/tsconfig.json` 的 `include` 仅限定为内置插件（`["*-usage-source/**/*.ts"]`），防止外部包含 JSX 的组件代码引发 `TS17004` 报错。
+- **涉及核心文件**：
+  - `packages/plugin/src/server/contracts.ts`（`PluginServerContext` 声明 `registerUsageSource` 与 `registerWorkflowPreset?`）
+  - `packages/server/src/server/plugins/plugin-process-protocol.ts`（消息协议定义 `usageSources` 与 `workflowPresets`）
+  - `packages/server/src/server/plugins/plugin-process.ts`（`createPluginWorker` 内初始化、注册与 `ready` 上报）
+  - `packages/server/src/server/plugins/runtime.ts`（运行时接收并存储 registrations）
+  - `packages/server/src/server/plugins/index.ts`（插件服务生命周期 publish 与 remove）
+  - `plugins/tsconfig.json`（`include` 限定为 `["*-usage-source/**/*.ts"]`）
+  - 自定义插件测试：在 mock `PluginServerContext` 时必须包含 `registerUsageSource: vi.fn()`。
 
 ---
 
@@ -185,11 +209,11 @@ git remote set-url origin https://github.com/goodideal/paseo.git
 ### 方案 A：全自动一键同步（推荐）
 
 ```bash
-# 自动拉取上游、变基、同步 -custom 版本、刷新依赖、质量门禁验证并全量编译安装
-npm run install:local -- --sync-upstream --rebase --verify
+# 自动拉取上游、合并最新提交、同步 -custom 版本、刷新依赖、质量门禁验证并全量编译安装
+npm run install:local -- --sync-upstream --verify
 ```
 
-若在变基过程中遇到冲突，脚本会安全中断并输出清晰的处理指引，解决冲突后重新执行即可。
+若在合并过程中遇到业务代码冲突，脚本会安全中断并输出清晰的处理指引，解决冲突后重新执行即可。
 
 ---
 
@@ -198,7 +222,7 @@ npm run install:local -- --sync-upstream --rebase --verify
 #### Step 1: 状态检查与环境评估
 
 ```bash
-# 1. 查看本地工作区状态
+# 1. 查看本地工作区状态（确保工作区干净）
 git status
 
 # 2. 检查与官方差距
@@ -216,11 +240,12 @@ git pull --ff-only upstream main
 git push origin main
 ```
 
-#### Step 3: 特性分支变基与冲突处理
+#### Step 3: 特性分支合流与冲突处理
 
 ```bash
 git checkout custom-features
-git rebase main
+git merge upstream/main -m "merge: sync official upstream updates"
+# 或者使用 rebase: git rebase main
 ```
 
 #### 🌟 核心技巧：秒级解决 `package.json` 的批量版本冲突
@@ -228,21 +253,22 @@ git rebase main
 因定制分支版本带有 `-custom` 后缀，在上游切新版本后变基或合并时，所有子包的 `package.json` 会因为版本号和内部依赖版本产生冲突。**严禁手动逐个编辑十几个文件**，使用以下步骤秒级解决：
 
 ```bash
-# 1. 在根目录 package.json 中仅将 version 冲突修改为最新上游版本加上 -custom（如 "0.9.0-beta.3-custom"）并保存
+# 1. 在根目录 package.json 中仅将 version 冲突修改为最新上游版本加上 -custom（如 "0.10.1-custom.<DDhhmm>"）并保存
 # 2. 对所有子包 package.json 使用 ours 丢弃冲突标记：
-git checkout --ours packages/*/package.json
+git checkout --ours packages/*/package.json plugins/package.json
 
 # 3. 运行官方同步脚本，自动精准级联重写所有子包版本及内部依赖引用：
 node scripts/sync-workspace-versions.mjs
 
 # 4. 标记解决并继续：
-git add package.json packages/*/package.json
-# 若在 rebase 冲突中：git rebase --continue
-# 若在 merge 冲突中：git commit
+git add package.json packages/*/package.json plugins/package.json
 ```
 
 > [!NOTE]
-> 若冲突涉及业务代码（如 `stt.ts` 或 `terminal-pane.tsx`）：保留本地定制逻辑并适配上游新参数，`git add <file>` 后执行 `git rebase --continue`。
+> 若冲突涉及业务代码（如 `plugin-process.ts`、`websocket-server.ts` 或 `terminal-pane.tsx`）：
+>
+> - 仔细阅读并保留本地定制逻辑（如 `workflowPresets`），适配上游新架构（如 `createPluginWorker` 工厂函数与 `usageSources`）；
+> - `git add <file>` 解决全部冲突后执行 `git commit`。
 
 #### Step 4: 安装与依赖同步
 
@@ -253,15 +279,15 @@ npm install
 - 注意：`postinstall` 钩子会自动运行 `scripts/postinstall-patches.mjs` 给 Expo / React Native 相关包打补丁。
 - 若 `package-lock.json` 出现非预期格式扰动，使用 `git checkout -- package-lock.json` 恢复，保持与上游一致。
 
-#### Step 5: 构建与质量门禁验证
+#### Step 5: 跨包依赖构建链与质量门禁验证
 
-Paseo 是典型的 Monorepo 架构，类型检查和子包间存在严格的构建依赖链：
+Paseo 是典型的 Monorepo 架构，类型检查（typecheck）和子包间存在严格的构建依赖链。**在合流了 protocol/client/plugin 等基础包后，直接执行 typecheck 会因缺少 generated declaration 报错，必须遵循以下前置构建链**：
 
 ```bash
-# 1. 构建底层依赖
-npm run build:protocol
+# 1. 构建底层依赖与类型声明文件（关键！）
 npm run build:client
-npm run build:highlight && npm run build:plugin && npm run build:relay
+npm run build --workspace=@getpaseo/plugin
+npm run build:highlight && npm run build:relay
 
 # 2. 构建核心服务端与 CLI
 npm run build --workspace=@getpaseo/server
@@ -270,12 +296,13 @@ npm run build --workspace=@getpaseo/cli
 # 3. 运行全库 Typecheck
 npm run typecheck:server
 npm run typecheck --workspace=@getpaseo/app
+npm run typecheck --workspace=@getpaseo/builtin-plugins
 
 # 4. 代码格式与 Lint 校验（按项目规范严格使用 npm 脚本）
 npm run lint
 npm run format:check
 
-# 5. 核心单测全量回归（涵盖全部 4 大定制特性）
+# 5. 核心单测全量回归（涵盖全部定制特性）
 npx vitest run \
   packages/app/src/hooks/use-settings/storage.test.ts \
   packages/server/src/server/session/voice/voice-session.test.ts \
@@ -285,10 +312,20 @@ npx vitest run \
   --bail=1
 ```
 
-#### Step 6: 推送更新到个人远端 Fork
+#### Step 6: 维护 -custom 构建版本标识与提交推送
+
+在完成合流与依赖刷新后，更新并提交版本标识：
 
 ```bash
-git push origin custom-features --force-with-lease
+# 1. 依据 DDhhmm 时间戳生成并同步全库版本
+node scripts/sync-workspace-versions.mjs
+
+# 2. 提交版本变更与合流
+git add -A
+git commit -m "chore: bump version to <version>-custom.<DDhhmm>"
+
+# 3. 推送更新到个人远端 Fork
+git push origin custom-features
 ```
 
 #### Step 7: 本地编译部署与服务重启提示
@@ -326,14 +363,16 @@ paseo restart
 
 ## 6. 常见问题排查手册 (Troubleshooting FAQ)
 
-| 问题现象                                                              | 根因分析                                               | 解决方案                                                                                                                    |
-| :-------------------------------------------------------------------- | :----------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------- |
-| `Cannot find module '@getpaseo/protocol/messages'`                    | Monorepo 子包未构建，缺少 generated validators 或 dist | 先执行 `npm run build:protocol && npm run build:client`                                                                     |
-| `Property 'terminalAppearance' is missing in type ... in ja.ts/ar.ts` | `TranslationResources` 严格校验所有语言 key            | 检查 `en.ts` 中 `TranslationResources` 是否已对新字段配置了可选映射（见特性 A）                                             |
-| 变基或合并时所有 `package.json` 报冲突                                | 上游版本迭代与本地 `-custom` 后缀冲突                  | 见 SOP Step 3：改根目录版本后运行 `git checkout --ours packages/*/package.json && node scripts/sync-workspace-versions.mjs` |
-| 客户端与服务端连接后提示 `Version Mismatch`                           | 本地安装了 `-custom` 但判断逻辑未放行                  | 检查 `desktop-updates.ts` 与 `settings-screen.tsx` 中的版本比对是否已剔除 `-custom`                                         |
-| `oxlint: private async method has a complexity of 22 (Max 20)`        | `transcribeAudioInternal` 分支过多                     | 将多条件判断与 logprob 分析抽离为顶层纯函数（见特性 B）                                                                     |
-| `oxfmt: Format issues found in above 1 files`                         | 文件存在格式缩进/尾逗号不符合规范                      | 严格运行 `npm run format` 自动修正，切勿手动硬改                                                                            |
-| `git push: deploy key permission denied`                              | SSH 默认尝试了其他项目的 deploy key                    | 运行 `gh auth setup-git`，改用已授权的个人 HTTPS 协议推送                                                                   |
-| 终端中文字符重叠、光标对不准                                          | 异步中文字体加载后未重算 cell 宽高                     | 确保 `terminal-emulator-runtime.ts` 中在 `fontSet.load` 后调用了 `remeasureCharSize()`                                      |
-| `git fetch upstream` 权限报错或失败                                   | 远端未配置或沙盒限制                                   | 脚本已内置 `ensureUpstreamRemote()`，若网络受限可先在宿主终端执行一次 `git fetch upstream`                                  |
+| 问题现象                                                                                                         | 根因分析                                                                                                      | 解决方案                                                                                                                                         |
+| :--------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------ | :----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Cannot find module '@getpaseo/protocol/messages'` 或缺少 response 类型                                          | Monorepo 子包未构建，缺少 generated validators 或 dist declarations                                           | 先执行 `npm run build:protocol && npm run build:client`                                                                                          |
+| `error TS17004: Cannot use JSX unless the '--jsx' flag is provided` in `plugins/*`                               | 官方新增 `plugins` workspace 后，`plugins/tsconfig.json` 的 include 误扫了本地软链接挂载的自定义外部 JSX 插件 | 将 `plugins/tsconfig.json` 的 `include` 限制为 `["*-usage-source/**/*.ts"]`，杜绝扫入外部插件                                                    |
+| `error TS2741: Property 'registerUsageSource' is missing in type ... but required in type 'PluginServerContext'` | 官方在 `PluginServerContext` 引入了 `registerUsageSource`，导致自定义插件单元测试的 mock 对象属性缺失         | 在测试的 `fakeServer: PluginServerContext` mock 中补齐 `registerUsageSource: vi.fn()`                                                            |
+| `Property 'terminalAppearance' is missing in type ... in ja.ts/ar.ts`                                            | `TranslationResources` 严格校验所有语言 key                                                                   | 检查 `en.ts` 中 `TranslationResources` 是否已对新字段配置了可选映射（见特性 A）                                                                  |
+| 变基或合并时所有 `package.json` 报冲突                                                                           | 上游版本迭代与本地 `-custom` 后缀冲突                                                                         | 见 SOP Step 3：改根目录版本后运行 `git checkout --ours packages/*/package.json plugins/package.json && node scripts/sync-workspace-versions.mjs` |
+| 客户端与服务端连接后提示 `Version Mismatch`                                                                      | 本地安装了 `-custom` 但判断逻辑未放行                                                                         | 检查 `desktop-updates.ts` 与 `settings-screen.tsx` 中的版本比对是否已剔除 `-custom`                                                              |
+| `oxlint: private async method has a complexity of 22 (Max 20)`                                                   | `transcribeAudioInternal` 分支过多                                                                            | 将多条件判断与 logprob 分析抽离为顶层纯函数（见特性 B）                                                                                          |
+| `oxfmt: Format issues found in above 1 files`                                                                    | 文件存在格式缩进/尾逗号不符合规范                                                                             | 严格运行 `npm run format` 自动修正，切勿手动硬改                                                                                                 |
+| `git push: deploy key permission denied`                                                                         | SSH 默认尝试了其他项目的 deploy key                                                                           | 运行 `gh auth setup-git`，改用已授权的个人 HTTPS 协议推送                                                                                        |
+| 终端中文字符重叠、光标对不准                                                                                     | 异步中文字体加载后未重算 cell 宽高                                                                            | 确保 `terminal-emulator-runtime.ts` 中在 `fontSet.load` 后调用了 `remeasureCharSize()`                                                           |
+| `git fetch upstream` 权限报错或失败                                                                              | 远端未配置或沙盒限制                                                                                          | 脚本已内置 `ensureUpstreamRemote()`，若网络受限可先在宿主终端执行一次 `git fetch upstream`                                                       |
