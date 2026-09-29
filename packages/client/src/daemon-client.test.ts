@@ -7137,6 +7137,15 @@ test("Workflow Engine actions require a host upgrade without fallback requests",
     await expect(action()).rejects.toThrow("Workflow Engine requires a host upgrade.");
   }
   expect(transport.sent.length).toBe(sentBefore);
+
+  await expect(
+    client.workflowInteractionRespond({
+      ...scope,
+      runId: "run-1",
+      interactionId: "interaction-1",
+      answer: "test answer",
+    }),
+  ).rejects.toThrow("Workflow Interactions require a host upgrade.");
 });
 
 test("correlates Workflow Run create responses by requestId", async () => {

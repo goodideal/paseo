@@ -192,4 +192,87 @@ describe("WorkflowSession", () => {
     expect(redResponse?.payload.content).toBe(null);
     expect(redResponse?.payload.artifact?.redacted).toBe(true);
   });
+
+  it("handles workflow.interaction.respond.request and emits interaction response", async () => {
+    const { emitted, presets, session, store } = createSession();
+    const firstPreset = presets.list()[0];
+    expect(firstPreset).toBeDefined();
+    const workflowId = firstPreset!.workflowId;
+    const validHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const run = store.create({
+      id: "run_interact_1",
+      projectId: "project_1",
+      workspaceId: "workspace_1",
+      definitionId: workflowId,
+      definitionRevision: "1",
+      definitionHash: validHash,
+      resolvedDefinition: presets.get(workflowId)?.definition,
+      workspaceRoot: "/workspace/project_1",
+      principalId: "principal_1",
+      status: "running",
+      createdAt: 100,
+      updatedAt: 100,
+      stepAttempts: [
+        {
+          id: "attempt_1",
+          stepId: "step_ask",
+          adapterType: "interaction.wait",
+          adapterVersion: "1.0.0",
+          status: "running",
+          input: {},
+          startedAt: 100,
+        },
+      ],
+      approvals: [],
+      artifacts: [
+        {
+          id: "art_q_1",
+          kind: "interaction_prompt",
+          path: "/tmp/q.txt",
+          contentHash: validHash,
+          bytes: 10,
+          redacted: false,
+          createdAt: 100,
+        },
+      ],
+      intents: [],
+      receipts: [],
+      leases: [],
+      unknownOutcomes: [],
+      interactions: [
+        {
+          id: "interaction_1",
+          runId: "run_interact_1",
+          stepId: "step_ask",
+          status: "pending",
+          promptArtifactId: "art_q_1",
+          requestedAt: 100,
+        },
+      ],
+    });
+
+    await session.handle({
+      type: "workflow.interaction.respond.request",
+      projectId: "project_1",
+      workspaceId: "workspace_1",
+      runId: run.id,
+      requestId: "respond_req",
+      interactionId: "interaction_1",
+      answer: "Proceed with strict gate",
+    });
+
+    type InteractionRespondResponse = Extract<
+      SessionOutboundMessage,
+      { type: "workflow.interaction.respond.response" }
+    >;
+
+    const response = emitted.find(
+      (m): m is InteractionRespondResponse =>
+        m.type === "workflow.interaction.respond.response" && m.payload.requestId === "respond_req",
+    );
+    expect(response).toBeDefined();
+    expect(response?.payload.error).toBe(null);
+    expect(response?.payload.interaction?.status).toBe("answered");
+    expect(response?.payload.interaction?.responderId).toBe("principal_1");
+  });
 });

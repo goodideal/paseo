@@ -50,6 +50,7 @@ function toRunSummary(run: WorkflowRun, sourcePreset: string = run.definitionId)
   const current = run.stepAttempts.findLast((attempt) =>
     ["pending", "ready", "running", "retry_wait", "waiting_approval"].includes(attempt.status),
   );
+  const pendingInteraction = run.interactions?.findLast((item) => item.status === "pending");
   return {
     projectId: run.projectId,
     workspaceId: run.workspaceId,
@@ -67,6 +68,7 @@ function toRunSummary(run: WorkflowRun, sourcePreset: string = run.definitionId)
     completedAt: ["succeeded", "failed", "cancelled", "blocked", "unknown"].includes(run.status)
       ? new Date(run.updatedAt).toISOString()
       : null,
+    pendingInteraction: pendingInteraction ?? null,
   };
 }
 
@@ -82,6 +84,8 @@ function toRunDetail(run: WorkflowRun, sourcePreset?: string) {
       skipReason: attempt.skipReason ?? null,
       failureReason: attempt.failureClassification ?? null,
     })),
+    interactions: run.interactions ?? [],
+    deliveryApprovalManifest: run.deliveryApprovalManifest ?? null,
   };
 }
 
@@ -344,6 +348,29 @@ export class WorkflowSession {
     }
   }
 
+  private async handleInteractionRequest(request: WorkflowRequest): Promise<void> {
+    if (request.type === "workflow.interaction.respond.request") {
+      const run = await this.options.workflowService.respondInteraction({
+        ...request,
+        responderId: this.options.principalId,
+        answer: request.answer,
+      });
+      const interaction = run.interactions.find(
+        (candidate) => candidate.id === request.interactionId,
+      );
+      this.kickRun(run);
+      this.options.host.emit({
+        type: "workflow.interaction.respond.response",
+        payload: {
+          ...this.responseScope(request),
+          runId: run.id,
+          interaction: interaction ?? null,
+          error: null,
+        },
+      });
+    }
+  }
+
   private async handleRequest(request: WorkflowRequest): Promise<void> {
     if (request.type.startsWith("workflow.definition.")) {
       this.handleDefinitionRequest(request);
@@ -355,6 +382,10 @@ export class WorkflowSession {
     }
     if (request.type.startsWith("workflow.approval.")) {
       this.handleApprovalRequest(request);
+      return;
+    }
+    if (request.type.startsWith("workflow.interaction.")) {
+      await this.handleInteractionRequest(request);
       return;
     }
     if (request.type.startsWith("workflow.artifact.")) {
@@ -518,6 +549,12 @@ export class WorkflowSession {
         this.options.host.emit({
           type: "workflow.artifact.get.response",
           payload: { ...payload, artifact: null, content: null },
+        });
+        return;
+      case "workflow.interaction.respond.request":
+        this.options.host.emit({
+          type: "workflow.interaction.respond.response",
+          payload: { ...payload, interaction: null },
         });
         return;
       default:

@@ -698,6 +698,10 @@ export type WorkflowArtifactGetOptions = Omit<
   Extract<SessionInboundMessage, { type: "workflow.artifact.get.request" }>,
   "type" | "requestId"
 > & { requestId?: string };
+export type WorkflowInteractionRespondOptions = Omit<
+  Extract<SessionInboundMessage, { type: "workflow.interaction.respond.request" }>,
+  "type" | "requestId"
+> & { requestId?: string };
 
 export type WorkflowDefinitionListPayload = Extract<
   SessionOutboundMessage,
@@ -750,6 +754,10 @@ export type WorkflowArtifactListPayload = Extract<
 export type WorkflowArtifactGetPayload = Extract<
   SessionOutboundMessage,
   { type: "workflow.artifact.get.response" }
+>["payload"];
+export type WorkflowInteractionRespondPayload = Extract<
+  SessionOutboundMessage,
+  { type: "workflow.interaction.respond.response" }
 >["payload"];
 export type FetchAgentTimelinePayload = FetchAgentTimelineResponseMessage["payload"];
 export type AgentForkContextPayload = AgentForkContextResponseMessage["payload"];
@@ -6395,6 +6403,23 @@ export class DaemonClient {
     });
   }
 
+  async workflowInteractionRespond(
+    options: WorkflowInteractionRespondOptions,
+  ): Promise<WorkflowInteractionRespondPayload> {
+    this.requireWorkflowInteractionsSupport();
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "workflow.interaction.respond.request",
+        projectId: options.projectId,
+        workspaceId: options.workspaceId,
+        runId: options.runId,
+        interactionId: options.interactionId,
+        answer: options.answer,
+      },
+    });
+  }
+
   onTerminalStreamEvent(handler: (event: TerminalStreamEvent) => void): () => void {
     return this.terminalStreams.onEvent(handler);
   }
@@ -6450,6 +6475,13 @@ export class DaemonClient {
     // COMPAT(workflowEngine): added in v0.8.0, remove gate after 2027-03-25 once daemon floor supports Workflow Engine.
     if (this.lastServerInfoMessage?.features?.workflowEngine !== true) {
       throw new Error("Workflow Engine requires a host upgrade.");
+    }
+  }
+
+  private requireWorkflowInteractionsSupport(): void {
+    // COMPAT(workflowInteractions): added in v0.10.1, remove gate after 2027-03-25 once daemon floor supports Workflow Interactions.
+    if (this.lastServerInfoMessage?.features?.workflowInteractions !== true) {
+      throw new Error("Workflow Interactions require a host upgrade.");
     }
   }
 

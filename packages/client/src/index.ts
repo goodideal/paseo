@@ -499,6 +499,7 @@ export interface PaseoWorkflowActions {
   approvalDeny: DaemonClient["workflowApprovalDeny"];
   artifactList: DaemonClient["workflowArtifactList"];
   artifactGet: DaemonClient["workflowArtifactGet"];
+  interactionRespond: DaemonClient["workflowInteractionRespond"];
 }
 
 export interface PaseoApi {
@@ -788,6 +789,7 @@ export function createPaseoApi(
       approvalDeny: (options) => daemonClient.workflowApprovalDeny(options),
       artifactList: (options) => daemonClient.workflowArtifactList(options),
       artifactGet: (options) => daemonClient.workflowArtifactGet(options),
+      interactionRespond: (options) => daemonClient.workflowInteractionRespond(options),
     },
     config: {
       get: (requestId) => daemonClient.getDaemonConfig(requestId),
