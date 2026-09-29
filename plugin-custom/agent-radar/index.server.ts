@@ -82,6 +82,8 @@ export default function contribute(server: PluginServerContext) {
 
   server.on("agent.turn_started", (event, context) => {
     const agentId = event.agent.id;
+    // Clear any previous stale blocker on new turn start to avoid ghost cards
+    activeBlockers.delete(agentId);
     try {
       const agentRef = context.paseo?.agents?.ref(agentId);
       if (agentRef?.timeline?.subscribe) {
@@ -149,34 +151,47 @@ export default function contribute(server: PluginServerContext) {
     }
 
     const intent = governor.evaluateOutput(agentId, outputText, toolCalls);
+    const isAutoContinueEnabled = governor.isAgentAutoContinueEnabled(
+      agentId,
+      configuredAutoContinue,
+    );
 
     if (intent === "AUTO_CONTINUE") {
-      const isAutoContinueEnabled = governor.isAgentAutoContinueEnabled(
-        agentId,
-        configuredAutoContinue,
-      );
       if (isAutoContinueEnabled) {
         governor.incrementTurn(agentId);
         await executor.autoContinue(agentId, context, configuredAutoContinuePrompt);
       }
     } else if (intent === "BLOCKER_ESCALATE") {
+      const isExplicitCrash = outputText.includes(
+        "collab spawn failed: agent thread limit reached",
+      );
+      const isPrMerge = governor.isPrMergeIntent(outputText, toolCalls);
+
+      // Blocker escalation should strictly gate on auto-continue being active,
+      // UNLESS it's an explicit subprocess crash (thread limit) or PR merge gate.
+      // Normal turns with auto-continue disabled should end naturally without blocker cards.
+      if (!isAutoContinueEnabled && !isExplicitCrash && !isPrMerge) {
+        return;
+      }
+
       let rootCause =
         governor.getLastBlockerReason(agentId) ?? "Reached auto-turn limit or detected flapping";
-      if (outputText.includes("collab spawn failed: agent thread limit reached")) {
+      if (isExplicitCrash) {
         rootCause = "Agent thread limit reached (collab spawn failed)";
       }
 
+      const isAutoTurnLimit = rootCause.includes("auto-turn limit");
       let options: DecisionOption[] = [
         {
-          id: "retry",
-          label: "Retry",
-          description: "Retry the last action",
+          id: "continue",
+          label: "继续推进",
+          description: isAutoTurnLimit ? "授权继续按原定计划自主推进下一步" : "继续执行下一步任务",
           actionType: "retry_with_tip",
         },
         {
           id: "pause",
-          label: "Pause",
-          description: "Pause execution for manual review",
+          label: "暂停",
+          description: "暂停自动推进，转为人工介入",
           actionType: "pause",
         },
       ];
@@ -246,7 +261,9 @@ export default function contribute(server: PluginServerContext) {
       return { success: false, message: "No active blocker found for this agent" };
     }
 
-    const option = report.options.find((o) => o.id === input.optionId);
+    const option = report.options.find(
+      (o) => o.id === input.optionId || (input.optionId === "retry" && o.id === "continue"),
+    );
     if (!option) {
       return { success: false, message: "Invalid option selected" };
     }
@@ -255,10 +272,11 @@ export default function contribute(server: PluginServerContext) {
     governor.resetTurn(input.agentId);
 
     if (option.actionType === "retry_with_tip") {
-      const prompt =
-        option.id === "approve_pr"
-          ? "已由用户在 Agent Radar 手动批准 PR 合并，请继续执行合并与验证。"
-          : "已由 Watchdog 批准继续执行，请重试该步骤并继续前进。";
+      let prompt =
+        "【自动推进提示】用户已授权继续推进任务，请按原定计划与步骤继续执行下一步，无须重复上一轮动作。";
+      if (option.id === "approve_pr") {
+        prompt = "已由用户在 Agent Radar 手动批准 PR 合并，请继续执行合并与验证。";
+      }
       await context.paseo.agents.ref(input.agentId).send(prompt);
     }
 

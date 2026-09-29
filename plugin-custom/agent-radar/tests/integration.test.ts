@@ -174,6 +174,9 @@ describe("Subagent Watchdog Integration Test", () => {
     expect(status.blocker).toBeDefined();
     expect(status.blocker?.rootCause).toContain("Agent thread limit reached");
     expect(status.blocker?.options.length).toBeGreaterThanOrEqual(2);
+    expect(
+      status.blocker?.options.some((o: any) => o.id === "continue" && o.label === "继续推进"),
+    ).toBe(true);
 
     // 4. Resolve decision via resolveDecisionRpc
     const resolveHandler = rpcHandlers.get(resolveDecisionRpc);
@@ -183,13 +186,16 @@ describe("Subagent Watchdog Integration Test", () => {
     const resolution = await resolveHandler!(
       {
         agentId: "agent-task-1",
-        optionId: "retry",
+        optionId: "continue",
       },
       hookContext,
     );
 
     expect(resolution.success).toBe(true);
-    expect(mockSend).toHaveBeenCalledWith(expect.stringContaining("已由 Watchdog 批准继续执行"));
+    expect(mockSend).toHaveBeenCalledWith(
+      "【自动推进提示】用户已授权继续推进任务，请按原定计划与步骤继续执行下一步，无须重复上一轮动作。",
+    );
+    expect(mockSend).not.toHaveBeenCalledWith(expect.stringContaining("请重试该步骤"));
 
     // 5. Test interruption RPC
     const interruptHandler = rpcHandlers.get(interruptAgentRpc);
@@ -626,6 +632,88 @@ describe("Subagent Watchdog Integration Test", () => {
 
     // Because autoContinue defaults to false, mockSend MUST NOT be called!
     expect(mockSend).not.toHaveBeenCalled();
+
+    cleanup();
+  });
+
+  it("does NOT append watchdog-blocker when autoContinue is disabled, and clears stale blockers on turn_started", async () => {
+    const listeners: Record<string, Function[]> = {};
+    const rpcHandlers = new Map<any, Function>();
+
+    const fakeServer: PluginServerContext = {
+      on(name: any, handler: any) {
+        if (!listeners[name]) listeners[name] = [];
+        listeners[name]!.push(handler);
+        return () => {};
+      },
+      before: vi.fn(),
+      registerSettings: vi.fn().mockReturnValue({
+        read: vi.fn().mockResolvedValue({
+          status: "ready",
+          values: {
+            autoContinue: false, // Explicitly disabled
+            maxAutoTurns: 5,
+          },
+        }),
+        subscribe: vi.fn().mockReturnValue(() => {}),
+      }) as any,
+      handle(contract: any, handler: any) {
+        rpcHandlers.set(contract, handler);
+      },
+      registerProvider: vi.fn(),
+      registerUsageSource: vi.fn(),
+    };
+
+    const cleanup = contribute(fakeServer);
+    const mockSend = vi.fn().mockResolvedValue(undefined);
+    const mockAppend = vi.fn().mockResolvedValue({ seq: 1, epoch: "epoch-1" });
+    const hookContext: PluginHookContext = {
+      paseo: {
+        agents: {
+          ref: () => ({
+            send: mockSend,
+            timeline: { append: mockAppend, subscribe: vi.fn() },
+          }),
+        },
+      } as any,
+      signal: new AbortController().signal,
+    };
+
+    const agentA = {
+      id: "agent-interactive-test",
+      workspaceId: "wks-1",
+      provider: "claude",
+      cwd: "/repo",
+      title: "Interactive Claude",
+    };
+
+    await Promise.resolve();
+    const turnEndedListeners = listeners["agent.turn_ended"] || [];
+    const turnStartedListeners = listeners["agent.turn_started"] || [];
+
+    // Turn 1 ends with output that previously would be false-flagged as flapping or error
+    await turnEndedListeners[0]!(
+      {
+        agent: agentA,
+        turnId: "turn-1",
+        outcome: { kind: "completed" },
+        timeline: [
+          {
+            type: "assistant_message",
+            text: "我已准备好代码，请确认是否继续下一步？",
+          },
+        ],
+      },
+      hookContext,
+    );
+
+    // Because autoContinue is disabled, it MUST NOT append a blocker card!
+    expect(mockAppend).not.toHaveBeenCalled();
+
+    // Query status handler: should have no blocker
+    const statusHandler = rpcHandlers.get(getWatchdogStatusRpc);
+    let status = await statusHandler!({ agentId: "agent-interactive-test" }, hookContext);
+    expect(status.blocker).toBeNull();
 
     cleanup();
   });
