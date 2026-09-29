@@ -4,12 +4,14 @@ import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { createPaseoClient, type PaseoClient } from "@getpaseo/client";
 import {
   approveTaskRpc,
+  diagnoseProjectsRpc,
   getTaskDetailRpc,
   listTasksRpc,
   rejectTaskRpc,
 } from "./shared/contracts.js";
 import { giteaSettingsDefinition } from "./shared/settings.js";
 import { SettingsManager } from "./server/settings-manager.js";
+import { DiagnosticsService } from "./server/diagnostics.js";
 import { TaskStore } from "./server/store.js";
 import { GiteaClientPool } from "./server/client-pool.js";
 import { ProjectGiteaResolver } from "./server/resolver.js";
@@ -33,6 +35,7 @@ export default function contribute(server: PluginServerContext) {
   const store = new TaskStore(storePath);
   const clientPool = new GiteaClientPool();
   const resolver = new ProjectGiteaResolver();
+  const diagnosticsService = new DiagnosticsService(resolver, clientPool, settingsManager);
 
   const orchestrator = new WorktreeOrchestrator({
     store,
@@ -104,6 +107,18 @@ export default function contribute(server: PluginServerContext) {
 
   server.handle(rejectTaskRpc, async ({ taskId, feedback }) => {
     return orchestrator.rejectTask(taskId, feedback);
+  });
+
+  server.handle(diagnoseProjectsRpc, async (_input, context) => {
+    let projects: any[] = [];
+    try {
+      const list = await context.paseo.projects.list();
+      projects = list.projects.filter((p) => p.projectKind === "git");
+    } catch {
+      // fallback if project list is pending
+    }
+    const diagnostics = await diagnosticsService.diagnoseProjects(projects);
+    return { diagnostics };
   });
 
   return () => {
