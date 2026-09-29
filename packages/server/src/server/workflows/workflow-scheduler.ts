@@ -39,7 +39,11 @@ function latestAttempt(run: WorkflowRun, stepId: string): WorkflowStepAttempt | 
 function dependenciesComplete(run: WorkflowRun, dependsOn: string[]): boolean {
   return dependsOn.every((stepId) => {
     const attempt = latestAttempt(run, stepId);
-    return attempt ? isSuccessfulDependency(attempt.status) : false;
+    if (!attempt || !isSuccessfulDependency(attempt.status)) return false;
+    const hasPendingInteraction = run.interactions?.some(
+      (interaction) => interaction.stepId === stepId && interaction.status === "pending",
+    );
+    return !hasPendingInteraction;
   });
 }
 
@@ -200,8 +204,50 @@ export function scheduleWorkflow(
     return { run, hasReadyStep: false };
   }
 
-  const nextAttempts = [...run.stepAttempts];
-  const outputs = outputsOf(run);
+  const nextAttempts = run.stepAttempts.map((attempt) => {
+    if (isTerminal(attempt.status)) return attempt;
+    const interaction = run.interactions?.findLast(
+      (item) => item.stepId === attempt.stepId && item.requestedAt >= (attempt.startedAt ?? 0),
+    );
+    if (!interaction) return attempt;
+
+    if (interaction.status === "answered") {
+      return {
+        ...attempt,
+        status: "succeeded" as const,
+        completedAt: interaction.answeredAt ?? now,
+        declaredOutputs: {
+          ...attempt.declaredOutputs,
+          ...(interaction.answerArtifactId !== undefined
+            ? { answerArtifactId: interaction.answerArtifactId }
+            : {}),
+          ...(interaction.responderId !== undefined
+            ? { responderId: interaction.responderId }
+            : {}),
+          ...(interaction.answeredAt !== undefined ? { answeredAt: interaction.answeredAt } : {}),
+        },
+      };
+    }
+    if (interaction.status === "expired") {
+      return {
+        ...attempt,
+        status: "failed" as const,
+        completedAt: now,
+        failureClassification: "interaction_expired",
+      };
+    }
+    if (interaction.status === "cancelled") {
+      return {
+        ...attempt,
+        status: "cancelled" as const,
+        completedAt: now,
+      };
+    }
+    return attempt;
+  });
+
+  const updatedRun: WorkflowRun = { ...run, stepAttempts: nextAttempts };
+  const outputs = outputsOf(updatedRun);
   const activeConflictKeys = collectActiveConflictKeys(
     nextAttempts,
     definition,

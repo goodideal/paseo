@@ -260,4 +260,171 @@ describe("WorkflowService", () => {
     });
     expect(reloaded?.deliveryApprovalManifest).toEqual(validManifest);
   });
+
+  it("handles interaction lifecycle: creation, redaction, and prevents duplicate response", async () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-workflow-service-interaction-"));
+    temporaryDirectories.push(paseoHome);
+    const registry = makeRegistry();
+    let idCounter = 0;
+    const service = new WorkflowService({
+      store: new WorkflowStore({ paseoHome }),
+      registry,
+      now: () => 1000 + idCounter,
+      createId: (kind) => `${kind}_${(++idCounter).toString().padStart(16, "0")}`,
+    });
+    const scope = { projectId: "project_1", workspaceId: "workspace_1" };
+
+    const run = service.create({
+      ...scope,
+      principalId: "principal_1",
+      workspaceRoot: "/repo",
+      definition: makeDefinition(),
+    });
+
+    const runWithInteraction = await service.createInteraction({
+      ...scope,
+      runId: run.id,
+      stepId: "ship",
+      promptArtifactId: "artifact_prompt_0001",
+    });
+    expect(runWithInteraction.interactions).toHaveLength(1);
+    const interactionId = runWithInteraction.interactions[0].id;
+    expect(runWithInteraction.interactions[0]).toMatchObject({
+      id: interactionId,
+      stepId: "ship",
+      status: "pending",
+      promptArtifactId: "artifact_prompt_0001",
+    });
+
+    const sensitiveAnswer =
+      "请继续写 spec，密钥是 sk-ant-api03-abcdef12345678901234567890，请注意保管";
+    const answeredRun = await service.respondInteraction({
+      ...scope,
+      runId: run.id,
+      interactionId,
+      responderId: "principal_1",
+      answer: sensitiveAnswer,
+    });
+
+    expect(answeredRun.interactions[0]?.status).toBe("answered");
+    expect(answeredRun.interactions[0]?.responderId).toBe("principal_1");
+    expect(answeredRun.interactions[0]?.answerArtifactId).toBeDefined();
+
+    // Verify artifact was created, redacted, and appended
+    const answerArtifact = answeredRun.artifacts.find(
+      (art) => art.id === answeredRun.interactions[0].answerArtifactId,
+    );
+    expect(answerArtifact).toBeDefined();
+    expect(answerArtifact?.kind).toBe("interaction_answer");
+    expect(answerArtifact?.redacted).toBe(true);
+    expect(answeredRun.artifacts).toHaveLength(1);
+
+    // Duplicate response must throw error indicating already answered
+    await expect(
+      service.respondInteraction({
+        ...scope,
+        runId: run.id,
+        interactionId,
+        responderId: "principal_1",
+        answer: "第二次回答",
+      }),
+    ).rejects.toThrow("already answered");
+
+    // Ensure no second artifact was created
+    const finalRun = service.inspect({ ...scope, runId: run.id });
+    expect(finalRun.artifacts).toHaveLength(1);
+  });
+
+  it("rejects interaction response with wrong scope, expired interaction, or cancelled run", async () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-workflow-service-errors-"));
+    temporaryDirectories.push(paseoHome);
+    const registry = makeRegistry();
+    let idCounter = 0;
+    const service = new WorkflowService({
+      store: new WorkflowStore({ paseoHome }),
+      registry,
+      now: () => 2000 + idCounter,
+      createId: (kind) => `${kind}_${(++idCounter).toString().padStart(16, "0")}`,
+    });
+    const scope = { projectId: "project_1", workspaceId: "workspace_1" };
+
+    const run = service.create({
+      ...scope,
+      principalId: "principal_1",
+      workspaceRoot: "/repo",
+      definition: makeDefinition(),
+    });
+
+    const runWithInteraction = await service.createInteraction({
+      ...scope,
+      runId: run.id,
+      stepId: "ship",
+      promptArtifactId: "artifact_prompt_0001",
+    });
+    const interactionId = runWithInteraction.interactions[0].id;
+
+    // Wrong scope throws not found in scope
+    await expect(
+      service.respondInteraction({
+        projectId: "project_1",
+        workspaceId: "workspace_other",
+        runId: run.id,
+        interactionId,
+        responderId: "principal_1",
+        answer: "回答",
+      }),
+    ).rejects.toThrow("not found in scope");
+
+    // Expire interaction
+    const expiredRun = await service.expireInteraction({
+      ...scope,
+      runId: run.id,
+      interactionId,
+    });
+    expect(expiredRun.interactions[0]?.status).toBe("expired");
+
+    // Answering expired interaction throws
+    await expect(
+      service.respondInteraction({
+        ...scope,
+        runId: run.id,
+        interactionId,
+        responderId: "principal_1",
+        answer: "回答已过期交互",
+      }),
+    ).rejects.toThrow("is not pending");
+
+    // Create a new run with pending interaction, then cancel the run
+    const runForCancel = service.create({
+      ...scope,
+      principalId: "principal_1",
+      workspaceRoot: "/repo",
+      definition: makeDefinition(),
+    });
+
+    const run2 = await service.createInteraction({
+      ...scope,
+      runId: runForCancel.id,
+      stepId: "ship",
+      promptArtifactId: "artifact_prompt_0002",
+    });
+    const interaction2 = run2.interactions.find(
+      (i) => i.promptArtifactId === "artifact_prompt_0002",
+    )!;
+    expect(interaction2.status).toBe("pending");
+
+    const cancelledRun = service.cancel({ ...scope, runId: runForCancel.id });
+    const cancelledInteraction = cancelledRun.interactions.find((i) => i.id === interaction2.id);
+    expect(cancelledInteraction?.status).toBe("cancelled");
+
+    await expect(
+      service.respondInteraction({
+        ...scope,
+        runId: runForCancel.id,
+        interactionId: interaction2.id,
+        responderId: "principal_1",
+        answer: "回答已取消的交互",
+      }),
+    ).rejects.toThrow("is not pending");
+  });
 });

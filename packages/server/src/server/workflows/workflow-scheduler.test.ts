@@ -218,4 +218,173 @@ describe("scheduleWorkflow", () => {
     expect(afterCancel.hasReadyStep).toBe(false);
     expect(afterCancel.run.stepAttempts.length).toBe(scheduled.stepAttempts.length);
   });
+
+  it("holds dependent steps while interaction is pending and readies only the answered continuation", () => {
+    const definition: WorkflowDefinition = {
+      id: "interactive_def",
+      revision: "rev1",
+      maxConcurrency: 2,
+      maxArtifactBytes: 1024,
+      steps: [
+        {
+          id: "step_input_1",
+          type: "interaction.wait",
+          timeoutMs: 1000,
+          retries: 0,
+          concurrency: 1,
+          approval: "automatic",
+        },
+        {
+          id: "step_input_2",
+          type: "interaction.wait",
+          timeoutMs: 1000,
+          retries: 0,
+          concurrency: 1,
+          approval: "automatic",
+        },
+        {
+          id: "continuation_1",
+          type: "workspace.read_only",
+          dependsOn: ["step_input_1"],
+          timeoutMs: 1000,
+          retries: 0,
+          concurrency: 1,
+          approval: "automatic",
+        },
+        {
+          id: "continuation_2",
+          type: "workspace.read_only",
+          dependsOn: ["step_input_2"],
+          timeoutMs: 1000,
+          retries: 0,
+          concurrency: 1,
+          approval: "automatic",
+        },
+      ],
+    };
+
+    const runWithPending = makeRun({
+      stepAttempts: [
+        {
+          id: "attempt_input_1",
+          stepId: "step_input_1",
+          adapterType: "interaction.wait",
+          adapterVersion: "1.0.0",
+          status: "running",
+          input: {},
+        },
+        {
+          id: "attempt_input_2",
+          stepId: "step_input_2",
+          adapterType: "interaction.wait",
+          adapterVersion: "1.0.0",
+          status: "running",
+          input: {},
+        },
+      ],
+      interactions: [
+        {
+          id: "interaction_1",
+          runId: "run_1",
+          stepId: "step_input_1",
+          status: "pending",
+          promptArtifactId: "prompt_artifact_1",
+          requestedAt: 100,
+        },
+        {
+          id: "interaction_2",
+          runId: "run_1",
+          stepId: "step_input_2",
+          status: "pending",
+          promptArtifactId: "prompt_artifact_2",
+          requestedAt: 100,
+        },
+      ],
+    });
+
+    const scheduledPending = scheduleWorkflow(runWithPending, definition, 100).run;
+    // Neither continuation_1 nor continuation_2 is ready while their interactions are pending
+    expect(scheduledPending.stepAttempts.some((a) => a.stepId === "continuation_1")).toBe(false);
+    expect(scheduledPending.stepAttempts.some((a) => a.stepId === "continuation_2")).toBe(false);
+
+    // Now answer interaction_1 ONLY
+    const runWithFirstAnswered: WorkflowRun = {
+      ...runWithPending,
+      interactions: [
+        {
+          ...runWithPending.interactions[0],
+          status: "answered",
+          answerArtifactId: "answer_artifact_1",
+          answeredAt: 200,
+          responderId: "user_1",
+        },
+        runWithPending.interactions[1], // interaction_2 remains pending
+      ],
+    };
+
+    const scheduledAnswered = scheduleWorkflow(runWithFirstAnswered, definition, 200).run;
+    // continuation_1 should now be scheduled and ready!
+    expect(
+      scheduledAnswered.stepAttempts.some(
+        (a) => a.stepId === "continuation_1" && a.status === "ready",
+      ),
+    ).toBe(true);
+    // continuation_2 MUST NOT be ready!
+    expect(scheduledAnswered.stepAttempts.some((a) => a.stepId === "continuation_2")).toBe(false);
+    // step_input_1 should now be succeeded with declared outputs!
+    const attempt1 = scheduledAnswered.stepAttempts.find((a) => a.stepId === "step_input_1");
+    expect(attempt1?.status).toBe("succeeded");
+    expect(attempt1?.declaredOutputs).toMatchObject({
+      answerArtifactId: "answer_artifact_1",
+      responderId: "user_1",
+    });
+  });
+
+  it("marks waiting step as failed when its interaction expires", () => {
+    const definition: WorkflowDefinition = {
+      id: "interactive_def",
+      revision: "rev1",
+      maxConcurrency: 1,
+      maxArtifactBytes: 1024,
+      steps: [
+        {
+          id: "step_input",
+          type: "interaction.wait",
+          timeoutMs: 1000,
+          retries: 0,
+          concurrency: 1,
+          approval: "automatic",
+        },
+      ],
+    };
+
+    const runWithExpired = makeRun({
+      stepAttempts: [
+        {
+          id: "attempt_input",
+          stepId: "step_input",
+          adapterType: "interaction.wait",
+          adapterVersion: "1.0.0",
+          status: "running",
+          input: {},
+        },
+      ],
+      interactions: [
+        {
+          id: "interaction_1",
+          runId: "run_1",
+          stepId: "step_input",
+          status: "expired",
+          promptArtifactId: "prompt_artifact_1",
+          requestedAt: 100,
+        },
+      ],
+    });
+
+    const scheduled = scheduleWorkflow(runWithExpired, definition, 200).run;
+    expect(scheduled.status).toBe("failed");
+    const attempt = scheduled.stepAttempts.find((a) => a.stepId === "step_input");
+    expect(attempt?.status).toBe("failed");
+    expect(attempt?.failureClassification).toBe("interaction_expired");
+  });
 });
