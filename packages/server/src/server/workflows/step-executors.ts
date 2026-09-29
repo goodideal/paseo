@@ -378,9 +378,7 @@ export class StepExecutor {
     return run.approvals.some(
       (appr) =>
         appr.status === "approved" &&
-        (appr.reason?.toLowerCase().includes("plan") ||
-          appr.stepId.toLowerCase().includes("plan") ||
-          appr.consumedAt !== undefined),
+        (appr.reason?.toLowerCase().includes("plan") || appr.stepId.toLowerCase().includes("plan")),
     );
   }
 

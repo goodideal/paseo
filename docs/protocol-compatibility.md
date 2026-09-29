@@ -80,7 +80,7 @@ A shim that exists for old-app or old-daemon support carries a comment naming it
 
 ```ts
 // COMPAT(workspaceFileEditing): added in v0.2.0, remove after 2027-01-18 once daemon floor >= v0.2.0.
-// COMPAT(workflowInteractions): added in v0.10.1, remove gate after 2027-03-25 once daemon floor supports Workflow Interactions.
+// COMPAT(workflowInteractions): added in v0.10.2, remove gate after 2027-03-29 once daemon floor supports Workflow Interactions.
 ```
 
 `rg "COMPAT\("` is the full cleanup backlog, so:
