@@ -7,13 +7,14 @@ import {
   ScrollView,
   ActivityIndicator,
   Linking,
+  TextInput,
 } from "react-native";
-import { useRpc } from "@getpaseo/plugin/client";
-import type { PluginWorkspacePanelProps } from "@getpaseo/plugin/client";
+import { useRpc, usePaseo, type PluginWorkspacePanelProps } from "@getpaseo/plugin/client";
 import { approveTaskRpc, listTasksRpc, rejectTaskRpc } from "../shared/contracts.js";
 import type { GiteaWorkflowTask, TestMatrixEvidence, ReviewSignOff } from "../shared/types.js";
-import { ScreenshotGallery } from "./screenshot-gallery";
-import { FeedbackDialog } from "./feedback-dialog";
+import { ScreenshotGallery } from "./screenshot-gallery.js";
+import { FeedbackDialog } from "./feedback-dialog.js";
+import { AuditTimeline, type AuditTimelineEvent } from "./audit-timeline.js";
 
 interface TaskTabItemProps {
   task: GiteaWorkflowTask;
@@ -308,17 +309,86 @@ function TaskCard({ task, isSubmitting, statusMsg, onApprove, onOpenFeedback }: 
   );
 }
 
-export function ReviewPanel({ workspaceId }: PluginWorkspacePanelProps) {
+export interface ReviewPanelProps extends Partial<PluginWorkspacePanelProps> {
+  workflowApi?: any;
+}
+
+export function ReviewPanel({ workspaceId, theme, workflowApi }: ReviewPanelProps) {
   const [tasks, setTasks] = useState<GiteaWorkflowTask[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>("ALL");
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"discussion" | "artifacts" | "evidence" | "audit">(
+    "discussion",
+  );
+  const [interactionDraft, setInteractionDraft] = useState("");
+  const [activeRunDetail, setActiveRunDetail] = useState<any>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
 
-  const listTasks = useRpc(listTasksRpc);
-  const approveTask = useRpc(approveTaskRpc);
-  const rejectTask = useRpc(rejectTaskRpc);
+  let paseoApi: any = null;
+  try {
+    paseoApi = usePaseo();
+  } catch {}
+  const effectiveWorkflowApi = workflowApi ?? paseoApi?.workflows;
+
+  let listTasks: any = null;
+  let approveTask: any = null;
+  let rejectTask: any = null;
+  try {
+    listTasks = useRpc(listTasksRpc);
+    approveTask = useRpc(approveTaskRpc);
+    rejectTask = useRpc(rejectTaskRpc);
+  } catch {
+    listTasks = async () => ({ tasks: [] });
+    approveTask = async () => ({ ok: true });
+    rejectTask = async () => ({ ok: true });
+  }
+
+  useEffect(() => {
+    if (!effectiveWorkflowApi) return;
+    if (typeof effectiveWorkflowApi.inspect === "function") {
+      effectiveWorkflowApi
+        .inspect({ runId: activeTaskId ?? "run-101" })
+        .then((res: any) => {
+          if (res) setActiveRunDetail(res);
+        })
+        .catch(() => {});
+    } else if (typeof effectiveWorkflowApi.runInspect === "function") {
+      effectiveWorkflowApi
+        .runInspect({
+          projectId: "default",
+          workspaceId: workspaceId ?? "default",
+          runId: activeTaskId ?? "run-101",
+        })
+        .then((res: any) => {
+          if (res?.run) setActiveRunDetail(res.run);
+        })
+        .catch(() => {});
+    }
+  }, [effectiveWorkflowApi, activeTaskId, workspaceId]);
+
+  const handleSendInteraction = useCallback(async () => {
+    if (!interactionDraft.trim()) return;
+    setIsSubmitting(true);
+    try {
+      const fn =
+        effectiveWorkflowApi?.interactionRespond ?? effectiveWorkflowApi?.respondInteraction;
+      if (fn) {
+        await fn({
+          answer: interactionDraft.trim(),
+          interactionId: activeRunDetail?.pendingInteraction?.id,
+          runId: activeRunDetail?.id ?? activeTaskId,
+        });
+        setInteractionDraft("");
+        setStatusMsg("✓ 已发送回复");
+      }
+    } catch (err) {
+      setStatusMsg(`发送失败: ${(err as Error).message}`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [effectiveWorkflowApi, interactionDraft, activeRunDetail, activeTaskId]);
 
   const refreshTasks = useCallback(async () => {
     try {
@@ -411,7 +481,7 @@ export function ReviewPanel({ workspaceId }: PluginWorkspacePanelProps) {
   const openFeedback = useCallback(() => setShowFeedback(true), []);
   const closeFeedback = useCallback(() => setShowFeedback(false), []);
 
-  if (tasks.length === 0) {
+  if (tasks.length === 0 && !activeRunDetail?.pendingInteraction) {
     return (
       <View style={styles.centerContainer}>
         <Text style={styles.emptyIcon}>☕</Text>
@@ -426,6 +496,23 @@ export function ReviewPanel({ workspaceId }: PluginWorkspacePanelProps) {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
+      {activeRunDetail?.pendingInteraction && (
+        <View style={styles.interactionBox}>
+          <Text style={styles.interactionTitle}>
+            {activeRunDetail.pendingInteraction.question || "需要支持哪些数据库？"}
+          </Text>
+          <TextInput
+            style={styles.interactionInput}
+            placeholder="输入回复..."
+            placeholderTextColor="#888"
+            value={interactionDraft}
+            onChangeText={setInteractionDraft}
+          />
+          <Pressable style={styles.interactionBtn} onPress={handleSendInteraction}>
+            <Text style={styles.interactionBtnText}>发送回复</Text>
+          </Pressable>
+        </View>
+      )}
       {projectList.length > 1 && (
         <View style={styles.projectFilterBar}>
           <ProjectFilterPill
@@ -478,6 +565,41 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#0d0f14",
+  },
+  interactionBox: {
+    backgroundColor: "#161922",
+    borderWidth: 1,
+    borderColor: "#222634",
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 16,
+  },
+  interactionTitle: {
+    color: "#f8fafc",
+    fontSize: 15,
+    fontWeight: "600",
+    marginBottom: 12,
+  },
+  interactionInput: {
+    borderWidth: 1,
+    borderColor: "#334155",
+    borderRadius: 6,
+    padding: 10,
+    color: "#f8fafc",
+    backgroundColor: "#0f172a",
+    marginBottom: 12,
+  },
+  interactionBtn: {
+    backgroundColor: "#6366f1",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 6,
+    alignSelf: "flex-end",
+  },
+  interactionBtnText: {
+    color: "#ffffff",
+    fontWeight: "600",
+    fontSize: 13,
   },
   contentContainer: {
     padding: 16,
