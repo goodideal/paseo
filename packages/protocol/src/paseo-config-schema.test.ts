@@ -91,7 +91,6 @@ describe("paseo config schema", () => {
           branchName: { instructions: "Prefix branches with feat/." },
           commitMessage: { instructions: "Use imperative mood." },
           pullRequest: { instructions: "Include risk notes." },
-          audioBrief: { instructions: "Explain options thoroughly." },
         },
       }),
     ).toEqual({
@@ -100,7 +99,6 @@ describe("paseo config schema", () => {
         branchName: { instructions: "Prefix branches with feat/." },
         commitMessage: { instructions: "Use imperative mood." },
         pullRequest: { instructions: "Include risk notes." },
-        audioBrief: { instructions: "Explain options thoroughly." },
       },
     });
   });

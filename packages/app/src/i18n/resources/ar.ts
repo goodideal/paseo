@@ -52,10 +52,6 @@ export const ar: TranslationResources = {
       loading: "تحميل...",
       starting: "جارٍ البدء...",
       copied: "منقول",
-      audioBriefPlay: "تشغيل الملخص الصوتي",
-      audioBriefStop: "إيقاف الملخص الصوتي",
-      audioBriefLoading: "جارٍ إنشاء الملخص الصوتي...",
-      audioBriefTitle: "ملخص صوتي",
       copiedLabel: "منسوخ{{label}}",
       downloadComplete: "اكتمل التنزيل",
       downloadFailed: "فشل التنزيل",
@@ -2089,14 +2085,6 @@ export const ar: TranslationResources = {
       fallbackHint: "إذا لم يكن متاحًا، يستخدم Paseo نموذجًا آخر متاحًا",
       docs: "الوثائق",
       saveError: "تعذر تحديث إنشاء البيانات الوصفية",
-      audioBriefTitle: "موجه الملخص الصوتي",
-      audioBriefDescription:
-        "تخصيص التعليمات التي يستخدمها Paseo لتوليد ملخصات صوتية منطوقة من رسائل المساعد",
-      audioBriefPlaceholder: "اتركه فارغًا لاستخدام الملخص التكيفي المدمج، أو أدخل تعليمات مخصصة...",
-      loadDefaultTemplate: "تحميل القالب",
-      reset: "إعادة تعيين",
-      save: "حفظ",
-      saving: "جارٍ الحفظ...",
     },
     general: {
       title: "عام",
@@ -2784,9 +2772,6 @@ export const ar: TranslationResources = {
         commitMessagePlaceholder: "استخدم الالتزامات التقليدية مع النطاق",
         pullRequest: "سحب الطلبات",
         pullRequestPlaceholder: "ابدأ بملخص من فقرة واحدة، مع تضمين قسم لخطة الاختبار",
-        audioBrief: "ملخص صوتي",
-        audioBriefPlaceholder:
-          "اشرح مقترحات البنية المعمارية بتفصيل، واجعل التحديثات الروتينية موجزة...",
       },
       writeFailures: {
         staleTitle: "تم تغيير التكوين على القرص",

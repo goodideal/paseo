@@ -210,11 +210,6 @@ const MutableStructuredGenerationProviderSchema = z
 const MutableMetadataGenerationConfigSchema = z
   .object({
     providers: z.array(MutableStructuredGenerationProviderSchema).default([]),
-    audioBrief: z
-      .object({
-        instructions: z.string().optional(),
-      })
-      .optional(),
   })
   .passthrough();
 

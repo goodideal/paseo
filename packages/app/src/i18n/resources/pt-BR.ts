@@ -53,10 +53,6 @@ export const ptBR: TranslationResources = {
       loading: "Carregando...",
       starting: "Iniciando...",
       copied: "Copiado",
-      audioBriefPlay: "Reproduzir resumo de áudio",
-      audioBriefStop: "Parar resumo de áudio",
-      audioBriefLoading: "Gerando resumo de áudio...",
-      audioBriefTitle: "Resumo de áudio",
       copiedLabel: "{{label}} copiado",
       downloadComplete: "Download concluído",
       downloadFailed: "Falha no download",
@@ -2123,15 +2119,6 @@ export const ptBR: TranslationResources = {
       fallbackHint: "Se ele não estiver disponível, o Paseo usa outro modelo disponível",
       docs: "Documentação",
       saveError: "Não foi possível atualizar a geração de metadados",
-      audioBriefTitle: "Prompt do resumo de áudio",
-      audioBriefDescription:
-        "Personalize as instruções que o Paseo usa para sintetizar resumos falados em áudio a partir das mensagens do assistente",
-      audioBriefPlaceholder:
-        "Deixe em branco para usar o resumidor adaptativo integrado ou digite instruções personalizadas...",
-      loadDefaultTemplate: "Carregar modelo",
-      reset: "Redefinir",
-      save: "Salvar",
-      saving: "Salvando...",
     },
     general: {
       title: "Geral",
@@ -2829,9 +2816,6 @@ export const ptBR: TranslationResources = {
         commitMessagePlaceholder: "Use Conventional Commits com escopo",
         pullRequest: "Pull requests",
         pullRequestPlaceholder: "Comece com um resumo de um parágrafo e inclua uma seção Test plan",
-        audioBrief: "Resumo de áudio",
-        audioBriefPlaceholder:
-          "Explique propostas de arquitetura detalhadamente, mantenha atualizações rotineiras breves...",
       },
       writeFailures: {
         staleTitle: "Configuração alterada no disco",

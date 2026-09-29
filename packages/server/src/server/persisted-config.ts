@@ -170,12 +170,6 @@ const StructuredGenerationProviderConfigSchema = z
 const AgentMetadataGenerationSchema = z
   .object({
     providers: z.array(StructuredGenerationProviderConfigSchema).optional(),
-    audioBrief: z
-      .object({
-        instructions: z.string().optional(),
-      })
-      .strict()
-      .optional(),
   })
   .strict();
 

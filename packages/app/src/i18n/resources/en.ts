@@ -48,10 +48,6 @@ export const en = {
       loading: "Loading...",
       starting: "Starting...",
       copied: "Copied",
-      audioBriefPlay: "Play audio brief",
-      audioBriefStop: "Stop audio brief",
-      audioBriefLoading: "Generating audio brief...",
-      audioBriefTitle: "Audio Brief",
       copiedLabel: "Copied {{label}}",
       downloadComplete: "Download complete",
       downloadFailed: "Download failed",
@@ -2212,15 +2208,6 @@ export const en = {
       fallbackHint: "If it is unavailable, Paseo falls back to another available model",
       docs: "Docs",
       saveError: "Unable to update metadata generation",
-      audioBriefTitle: "Audio brief prompt",
-      audioBriefDescription:
-        "Customize the instructions Paseo uses to synthesize spoken audio briefs from assistant messages",
-      audioBriefPlaceholder:
-        "Leave blank to use the built-in adaptive summarizer, or enter custom instructions...",
-      loadDefaultTemplate: "Load template",
-      reset: "Reset",
-      save: "Save",
-      saving: "Saving...",
     },
     general: {
       title: "General",
@@ -2912,9 +2899,6 @@ export const en = {
         commitMessagePlaceholder: "Use Conventional Commits with a scope",
         pullRequest: "Pull requests",
         pullRequestPlaceholder: "Lead with a one-paragraph summary, include a Test plan section",
-        audioBrief: "Audio brief",
-        audioBriefPlaceholder:
-          "Explain architectural proposals thoroughly, keep routine updates brief...",
       },
       writeFailures: {
         staleTitle: "Config changed on disk",
@@ -2947,54 +2931,44 @@ export type TranslationResources = {
           terminalAppearance?: BaseTranslation["settings"]["appearance"]["terminalAppearance"];
         };
       }
-    : K extends "common"
-      ? Omit<
-          BaseTranslation["common"],
-          "audioBriefPlay" | "audioBriefStop" | "audioBriefLoading" | "audioBriefTitle"
-        > & {
-          audioBriefPlay?: string;
-          audioBriefStop?: string;
-          audioBriefLoading?: string;
-          audioBriefTitle?: string;
-        }
-      : K extends "composer"
-        ? Omit<BaseTranslation["composer"], "quickPrompts"> & {
-            quickPrompts: Omit<BaseTranslation["composer"]["quickPrompts"], "modal"> & {
-              modal: Omit<
-                BaseTranslation["composer"]["quickPrompts"]["modal"],
-                | "tabProject"
-                | "tabGlobal"
-                | "projectScope"
-                | "globalScope"
-                | "globalNotice"
-                | "projectNotice"
-                | "globalReadOnlyHint"
-                | "newProjectPrompt"
-                | "newGlobalPrompt"
-                | "editProjectPrompt"
-                | "editGlobalPrompt"
-                | "jumpToGlobal"
-                | "emptyProjectItems"
-                | "moveUp"
-                | "moveDown"
-              > & {
-                tabProject?: string;
-                tabGlobal?: string;
-                projectScope?: string;
-                globalScope?: string;
-                globalNotice?: string;
-                projectNotice?: string;
-                globalReadOnlyHint?: string;
-                newProjectPrompt?: string;
-                newGlobalPrompt?: string;
-                editProjectPrompt?: string;
-                editGlobalPrompt?: string;
-                jumpToGlobal?: string;
-                emptyProjectItems?: string;
-                moveUp?: string;
-                moveDown?: string;
-              };
+    : K extends "composer"
+      ? Omit<BaseTranslation["composer"], "quickPrompts"> & {
+          quickPrompts: Omit<BaseTranslation["composer"]["quickPrompts"], "modal"> & {
+            modal: Omit<
+              BaseTranslation["composer"]["quickPrompts"]["modal"],
+              | "tabProject"
+              | "tabGlobal"
+              | "projectScope"
+              | "globalScope"
+              | "globalNotice"
+              | "projectNotice"
+              | "globalReadOnlyHint"
+              | "newProjectPrompt"
+              | "newGlobalPrompt"
+              | "editProjectPrompt"
+              | "editGlobalPrompt"
+              | "jumpToGlobal"
+              | "emptyProjectItems"
+              | "moveUp"
+              | "moveDown"
+            > & {
+              tabProject?: string;
+              tabGlobal?: string;
+              projectScope?: string;
+              globalScope?: string;
+              globalNotice?: string;
+              projectNotice?: string;
+              globalReadOnlyHint?: string;
+              newProjectPrompt?: string;
+              newGlobalPrompt?: string;
+              editProjectPrompt?: string;
+              editGlobalPrompt?: string;
+              jumpToGlobal?: string;
+              emptyProjectItems?: string;
+              moveUp?: string;
+              moveDown?: string;
             };
-          }
-        : BaseTranslation[K];
+          };
+        }
+      : BaseTranslation[K];
 };

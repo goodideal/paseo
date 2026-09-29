@@ -52,10 +52,6 @@ export const fr: TranslationResources = {
       loading: "Chargement...",
       starting: "Départ...",
       copied: "Copié",
-      audioBriefPlay: "Lire le résumé audio",
-      audioBriefStop: "Arrêter le résumé audio",
-      audioBriefLoading: "Génération du résumé audio...",
-      audioBriefTitle: "Résumé audio",
       copiedLabel: "{{label}}copié",
       downloadComplete: "Téléchargement terminé",
       downloadFailed: "Le téléchargement a échoué",
@@ -2141,15 +2137,6 @@ export const fr: TranslationResources = {
       fallbackHint: "S’il est indisponible, Paseo utilise un autre modèle disponible",
       docs: "Documentation",
       saveError: "Impossible de mettre à jour la génération de métadonnées",
-      audioBriefTitle: "Prompt du résumé audio",
-      audioBriefDescription:
-        "Personnalisez les instructions utilisées par Paseo pour synthétiser des résumés audio vocaux à partir des messages de l'assistant",
-      audioBriefPlaceholder:
-        "Laissez vide pour utiliser le résumé adaptatif intégré, ou saisissez des instructions personnalisées...",
-      loadDefaultTemplate: "Charger le modèle",
-      reset: "Réinitialiser",
-      save: "Enregistrer",
-      saving: "Enregistrement...",
     },
     general: {
       title: "Général",
@@ -2855,9 +2842,6 @@ export const fr: TranslationResources = {
         pullRequest: "Demandes de tirage",
         pullRequestPlaceholder:
           "Commencez avec un résumé d'un paragraphe, incluez une section sur le plan de test",
-        audioBrief: "Résumé audio",
-        audioBriefPlaceholder:
-          "Expliquez en détail les propositions d'architecture, soyez concis pour les mises à jour courantes...",
       },
       writeFailures: {
         staleTitle: "Configuration modifiée sur le disque",
