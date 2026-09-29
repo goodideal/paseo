@@ -137,3 +137,64 @@ export const GiteaSettingsSchema = z.object({
 });
 
 export type GiteaSettings = z.infer<typeof GiteaSettingsSchema>;
+
+export const GiteaWorkflowPolicySchema = z.enum([
+  "full_superpowers",
+  "issue_preapproved",
+  "unattended",
+]);
+
+export type GiteaWorkflowPolicy = z.infer<typeof GiteaWorkflowPolicySchema>;
+
+export const GiteaProjectSettingsSchema = z.object({
+  enabled: z.boolean().default(false),
+  readyLabel: z.string().default("agent-ready"),
+  workflowPolicyOverride: GiteaWorkflowPolicySchema.optional(),
+});
+
+export type GiteaProjectSettings = z.infer<typeof GiteaProjectSettingsSchema>;
+
+export const GiteaHostSettingsSchema = z.object({
+  enabled: z.boolean().default(false),
+  pollIntervalSeconds: z.number().int().min(10).default(60),
+  maxConcurrentRuns: z.number().int().min(1).max(10).default(3),
+  maxAutomaticRepairCycles: z.number().int().min(0).max(5).default(2),
+  automationProfile: z.string().default("claude-code"),
+  workflowPolicy: GiteaWorkflowPolicySchema.default("full_superpowers"),
+  projects: z.record(z.string(), GiteaProjectSettingsSchema).default({}),
+  inProgressLabel: z.string().default("agent-in-progress"),
+  reviewedLabel: z.string().default("agent-reviewed"),
+  evidenceRetentionDays: z.number().int().min(1).default(90),
+});
+
+export type GiteaHostSettings = z.infer<typeof GiteaHostSettingsSchema>;
+
+export const IssueRunIndexEntrySchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  repoOwner: z.string(),
+  repoName: z.string(),
+  issueNumber: z.number().int(),
+  runId: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export type IssueRunIndexEntry = z.infer<typeof IssueRunIndexEntrySchema>;
+
+export const GiteaProjectDiagnosticSchema = z.object({
+  projectId: z.string(),
+  projectName: z.string(),
+  host: z.string(),
+  baseUrl: z.string(),
+  repoOwner: z.string(),
+  repoName: z.string(),
+  connectionStatus: z.enum(["connected", "unauthorized", "unreachable", "not_gitea"]),
+  authSource: z.enum(["tea", "env", "anonymous", "none"]),
+  authorized: z.boolean(),
+  readyLabel: z.string(),
+  pendingIssueCount: z.number().int().nonnegative().optional(),
+  errorMessage: z.string().optional(),
+});
+
+export type GiteaProjectDiagnostic = z.infer<typeof GiteaProjectDiagnosticSchema>;

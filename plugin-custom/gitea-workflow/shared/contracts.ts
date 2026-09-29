@@ -1,6 +1,6 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
-import { GiteaWorkflowTaskSchema } from "./types.js";
+import { GiteaWorkflowTaskSchema, GiteaProjectDiagnosticSchema } from "./types.js";
 
 export const listTasksRpc = defineRpc({
   name: "gitea.tasks.list",
@@ -44,5 +44,24 @@ export const rejectTaskRpc = defineRpc({
   output: z.object({
     ok: z.boolean(),
     error: z.string().optional(),
+  }),
+});
+
+export const diagnoseProjectsRpc = defineRpc({
+  name: "gitea.diagnostics.list",
+  input: z.object({}),
+  output: z.object({
+    diagnostics: z.array(GiteaProjectDiagnosticSchema),
+  }),
+});
+
+export const pruneEvidenceRpc = defineRpc({
+  name: "gitea.evidence.prune",
+  input: z.object({
+    olderThanDays: z.number().int().positive().optional(),
+  }),
+  output: z.object({
+    prunedCount: z.number().int(),
+    freedBytes: z.number().int(),
   }),
 });

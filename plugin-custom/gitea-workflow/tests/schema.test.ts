@@ -2,9 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
   GiteaWorkflowTaskSchema,
   GiteaSettingsSchema,
+  GiteaHostSettingsSchema,
   ResolvedProjectGiteaSchema,
 } from "../shared/types.js";
-import { listTasksRpc, approveTaskRpc, rejectTaskRpc } from "../shared/contracts.js";
+import {
+  listTasksRpc,
+  approveTaskRpc,
+  rejectTaskRpc,
+  diagnoseProjectsRpc,
+  pruneEvidenceRpc,
+} from "../shared/contracts.js";
 
 describe("Gitea Workflow Schemas and RPCs", () => {
   it("validates a valid task record with project scoping", () => {
@@ -79,5 +86,32 @@ describe("Gitea Workflow Schemas and RPCs", () => {
     expect(listTasksRpc.name).toBe("gitea.tasks.list");
     expect(approveTaskRpc.name).toBe("gitea.tasks.approve");
     expect(rejectTaskRpc.name).toBe("gitea.tasks.reject");
+    expect(diagnoseProjectsRpc.name).toBe("gitea.diagnostics.list");
+    expect(pruneEvidenceRpc.name).toBe("gitea.evidence.prune");
+  });
+
+  it("provides safe defaults with global automation disabled in GiteaHostSettingsSchema", () => {
+    const settings = GiteaHostSettingsSchema.parse({});
+    expect(settings.enabled).toBe(false);
+    expect(settings.workflowPolicy).toBe("full_superpowers");
+    expect(settings.pollIntervalSeconds).toBe(60);
+    expect(settings.maxConcurrentRuns).toBe(3);
+    expect(settings.evidenceRetentionDays).toBe(90);
+    expect(settings.projects).toEqual({});
+  });
+
+  it("validates project authorization and policy override in GiteaHostSettingsSchema", () => {
+    const settings = GiteaHostSettingsSchema.parse({
+      enabled: true,
+      projects: {
+        "proj-1": {
+          enabled: true,
+          readyLabel: "bot-task",
+          workflowPolicyOverride: "issue_preapproved",
+        },
+      },
+    });
+    expect(settings.projects["proj-1"].readyLabel).toBe("bot-task");
+    expect(settings.projects["proj-1"].workflowPolicyOverride).toBe("issue_preapproved");
   });
 });
