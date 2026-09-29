@@ -4,6 +4,8 @@ import {
   WorkflowApprovalApproveRequestSchema,
   WorkflowArtifactGetResponseSchema,
   WorkflowDefinitionListRequestSchema,
+  WorkflowInteractionRespondRequestSchema,
+  WorkflowInteractionRespondResponseSchema,
   WorkflowRunCreateRequestSchema,
   WorkflowRunCreateResponseSchema,
 } from "./rpc-schemas.js";
@@ -46,6 +48,37 @@ describe("workflow RPC schemas", () => {
       ...scope,
       approvalId: "approval-1",
     });
+
+    const request = WorkflowInteractionRespondRequestSchema.parse({
+      type: "workflow.interaction.respond.request",
+      requestId: "request_1",
+      projectId: "project_1",
+      workspaceId: "workspace_1",
+      runId: "run_1",
+      interactionId: "interaction_1",
+      answer: "保留人工批准",
+    });
+    expect(request.answer).toBe("保留人工批准");
+
+    const response = WorkflowInteractionRespondResponseSchema.parse({
+      type: "workflow.interaction.respond.response",
+      payload: {
+        ...scope,
+        interaction: {
+          id: "interaction_1",
+          runId: "run_1",
+          stepId: "design-input",
+          status: "answered",
+          promptArtifactId: "art_1",
+          answerArtifactId: "art_2",
+          requestedAt: 100,
+          answeredAt: 200,
+          responderId: "principal_1",
+        },
+        error: null,
+      },
+    });
+    expect(response.payload.interaction?.status).toBe("answered");
   });
 
   test("uses dotted request and response type names with response payload correlation", () => {

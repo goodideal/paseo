@@ -1802,6 +1802,8 @@ export class VoiceAssistantWebSocketServer {
         hubAgentRpc: true,
         // COMPAT(workflowEngine): added in v0.8.0, remove gate after 2027-03-25 once daemon floor supports Workflow Engine.
         ...(this.workflowService ? { workflowEngine: true } : {}),
+        // COMPAT(workflowInteractions): added in v0.10.2, remove gate after 2027-03-29 once daemon floor supports Workflow Interactions.
+        ...(this.workflowService ? { workflowInteractions: true } : {}),
         // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.
         directorySync: true,
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.

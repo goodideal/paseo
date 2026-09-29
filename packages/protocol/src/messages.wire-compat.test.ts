@@ -10,6 +10,7 @@ import {
   WorkspaceSetupProgressMessageSchema,
   AgentTimelineEntryPayloadSchema,
 } from "./messages.js";
+import { WorkflowRunDetailSchema } from "./workflow/rpc-schemas.js";
 
 test("terminal listings accept older rows and retain new per-terminal directories", () => {
   const response = {
@@ -388,4 +389,41 @@ test("blocked setup preserves the legacy failed shape and optional provenance", 
   expect(WorkspaceSetupSnapshotSchema.parse(legacySnapshot.parse(failed))).toEqual(
     legacySnapshot.parse(failed),
   );
+});
+
+test("workflow run detail parses legacy runs without interactions and accepts optional pendingInteraction projection", () => {
+  const legacyDetail = {
+    projectId: "project-1",
+    workspaceId: "workspace-1",
+    runId: "run-1",
+    workflowId: "test-workflow",
+    name: "Test workflow",
+    sourcePreset: "test-preset",
+    definitionRevision: "1",
+    definitionHash: "hash-1",
+    status: "running" as const,
+    currentStepId: "step-1",
+    executionRisk: "workspace_write" as const,
+    createdAt: "2026-09-29T00:00:00.000Z",
+    updatedAt: "2026-09-29T00:00:00.000Z",
+    completedAt: null,
+    stepAttempts: [],
+  };
+
+  const parsedLegacy = WorkflowRunDetailSchema.parse(legacyDetail);
+  expect(parsedLegacy.runId).toBe("run-1");
+  expect(parsedLegacy.pendingInteraction).toBeUndefined();
+
+  const modernDetail = {
+    ...legacyDetail,
+    pendingInteraction: {
+      id: "interaction-1",
+      promptArtifactId: "art-prompt-1",
+      status: "pending" as const,
+      question: "请确认是否继续发布？",
+    },
+  };
+  const parsedModern = WorkflowRunDetailSchema.parse(modernDetail);
+  expect(parsedModern.pendingInteraction).toBeDefined();
+  expect(parsedModern.pendingInteraction?.id).toBe("interaction-1");
 });

@@ -55,6 +55,37 @@ export const WorkflowStepAttemptSchema = z.object({
   failureReason: z.string().nullable(),
 });
 
+export const WorkflowInteractionStatusSchema = z.enum([
+  "pending",
+  "answered",
+  "expired",
+  "cancelled",
+]);
+
+export const WorkflowInteractionSchema = z.object({
+  id: z.string().min(1),
+  interactionId: z.string().min(1).optional(),
+  runId: z.string().min(1).optional(),
+  stepId: z.string().min(1).optional(),
+  status: WorkflowInteractionStatusSchema.optional(),
+  promptArtifactId: z.string().min(1).optional(),
+  answerArtifactId: z.string().min(1).nullable().optional(),
+  question: z.string().nullable().optional(),
+  requestedAt: z.union([z.number(), z.string()]).optional(),
+  answeredAt: z.union([z.number(), z.string()]).nullable().optional(),
+  responderId: z.string().nullable().optional(),
+  createdAt: z.union([z.number(), z.string()]).optional(),
+});
+
+export const DeliveryApprovalManifestSchema = z.object({
+  sourceBranch: z.string().min(1),
+  targetBranch: z.string().min(1),
+  commitSha: z.string().min(1),
+  pullRequestTitle: z.string().min(1),
+  pullRequestBodyDigest: z.string().min(1),
+  issueReference: z.string().min(1),
+});
+
 export const WorkflowRunSummarySchema = WorkflowScopeSchema.extend({
   runId: z.string().min(1),
   workflowId: z.string().min(1),
@@ -68,10 +99,13 @@ export const WorkflowRunSummarySchema = WorkflowScopeSchema.extend({
   createdAt: z.string(),
   updatedAt: z.string(),
   completedAt: z.string().nullable(),
+  pendingInteraction: WorkflowInteractionSchema.nullable().optional(),
 });
 
 export const WorkflowRunDetailSchema = WorkflowRunSummarySchema.extend({
   stepAttempts: z.array(WorkflowStepAttemptSchema),
+  interactions: z.array(WorkflowInteractionSchema).optional(),
+  deliveryApprovalManifest: DeliveryApprovalManifestSchema.nullable().optional(),
 });
 
 export const WorkflowApprovalStatusSchema = z.enum(["pending", "approved", "denied", "expired"]);
@@ -167,6 +201,13 @@ export const WorkflowApprovalDenyRequestSchema = WorkflowRequestScopeSchema.exte
   runId: z.string().min(1),
   approvalId: z.string().min(1),
   reason: z.string().min(1).optional(),
+});
+
+export const WorkflowInteractionRespondRequestSchema = WorkflowRequestScopeSchema.extend({
+  type: z.literal("workflow.interaction.respond.request"),
+  runId: z.string().min(1),
+  interactionId: z.string().min(1),
+  answer: z.string().trim().min(1).max(16_384),
 });
 
 export const WorkflowArtifactListRequestSchema = WorkflowRequestScopeSchema.extend({
@@ -287,6 +328,14 @@ export const WorkflowArtifactGetResponseSchema = z.object({
   }),
 });
 
+export const WorkflowInteractionRespondResponseSchema = z.object({
+  type: z.literal("workflow.interaction.respond.response"),
+  payload: WorkflowResponseScopeSchema.extend({
+    interaction: WorkflowInteractionSchema.nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
 export type WorkflowScope = z.infer<typeof WorkflowScopeSchema>;
 export type WorkflowRunStatus = z.infer<typeof WorkflowRunStatusSchema>;
 export type WorkflowStepAttemptStatus = z.infer<typeof WorkflowStepAttemptStatusSchema>;
@@ -328,3 +377,12 @@ export type WorkflowApprovalApproveResponse = z.infer<typeof WorkflowApprovalApp
 export type WorkflowApprovalDenyResponse = z.infer<typeof WorkflowApprovalDenyResponseSchema>;
 export type WorkflowArtifactListResponse = z.infer<typeof WorkflowArtifactListResponseSchema>;
 export type WorkflowArtifactGetResponse = z.infer<typeof WorkflowArtifactGetResponseSchema>;
+export type WorkflowInteractionStatus = z.infer<typeof WorkflowInteractionStatusSchema>;
+export type WorkflowInteraction = z.infer<typeof WorkflowInteractionSchema>;
+export type DeliveryApprovalManifest = z.infer<typeof DeliveryApprovalManifestSchema>;
+export type WorkflowInteractionRespondRequest = z.infer<
+  typeof WorkflowInteractionRespondRequestSchema
+>;
+export type WorkflowInteractionRespondResponse = z.infer<
+  typeof WorkflowInteractionRespondResponseSchema
+>;

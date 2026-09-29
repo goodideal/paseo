@@ -114,6 +114,7 @@ import {
   WorkflowApprovalDenyRequestSchema,
   WorkflowArtifactListRequestSchema,
   WorkflowArtifactGetRequestSchema,
+  WorkflowInteractionRespondRequestSchema,
   WorkflowDefinitionListResponseSchema,
   WorkflowDefinitionInspectResponseSchema,
   WorkflowRunCreateResponseSchema,
@@ -127,7 +128,28 @@ import {
   WorkflowApprovalDenyResponseSchema,
   WorkflowArtifactListResponseSchema,
   WorkflowArtifactGetResponseSchema,
+  WorkflowInteractionRespondResponseSchema,
+  WorkflowInteractionStatusSchema,
+  WorkflowInteractionSchema,
+  DeliveryApprovalManifestSchema,
+  type WorkflowInteractionStatus,
+  type WorkflowInteraction,
+  type DeliveryApprovalManifest,
+  type WorkflowInteractionRespondRequest,
+  type WorkflowInteractionRespondResponse,
 } from "./workflow/rpc-schemas.js";
+export {
+  WorkflowInteractionRespondRequestSchema,
+  WorkflowInteractionRespondResponseSchema,
+  WorkflowInteractionStatusSchema,
+  WorkflowInteractionSchema,
+  DeliveryApprovalManifestSchema,
+  type WorkflowInteractionStatus,
+  type WorkflowInteraction,
+  type DeliveryApprovalManifest,
+  type WorkflowInteractionRespondRequest,
+  type WorkflowInteractionRespondResponse,
+};
 import {
   BROWSER_AUTOMATION_COMMAND_NAMES,
   BrowserAutomationExecuteRequestSchema,
@@ -3454,6 +3476,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkflowApprovalDenyRequestSchema,
   WorkflowArtifactListRequestSchema,
   WorkflowArtifactGetRequestSchema,
+  WorkflowInteractionRespondRequestSchema,
 ]);
 
 export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
@@ -3797,6 +3820,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentConfigApply: z.boolean().optional(),
         // COMPAT(workflowEngine): added in v0.8.0, remove gate after 2027-03-25 once daemon floor supports Workflow Engine.
         workflowEngine: z.boolean().optional(),
+        // COMPAT(workflowInteractions): added in v0.10.2, remove gate after 2027-03-29 once daemon floor supports Workflow Interactions.
+        workflowInteractions: z.boolean().optional(),
       })
       .optional(),
   })
@@ -7132,6 +7157,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkflowApprovalDenyResponseSchema,
   WorkflowArtifactListResponseSchema,
   WorkflowArtifactGetResponseSchema,
+  WorkflowInteractionRespondResponseSchema,
   DaemonUpdateProgressMessageSchema,
   DaemonUpdateResponseSchema,
 ]);

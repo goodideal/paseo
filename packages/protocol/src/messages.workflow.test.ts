@@ -48,9 +48,9 @@ describe("Workflow Engine protocol compatibility", () => {
       ServerInfoStatusPayloadSchema.parse({
         status: "server_info",
         serverId: "workflow-daemon",
-        features: { workflowEngine: true },
+        features: { workflowEngine: true, workflowInteractions: true },
       }).features,
-    ).toEqual({ workflowEngine: true });
+    ).toEqual({ workflowEngine: true, workflowInteractions: true });
   });
 
   test("parses every Workflow request through the inbound union with scope and correlation fields", () => {
@@ -120,6 +120,12 @@ describe("Workflow Engine protocol compatibility", () => {
         type: "workflow.artifact.get.request",
         ...scope,
         artifactId: "artifact-1",
+      },
+      {
+        type: "workflow.interaction.respond.request",
+        ...scope,
+        interactionId: "interaction-1",
+        answer: "继续推进",
       },
     ];
 
@@ -204,6 +210,18 @@ describe("Workflow Engine protocol compatibility", () => {
       {
         type: "workflow.artifact.get.response",
         payload: { ...basePayload, artifact, content: "test output", error: null },
+      },
+      {
+        type: "workflow.interaction.respond.response",
+        payload: {
+          ...basePayload,
+          interaction: {
+            id: "interaction-1",
+            promptArtifactId: "artifact-1",
+            status: "answered",
+          },
+          error: null,
+        },
       },
     ];
 
