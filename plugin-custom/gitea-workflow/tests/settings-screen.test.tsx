@@ -103,6 +103,9 @@ describe("HostSettingsScreen", () => {
       />,
     );
 
+    (globalThis as unknown as { confirm: (msg: string) => boolean }).confirm = vi
+      .fn()
+      .mockReturnValue(true);
     expect(screen.getByText("自动处理 Issue")).toBeDefined();
     const switchControl = screen.getByTestId("global-enabled-switch");
     fireEvent.click(switchControl);

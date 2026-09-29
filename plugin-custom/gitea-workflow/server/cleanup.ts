@@ -14,8 +14,12 @@ export class EvidencePruner {
     private readonly settings: SettingsManager,
   ) {}
 
-  async pruneExpiredEvidence(nowMs = Date.now()): Promise<PruneResult> {
-    const retentionDays = this.settings.current.evidenceRetentionDays ?? 90;
+  async pruneExpiredEvidence(
+    nowMs = Date.now(),
+    olderThanDaysOverride?: number,
+  ): Promise<PruneResult> {
+    const retentionDays =
+      olderThanDaysOverride ?? this.settings.current.evidenceRetentionDays ?? 90;
     const cutoffMs = nowMs - retentionDays * 24 * 3600 * 1000;
     const records = await this.evidenceManager.listRecordedEvidence();
 
@@ -42,6 +46,16 @@ export class EvidencePruner {
         if (success) {
           prunedCount++;
           freedBytes += record.sizeBytes;
+          console.log(
+            JSON.stringify({
+              event: "evidence_pruned",
+              runId: record.runId,
+              path: record.path,
+              sizeBytes: record.sizeBytes,
+              retentionDays,
+              prunedAt: new Date(nowMs).toISOString(),
+            }),
+          );
         }
       } catch {
         // ignore individual inspection error

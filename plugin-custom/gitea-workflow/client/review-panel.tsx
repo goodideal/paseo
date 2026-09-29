@@ -546,7 +546,63 @@ export function ReviewPanel({ workspaceId, theme, workflowApi }: ReviewPanelProp
         ))}
       </ScrollView>
 
-      {activeTask && (
+      <View style={styles.segmentTabBar}>
+        {(["discussion", "artifacts", "evidence", "audit"] as const).map((tab) => (
+          <Pressable
+            key={tab}
+            style={[styles.segmentTab, activeTab === tab && styles.segmentTabActive]}
+            onPress={() => setActiveTab(tab)}
+          >
+            <Text style={[styles.segmentTabText, activeTab === tab && styles.segmentTabTextActive]}>
+              {tab === "discussion"
+                ? "对话"
+                : tab === "artifacts"
+                  ? "产物"
+                  : tab === "evidence"
+                    ? "验证"
+                    : "审计"}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+
+      {activeTab === "audit" && (
+        <AuditTimeline
+          events={[
+            {
+              id: "ev-1",
+              type: "claim",
+              title: "Issue 已认领",
+              description: activeTask ? `认领 Issue #${activeTask.issueNumber}` : "认领任务",
+              timestamp: activeTask?.createdAt || new Date().toISOString(),
+              status: "succeeded",
+            },
+            ...(activeRunDetail?.stepAttempts?.map((s: any) => ({
+              id: s.stepId,
+              type: "step",
+              title: `步骤: ${s.stepId}`,
+              description: s.skipReason || s.failureReason,
+              timestamp: s.startedAt || new Date().toISOString(),
+              status: s.status,
+            })) ?? []),
+          ]}
+          theme={
+            (theme as any) ?? {
+              colors: {
+                foreground: "#fff",
+                foregroundMuted: "#94a3b8",
+                surface0: "#161922",
+                statusSuccess: "#10b981",
+                statusDanger: "#ef4444",
+                statusWarning: "#f59e0b",
+                accent: "#6366f1",
+              },
+            }
+          }
+        />
+      )}
+
+      {activeTab !== "audit" && activeTask && (
         <TaskCard
           task={activeTask}
           isSubmitting={isSubmitting}
@@ -600,6 +656,32 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     fontWeight: "600",
     fontSize: 13,
+  },
+  segmentTabBar: {
+    flexDirection: "row",
+    backgroundColor: "#161922",
+    borderRadius: 8,
+    padding: 4,
+    marginBottom: 16,
+    gap: 4,
+  },
+  segmentTab: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: "center",
+    borderRadius: 6,
+  },
+  segmentTabActive: {
+    backgroundColor: "#2e3856",
+  },
+  segmentTabText: {
+    color: "#94a3b8",
+    fontSize: 13,
+    fontWeight: "500",
+  },
+  segmentTabTextActive: {
+    color: "#ffffff",
+    fontWeight: "700",
   },
   contentContainer: {
     padding: 16,

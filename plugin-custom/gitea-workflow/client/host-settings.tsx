@@ -101,6 +101,15 @@ export function HostSettingsScreen({
   const values: GiteaHostSettings = settings.values;
 
   const toggleGlobalEnabled = (enabled: boolean) => {
+    if (enabled && typeof globalThis !== "undefined") {
+      const g = globalThis as unknown as { confirm?: (msg: string) => boolean };
+      if (typeof g.confirm === "function") {
+        const ok = g.confirm(
+          "开启后将自动处理授权项目中有启动标签的 Issue 并创建工作树。是否确认开启？",
+        );
+        if (!ok) return;
+      }
+    }
     void settings.save({ ...values, enabled }, settings.revision);
   };
 
@@ -123,6 +132,13 @@ export function HostSettingsScreen({
   };
 
   const toggleProject = (projectId: string, currentEnabled: boolean) => {
+    if (!currentEnabled && typeof globalThis !== "undefined") {
+      const g = globalThis as unknown as { confirm?: (msg: string) => boolean };
+      if (typeof g.confirm === "function") {
+        const ok = g.confirm(`是否确认授权项目 ${projectId} 自动执行匹配的 Issue？`);
+        if (!ok) return;
+      }
+    }
     const existing = values.projects[projectId] ?? {
       enabled: false,
       readyLabel: "agent-ready",
