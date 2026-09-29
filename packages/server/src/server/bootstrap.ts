@@ -2,8 +2,8 @@ import { describeHookWorkspace } from "./plugins/lifecycle/index.js";
 import express from "express";
 import { createServer as createHTTPServer, type IncomingMessage, type ServerResponse } from "http";
 import { constants, existsSync, unlinkSync } from "fs";
-import { open, rm, stat } from "fs/promises";
-import { randomUUID } from "node:crypto";
+import { mkdir, open, rm, stat, writeFile } from "fs/promises";
+import { createHash, randomUUID } from "node:crypto";
 import { hostname as getHostname } from "node:os";
 import path from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -155,6 +155,12 @@ import { createWorkflowPresetRegistry } from "./workflows/workflow-preset-regist
 import { WorkflowService } from "./workflows/workflow-service.js";
 import { StepExecutor } from "./workflows/step-executors.js";
 import { createDefaultVerificationProfileRegistry } from "./workflows/verification-profiles.js";
+import { sendPromptToAgent } from "./agent/agent-prompt.js";
+import {
+  extractWorkflowAgentHandoff,
+  isWorkflowAgentHandoff,
+} from "./workflows/workflow-agent-handoff.js";
+import type { WorkflowArtifact, WorkflowRun } from "./workflows/workflow-models.js";
 import {
   getCurrentBranch,
   pushCurrentBranch,
@@ -1368,6 +1374,41 @@ export async function createPaseoDaemon(
   };
   const execFileAsync = promisify(execFile);
   const workflowProfiles = createDefaultVerificationProfileRegistry();
+  const saveWorkflowArtifact = async (
+    run: WorkflowRun,
+    kind: string,
+    content: string,
+  ): Promise<WorkflowArtifact> => {
+    const id = `artifact_${randomUUID().replaceAll("-", "")}`;
+    const now = Date.now();
+    const contentBuffer = Buffer.from(content, "utf8");
+    const contentHash = createHash("sha256").update(contentBuffer).digest("hex");
+    const artifactPath = `artifacts/${run.id}/${id}.txt`;
+    const artifactDir = path.join(config.paseoHome, "artifacts", run.id);
+    await mkdir(artifactDir, { recursive: true });
+    await writeFile(path.join(artifactDir, `${id}.txt`), contentBuffer);
+
+    const artifact: WorkflowArtifact = {
+      id,
+      kind,
+      path: artifactPath,
+      contentHash,
+      bytes: contentBuffer.length,
+      redacted: false,
+      createdAt: now,
+    };
+
+    workflowStore.update(
+      { projectId: run.projectId, workspaceId: run.workspaceId, runId: run.id },
+      (current) => ({
+        ...current,
+        artifacts: [...current.artifacts, artifact],
+        updatedAt: now,
+      }),
+    );
+
+    return artifact;
+  };
   const workflowExecutor = new StepExecutor(workflowRegistry, workflowProfiles, {
     createWorktree: async ({ workspaceRoot, branch }) => {
       const result = await createPaseoWorktreeForTools({
@@ -1391,6 +1432,211 @@ export async function createPaseoDaemon(
         internal: true,
       });
       return { agentId: result.snapshot.id, sessionId: result.snapshot.id, resumable: true };
+    },
+    runAgentUntilComplete: async ({ cwd, prompt, profile, mode, run, stepId }) => {
+      let provider = "codex";
+      if (
+        typeof profile === "object" &&
+        profile &&
+        "provider" in profile &&
+        typeof profile.provider === "string"
+      ) {
+        provider = profile.provider;
+      } else if (typeof profile === "string" && profile !== "default") {
+        provider = profile;
+      }
+      const agentResult = await createAgent({
+        kind: "mcp",
+        provider,
+        title: `Workflow ${run.id} - ${stepId}`,
+        cwd,
+        workspaceId: (await findWorkspaceIdForCwdExternal(cwd)) ?? run.workspaceId,
+        background: true,
+        notifyOnFinish: false,
+        internal: true,
+      });
+      const agentId = agentResult.snapshot.id;
+      await sendPromptToAgent({
+        agentManager,
+        agentStorage,
+        agentId,
+        prompt,
+        sessionMode: mode,
+        logger,
+      });
+      const waitResult = await agentManager.waitForAgentEvent(agentId, { waitForActive: true });
+      if (waitResult.permission) {
+        const finalArtifact = await saveWorkflowArtifact(
+          run,
+          "agent_output",
+          waitResult.lastMessage ?? "",
+        );
+        return {
+          agentId,
+          sessionId: agentId,
+          outcome: "permission_pending",
+          finalArtifactId: finalArtifact.id,
+        };
+      }
+      if (waitResult.status === "error") {
+        const finalArtifact = await saveWorkflowArtifact(
+          run,
+          "agent_output",
+          waitResult.lastMessage ?? "",
+        );
+        return {
+          agentId,
+          sessionId: agentId,
+          outcome: "failed",
+          finalArtifactId: finalArtifact.id,
+        };
+      }
+      if (waitResult.status === "closed") {
+        const finalArtifact = await saveWorkflowArtifact(
+          run,
+          "agent_output",
+          waitResult.lastMessage ?? "",
+        );
+        return {
+          agentId,
+          sessionId: agentId,
+          outcome: "cancelled",
+          finalArtifactId: finalArtifact.id,
+        };
+      }
+      const finalContent = waitResult.lastMessage ?? "";
+      const finalArtifact = await saveWorkflowArtifact(run, "agent_output", finalContent);
+      const handoffResult = extractWorkflowAgentHandoff(finalContent);
+      let handoffArtifactId: string | undefined = undefined;
+      if (isWorkflowAgentHandoff(handoffResult)) {
+        const handoffArtifact = await saveWorkflowArtifact(
+          run,
+          "handoff",
+          JSON.stringify(handoffResult, null, 2),
+        );
+        handoffArtifactId = handoffArtifact.id;
+      }
+      return {
+        agentId,
+        sessionId: agentId,
+        outcome: "completed",
+        finalArtifactId: finalArtifact.id,
+        ...(handoffArtifactId ? { handoffArtifactId } : {}),
+      };
+    },
+    continueAgentUntilComplete: async ({ agentId, prompt, mode, run }) => {
+      await sendPromptToAgent({
+        agentManager,
+        agentStorage,
+        agentId,
+        prompt,
+        sessionMode: mode,
+        logger,
+      });
+      const waitResult = await agentManager.waitForAgentEvent(agentId, { waitForActive: true });
+      if (waitResult.permission) {
+        const finalArtifact = await saveWorkflowArtifact(
+          run,
+          "agent_output",
+          waitResult.lastMessage ?? "",
+        );
+        return {
+          agentId,
+          sessionId: agentId,
+          outcome: "permission_pending",
+          finalArtifactId: finalArtifact.id,
+        };
+      }
+      if (waitResult.status === "error") {
+        const finalArtifact = await saveWorkflowArtifact(
+          run,
+          "agent_output",
+          waitResult.lastMessage ?? "",
+        );
+        return {
+          agentId,
+          sessionId: agentId,
+          outcome: "failed",
+          finalArtifactId: finalArtifact.id,
+        };
+      }
+      if (waitResult.status === "closed") {
+        const finalArtifact = await saveWorkflowArtifact(
+          run,
+          "agent_output",
+          waitResult.lastMessage ?? "",
+        );
+        return {
+          agentId,
+          sessionId: agentId,
+          outcome: "cancelled",
+          finalArtifactId: finalArtifact.id,
+        };
+      }
+      const finalContent = waitResult.lastMessage ?? "";
+      const finalArtifact = await saveWorkflowArtifact(run, "agent_output", finalContent);
+      const handoffResult = extractWorkflowAgentHandoff(finalContent);
+      let handoffArtifactId: string | undefined = undefined;
+      if (isWorkflowAgentHandoff(handoffResult)) {
+        const handoffArtifact = await saveWorkflowArtifact(
+          run,
+          "handoff",
+          JSON.stringify(handoffResult, null, 2),
+        );
+        handoffArtifactId = handoffArtifact.id;
+      }
+      return {
+        agentId,
+        sessionId: agentId,
+        outcome: "completed",
+        finalArtifactId: finalArtifact.id,
+        ...(handoffArtifactId ? { handoffArtifactId } : {}),
+      };
+    },
+    waitForInteraction: async ({ run, stepId, question, promptArtifactId }) => {
+      const answered = run.interactions?.findLast(
+        (item) => item.stepId === stepId && item.status === "answered",
+      );
+      if (answered) {
+        return {
+          interactionId: answered.id,
+          status: "answered",
+          answerArtifactId: answered.answerArtifactId,
+          responderId: answered.responderId,
+          answeredAt: answered.answeredAt,
+        };
+      }
+      const existingPending = run.interactions?.findLast(
+        (item) => item.stepId === stepId && item.status === "pending",
+      );
+      if (existingPending) {
+        return {
+          interactionId: existingPending.id,
+          status: "pending",
+        };
+      }
+      let effectivePromptArtifactId = promptArtifactId;
+      if (!effectivePromptArtifactId) {
+        const promptArtifact = await saveWorkflowArtifact(
+          run,
+          "interaction_prompt",
+          question ?? "Awaiting user input",
+        );
+        effectivePromptArtifactId = promptArtifact.id;
+      }
+      const interactionId = `interaction_${randomUUID().replaceAll("-", "")}`;
+      await workflowService.createInteraction({
+        projectId: run.projectId,
+        workspaceId: run.workspaceId,
+        runId: run.id,
+        stepId,
+        promptArtifactId: effectivePromptArtifactId,
+        interactionId,
+      });
+      return {
+        interactionId,
+        status: "pending",
+      };
     },
     runVerification: async ({ profile, cwd }) => {
       const result = await execFileAsync(profile.command, profile.args, {

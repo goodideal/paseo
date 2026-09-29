@@ -9,6 +9,49 @@ import type {
   WorkflowUnknownOutcome,
 } from "./workflow-models.js";
 
+export type WorkflowAgentProfile = string | Record<string, unknown>;
+
+export interface RunWorkflowAgentInput {
+  cwd: string;
+  prompt: string;
+  profile: WorkflowAgentProfile;
+  mode: "plan" | "execute" | "review";
+}
+
+export interface ContinueWorkflowAgentInput {
+  cwd: string;
+  agentId: string;
+  sessionId?: string;
+  prompt: string;
+  profile?: WorkflowAgentProfile;
+  mode: "plan" | "execute" | "review";
+  expectedPhase?: string;
+}
+
+export interface WorkflowAgentTurnResult {
+  agentId: string;
+  sessionId: string;
+  outcome: "completed" | "failed" | "cancelled" | "permission_pending";
+  finalArtifactId: string;
+  handoffArtifactId?: string;
+}
+
+export interface WaitForInteractionInput {
+  run: WorkflowRun;
+  stepId: string;
+  attemptId: string;
+  question?: string;
+  promptArtifactId?: string;
+}
+
+export interface WaitForInteractionResult {
+  interactionId: string;
+  status: "pending" | "answered" | "expired" | "cancelled";
+  answerArtifactId?: string;
+  responderId?: string;
+  answeredAt?: number;
+}
+
 export interface StepExecutorHost {
   createWorktree?(params: {
     workspaceId: string;
@@ -50,6 +93,21 @@ export interface StepExecutorHost {
     input: Record<string, unknown>;
     run: WorkflowRun;
   }): Promise<Record<string, unknown>>;
+  runAgentUntilComplete?(
+    params: RunWorkflowAgentInput & {
+      run: WorkflowRun;
+      stepId: string;
+      attemptId: string;
+    },
+  ): Promise<WorkflowAgentTurnResult>;
+  continueAgentUntilComplete?(
+    params: ContinueWorkflowAgentInput & {
+      run: WorkflowRun;
+      stepId: string;
+      attemptId: string;
+    },
+  ): Promise<WorkflowAgentTurnResult>;
+  waitForInteraction?(params: WaitForInteractionInput): Promise<WaitForInteractionResult>;
 }
 
 export interface StepExecutionInput {
@@ -77,7 +135,7 @@ export interface PreparedStepExecutionInput {
 
 export interface StepExecutionOutcome {
   attemptId: string;
-  status: "succeeded" | "failed" | "unknown";
+  status: "succeeded" | "failed" | "unknown" | "blocked" | "cancelled" | "running";
   completedAt: number;
   declaredOutputs?: WorkflowStepAttempt["declaredOutputs"];
   receipt?: WorkflowReceipt;
@@ -240,26 +298,46 @@ export class StepExecutor {
     const adapter = this.requireAdapter(attempt.adapterType);
     const intent = input.run.intents.find((candidate) => candidate.attemptId === attempt.id);
     try {
-      const rawOutput = await this.executeAdapter(adapter, attempt.input, input.run);
-      const output = adapter.outputSchema.parse(rawOutput);
-      return {
-        attemptId: attempt.id,
-        status: "succeeded",
-        completedAt: input.now,
-        declaredOutputs: requireJsonRecord(output),
-        ...(intent
-          ? {
-              receipt: {
-                id: `receipt_${attempt.stepId}_${input.now}_${randomUUID().replaceAll("-", "")}`,
-                intentId: intent.id,
-                stepId: attempt.stepId,
-                attemptId: attempt.id,
-                outputDigest: sha256(JSON.stringify(output)),
-                createdAt: input.now,
-              },
-            }
-          : {}),
-      };
+      if (
+        adapter.type === "agent.continue_until_complete" &&
+        attempt.input.mode === "execute" &&
+        !this.hasApprovedPlan(input.run)
+      ) {
+        return {
+          attemptId: attempt.id,
+          status: "blocked",
+          completedAt: input.now,
+          failureClassification: "plan_not_approved",
+        };
+      }
+
+      const rawOutput = await this.executeAdapter(adapter, attempt.input, input.run, attempt);
+
+      if (
+        adapter.type === "agent.run_until_complete" ||
+        adapter.type === "agent.continue_until_complete"
+      ) {
+        return this.handleAgentTurnOutcome(
+          rawOutput as unknown as WorkflowAgentTurnResult,
+          attempt,
+          adapter,
+          intent,
+          rawOutput,
+          input.now,
+        );
+      }
+
+      if (adapter.type === "interaction.wait") {
+        return this.handleInteractionWaitOutcome(
+          rawOutput as unknown as WaitForInteractionResult,
+          attempt,
+          adapter,
+          rawOutput,
+          input.now,
+        );
+      }
+
+      return this.handleStandardOutcome(rawOutput, attempt, adapter, intent, input.now);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (intent && adapter.executionRisk === "external_write") {
@@ -287,23 +365,142 @@ export class StepExecutor {
     }
   }
 
+  private hasApprovedPlan(run: WorkflowRun): boolean {
+    return run.approvals.some(
+      (appr) =>
+        appr.status === "approved" &&
+        (appr.reason?.toLowerCase().includes("plan") ||
+          appr.stepId.toLowerCase().includes("plan") ||
+          appr.consumedAt !== undefined),
+    );
+  }
+
+  private handleAgentTurnOutcome(
+    turnResult: WorkflowAgentTurnResult,
+    attempt: WorkflowStepAttempt,
+    adapter: RegisteredStepAdapter,
+    intent: WorkflowIntent | undefined,
+    rawOutput: Record<string, unknown>,
+    now: number,
+  ): StepExecutionOutcome {
+    if (turnResult.outcome === "permission_pending") {
+      return {
+        attemptId: attempt.id,
+        status: "blocked",
+        completedAt: now,
+        failureClassification: "permission_pending",
+        declaredOutputs: requireJsonRecord(turnResult),
+      };
+    }
+    if (turnResult.outcome === "failed") {
+      return {
+        attemptId: attempt.id,
+        status: "failed",
+        completedAt: now,
+        failureClassification: "agent_failed",
+        declaredOutputs: requireJsonRecord(turnResult),
+      };
+    }
+    if (turnResult.outcome === "cancelled") {
+      return {
+        attemptId: attempt.id,
+        status: "cancelled",
+        completedAt: now,
+        failureClassification: "agent_cancelled",
+        declaredOutputs: requireJsonRecord(turnResult),
+      };
+    }
+    if (!turnResult.handoffArtifactId) {
+      return {
+        attemptId: attempt.id,
+        status: "blocked",
+        completedAt: now,
+        failureClassification: "missing_handoff",
+        declaredOutputs: requireJsonRecord(turnResult),
+      };
+    }
+    return this.handleStandardOutcome(rawOutput, attempt, adapter, intent, now);
+  }
+
+  private handleInteractionWaitOutcome(
+    waitResult: WaitForInteractionResult,
+    attempt: WorkflowStepAttempt,
+    adapter: RegisteredStepAdapter,
+    rawOutput: Record<string, unknown>,
+    now: number,
+  ): StepExecutionOutcome {
+    if (waitResult.status === "pending") {
+      return {
+        attemptId: attempt.id,
+        status: "running",
+        completedAt: now,
+        declaredOutputs: requireJsonRecord(waitResult),
+      };
+    }
+    const output = adapter.outputSchema.parse(rawOutput);
+    return {
+      attemptId: attempt.id,
+      status: "succeeded",
+      completedAt: now,
+      declaredOutputs: requireJsonRecord(output),
+    };
+  }
+
+  private handleStandardOutcome(
+    rawOutput: Record<string, unknown>,
+    attempt: WorkflowStepAttempt,
+    adapter: RegisteredStepAdapter,
+    intent: WorkflowIntent | undefined,
+    now: number,
+  ): StepExecutionOutcome {
+    const output = adapter.outputSchema.parse(rawOutput);
+    return {
+      attemptId: attempt.id,
+      status: "succeeded",
+      completedAt: now,
+      declaredOutputs: requireJsonRecord(output),
+      ...(intent
+        ? {
+            receipt: {
+              id: `receipt_${attempt.stepId}_${now}_${randomUUID().replaceAll("-", "")}`,
+              intentId: intent.id,
+              stepId: attempt.stepId,
+              attemptId: attempt.id,
+              outputDigest: sha256(JSON.stringify(output)),
+              createdAt: now,
+            },
+          }
+        : {}),
+    };
+  }
+
   applyOutcome(run: WorkflowRun, outcome: StepExecutionOutcome): WorkflowRun {
     const receipts = outcome.receipt ? [...run.receipts, outcome.receipt] : run.receipts;
     const unknownOutcomes = outcome.unknownOutcome
       ? [...run.unknownOutcomes, outcome.unknownOutcome]
       : run.unknownOutcomes;
+    let nextRunStatus = run.status;
+    if (outcome.status === "unknown") {
+      nextRunStatus = "unknown";
+    } else if (outcome.status === "blocked") {
+      nextRunStatus = "blocked";
+    } else if (outcome.status === "failed") {
+      nextRunStatus = "failed";
+    } else if (outcome.status === "cancelled") {
+      nextRunStatus = "cancelled";
+    }
     return {
       ...run,
       receipts,
       unknownOutcomes,
       updatedAt: outcome.completedAt,
-      status: outcome.status === "unknown" ? "unknown" : run.status,
+      status: nextRunStatus,
       stepAttempts: run.stepAttempts.map((attempt) =>
         attempt.id === outcome.attemptId
           ? {
               ...attempt,
               status: outcome.status,
-              completedAt: outcome.completedAt,
+              completedAt: outcome.status === "running" ? undefined : outcome.completedAt,
               declaredOutputs: outcome.declaredOutputs,
               failureClassification: outcome.failureClassification,
             }
@@ -338,6 +535,7 @@ export class StepExecutor {
     adapter: RegisteredStepAdapter,
     input: Record<string, unknown>,
     run: WorkflowRun,
+    attempt: WorkflowStepAttempt,
   ): Promise<Record<string, unknown>> {
     if (adapter.owner.kind === "plugin") {
       if (!this.host.executePluginAdapter) {
@@ -364,9 +562,108 @@ export class StepExecutor {
         return this.executePush(input, run.workspaceRoot);
       case "git.create_pr":
         return this.executePr(input, run.workspaceRoot);
+      case "agent.run_until_complete":
+        return this.executeRunAgentUntilComplete(input, run, attempt);
+      case "agent.continue_until_complete":
+        return this.executeContinueAgentUntilComplete(input, run, attempt);
+      case "interaction.wait":
+        return this.executeInteractionWait(input, run, attempt);
       default:
         throw new Error(`Core adapter execution is unavailable: ${adapter.type}`);
     }
+  }
+
+  private async executeRunAgentUntilComplete(
+    input: Record<string, unknown>,
+    run: WorkflowRun,
+    attempt: WorkflowStepAttempt,
+  ): Promise<Record<string, unknown>> {
+    if (!this.host.runAgentUntilComplete) {
+      throw new Error("Agent adapter host is unavailable: runAgentUntilComplete");
+    }
+    const cwd = typeof input.cwd === "string" ? input.cwd : run.workspaceRoot;
+    const prompt = typeof input.prompt === "string" ? input.prompt : "";
+    const profile = (input.profile as WorkflowAgentProfile) ?? "default";
+    const mode = (input.mode as "plan" | "execute" | "review") ?? "plan";
+    const result = await this.host.runAgentUntilComplete({
+      cwd,
+      prompt,
+      profile,
+      mode,
+      run,
+      stepId: attempt.stepId,
+      attemptId: attempt.id,
+    });
+    return result as unknown as Record<string, unknown>;
+  }
+
+  private async executeContinueAgentUntilComplete(
+    input: Record<string, unknown>,
+    run: WorkflowRun,
+    attempt: WorkflowStepAttempt,
+  ): Promise<Record<string, unknown>> {
+    if (!this.host.continueAgentUntilComplete) {
+      throw new Error("Agent adapter host is unavailable: continueAgentUntilComplete");
+    }
+    const cwd = typeof input.cwd === "string" ? input.cwd : run.workspaceRoot;
+    const agentId = typeof input.agentId === "string" ? input.agentId : "";
+    const sessionId = typeof input.sessionId === "string" ? input.sessionId : undefined;
+    const prompt = typeof input.prompt === "string" ? input.prompt : "";
+    const profile = input.profile as WorkflowAgentProfile | undefined;
+    const mode = (input.mode as "plan" | "execute" | "review") ?? "plan";
+    const expectedPhase = typeof input.expectedPhase === "string" ? input.expectedPhase : undefined;
+    const result = await this.host.continueAgentUntilComplete({
+      cwd,
+      agentId,
+      sessionId,
+      prompt,
+      profile,
+      mode,
+      expectedPhase,
+      run,
+      stepId: attempt.stepId,
+      attemptId: attempt.id,
+    });
+    return result as unknown as Record<string, unknown>;
+  }
+
+  private async executeInteractionWait(
+    input: Record<string, unknown>,
+    run: WorkflowRun,
+    attempt: WorkflowStepAttempt,
+  ): Promise<Record<string, unknown>> {
+    const answered = run.interactions?.findLast(
+      (item) => item.stepId === attempt.stepId && item.status === "answered",
+    );
+    if (answered) {
+      return {
+        interactionId: answered.id,
+        answerArtifactId: answered.answerArtifactId,
+        responderId: answered.responderId,
+        answeredAt: answered.answeredAt,
+        status: "answered",
+      };
+    }
+    if (this.host.waitForInteraction) {
+      const question = typeof input.question === "string" ? input.question : undefined;
+      const promptArtifactId =
+        typeof input.promptArtifactId === "string" ? input.promptArtifactId : undefined;
+      const result = await this.host.waitForInteraction({
+        run,
+        stepId: attempt.stepId,
+        attemptId: attempt.id,
+        question,
+        promptArtifactId,
+      });
+      return result as unknown as Record<string, unknown>;
+    }
+    const pending = run.interactions?.findLast(
+      (item) => item.stepId === attempt.stepId && item.status === "pending",
+    );
+    return {
+      interactionId: pending?.id,
+      status: "pending",
+    };
   }
 
   private async executeWorktree(

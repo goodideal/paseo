@@ -64,6 +64,27 @@ function setup() {
     gitPush: vi.fn().mockResolvedValue({ success: true, commitSha: "abcdef123456" }),
     createPullRequest: vi.fn().mockResolvedValue({ prUrl: "https://forge/pr/42", prNumber: 42 }),
     findPullRequest: vi.fn().mockResolvedValue(null),
+    runAgentUntilComplete: vi.fn().mockResolvedValue({
+      agentId: "agent_1",
+      sessionId: "sess_1",
+      outcome: "completed",
+      finalArtifactId: "art_final_1",
+      handoffArtifactId: "art_handoff_1",
+    }),
+    continueAgentUntilComplete: vi.fn().mockResolvedValue({
+      agentId: "agent_1",
+      sessionId: "sess_1",
+      outcome: "completed",
+      finalArtifactId: "art_final_2",
+      handoffArtifactId: "art_handoff_2",
+    }),
+    waitForInteraction: vi.fn().mockResolvedValue({
+      interactionId: "interaction_1",
+      status: "answered",
+      answerArtifactId: "art_answer_1",
+      responderId: "user_1",
+      answeredAt: 2000,
+    }),
   };
   const executor = new StepExecutor(registry, profileRegistry, host);
   return { registry, profileRegistry, host, executor };
@@ -294,6 +315,260 @@ describe("Workflow Core Step Adapters and Execution Lifecycle", () => {
       agentId: "agent_1",
       sessionId: "sess_1",
       resumable: false,
+    });
+  });
+
+  it("handles agent.run_until_complete with outcome: completed", async () => {
+    const { executor, host } = setup();
+    const run = makeRun("agent_step", "agent.run_until_complete");
+    const permissions = new Set(["workspace.write" as const]);
+
+    const result = await executor.execute({
+      run,
+      stepId: "agent_step",
+      attemptId: "attempt_1",
+      input: { prompt: "design architecture", mode: "plan" },
+      principalPermissions: permissions,
+      now: 1000,
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(host.runAgentUntilComplete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: "design architecture",
+        mode: "plan",
+      }),
+    );
+    expect(result.declaredOutputs).toMatchObject({
+      agentId: "agent_1",
+      outcome: "completed",
+      finalArtifactId: "art_final_1",
+      handoffArtifactId: "art_handoff_1",
+    });
+  });
+
+  it("transitions to blocked with permission_pending failureClassification when agent requests permission (Task 4)", async () => {
+    const { executor, host } = setup();
+    vi.mocked(host.runAgentUntilComplete!).mockResolvedValueOnce({
+      agentId: "agent_1",
+      sessionId: "sess_1",
+      outcome: "permission_pending",
+      finalArtifactId: "art_final_1",
+    });
+
+    const run = makeRun("agent_step", "agent.run_until_complete");
+    const permissions = new Set(["workspace.write" as const]);
+
+    const result = await executor.execute({
+      run,
+      stepId: "agent_step",
+      attemptId: "attempt_1",
+      input: { prompt: "run task", mode: "plan" },
+      principalPermissions: permissions,
+      now: 1000,
+    });
+
+    expect(result.status).toBe("blocked");
+    expect(result.run.status).toBe("blocked");
+    expect(result.run.stepAttempts[0].failureClassification).toBe("permission_pending");
+  });
+
+  it("transitions to failed when agent outcome is failed", async () => {
+    const { executor, host } = setup();
+    vi.mocked(host.runAgentUntilComplete!).mockResolvedValueOnce({
+      agentId: "agent_1",
+      sessionId: "sess_1",
+      outcome: "failed",
+      finalArtifactId: "art_final_1",
+    });
+
+    const run = makeRun("agent_step", "agent.run_until_complete");
+    const permissions = new Set(["workspace.write" as const]);
+
+    const result = await executor.execute({
+      run,
+      stepId: "agent_step",
+      attemptId: "attempt_1",
+      input: { prompt: "run task", mode: "plan" },
+      principalPermissions: permissions,
+      now: 1000,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.run.status).toBe("failed");
+    expect(result.run.stepAttempts[0].failureClassification).toBe("agent_failed");
+  });
+
+  it("transitions to cancelled when agent outcome is cancelled", async () => {
+    const { executor, host } = setup();
+    vi.mocked(host.runAgentUntilComplete!).mockResolvedValueOnce({
+      agentId: "agent_1",
+      sessionId: "sess_1",
+      outcome: "cancelled",
+      finalArtifactId: "art_final_1",
+    });
+
+    const run = makeRun("agent_step", "agent.run_until_complete");
+    const permissions = new Set(["workspace.write" as const]);
+
+    const result = await executor.execute({
+      run,
+      stepId: "agent_step",
+      attemptId: "attempt_1",
+      input: { prompt: "run task", mode: "plan" },
+      principalPermissions: permissions,
+      now: 1000,
+    });
+
+    expect(result.status).toBe("cancelled");
+    expect(result.run.status).toBe("cancelled");
+    expect(result.run.stepAttempts[0].failureClassification).toBe("agent_cancelled");
+  });
+
+  it("transitions to blocked when handoff block is missing or invalid", async () => {
+    const { executor, host } = setup();
+    vi.mocked(host.runAgentUntilComplete!).mockResolvedValueOnce({
+      agentId: "agent_1",
+      sessionId: "sess_1",
+      outcome: "completed",
+      finalArtifactId: "art_final_1",
+      // handoffArtifactId is omitted
+    });
+
+    const run = makeRun("agent_step", "agent.run_until_complete");
+    const permissions = new Set(["workspace.write" as const]);
+
+    const result = await executor.execute({
+      run,
+      stepId: "agent_step",
+      attemptId: "attempt_1",
+      input: { prompt: "run task", mode: "plan" },
+      principalPermissions: permissions,
+      now: 1000,
+    });
+
+    expect(result.status).toBe("blocked");
+    expect(result.run.status).toBe("blocked");
+    expect(result.run.stepAttempts[0].failureClassification).toBe("missing_handoff");
+  });
+
+  it("refuses switching to execute mode before plan approval in agent.continue_until_complete", async () => {
+    const { executor } = setup();
+    const run = makeRun("continue_step", "agent.continue_until_complete");
+    const permissions = new Set(["workspace.write" as const]);
+
+    const result = await executor.execute({
+      run,
+      stepId: "continue_step",
+      attemptId: "attempt_1",
+      input: { agentId: "agent_1", prompt: "implement plan", mode: "execute" },
+      principalPermissions: permissions,
+      now: 1000,
+    });
+
+    expect(result.status).toBe("blocked");
+    expect(result.error).toContain("plan_not_approved");
+  });
+
+  it("allows continue_until_complete to execute mode once plan approval is granted, preserving agentId", async () => {
+    const { executor, host } = setup();
+    const run = makeRun("continue_step", "agent.continue_until_complete", {
+      approvals: [
+        {
+          id: "appr_plan_1",
+          stepId: "plan_step",
+          attemptId: "attempt_0",
+          status: "approved",
+          requesterId: "user_1",
+          requestedAt: 500,
+          decidedAt: 800,
+          consumedAt: 800,
+          expiresAt: 5000,
+          reason: "plan approved",
+        },
+      ],
+    });
+    const permissions = new Set(["workspace.write" as const]);
+
+    const result = await executor.execute({
+      run,
+      stepId: "continue_step",
+      attemptId: "attempt_1",
+      input: { agentId: "agent_1", prompt: "implement plan", mode: "execute" },
+      principalPermissions: permissions,
+      now: 1000,
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.declaredOutputs?.agentId).toBe("agent_1");
+    expect(host.continueAgentUntilComplete).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: "agent_1", mode: "execute" }),
+    );
+  });
+
+  it("handles interaction.wait when interaction is pending without blocking unbounded process promise", async () => {
+    const { executor, host } = setup();
+    vi.mocked(host.waitForInteraction!).mockResolvedValueOnce({
+      interactionId: "interaction_pending_1",
+      status: "pending",
+    });
+
+    const run = makeRun("interact_step", "interaction.wait");
+    const permissions = new Set(["workspace.read" as const]);
+
+    const result = await executor.execute({
+      run,
+      stepId: "interact_step",
+      attemptId: "attempt_1",
+      input: { question: "Confirm scope?" },
+      principalPermissions: permissions,
+      now: 1000,
+    });
+
+    expect(result.status).toBe("running");
+    expect(result.run.status).toBe("running");
+  });
+
+  it("completes interaction.wait when interaction is answered", async () => {
+    const { executor, host } = setup();
+    vi.mocked(host.waitForInteraction!).mockResolvedValueOnce({
+      interactionId: "interaction_1",
+      status: "answered",
+      answerArtifactId: "art_ans_1",
+      responderId: "user_1",
+      answeredAt: 1200,
+    });
+
+    const run = makeRun("interact_step", "interaction.wait", {
+      interactions: [
+        {
+          id: "interaction_1",
+          runId: "run_test_1",
+          stepId: "interact_step",
+          status: "answered",
+          promptArtifactId: "art_q_1",
+          answerArtifactId: "art_ans_1",
+          requestedAt: 1000,
+          answeredAt: 1200,
+          responderId: "user_1",
+        },
+      ],
+    });
+    const permissions = new Set(["workspace.read" as const]);
+
+    const result = await executor.execute({
+      run,
+      stepId: "interact_step",
+      attemptId: "attempt_1",
+      input: {},
+      principalPermissions: permissions,
+      now: 1250,
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.declaredOutputs).toMatchObject({
+      answerArtifactId: "art_ans_1",
+      responderId: "user_1",
     });
   });
 });
