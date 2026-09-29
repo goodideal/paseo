@@ -164,7 +164,6 @@ export class ManagedGovernor {
     // 1. Check for thread limit failure or explicit errors
     if (
       trimmedOutput.includes("collab spawn failed: agent thread limit reached") ||
-      trimmedOutput.includes("fatal: ") ||
       trimmedOutput.includes("ERR_BLOCKED")
     ) {
       this.lastBlockerReason.set(agentId, "Agent execution error or thread limit reached");
@@ -181,9 +180,11 @@ export class ManagedGovernor {
     }
 
     // 3. Human Decision / Clarification Needed
+    // When the agent is explicitly asking the human to choose or clarify,
+    // this is healthy dialogue — NOT an error blocker.
+    // Return NEUTRAL so the turn ends naturally waiting for the user's reply in chat.
     if (this.isHumanDecisionNeeded(trimmedOutput)) {
-      this.lastBlockerReason.set(agentId, "Agent requested human decision or clarification");
-      return "BLOCKER_ESCALATE";
+      return "NEUTRAL";
     }
 
     // 4. Content-Aware: Error Fingerprint Non-Convergence (Repeated identical error across consecutive turns)

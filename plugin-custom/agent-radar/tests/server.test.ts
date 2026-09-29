@@ -163,6 +163,16 @@ describe("ManagedGovernor", () => {
       );
       expect(governor.getLastBlockerReason("agent-1")).toContain("Repeated error detected");
     });
+
+    it("should NOT escalate on fatal text discussion or normal human questions", () => {
+      const governor = new ManagedGovernor();
+      expect(
+        governor.evaluateOutput("agent-1", "如果遇到 fatal: remote not found，请检查网络设置", []),
+      ).toBe("NEUTRAL");
+      expect(
+        governor.evaluateOutput("agent-1", "我们有两种方案，请选择方案 1 还是方案 2？", []),
+      ).toBe("NEUTRAL");
+    });
   });
 
   describe("PR Merge Protection", () => {
@@ -231,15 +241,14 @@ describe("ManagedGovernor", () => {
       expect(governor.getLastBlockerReason("agent-1")).toContain("flapping");
     });
 
-    it("should escalate when human decision or clarification is needed even with checkboxes", () => {
+    it("should NOT escalate when human decision or clarification is needed, allowing normal dialogue", () => {
       const governor = new ManagedGovernor(5);
       const intent = governor.evaluateOutput(
         "agent-1",
         "我们有两种实现方案，请确认选择方案 A 还是方案 B？\n- [ ] 等待用户确认方案",
         [],
       );
-      expect(intent).toBe("BLOCKER_ESCALATE");
-      expect(governor.getLastBlockerReason("agent-1")).toContain("human decision");
+      expect(intent).toBe("NEUTRAL");
     });
   });
 });
