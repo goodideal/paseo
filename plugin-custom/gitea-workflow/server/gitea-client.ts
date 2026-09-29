@@ -80,6 +80,29 @@ export class GiteaClient {
     });
   }
 
+  async getIssue(issueNumber: number): Promise<GiteaIssueDto> {
+    const res = await fetch(this.url(`/issues/${issueNumber}`), {
+      headers: this.headers,
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to fetch issue #${issueNumber}: ${res.status} ${res.statusText}`);
+    }
+    return (await res.json()) as GiteaIssueDto;
+  }
+
+  async createComment(issueNumber: number, body: string): Promise<void> {
+    const res = await fetch(this.url(`/issues/${issueNumber}/comments`), {
+      method: "POST",
+      headers: this.headers,
+      body: JSON.stringify({ body }),
+    });
+    if (!res.ok) {
+      throw new Error(
+        `Failed to post comment on issue #${issueNumber}: ${res.status} ${res.statusText}`,
+      );
+    }
+  }
+
   async getRepoLabels(): Promise<Array<{ id: number; name: string }>> {
     try {
       const res = await fetch(this.url("/labels?limit=100"), {
