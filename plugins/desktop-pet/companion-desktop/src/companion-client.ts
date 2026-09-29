@@ -30,10 +30,14 @@ function animate() {
 }
 requestAnimationFrame(animate);
 
-// Determine companion WebSocket port (query param -> default 6768)
+// Determine companion WebSocket host & port (supports remote daemon IP like Tailscale/LAN)
 const urlParams = new URLSearchParams(window.location.search);
-const wsPort = urlParams.get("port") || "6768";
-const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`);
+const wsHost =
+  window.location.hostname && window.location.hostname !== ""
+    ? window.location.hostname
+    : "127.0.0.1";
+const wsPort = urlParams.get("port") || window.location.port || "6768";
+const ws = new WebSocket(`ws://${wsHost}:${wsPort}`);
 
 ws.onmessage = (event) => {
   try {

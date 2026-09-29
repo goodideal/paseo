@@ -133,8 +133,12 @@
   }
   requestAnimationFrame(animate);
   var urlParams = new URLSearchParams(window.location.search);
-  var wsPort = urlParams.get("port") || "6768";
-  var ws = new WebSocket(`ws://127.0.0.1:${wsPort}`);
+  var wsHost =
+    window.location.hostname && window.location.hostname !== ""
+      ? window.location.hostname
+      : "127.0.0.1";
+  var wsPort = urlParams.get("port") || window.location.port || "6768";
+  var ws = new WebSocket(`ws://${wsHost}:${wsPort}`);
   ws.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);

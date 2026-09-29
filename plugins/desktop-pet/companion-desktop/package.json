@@ -1,0 +1,9 @@
+{
+  "name": "paseo-desktop-pet-companion",
+  "version": "1.0.0",
+  "private": true,
+  "main": "src/main.cjs",
+  "scripts": {
+    "start": "electron ."
+  }
+}
