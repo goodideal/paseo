@@ -221,7 +221,7 @@ export function buildGiteaWorkflowDefinition(strategy: GiteaWorkflowPolicy = "fu
   );
 
   return {
-    id: "gitea.issue-to-pr",
+    id: `gitea.issue-to-pr${strategy === "full_superpowers" ? "" : `.${strategy.replace("issue_", "")}`}`,
     revision: "1",
     maxConcurrency: 1,
     maxArtifactBytes: 10 * 1024 * 1024,
@@ -229,9 +229,25 @@ export function buildGiteaWorkflowDefinition(strategy: GiteaWorkflowPolicy = "fu
   };
 }
 
-export const issueToPrPreset: PluginWorkflowPreset = {
-  workflowId: "gitea.issue-to-pr",
-  name: "Gitea Superpowers Issue-to-PR Pipeline",
-  sourcePreset: "gitea-workflow",
-  definition: buildGiteaWorkflowDefinition("full_superpowers"),
-};
+export const giteaWorkflowPresets: PluginWorkflowPreset[] = [
+  {
+    workflowId: "gitea.issue-to-pr",
+    name: "Gitea Superpowers Pipeline (Full)",
+    sourcePreset: "gitea-workflow",
+    definition: buildGiteaWorkflowDefinition("full_superpowers"),
+  },
+  {
+    workflowId: "gitea.issue-to-pr.preapproved",
+    name: "Gitea Superpowers Pipeline (Preapproved)",
+    sourcePreset: "gitea-workflow",
+    definition: buildGiteaWorkflowDefinition("issue_preapproved"),
+  },
+  {
+    workflowId: "gitea.issue-to-pr.unattended",
+    name: "Gitea Superpowers Pipeline (Unattended)",
+    sourcePreset: "gitea-workflow",
+    definition: buildGiteaWorkflowDefinition("unattended"),
+  },
+];
+
+export const issueToPrPreset: PluginWorkflowPreset = giteaWorkflowPresets[0]!;

@@ -9,8 +9,11 @@ function sanitizeCommentBody(text: string, secrets: string[] = []): string {
       result = result.replaceAll(secret, "[redacted]");
     }
   }
-  // Strip common local filesystem paths like /Users/... or /home/...
-  result = result.replace(/(\/Users\/[a-zA-Z0-9._-]+\/|\/home\/[a-zA-Z0-9._-]+\/)/g, "~/");
+  // Strip common local filesystem paths like /Users/..., /home/..., /root/... or C:\Users\...
+  result = result.replace(
+    /(\/Users\/[a-zA-Z0-9._-]+\/|\/home\/[a-zA-Z0-9._-]+\/|\/root\/|[a-zA-Z]:[\\\/]Users[\\\/][a-zA-Z0-9._-]+[\\\/])/g,
+    "~/",
+  );
   return result;
 }
 
@@ -22,7 +25,7 @@ export function createPostSummaryAdapter(
     version: "1.0.0",
     inputSchema: z.object({
       baseUrl: z.string().url(),
-      token: z.string(),
+      token: z.string().optional().default(""),
       repoOwner: z.string(),
       repoName: z.string(),
       issueNumber: z.number().int(),

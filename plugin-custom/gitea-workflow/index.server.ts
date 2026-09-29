@@ -18,7 +18,7 @@ import { GiteaClientPool } from "./server/client-pool.js";
 import { ProjectGiteaResolver } from "./server/resolver.js";
 import { MultiProjectPoller } from "./server/poller.js";
 import { createGiteaStepAdapters } from "./server/adapters/index.js";
-import { issueToPrPreset } from "./server/presets/issue-to-pr.js";
+import { giteaWorkflowPresets } from "./server/presets/issue-to-pr.js";
 import { EvidenceManager } from "./server/evidence-manager.js";
 import { EvidencePruner } from "./server/cleanup.js";
 
@@ -35,9 +35,12 @@ export default function contribute(server: PluginServerContext) {
   const settingsManager = new SettingsManager(settingsHandle);
   void settingsManager.initialize();
 
-  const storePath = join(tmpdir(), "paseo-gitea-workflow", "tasks.json");
+  const dataDir = process.env.PASEO_HOME
+    ? join(process.env.PASEO_HOME, "plugins", "gitea-workflow")
+    : join(tmpdir(), "paseo-gitea-workflow");
+  const storePath = join(dataDir, "tasks.json");
   const store = new TaskStore(storePath);
-  const indexPath = join(tmpdir(), "paseo-gitea-workflow", "issue-index.json");
+  const indexPath = join(dataDir, "issue-index.json");
   const indexStore = new IssueRunIndexStore(indexPath);
 
   const clientPool = new GiteaClientPool();
@@ -58,7 +61,9 @@ export default function contribute(server: PluginServerContext) {
   for (const adapter of createGiteaStepAdapters(clientPool)) {
     server.registerWorkflowStepAdapter?.(adapter);
   }
-  server.registerWorkflowPreset?.(issueToPrPreset);
+  for (const preset of giteaWorkflowPresets) {
+    server.registerWorkflowPreset?.(preset);
+  }
 
   let poller: MultiProjectPoller | null = null;
 
@@ -137,55 +142,63 @@ export default function contribute(server: PluginServerContext) {
 
   server.handle(approveTaskRpc, async ({ taskId }, context) => {
     const workflows = context.paseo.workflows;
-    if (workflows) {
-      try {
-        const list = await workflows.approvalList({
-          projectId: "default",
-          workspaceId: "default",
-          runId: taskId,
-        });
-        const pending = list.approvals.find((a) => a.status === "pending");
-        if (pending) {
-          await workflows.approvalApprove({
-            projectId: "default",
-            workspaceId: "default",
-            runId: taskId,
-            approvalId: pending.approvalId,
-          });
-          return { ok: true };
-        }
-      } catch {
-        // ignore
-      }
+    if (!workflows) {
+      return { ok: false, error: "Workflow service is unavailable" };
     }
-    return { ok: true };
+    try {
+      const task = await store.getTask(taskId);
+      const projectId = task?.projectId ?? "default";
+      const workspaceId = task?.workspaceId ?? "default";
+      const list = await workflows.approvalList({
+        projectId,
+        workspaceId,
+        runId: taskId,
+      });
+      const pending = list.approvals.find((a) => a.status === "pending");
+      if (pending) {
+        await workflows.approvalApprove({
+          projectId,
+          workspaceId,
+          runId: taskId,
+          approvalId: pending.approvalId,
+        });
+        return { ok: true };
+      }
+      return { ok: false, error: `No pending approval found for task ${taskId}` };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
   });
 
   server.handle(rejectTaskRpc, async ({ taskId, feedback }, context) => {
     const workflows = context.paseo.workflows;
-    if (workflows) {
-      try {
-        const list = await workflows.approvalList({
-          projectId: "default",
-          workspaceId: "default",
-          runId: taskId,
-        });
-        const pending = list.approvals.find((a) => a.status === "pending");
-        if (pending) {
-          await workflows.approvalDeny({
-            projectId: "default",
-            workspaceId: "default",
-            runId: taskId,
-            approvalId: pending.approvalId,
-            reason: feedback,
-          });
-          return { ok: true };
-        }
-      } catch {
-        // ignore
-      }
+    if (!workflows) {
+      return { ok: false, error: "Workflow service is unavailable" };
     }
-    return { ok: true };
+    try {
+      const task = await store.getTask(taskId);
+      const projectId = task?.projectId ?? "default";
+      const workspaceId = task?.workspaceId ?? "default";
+      const list = await workflows.approvalList({
+        projectId,
+        workspaceId,
+        runId: taskId,
+      });
+      const pending = list.approvals.find((a) => a.status === "pending");
+      if (pending) {
+        await workflows.approvalDeny({
+          projectId,
+          workspaceId,
+          runId: taskId,
+          approvalId: pending.approvalId,
+          reason: feedback,
+        });
+        return { ok: true };
+      }
+      return { ok: false, error: `No pending approval found for task ${taskId}` };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
   });
 
   server.handle(diagnoseProjectsRpc, async (_input, context) => {
@@ -203,7 +216,7 @@ export default function contribute(server: PluginServerContext) {
 
   server.handle(pruneEvidenceRpc, async ({ olderThanDays }) => {
     const nowMs = Date.now();
-    const result = await pruner.pruneExpiredEvidence(nowMs);
+    const result = await pruner.pruneExpiredEvidence(nowMs, olderThanDays);
     return result;
   });
 

@@ -11,7 +11,7 @@ export function createFetchIssueAdapter(
     version: "1.0.0",
     inputSchema: z.object({
       baseUrl: z.string().url(),
-      token: z.string(),
+      token: z.string().optional().default(""),
       repoOwner: z.string(),
       repoName: z.string(),
       issueNumber: z.number().int(),

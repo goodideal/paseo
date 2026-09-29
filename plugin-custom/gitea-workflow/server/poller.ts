@@ -86,13 +86,19 @@ export class MultiProjectPoller {
             );
             if (alreadyHasRun) continue;
 
+            const presetId =
+              policy === "issue_preapproved"
+                ? "gitea.issue-to-pr.preapproved"
+                : policy === "unattended"
+                  ? "gitea.issue-to-pr.unattended"
+                  : "gitea.issue-to-pr";
+
             const createRes = await workflows.runCreate({
               projectId: project.projectId,
               workspaceId: project.projectId,
-              workflowId: "gitea.issue-to-pr",
+              workflowId: presetId,
               input: {
                 baseUrl: resolved.baseUrl,
-                token: resolved.token,
                 repoOwner: resolved.repoOwner,
                 repoName: resolved.repoName,
                 issueNumber: issue.number,
