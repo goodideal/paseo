@@ -8,6 +8,8 @@ import {
   listTasksRpc,
   rejectTaskRpc,
 } from "./shared/contracts.js";
+import { giteaSettingsDefinition } from "./shared/settings.js";
+import { SettingsManager } from "./server/settings-manager.js";
 import { TaskStore } from "./server/store.js";
 import { GiteaClientPool } from "./server/client-pool.js";
 import { ProjectGiteaResolver } from "./server/resolver.js";
@@ -23,6 +25,10 @@ function getDaemonWsUrl(): string {
 }
 
 export default function contribute(server: PluginServerContext) {
+  const settingsHandle = server.registerSettings(giteaSettingsDefinition);
+  const settingsManager = new SettingsManager(settingsHandle);
+  void settingsManager.initialize();
+
   const storePath = join(tmpdir(), "paseo-gitea-workflow", "tasks.json");
   const store = new TaskStore(storePath);
   const clientPool = new GiteaClientPool();
@@ -101,6 +107,7 @@ export default function contribute(server: PluginServerContext) {
   });
 
   return () => {
+    settingsManager.dispose();
     poller?.stop();
     if (paseoClient) {
       void paseoClient.close().catch(() => {});
