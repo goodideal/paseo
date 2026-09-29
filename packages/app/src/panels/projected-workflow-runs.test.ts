@@ -255,6 +255,9 @@ describe("buildProjectedWorkflowRuns", () => {
     expect(summaries[0].completedAt).toBe("2026-09-26T10:05:00.000Z");
     const detail = getDetail("virtual:session:agent-2");
     expect(detail?.stepAttempts[1].status).toBe("failed");
+    expect(detail?.pendingInteraction).toBeNull();
+    expect(detail?.interactions).toEqual([]);
+    expect(detail?.deliveryApprovalManifest).toBeNull();
   });
 
   it("ignores archived agents or child agents as roots", () => {

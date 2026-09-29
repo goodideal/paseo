@@ -212,12 +212,15 @@ export function buildProjectedWorkflowRuns(input: BuildProjectedRunsInput): {
       createdAt: createdAtIso,
       updatedAt: updatedAtIso,
       completedAt: runStatus === "running" ? null : updatedAtIso,
+      pendingInteraction: null,
     };
 
     const detail: ProjectedWorkflowRunDetail = {
       ...summary,
       kind: "projected",
       stepAttempts,
+      interactions: [],
+      deliveryApprovalManifest: null,
     };
 
     summaries.push(summary);

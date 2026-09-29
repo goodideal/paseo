@@ -37,6 +37,10 @@ function TestComponent({ client }: { client: WorkflowEngineClient | null }) {
   const cancel = useCallback(() => void model.cancelRun("2"), [model]);
   const approve = useCallback(() => void model.approveRun("2", "appr-1"), [model]);
   const retry = useCallback(() => void model.retryRun("2", "verify"), [model]);
+  const respond = useCallback(
+    () => void model.respondInteraction("2", "inter-1", "my response"),
+    [model],
+  );
   return (
     <div>
       <div data-testid="runs-count">{model.runs?.length ?? "null"}</div>
@@ -57,6 +61,9 @@ function TestComponent({ client }: { client: WorkflowEngineClient | null }) {
       </button>
       <button type="button" data-testid="retry" onClick={retry}>
         Retry
+      </button>
+      <button type="button" data-testid="respond" onClick={respond}>
+        Respond
       </button>
     </div>
   );
@@ -242,6 +249,40 @@ describe("useWorkflowRuns", () => {
     await act(async () => fireEvent.click(screen.getByTestId("cancel")));
     expect(screen.getByTestId("action-error").textContent).toBe("Run is already terminal");
     expect(screen.getByTestId("action-success").textContent).toBe("none");
+  });
+
+  it("answers pending interaction and updates action success", async () => {
+    const mockRespond = vi.fn().mockResolvedValue({
+      ...scope,
+      requestId: "respond",
+      runId: "2",
+      payload: {
+        ...scope,
+        requestId: "respond",
+        runId: "2",
+        interaction: { id: "inter-1", status: "answered" },
+        error: null,
+      },
+      error: null,
+    });
+    const client = createClient({
+      workflowInteractionRespond: mockRespond,
+    });
+    render(<TestComponent client={client} />);
+    await screen.findByText("3", { selector: '[data-testid="runs-count"]' });
+    fireEvent.click(screen.getByTestId("select"));
+    await screen.findByText("waiting_approval", { selector: '[data-testid="detail-status"]' });
+
+    await act(async () => fireEvent.click(screen.getByTestId("respond")));
+    expect(mockRespond).toHaveBeenCalledWith({
+      ...scope,
+      runId: "2",
+      interactionId: "inter-1",
+      answer: "my response",
+    });
+    expect(screen.getByTestId("action-success").textContent).toBe(
+      "Interaction answered and resumed",
+    );
   });
 
   it("provides a presentation for launcher and tab chrome", () => {

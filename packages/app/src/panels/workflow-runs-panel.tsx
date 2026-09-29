@@ -28,6 +28,7 @@ import {
   type ProjectedWorkflowRunDetail,
   type ProjectedWorkflowStepAttempt,
 } from "./projected-workflow-runs";
+import { WorkflowInteractionCard } from "./workflow-interaction-card";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { WorkspaceReaderScreen } from "@/screens/workspace/reader/workspace-reader-screen";
@@ -44,6 +45,7 @@ export interface WorkflowEngineClient {
   workflowApprovalDeny: import("@getpaseo/client/internal/daemon-client").DaemonClient["workflowApprovalDeny"];
   workflowRunRetry: import("@getpaseo/client/internal/daemon-client").DaemonClient["workflowRunRetry"];
   workflowRunResume: import("@getpaseo/client/internal/daemon-client").DaemonClient["workflowRunResume"];
+  workflowInteractionRespond?: import("@getpaseo/client/internal/daemon-client").DaemonClient["workflowInteractionRespond"];
 }
 
 export function isWorkflowEngineClient(client: unknown): client is WorkflowEngineClient {
@@ -337,6 +339,33 @@ export function useWorkflowRuns(
     [client, scope, fetchRuns, selectedRunId, reloadDetail],
   );
 
+  const respondInteraction = useCallback(
+    async (runId: string, interactionId: string, answer: string) => {
+      if (!client || !scope || !client.workflowInteractionRespond) return;
+      setIsActionPending(true);
+      setActionError(null);
+      try {
+        const response = await client.workflowInteractionRespond({
+          ...scope,
+          runId,
+          interactionId,
+          answer,
+        });
+        if (response.error) throw new Error(response.error);
+        setActionSuccess("Interaction answered and resumed");
+        await fetchRuns();
+        if (selectedRunId === runId) {
+          await reloadDetail(runId);
+        }
+      } catch (err) {
+        setActionError(err instanceof Error ? err.message : "Failed to answer interaction");
+      } finally {
+        setIsActionPending(false);
+      }
+    },
+    [client, scope, fetchRuns, selectedRunId, reloadDetail],
+  );
+
   return {
     runs,
     isLoading,
@@ -353,6 +382,7 @@ export function useWorkflowRuns(
     denyRun,
     retryRun,
     resumeRun,
+    respondInteraction,
     fetchRuns,
   };
 }
@@ -559,6 +589,15 @@ export function WorkflowRunsContent({
     );
   });
 
+  const supportsWorkflowInteractions = useSessionStore((state) => {
+    const serverInfo = state.sessions[serverId]?.serverInfo;
+    if (!serverInfo || !serverInfo.features) return false;
+    return (
+      "workflowInteractions" in serverInfo.features &&
+      (serverInfo.features as { workflowInteractions?: boolean }).workflowInteractions === true
+    );
+  });
+
   const { projectedRuns, getProjectedDetail } = useProjectedWorkflowRuns({
     serverId,
     workspaceId,
@@ -590,6 +629,7 @@ export function WorkflowRunsContent({
     denyRun,
     retryRun,
     resumeRun,
+    respondInteraction,
   } = useWorkflowRuns(workflowClient, workflowScope, {
     projectedRuns,
     getProjectedDetail,
@@ -686,6 +726,14 @@ export function WorkflowRunsContent({
     if (!detail) return;
     void resumeRun(detail.runId);
   }, [detail, resumeRun]);
+
+  const handleRespondInteraction = useCallback(
+    async (answer: string) => {
+      if (!detail?.pendingInteraction) return;
+      await respondInteraction(detail.runId, detail.pendingInteraction.id, answer);
+    },
+    [detail, respondInteraction],
+  );
 
   const renderWorkflowContent = () => {
     if (!supportsWorkflowEngine && projectedRuns.length === 0) {
@@ -824,6 +872,16 @@ export function WorkflowRunsContent({
 
         {actionError && <Alert variant="error" title="Action Failed" description={actionError} />}
         {actionSuccess && <Alert variant="success" title="Success" description={actionSuccess} />}
+
+        {detail.pendingInteraction && (
+          <WorkflowInteractionCard
+            interaction={detail.pendingInteraction}
+            supported={supportsWorkflowInteractions}
+            onRespond={handleRespondInteraction}
+            isPending={isActionPending}
+            error={actionError}
+          />
+        )}
 
         {/* Vertical Stepper / Indented DAG */}
         <ScrollView style={styles.stepperContainer}>
