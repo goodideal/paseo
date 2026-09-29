@@ -38,4 +38,22 @@ describe("CompanionService", () => {
 
     client.close();
   });
+
+  it("serves companion web UI index.html and bundle.js over HTTP without CORS issues", async () => {
+    service = new CompanionService(0);
+    const port = await service.start();
+
+    const htmlRes = await fetch(`http://127.0.0.1:${port}/`);
+    expect(htmlRes.status).toBe(200);
+    expect(htmlRes.headers.get("content-type")).toContain("text/html");
+    const htmlText = await htmlRes.text();
+    expect(htmlText).toContain("Paseo Desktop Pet");
+    expect(htmlText).toContain('<script src="./bundle.js"></script>');
+
+    const jsRes = await fetch(`http://127.0.0.1:${port}/bundle.js`);
+    expect(jsRes.status).toBe(200);
+    expect(jsRes.headers.get("content-type")).toContain("application/javascript");
+    const jsText = await jsRes.text();
+    expect(jsText).toContain("AnimationEngine");
+  });
 });

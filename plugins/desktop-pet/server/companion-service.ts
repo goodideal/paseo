@@ -1,9 +1,13 @@
 import { createServer, type Server } from "node:http";
-import { writeFile, mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { writeFile, mkdir, readFile } from "node:fs/promises";
+import { join, dirname } from "node:path";
 import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import type { PetDashboardSnapshot } from "../shared/types.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 export class CompanionService {
   private port: number;
@@ -22,7 +26,36 @@ export class CompanionService {
 
   public async start(): Promise<number> {
     return new Promise((resolve, reject) => {
-      this.httpServer = createServer((_req, res) => {
+      this.httpServer = createServer(async (req, res) => {
+        const url = new URL(req.url || "/", "http://127.0.0.1");
+
+        // Serve companion bundle.js
+        if (url.pathname === "/bundle.js") {
+          try {
+            const bundlePath = join(__dirname, "../companion-desktop/src/bundle.js");
+            const js = await readFile(bundlePath, "utf-8");
+            res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8" });
+            return res.end(js);
+          } catch {
+            res.writeHead(404, { "Content-Type": "text/plain" });
+            return res.end("bundle.js not found");
+          }
+        }
+
+        // Serve companion UI index.html
+        if (url.pathname === "/" || url.pathname === "/index.html") {
+          try {
+            const htmlPath = join(__dirname, "../companion-desktop/src/index.html");
+            const html = await readFile(htmlPath, "utf-8");
+            res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+            return res.end(html);
+          } catch {
+            res.writeHead(404, { "Content-Type": "text/plain" });
+            return res.end("index.html not found");
+          }
+        }
+
+        // API status fallback
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(
           JSON.stringify({ status: "ok", service: "paseo-desktop-pet", port: this.boundPort }),
