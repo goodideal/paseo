@@ -77,7 +77,10 @@ export class IssueRunIndexStore {
     repoOwner: string;
     repoName: string;
     issueNumber: number;
+    issueTitle?: string;
     runId: string;
+    baseUrl?: string;
+    token?: string;
   }): Promise<void> {
     await this.ensureLoaded();
     const key = this.indexKey(entry.projectId, entry.repoOwner, entry.repoName, entry.issueNumber);
@@ -88,12 +91,23 @@ export class IssueRunIndexStore {
       repoOwner: entry.repoOwner,
       repoName: entry.repoName,
       issueNumber: entry.issueNumber,
+      issueTitle: entry.issueTitle,
       runId: entry.runId,
+      baseUrl: entry.baseUrl,
+      token: entry.token,
       createdAt: now,
       updatedAt: now,
     };
     this.memoryCache.set(key, record);
     await this.flush();
+  }
+
+  async getEntryByRunId(runId: string): Promise<IssueRunIndexEntry | null> {
+    await this.ensureLoaded();
+    for (const entry of this.memoryCache.values()) {
+      if (entry.runId === runId) return entry;
+    }
+    return null;
   }
 
   async getRunIdForIssue(
@@ -105,6 +119,19 @@ export class IssueRunIndexStore {
     await this.ensureLoaded();
     const key = this.indexKey(projectId, repoOwner, repoName, issueNumber);
     return this.memoryCache.get(key)?.runId ?? null;
+  }
+
+  async removeRun(
+    projectId: string,
+    repoOwner: string,
+    repoName: string,
+    issueNumber: number,
+  ): Promise<void> {
+    await this.ensureLoaded();
+    const key = this.indexKey(projectId, repoOwner, repoName, issueNumber);
+    if (this.memoryCache.delete(key)) {
+      await this.flush();
+    }
   }
 
   async listEntries(projectId?: string): Promise<IssueRunIndexEntry[]> {

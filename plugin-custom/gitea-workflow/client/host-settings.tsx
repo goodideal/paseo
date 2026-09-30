@@ -6,6 +6,7 @@ import {
   SettingsSection,
   SettingsSwitch,
   SettingsSelect,
+  SettingsInput,
   SettingsRow,
   SettingsAction,
 } from "@getpaseo/plugin/client/ui";
@@ -25,6 +26,12 @@ const intervalOptions = [
   { label: "60 秒 (默认)", value: "60" },
   { label: "120 秒", value: "120" },
   { label: "300 秒", value: "300" },
+] as const;
+
+const permissionScopeOptions = [
+  { label: "受控执行 (修改代码与测试，推送需审批) [推荐]", value: "workspace_controlled" },
+  { label: "只读分析 (仅出方案与评论，禁止修改代码)", value: "read_only" },
+  { label: "全自动交付 (允许自动推送分支并创建 PR)", value: "full_delivery" },
 ] as const;
 
 const retentionOptions = [
@@ -53,10 +60,19 @@ export function HostSettingsScreen({
     : (settingsOverride ?? useSettings(giteaSettingsDefinition));
 
   const defaultRpcCaller = useCallback(
-    async () => ({ diagnostics: diagnosticsOverride ?? [] }),
+    async (_input: Record<string, never> = {}) => ({
+      diagnostics: diagnosticsOverride ?? [],
+    }),
     [diagnosticsOverride],
   );
-  const rpcFunc = useRpcHook ? useRpcHook(diagnoseProjectsRpc) : defaultRpcCaller;
+  let rpcFunc: (
+    input: Record<string, never>,
+  ) => Promise<{ diagnostics: GiteaProjectDiagnostic[] }> = defaultRpcCaller;
+  try {
+    rpcFunc = (useRpcHook ?? useRpc)(diagnoseProjectsRpc);
+  } catch {
+    rpcFunc = defaultRpcCaller;
+  }
   const diagnoseProjects = diagnosticsOverride ? defaultRpcCaller : rpcFunc;
 
   const [diagnostics, setDiagnostics] = useState<GiteaProjectDiagnostic[]>(
@@ -105,7 +121,7 @@ export function HostSettingsScreen({
       const g = globalThis as unknown as { confirm?: (msg: string) => boolean };
       if (typeof g.confirm === "function") {
         const ok = g.confirm(
-          "开启后将自动处理授权项目中有启动标签的 Issue 并创建工作树。是否确认开启？",
+          "开启后将自动处理授权项目中有触发标签 (Agent Auto / Agent Plan) 的 Issue 并创建工作树。是否确认开启？",
         );
         if (!ok) return;
       }
@@ -176,7 +192,7 @@ export function HostSettingsScreen({
           >
             <SettingsSwitch
               label="自动处理 Issue"
-              hint="开启后，仅处理已授权项目中带有启动标签的 Issue"
+              hint="开启后，仅处理已授权项目中带有 Agent Auto 或 Agent Plan 标签的 Issue"
               value={values.enabled}
               onValueChange={toggleGlobalEnabled}
               disabled={settings.saving}
@@ -188,6 +204,68 @@ export function HostSettingsScreen({
             options={policyOptions as any}
             disabled={settings.saving}
             onValueChange={changePolicy}
+          />
+        </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection title="触发标签与模式 (Trigger Labels & Modes)">
+        <SettingsCard>
+          <SettingsRow
+            label="Agent Auto (全自动模式)"
+            hint="添加 Issue 标签 agent-auto 或 agent:auto。认领后无人值守自动推进方案规划、代码编写、动态测试与 PR 提交，全流程无需人工干预。"
+          />
+          <SettingsRow
+            label="Agent Plan (规划审查模式)"
+            hint="添加 Issue 标签 agent-plan 或 agent:plan。Agent 仅产出架构设计与实施方案，在 Paseo Review 面板等待人工审批通过后方可执行编码。"
+          />
+        </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection title="授权范围 (Permission Scope)">
+        <SettingsCard>
+          <SettingsSelect
+            label="全局授权范围"
+            hint="设定 Agent 执行的最高权限边界（只读分析、受控执行、全自动交付）"
+            value={values.agentPermissionScope || "workspace_controlled"}
+            options={permissionScopeOptions as any}
+            disabled={settings.saving}
+            onValueChange={(agentPermissionScope: string) =>
+              settings.save(
+                { ...values, agentPermissionScope: agentPermissionScope as any },
+                settings.revision,
+              )
+            }
+          />
+        </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection title="执行引擎与模型 (Agent & Model)">
+        <SettingsCard>
+          <SettingsSelect
+            label="Agent 引擎"
+            hint="执行自动化开发任务的代码智能代理"
+            value={values.agentProvider || "claude"}
+            options={
+              [
+                { label: "Claude Code (推荐)", value: "claude" },
+                { label: "Codex", value: "codex" },
+                { label: "Google Antigravity", value: "antigravity" },
+                { label: "OpenCode", value: "opencode" },
+              ] as any
+            }
+            disabled={settings.saving}
+            onValueChange={(agentProvider) =>
+              settings.save({ ...values, agentProvider }, settings.revision)
+            }
+          />
+          <SettingsInput
+            label="指定模型 (可选)"
+            hint="留空使用引擎默认模型，如 gemini-flash[1M]、claude-3-7-sonnet、gpt-4o"
+            initialValue={values.agentModel || ""}
+            disabled={settings.saving}
+            onChangeText={(agentModel) =>
+              settings.save({ ...values, agentModel }, settings.revision)
+            }
           />
         </SettingsCard>
       </SettingsSection>

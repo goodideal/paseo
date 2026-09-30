@@ -117,6 +117,7 @@ describe("E2E Automated Task to Review Flow (Multi-Project)", () => {
       isProjectAuthorized: vi.fn().mockReturnValue(true),
       getReadyLabel: vi.fn().mockReturnValue("agent-ready"),
       getWorkflowPolicy: vi.fn().mockReturnValue("full_superpowers"),
+      getAgentPermissionScope: vi.fn().mockReturnValue("full_delivery"),
     };
 
     vi.spyOn(resolver, "resolveProject").mockResolvedValue({
@@ -212,5 +213,146 @@ describe("E2E Automated Task to Review Flow (Multi-Project)", () => {
     expect(createdRuns[2].presetId).toBe("gitea.issue-to-pr.plan");
     expect(createdRuns[2].input.mode).toBe("plan");
     expect(createdRuns[2].input.conflictWarning).toBe(true);
+  });
+  it("routes agent-auto into controlled preset when project scope requires delivery approval", async () => {
+    const indexStore = new IssueRunIndexStore(
+      join(tmpdir(), `test-controlled-index-${Date.now()}.json`),
+    );
+    const clientPool = new GiteaClientPool();
+    const resolver = new ProjectGiteaResolver();
+    const mockSettings = {
+      current: {
+        enabled: true,
+        pollIntervalSeconds: 60,
+        projects: { "proj-controlled": { enabled: true } },
+      },
+      isProjectAuthorized: vi.fn().mockReturnValue(true),
+      getReadyLabel: vi.fn().mockReturnValue("agent-ready"),
+      getWorkflowPolicy: vi.fn().mockReturnValue("unattended"),
+      getAgentPermissionScope: vi.fn().mockReturnValue("workspace_controlled"),
+    };
+    vi.spyOn(resolver, "resolveProject").mockResolvedValue({
+      projectId: "proj-controlled",
+      projectPath: "/tmp/controlled",
+      projectName: "controlled",
+      host: "gitea.local",
+      baseUrl: "http://gitea.local",
+      token: "tok",
+      repoOwner: "org",
+      repoName: "repo",
+      authSource: "tea",
+    });
+    const client = clientPool.getClient({
+      giteaUrl: "http://gitea.local",
+      giteaToken: "tok",
+      repoOwner: "org",
+      repoName: "repo",
+    });
+    vi.spyOn(client, "fetchReadyIssues").mockResolvedValue([
+      {
+        number: 200,
+        title: "Controlled auto task",
+        body: "",
+        html_url: "http://gitea.local/org/repo/issues/200",
+        labels: [{ name: "agent-auto" }],
+      },
+    ]);
+    const runCreate = vi.fn().mockResolvedValue({ runId: "run-controlled-200" });
+    const poller = new MultiProjectPoller({
+      settings: mockSettings as any,
+      resolver,
+      clientPool,
+      indexStore,
+      getWorkflows: () => ({ runCreate }) as any,
+      getProjects: async () => [
+        { projectId: "proj-controlled", projectRootPath: "/tmp/controlled", projectKind: "git" },
+      ],
+      getWorkspaces: () =>
+        ({
+          list: vi.fn().mockResolvedValue({
+            entries: [{ id: "wks-controlled", workspaceKind: "local_checkout" }],
+          }),
+        }) as any,
+    });
+
+    await poller.poll();
+
+    expect(runCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workflowId: "gitea.issue-to-pr.controlled",
+        input: expect.objectContaining({ permissionScope: "workspace_controlled" }),
+      }),
+    );
+  });
+
+  it("routes any trigger into readonly preset when project scope is read_only", async () => {
+    const indexStore = new IssueRunIndexStore(
+      join(tmpdir(), `test-readonly-index-${Date.now()}.json`),
+    );
+    const clientPool = new GiteaClientPool();
+    const resolver = new ProjectGiteaResolver();
+    const mockSettings = {
+      current: {
+        enabled: true,
+        pollIntervalSeconds: 60,
+        projects: { "proj-readonly": { enabled: true } },
+      },
+      isProjectAuthorized: vi.fn().mockReturnValue(true),
+      getReadyLabel: vi.fn().mockReturnValue("agent-ready"),
+      getWorkflowPolicy: vi.fn().mockReturnValue("full_superpowers"),
+      getAgentPermissionScope: vi.fn().mockReturnValue("read_only"),
+    };
+    vi.spyOn(resolver, "resolveProject").mockResolvedValue({
+      projectId: "proj-readonly",
+      projectPath: "/tmp/readonly",
+      projectName: "readonly",
+      host: "gitea.local",
+      baseUrl: "http://gitea.local",
+      token: "tok",
+      repoOwner: "org",
+      repoName: "repo",
+      authSource: "tea",
+    });
+    const client = clientPool.getClient({
+      giteaUrl: "http://gitea.local",
+      giteaToken: "tok",
+      repoOwner: "org",
+      repoName: "repo",
+    });
+    vi.spyOn(client, "fetchReadyIssues").mockResolvedValue([
+      {
+        number: 201,
+        title: "Readonly task",
+        body: "",
+        html_url: "http://gitea.local/org/repo/issues/201",
+        labels: [{ name: "agent-plan" }],
+      },
+    ]);
+    const runCreate = vi.fn().mockResolvedValue({ runId: "run-readonly-201" });
+    const poller = new MultiProjectPoller({
+      settings: mockSettings as any,
+      resolver,
+      clientPool,
+      indexStore,
+      getWorkflows: () => ({ runCreate }) as any,
+      getProjects: async () => [
+        { projectId: "proj-readonly", projectRootPath: "/tmp/readonly", projectKind: "git" },
+      ],
+      getWorkspaces: () =>
+        ({
+          list: vi.fn().mockResolvedValue({
+            entries: [{ id: "wks-readonly", workspaceKind: "local_checkout" }],
+          }),
+        }) as any,
+    });
+
+    await poller.poll();
+
+    expect(runCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workflowId: "gitea.issue-to-pr.readonly",
+        input: expect.objectContaining({ permissionScope: "read_only" }),
+      }),
+    );
   });
 });

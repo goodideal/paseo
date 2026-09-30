@@ -6,6 +6,10 @@ describe("Server RPC Handlers", () => {
   it("registers and responds to RPCs with project filtering", async () => {
     const handlers = new Map<string, (input: unknown, ctx: unknown) => Promise<unknown>>();
     const mockServer: Partial<PluginServerContext> = {
+      registerSettings: vi.fn().mockReturnValue({
+        read: vi.fn().mockResolvedValue({ status: "ready", revision: "1", values: {} }),
+        subscribe: vi.fn().mockReturnValue(() => {}),
+      }),
       handle: vi.fn().mockImplementation((contract, handler) => {
         handlers.set(contract.name, handler);
       }),

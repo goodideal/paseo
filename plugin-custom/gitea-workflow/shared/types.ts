@@ -19,6 +19,15 @@ export const TaskStateSchema = z.enum([
 export type TaskState = z.infer<typeof TaskStateSchema>;
 
 // 触发模式由 Issue 标签决定：`auto` 全自动交付，`plan` 先出方案并等待人工审批。
+
+export const AgentPermissionScopeSchema = z.enum([
+  "read_only",
+  "workspace_controlled",
+  "full_delivery",
+]);
+
+export type AgentPermissionScope = z.infer<typeof AgentPermissionScopeSchema>;
+
 export const GiteaTriggerModeSchema = z.enum(["auto", "plan"]);
 
 export type GiteaTriggerMode = z.infer<typeof GiteaTriggerModeSchema>;
@@ -172,6 +181,7 @@ export const GiteaProjectSettingsSchema = z.object({
   workflowPolicyOverride: GiteaWorkflowPolicySchema.optional(),
   agentProviderOverride: z.string().optional(),
   agentModelOverride: z.string().optional(),
+  agentPermissionScopeOverride: AgentPermissionScopeSchema.optional(),
 });
 
 export type GiteaProjectSettings = z.infer<typeof GiteaProjectSettingsSchema>;
@@ -184,6 +194,7 @@ export const GiteaHostSettingsSchema = z.object({
   automationProfile: z.string().default("claude-code"),
   agentProvider: z.string().default("claude"),
   agentModel: z.string().default(""),
+  agentPermissionScope: AgentPermissionScopeSchema.default("workspace_controlled"),
   workflowPolicy: GiteaWorkflowPolicySchema.default("full_superpowers"),
   projects: z.record(z.string(), GiteaProjectSettingsSchema).default({}),
   inProgressLabel: z.string().default("agent-in-progress"),

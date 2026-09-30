@@ -2,9 +2,11 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { PluginWorkflowStepAdapterRegistration } from "@getpaseo/plugin/server";
 import type { GiteaClientPool } from "../client-pool.js";
+import type { IssueRunIndexStore } from "../store.js";
 
 export function createFetchIssueAdapter(
   clientPool: GiteaClientPool,
+  indexStore?: IssueRunIndexStore,
 ): PluginWorkflowStepAdapterRegistration {
   return {
     type: "gitea.fetch_issue",
@@ -32,23 +34,40 @@ export function createFetchIssueAdapter(
     recovery: "resumable",
     supportedPlatforms: ["darwin", "linux", "win32"],
     resourceConflictKey: "gitea:issue:{{issueNumber}}",
-    execute: async (rawInput) => {
+    execute: async (rawInput, context) => {
       const input = rawInput as {
         baseUrl: string;
-        token: string;
+        token?: string;
         repoOwner: string;
         repoName: string;
         issueNumber: number;
       };
 
+      let token = input.token || "";
+      let baseUrl = input.baseUrl;
+      let repoOwner = input.repoOwner;
+      let repoName = input.repoName;
+      let issueNumber = input.issueNumber;
+
+      if (!token && (context as any)?.run?.runId && indexStore) {
+        const entry = await indexStore.getEntryByRunId((context as any).run.runId);
+        if (entry) {
+          token = token || entry.token || "";
+          baseUrl = baseUrl || entry.baseUrl || "";
+          repoOwner = repoOwner || entry.repoOwner || "";
+          repoName = repoName || entry.repoName || "";
+          issueNumber = issueNumber || entry.issueNumber || 0;
+        }
+      }
+
       const client = clientPool.getClient({
-        giteaUrl: input.baseUrl,
-        giteaToken: input.token,
-        repoOwner: input.repoOwner,
-        repoName: input.repoName,
+        giteaUrl: baseUrl,
+        giteaToken: token,
+        repoOwner,
+        repoName,
       });
 
-      const issue = await client.getIssue(input.issueNumber);
+      const issue = await client.getIssue(issueNumber);
       const labels = (issue.labels ?? []).map((l) => l.name);
       const digest = createHash("sha256")
         .update(

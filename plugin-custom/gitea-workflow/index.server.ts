@@ -58,7 +58,7 @@ export default function contribute(server: PluginServerContext) {
     settingsManager,
   );
 
-  for (const adapter of createGiteaStepAdapters(clientPool)) {
+  for (const adapter of createGiteaStepAdapters(clientPool, indexStore, settingsManager)) {
     server.registerWorkflowStepAdapter?.(adapter);
   }
   for (const preset of giteaWorkflowPresets) {
@@ -88,6 +88,7 @@ export default function contribute(server: PluginServerContext) {
             const list = await api.projects.list();
             return list.projects;
           },
+          getWorkspaces: () => (paseoClient ?? activePaseo)?.workspaces,
         });
         poller.start();
       }
@@ -124,6 +125,7 @@ export default function contribute(server: PluginServerContext) {
           const list = await context.paseo.projects.list();
           return list.projects;
         },
+        getWorkspaces: () => context.paseo.workspaces,
       });
       poller.start();
     }

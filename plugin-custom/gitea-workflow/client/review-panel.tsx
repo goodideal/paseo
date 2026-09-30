@@ -487,8 +487,8 @@ export function ReviewPanel({ workspaceId, theme, workflowApi }: ReviewPanelProp
         <Text style={styles.emptyIcon}>☕</Text>
         <Text style={styles.emptyTitle}>No Gitea Tasks Active</Text>
         <Text style={styles.emptySubtitle}>
-          Tasks with label &quot;agent-ready&quot; in registered repositories will appear here
-          automatically.
+          Tasks with label &quot;Agent Auto&quot; or &quot;Agent Plan&quot; in registered
+          repositories will appear here automatically.
         </Text>
       </View>
     );

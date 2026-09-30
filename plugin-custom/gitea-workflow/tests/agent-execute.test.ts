@@ -6,6 +6,7 @@ describe("Agent Execute Adapter", () => {
     const mockSettings = {
       getAgentProvider: vi.fn().mockReturnValue("claude"),
       getAgentModel: vi.fn().mockReturnValue("claude-3-7-sonnet"),
+      getAgentPermissionScope: vi.fn().mockReturnValue("workspace_controlled"),
     };
     const mockIndexStore = {
       getEntryByRunId: vi.fn().mockResolvedValue({
@@ -73,5 +74,42 @@ describe("Agent Execute Adapter", () => {
     // 3. Verifies proposal summary is returned in result
     expect(result.summary).toContain("### 方案选型");
     expect(result.status).toBe("succeeded");
+  });
+  it("sets agent modeId to plan when permission scope is read_only", async () => {
+    const mockSettings = {
+      getAgentProvider: vi.fn().mockReturnValue("claude"),
+      getAgentModel: vi.fn().mockReturnValue("claude-3-7-sonnet"),
+      getAgentPermissionScope: vi.fn().mockReturnValue("read_only"),
+    };
+    const mockIndexStore = {
+      getEntryByRunId: vi.fn().mockResolvedValue({
+        issueNumber: 55,
+        issueTitle: "Analyze auth performance",
+      }),
+    };
+    const mockAgentHandle = {
+      id: "agent-ro-1",
+      run: vi.fn().mockResolvedValue({
+        status: "idle",
+        lastMessage: "Readonly analysis complete.",
+      }),
+    };
+    const mockPaseo = {
+      workspaces: { list: vi.fn().mockResolvedValue({ entries: [] }) },
+      agents: { create: vi.fn().mockResolvedValue(mockAgentHandle) },
+    };
+
+    const adapter = createAgentExecuteAdapter(mockSettings as any, mockIndexStore as any);
+    await adapter.execute({ phase: "brainstorm" }, {
+      paseo: mockPaseo as any,
+      run: { runId: "run-ro-55", projectId: "proj-ro" },
+      step: { stepId: "brainstorm-agent" },
+    } as any);
+
+    expect(mockPaseo.agents.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({ modeId: "plan" }),
+      }),
+    );
   });
 });

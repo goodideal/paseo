@@ -519,6 +519,181 @@ export function buildPlanWorkflowDefinition() {
   };
 }
 
+export function buildReadOnlyWorkflowDefinition() {
+  const steps: StepDefinition[] = [
+    {
+      id: "fetch-issue",
+      type: "gitea.fetch_issue",
+      timeoutMs: 30_000,
+      retries: 2,
+      concurrency: 1,
+      approval: "automatic",
+    },
+    {
+      id: "brainstorm-agent",
+      type: "gitea.agent_execute",
+      dependsOn: ["fetch-issue"],
+      input: { phase: "brainstorm" },
+      timeoutMs: 30 * 60 * 1000,
+      retries: 0,
+      concurrency: 1,
+      approval: "automatic",
+    },
+    {
+      id: "plan-agent",
+      type: "gitea.agent_execute",
+      dependsOn: ["brainstorm-agent"],
+      input: { phase: "plan" },
+      timeoutMs: 30 * 60 * 1000,
+      retries: 0,
+      concurrency: 1,
+      approval: "automatic",
+    },
+    {
+      id: "post-summary",
+      type: "gitea.post_lifecycle_summary",
+      dependsOn: ["plan-agent"],
+      input: {
+        stage: "read_only_plan",
+        summary:
+          "Agent has completed read-only architectural analysis and proposal generation. Read-only scope prohibits automated code modification and pull requests.",
+      },
+      timeoutMs: 30_000,
+      retries: 1,
+      concurrency: 1,
+      approval: "automatic",
+    },
+  ];
+
+  return {
+    id: "gitea.issue-to-pr.readonly",
+    revision: "1",
+    maxConcurrency: 1,
+    maxArtifactBytes: 10 * 1024 * 1024,
+    steps,
+  };
+}
+
+export function buildControlledWorkflowDefinition() {
+  const steps: StepDefinition[] = [
+    {
+      id: "fetch-issue",
+      type: "gitea.fetch_issue",
+      timeoutMs: 30_000,
+      retries: 2,
+      concurrency: 1,
+      approval: "automatic",
+    },
+    {
+      id: "claim-issue",
+      type: "gitea.claim_issue",
+      dependsOn: ["fetch-issue"],
+      timeoutMs: 30_000,
+      retries: 1,
+      concurrency: 1,
+      approval: "automatic",
+    },
+    {
+      id: "worktree-create",
+      type: "worktree.create",
+      dependsOn: ["claim-issue"],
+      timeoutMs: 60_000,
+      retries: 1,
+      concurrency: 1,
+      approval: "automatic",
+    },
+    {
+      id: "auto-design",
+      type: "gitea.agent_execute",
+      dependsOn: ["worktree-create"],
+      input: { phase: "auto_design" },
+      timeoutMs: 30 * 60 * 1000,
+      retries: 0,
+      concurrency: 1,
+      approval: "automatic",
+    },
+    {
+      id: "implement-agent",
+      type: "gitea.agent_execute",
+      dependsOn: ["auto-design"],
+      input: { phase: "implement" },
+      timeoutMs: 60 * 60 * 1000,
+      retries: 0,
+      concurrency: 1,
+      approval: "automatic",
+    },
+    {
+      id: "verify-command",
+      type: "verify.command",
+      dependsOn: ["implement-agent"],
+      input: { verificationProfile: "unit-test" },
+      timeoutMs: 15 * 60 * 1000,
+      retries: 1,
+      concurrency: 1,
+      approval: "automatic",
+    },
+    {
+      id: "independent-review",
+      type: "gitea.agent_execute",
+      dependsOn: ["verify-command"],
+      input: { phase: "review" },
+      timeoutMs: 30 * 60 * 1000,
+      retries: 0,
+      concurrency: 1,
+      approval: "automatic",
+    },
+    {
+      id: "resolve-delivery",
+      type: "gitea.resolve_delivery",
+      dependsOn: ["independent-review"],
+      timeoutMs: 30_000,
+      retries: 0,
+      concurrency: 1,
+      approval: "automatic",
+    },
+    {
+      id: "gate-delivery",
+      type: "approval.wait",
+      dependsOn: ["resolve-delivery"],
+      input: {
+        phase: "delivery",
+        reason: "Controlled delivery requires explicit human approval before push",
+      },
+      timeoutMs: 60 * 60 * 1000,
+      retries: 0,
+      concurrency: 1,
+      approval: "required",
+    },
+    {
+      id: "git-push",
+      type: "git.push",
+      dependsOn: ["gate-delivery"],
+      timeoutMs: 60_000,
+      retries: 1,
+      concurrency: 1,
+      approval: "automatic",
+    },
+    {
+      id: "git-create-pr",
+      type: "git.create_pr",
+      dependsOn: ["git-push"],
+      input: { title: "Automated implementation for issue" },
+      timeoutMs: 60_000,
+      retries: 1,
+      concurrency: 1,
+      approval: "automatic",
+    },
+  ];
+
+  return {
+    id: "gitea.issue-to-pr.controlled",
+    revision: "1",
+    maxConcurrency: 1,
+    maxArtifactBytes: 10 * 1024 * 1024,
+    steps,
+  };
+}
+
 export const giteaWorkflowPresets: PluginWorkflowPreset[] = [
   {
     workflowId: "gitea.issue-to-pr",
@@ -537,6 +712,18 @@ export const giteaWorkflowPresets: PluginWorkflowPreset[] = [
     name: "Gitea Superpowers Pipeline (Plan)",
     sourcePreset: "gitea-workflow",
     definition: buildPlanWorkflowDefinition(),
+  },
+  {
+    workflowId: "gitea.issue-to-pr.readonly",
+    name: "Gitea Superpowers Pipeline (Read-Only)",
+    sourcePreset: "gitea-workflow",
+    definition: buildReadOnlyWorkflowDefinition(),
+  },
+  {
+    workflowId: "gitea.issue-to-pr.controlled",
+    name: "Gitea Superpowers Pipeline (Controlled)",
+    sourcePreset: "gitea-workflow",
+    definition: buildControlledWorkflowDefinition(),
   },
   {
     workflowId: "gitea.issue-to-pr.preapproved",

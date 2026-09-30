@@ -319,6 +319,7 @@ describe("MultiProjectPoller", () => {
       isProjectAuthorized: vi.fn().mockReturnValue(true),
       getReadyLabel: vi.fn().mockReturnValue("agent-ready"),
       getWorkflowPolicy: vi.fn().mockReturnValue("full_superpowers"),
+      getAgentPermissionScope: vi.fn().mockReturnValue("full_delivery"),
     };
     const mockResolver = {
       resolveProject: vi.fn().mockResolvedValue({
