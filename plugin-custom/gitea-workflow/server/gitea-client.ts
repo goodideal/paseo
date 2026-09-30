@@ -285,4 +285,31 @@ export class GiteaClient {
     const data = (await res.json()) as { html_url: string };
     return { url: data.html_url };
   }
+
+  async listIssueComments(
+    issueNumber: number,
+  ): Promise<Array<{ id: number; body: string; created_at: string }>> {
+    const res = await fetch(this.url(`/issues/${issueNumber}/comments`), {
+      headers: this.headers,
+    });
+    if (!res.ok) {
+      throw new Error(
+        `Failed to list comments on issue #${issueNumber}: ${res.status} ${res.statusText}`,
+      );
+    }
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  }
+
+  async addIssueLabel(issueNumber: number, labelName: string): Promise<void> {
+    await this.addLabelsByName(issueNumber, [labelName]);
+  }
+
+  async removeIssueLabel(issueNumber: number, labelName: string): Promise<void> {
+    await this.removeLabelsByName(issueNumber, [labelName]);
+  }
+
+  async createIssueComment(issueNumber: number, body: string): Promise<void> {
+    await this.createComment(issueNumber, body);
+  }
 }
