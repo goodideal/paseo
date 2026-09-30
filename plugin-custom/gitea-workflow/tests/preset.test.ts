@@ -3,8 +3,6 @@ import {
   buildGiteaWorkflowDefinition,
   buildAutoWorkflowDefinition,
   buildPlanWorkflowDefinition,
-  buildReadOnlyWorkflowDefinition,
-  buildControlledWorkflowDefinition,
 } from "../server/presets/issue-to-pr.js";
 
 describe("buildGiteaWorkflowDefinition (legacy)", () => {
@@ -87,34 +85,5 @@ describe("Gitea Workflow Presets (Auto & Plan)", () => {
     expect(ids).toContain("implement-agent");
     expect(ids).toContain("gate-delivery");
     expect(ids).toContain("git-create-pr");
-  });
-  it("builds readonly workflow without code modifications, worktree creation or git pushes", () => {
-    const def = buildReadOnlyWorkflowDefinition();
-    const ids = def.steps.map((s) => s.id);
-
-    expect(ids).toContain("fetch-issue");
-    expect(ids).toContain("brainstorm-agent");
-    expect(ids).toContain("plan-agent");
-    expect(ids).toContain("post-summary");
-
-    expect(ids).not.toContain("worktree-create");
-    expect(ids).not.toContain("implement-agent");
-    expect(ids).not.toContain("git-push");
-    expect(ids).not.toContain("git-create-pr");
-  });
-
-  it("builds controlled workflow with mandatory delivery approval gate before git-push", () => {
-    const def = buildControlledWorkflowDefinition();
-    const ids = def.steps.map((s) => s.id);
-
-    expect(ids).toContain("claim-issue");
-    expect(ids).toContain("worktree-create");
-    expect(ids).toContain("implement-agent");
-    expect(ids).toContain("gate-delivery");
-    expect(ids).toContain("git-push");
-    expect(ids).toContain("git-create-pr");
-
-    const deliveryGate = def.steps.find((s) => s.id === "gate-delivery");
-    expect(deliveryGate?.approval).toBe("required");
   });
 });

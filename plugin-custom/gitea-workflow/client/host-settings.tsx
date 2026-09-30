@@ -1,3 +1,34 @@
+export function getAgentChangeModeOptions(provider?: string, isOverride = false) {
+  const p = (provider || "claude").toLowerCase();
+  const options = [];
+  if (isOverride) {
+    options.push({ label: "继承全局默认", value: "" });
+  }
+
+  if (p.includes("codex")) {
+    options.push(
+      { label: "默认权限 (Default Permissions)", value: "auto" },
+      { label: "自动审查 (Auto-review)", value: "auto-review" },
+      { label: "完全访问 (Full Access - 免确认)", value: "full-access" },
+    );
+  } else if (p.includes("claude")) {
+    options.push(
+      { label: "自动模式 (Auto mode)", value: "auto" },
+      { label: "默认权限 (Default Permissions)", value: "default" },
+      { label: "接受文件修改 (Accept File Edits)", value: "acceptEdits" },
+      { label: "跳过权限确认 (Bypass Permissions)", value: "bypassPermissions" },
+      { label: "计划模式 (Plan Mode)", value: "plan" },
+    );
+  } else {
+    options.push(
+      { label: "默认模式 (Default)", value: "auto" },
+      { label: "完全访问 (Full Access)", value: "full-access" },
+      { label: "计划模式 (Plan Mode)", value: "plan" },
+    );
+  }
+  return options;
+}
+
 import React, { useCallback, useMemo, useState } from "react";
 import { View, Text, Pressable } from "react-native";
 import { useSettings, useRpc, type PluginSurfaceProps } from "@getpaseo/plugin/client";
@@ -26,12 +57,6 @@ const intervalOptions = [
   { label: "60 秒 (默认)", value: "60" },
   { label: "120 秒", value: "120" },
   { label: "300 秒", value: "300" },
-] as const;
-
-const permissionScopeOptions = [
-  { label: "受控执行 (修改代码与测试，推送需审批) [推荐]", value: "workspace_controlled" },
-  { label: "只读分析 (仅出方案与评论，禁止修改代码)", value: "read_only" },
-  { label: "全自动交付 (允许自动推送分支并创建 PR)", value: "full_delivery" },
 ] as const;
 
 const retentionOptions = [
@@ -221,24 +246,6 @@ export function HostSettingsScreen({
         </SettingsCard>
       </SettingsSection>
 
-      <SettingsSection title="授权范围 (Permission Scope)">
-        <SettingsCard>
-          <SettingsSelect
-            label="全局授权范围"
-            hint="设定 Agent 执行的最高权限边界（只读分析、受控执行、全自动交付）"
-            value={values.agentPermissionScope || "workspace_controlled"}
-            options={permissionScopeOptions as any}
-            disabled={settings.saving}
-            onValueChange={(agentPermissionScope: string) =>
-              settings.save(
-                { ...values, agentPermissionScope: agentPermissionScope as any },
-                settings.revision,
-              )
-            }
-          />
-        </SettingsCard>
-      </SettingsSection>
-
       <SettingsSection title="执行引擎与模型 (Agent & Model)">
         <SettingsCard>
           <SettingsSelect
@@ -265,6 +272,16 @@ export function HostSettingsScreen({
             disabled={settings.saving}
             onChangeText={(agentModel) =>
               settings.save({ ...values, agentModel }, settings.revision)
+            }
+          />
+          <SettingsSelect
+            label="Agent 运行模式 (Change Mode)"
+            hint="配置 Agent 的执行与审批模式，如 Codex 的 Full Access 等"
+            value={values.agentChangeMode || "auto"}
+            options={getAgentChangeModeOptions(values.agentProvider, false) as any}
+            disabled={settings.saving}
+            onValueChange={(agentChangeMode: string) =>
+              settings.save({ ...values, agentChangeMode }, settings.revision)
             }
           />
         </SettingsCard>

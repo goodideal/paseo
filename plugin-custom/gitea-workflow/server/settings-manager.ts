@@ -3,7 +3,6 @@ import {
   GiteaHostSettingsSchema,
   type GiteaHostSettings,
   type GiteaWorkflowPolicy,
-  type AgentPermissionScope,
 } from "../shared/types.js";
 
 export class SettingsManager {
@@ -50,11 +49,11 @@ export class SettingsManager {
     return this._current.agentProvider || this._current.automationProfile || "claude";
   }
 
-  getAgentPermissionScope(projectId?: string): AgentPermissionScope {
-    if (projectId && this._current.projects[projectId]?.agentPermissionScopeOverride) {
-      return this._current.projects[projectId].agentPermissionScopeOverride!;
+  getAgentChangeMode(projectId?: string): string {
+    if (projectId && this._current.projects[projectId]?.agentChangeModeOverride) {
+      return this._current.projects[projectId].agentChangeModeOverride!;
     }
-    return this._current.agentPermissionScope || "workspace_controlled";
+    return this._current.agentChangeMode || "auto";
   }
 
   getAgentModel(projectId?: string): string | undefined {

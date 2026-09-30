@@ -306,22 +306,13 @@ export class MultiProjectPoller {
           const readyIssues = await client.fetchReadyIssues();
           for (const issue of readyIssues) {
             const target = resolveIssueWorkflowPreset(issue.labels ?? []);
-            const permissionScope = this.options.settings.getAgentPermissionScope
-              ? this.options.settings.getAgentPermissionScope(project.projectId)
-              : "workspace_controlled";
-            const standardPresetId = target
+            const presetId = target
               ? target.presetId
               : policy === "issue_preapproved"
                 ? "gitea.issue-to-pr.preapproved"
                 : policy === "unattended"
                   ? "gitea.issue-to-pr.unattended"
                   : "gitea.issue-to-pr";
-            const presetId =
-              permissionScope === "read_only"
-                ? "gitea.issue-to-pr.readonly"
-                : permissionScope === "workspace_controlled" && target?.mode === "auto"
-                  ? "gitea.issue-to-pr.controlled"
-                  : standardPresetId;
             const mode = target?.mode ?? (policy === "unattended" ? "auto" : "plan");
             const conflictWarning = target?.conflictWarning ?? false;
 
@@ -396,7 +387,6 @@ export class MultiProjectPoller {
                 listenLabel: readyLabel,
                 policy,
                 mode,
-                permissionScope,
                 conflictWarning,
               },
             });

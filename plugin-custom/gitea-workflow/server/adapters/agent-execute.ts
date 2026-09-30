@@ -121,10 +121,9 @@ Then, proceed with the engineering workflow and ensure high code quality.`;
 
       const modelName = model || "gemini-flash[1M]";
       const providerSelection = `${provider}/${modelName}`;
-      const permissionScope = settingsManager.getAgentPermissionScope
-        ? settingsManager.getAgentPermissionScope(projectId)
-        : "workspace_controlled";
-      const modeId = permissionScope === "read_only" ? "plan" : "auto";
+      const modeId = settingsManager.getAgentChangeMode
+        ? settingsManager.getAgentChangeMode(projectId)
+        : "auto";
 
       const meta = PHASE_META[phase.toLowerCase()] || { icon: "🤖", label: phase };
       const shortTitle = issueTitle ? ` · ${issueTitle.slice(0, 28)}` : "";

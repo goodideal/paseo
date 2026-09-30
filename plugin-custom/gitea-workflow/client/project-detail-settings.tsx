@@ -11,6 +11,7 @@ import {
   SettingsAction,
 } from "@getpaseo/plugin/client/ui";
 import type { GiteaProjectDiagnostic } from "../shared/types.js";
+import { getAgentChangeModeOptions } from "./host-settings.js";
 
 export interface ProjectDetailSettingsProps {
   projectId: string;
@@ -19,13 +20,6 @@ export interface ProjectDetailSettingsProps {
   theme: PluginSurfaceProps["theme"];
   onBack: () => void;
 }
-
-const projectPermissionScopeOptions = [
-  { label: "继承全局默认", value: "" },
-  { label: "受控执行 (修改代码与测试，推送需审批)", value: "workspace_controlled" },
-  { label: "只读分析 (仅出方案与评论，禁止修改代码)", value: "read_only" },
-  { label: "全自动交付 (允许自动推送分支并创建 PR)", value: "full_delivery" },
-] as const;
 
 export function ProjectDetailSettings({
   projectId,
@@ -90,17 +84,22 @@ export function ProjectDetailSettings({
             }}
           />
           <SettingsSelect
-            label="项目授权范围覆盖 (可选)"
-            hint="可单独限制此项目的 Agent 操作权限"
-            value={projectSettings.agentPermissionScopeOverride || ""}
-            options={projectPermissionScopeOptions as any}
+            label="模式覆盖 (Change Mode)"
+            hint="留空继承全局配置，如覆盖为 Codex 的 Full Access 等"
+            value={projectSettings.agentChangeModeOverride || ""}
+            options={
+              getAgentChangeModeOptions(
+                projectSettings.agentProviderOverride || values.agentProvider,
+                true,
+              ) as any
+            }
             disabled={settings.saving}
             onValueChange={(val: string) => {
               const updated = {
                 ...values.projects,
                 [projectId]: {
                   ...projectSettings,
-                  agentPermissionScopeOverride: (val || undefined) as any,
+                  agentChangeModeOverride: val || undefined,
                 },
               };
               void settings.save({ ...values, projects: updated }, settings.revision);

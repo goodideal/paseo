@@ -100,22 +100,19 @@ describe("SettingsManager", () => {
     expect(manager.getAgentModel("proj-custom")).toBe("gemini-flash");
   });
 
-  it("supports host and project-level agent permission scope overrides", async () => {
+  it("supports host and project-level agent change mode overrides (e.g. Codex full-access)", async () => {
     const mockPluginSettings = {
       read: vi.fn().mockResolvedValue({
         status: "ready",
         values: {
           enabled: true,
-          agentPermissionScope: "workspace_controlled",
+          agentProvider: "codex",
+          agentChangeMode: "auto",
           projects: {
             "proj-default": { enabled: true },
-            "proj-readonly": {
+            "proj-full-access": {
               enabled: true,
-              agentPermissionScopeOverride: "read_only",
-            },
-            "proj-full": {
-              enabled: true,
-              agentPermissionScopeOverride: "full_delivery",
+              agentChangeModeOverride: "full-access",
             },
           },
         },
@@ -127,9 +124,8 @@ describe("SettingsManager", () => {
     const manager = new SettingsManager(mockPluginSettings as any);
     await manager.initialize();
 
-    expect(manager.getAgentPermissionScope()).toBe("workspace_controlled");
-    expect(manager.getAgentPermissionScope("proj-default")).toBe("workspace_controlled");
-    expect(manager.getAgentPermissionScope("proj-readonly")).toBe("read_only");
-    expect(manager.getAgentPermissionScope("proj-full")).toBe("full_delivery");
+    expect(manager.getAgentChangeMode()).toBe("auto");
+    expect(manager.getAgentChangeMode("proj-default")).toBe("auto");
+    expect(manager.getAgentChangeMode("proj-full-access")).toBe("full-access");
   });
 });

@@ -191,7 +191,7 @@ describe("HostSettingsScreen", () => {
     expect(screen.getByText("Agent Plan (规划审查模式)")).toBeDefined();
   });
 
-  it("renders permission scope selector in HostSettingsScreen and allows changing it", () => {
+  it("renders agent change mode selector in HostSettingsScreen and allows selecting Codex full-access", () => {
     const mockSave = vi.fn().mockResolvedValue(true);
     const mockSettings = {
       status: "ready" as const,
@@ -201,9 +201,9 @@ describe("HostSettingsScreen", () => {
         maxConcurrentRuns: 3,
         maxAutomaticRepairCycles: 2,
         automationProfile: "claude-code",
-        agentProvider: "claude",
+        agentProvider: "codex",
         agentModel: "",
-        agentPermissionScope: "workspace_controlled",
+        agentChangeMode: "auto",
         workflowPolicy: "full_superpowers" as const,
         projects: {},
         inProgressLabel: "agent-in-progress",
@@ -228,12 +228,17 @@ describe("HostSettingsScreen", () => {
       />,
     );
 
-    expect(screen.getByText("全局授权范围")).toBeDefined();
-    const select = screen.getByDisplayValue("受控执行 (修改代码与测试，推送需审批) [推荐]");
-    fireEvent.change(select, { target: { value: "read_only" } });
+    expect(screen.getByText("Agent 运行模式 (Change Mode)")).toBeDefined();
+    const select = screen
+      .getAllByRole("combobox")
+      .find((element: any) =>
+        Array.from(element.options as any[]).some((option: any) => option.value === "full-access"),
+      ) as any;
+    expect(select).not.toBeNull();
+    fireEvent.change(select!, { target: { value: "full-access" } });
 
     expect(mockSave).toHaveBeenCalledWith(
-      expect.objectContaining({ agentPermissionScope: "read_only" }),
+      expect.objectContaining({ agentChangeMode: "full-access" }),
       "rev-1",
     );
   });
@@ -278,10 +283,11 @@ describe("HostSettingsScreen", () => {
       expect(screen.queryByDisplayValue("agent-ready")).toBeNull();
     });
 
-    it("renders permission scope override selector in ProjectDetailSettings and allows changing it", () => {
+    it("renders change mode override selector in ProjectDetailSettings and allows choosing full-access", () => {
       const mockSave = vi.fn().mockResolvedValue(true);
       const mockSettings = {
         values: {
+          agentProvider: "codex",
           projects: {
             "proj-1": { enabled: true, readyLabel: "agent-ready" },
           },
@@ -309,17 +315,22 @@ describe("HostSettingsScreen", () => {
         />,
       );
 
-      expect(screen.getByText("项目授权范围覆盖 (可选)")).toBeDefined();
-      const elem = screen.getByText("项目授权范围覆盖 (可选)") as any;
-      const select = elem.parentElement?.querySelector("select");
+      expect(screen.getByText("模式覆盖 (Change Mode)")).toBeDefined();
+      const select = screen
+        .getAllByRole("combobox")
+        .find((element: any) =>
+          Array.from(element.options as any[]).some(
+            (option: any) => option.value === "full-access",
+          ),
+        ) as any;
       expect(select).not.toBeNull();
-      fireEvent.change(select!, { target: { value: "read_only" } });
+      fireEvent.change(select!, { target: { value: "full-access" } });
 
       expect(mockSave).toHaveBeenCalledWith(
         expect.objectContaining({
           projects: expect.objectContaining({
             "proj-1": expect.objectContaining({
-              agentPermissionScopeOverride: "read_only",
+              agentChangeModeOverride: "full-access",
             }),
           }),
         }),

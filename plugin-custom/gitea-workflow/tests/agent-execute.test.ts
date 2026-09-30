@@ -6,7 +6,7 @@ describe("Agent Execute Adapter", () => {
     const mockSettings = {
       getAgentProvider: vi.fn().mockReturnValue("claude"),
       getAgentModel: vi.fn().mockReturnValue("claude-3-7-sonnet"),
-      getAgentPermissionScope: vi.fn().mockReturnValue("workspace_controlled"),
+      getAgentChangeMode: vi.fn().mockReturnValue("auto"),
     };
     const mockIndexStore = {
       getEntryByRunId: vi.fn().mockResolvedValue({
@@ -75,11 +75,11 @@ describe("Agent Execute Adapter", () => {
     expect(result.summary).toContain("### 方案选型");
     expect(result.status).toBe("succeeded");
   });
-  it("sets agent modeId to plan when permission scope is read_only", async () => {
+  it("passes configured changeMode (e.g. Codex full-access) to agent create options", async () => {
     const mockSettings = {
-      getAgentProvider: vi.fn().mockReturnValue("claude"),
-      getAgentModel: vi.fn().mockReturnValue("claude-3-7-sonnet"),
-      getAgentPermissionScope: vi.fn().mockReturnValue("read_only"),
+      getAgentProvider: vi.fn().mockReturnValue("codex"),
+      getAgentModel: vi.fn().mockReturnValue("gpt-5.4"),
+      getAgentChangeMode: vi.fn().mockReturnValue("full-access"),
     };
     const mockIndexStore = {
       getEntryByRunId: vi.fn().mockResolvedValue({
@@ -88,10 +88,10 @@ describe("Agent Execute Adapter", () => {
       }),
     };
     const mockAgentHandle = {
-      id: "agent-ro-1",
+      id: "agent-mode-1",
       run: vi.fn().mockResolvedValue({
         status: "idle",
-        lastMessage: "Readonly analysis complete.",
+        lastMessage: "Execution complete.",
       }),
     };
     const mockPaseo = {
@@ -100,15 +100,18 @@ describe("Agent Execute Adapter", () => {
     };
 
     const adapter = createAgentExecuteAdapter(mockSettings as any, mockIndexStore as any);
-    await adapter.execute({ phase: "brainstorm" }, {
+    await adapter.execute({ phase: "implement" }, {
       paseo: mockPaseo as any,
-      run: { runId: "run-ro-55", projectId: "proj-ro" },
-      step: { stepId: "brainstorm-agent" },
+      run: { runId: "run-mode-55", projectId: "proj-codex" },
+      step: { stepId: "implement-agent" },
     } as any);
 
     expect(mockPaseo.agents.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        config: expect.objectContaining({ modeId: "plan" }),
+        config: expect.objectContaining({
+          provider: "codex/gpt-5.4",
+          modeId: "full-access",
+        }),
       }),
     );
   });
