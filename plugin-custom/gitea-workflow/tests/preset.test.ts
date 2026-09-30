@@ -1,7 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { buildGiteaWorkflowDefinition } from "../server/presets/issue-to-pr.js";
+import {
+  buildGiteaWorkflowDefinition,
+  buildAutoWorkflowDefinition,
+  buildPlanWorkflowDefinition,
+} from "../server/presets/issue-to-pr.js";
 
-describe("buildGiteaWorkflowDefinition", () => {
+describe("buildGiteaWorkflowDefinition (legacy)", () => {
   it("builds strict full_superpowers DAG with design and plan gates", () => {
     const def = buildGiteaWorkflowDefinition("full_superpowers");
     const stepIds = def.steps.map((s) => s.id);
@@ -43,5 +47,43 @@ describe("buildGiteaWorkflowDefinition", () => {
     expect(stepIds).not.toContain("plan-approval");
     // Delivery approval MUST still be present (cannot be bypassed)
     expect(stepIds).toContain("delivery-approval");
+  });
+});
+
+describe("Gitea Workflow Presets (Auto & Plan)", () => {
+  it("builds auto workflow without intermediate approval gates but with auto-design", () => {
+    const def = buildAutoWorkflowDefinition();
+    const ids = def.steps.map((s) => s.id);
+
+    expect(ids).toContain("claim-issue");
+    expect(ids).toContain("worktree-create");
+    expect(ids).toContain("auto-design");
+    expect(ids).toContain("implement-agent");
+    expect(ids).toContain("verify-command");
+    expect(ids).toContain("independent-review");
+    expect(ids).toContain("resolve-delivery");
+    expect(ids).toContain("git-push");
+    expect(ids).toContain("git-create-pr");
+
+    // No approval gates in auto mode
+    expect(ids).not.toContain("gate-brainstorm");
+    expect(ids).not.toContain("gate-spec");
+    expect(ids).not.toContain("gate-plan");
+    expect(ids).not.toContain("gate-delivery");
+  });
+
+  it("builds plan workflow with dual approval gates at each stage", () => {
+    const def = buildPlanWorkflowDefinition();
+    const ids = def.steps.map((s) => s.id);
+
+    expect(ids).toContain("brainstorm-agent");
+    expect(ids).toContain("gate-brainstorm");
+    expect(ids).toContain("spec-agent");
+    expect(ids).toContain("gate-spec");
+    expect(ids).toContain("plan-agent");
+    expect(ids).toContain("gate-plan");
+    expect(ids).toContain("implement-agent");
+    expect(ids).toContain("gate-delivery");
+    expect(ids).toContain("git-create-pr");
   });
 });
