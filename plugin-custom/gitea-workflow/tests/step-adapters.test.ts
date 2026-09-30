@@ -66,6 +66,62 @@ describe("Gitea Dedicated Step Adapters", () => {
       expect(mockClient.claimIssue).toHaveBeenCalledWith(42, 101);
     });
 
+    it("claims issue with agent-auto and transitions to agent-in-progress", async () => {
+      const mockClient = {
+        getIssue: vi.fn().mockResolvedValue({
+          number: 88,
+          labels: [{ name: "agent-auto", id: 201 }],
+        }),
+        claimIssue: vi.fn().mockResolvedValue(undefined),
+      };
+      const mockPool = { getClient: vi.fn().mockReturnValue(mockClient) };
+
+      const adapter = createClaimIssueAdapter(mockPool as any);
+      const result = await adapter.execute(
+        {
+          baseUrl: "https://git.example.com",
+          token: "tok",
+          repoOwner: "org",
+          repoName: "repo",
+          issueNumber: 88,
+          listenLabel: "agent-ready",
+          inProgressLabel: "agent-in-progress",
+        },
+        { paseo: {} as any, run: { projectId: "p1", workspaceId: "w1", runId: "r1" } },
+      );
+
+      expect(result.claimed).toBe(true);
+      expect(mockClient.claimIssue).toHaveBeenCalledWith(88, 201);
+    });
+
+    it("claims issue with agent:plan and transitions to agent-in-progress", async () => {
+      const mockClient = {
+        getIssue: vi.fn().mockResolvedValue({
+          number: 89,
+          labels: [{ name: "agent:plan", id: 202 }],
+        }),
+        claimIssue: vi.fn().mockResolvedValue(undefined),
+      };
+      const mockPool = { getClient: vi.fn().mockReturnValue(mockClient) };
+
+      const adapter = createClaimIssueAdapter(mockPool as any);
+      const result = await adapter.execute(
+        {
+          baseUrl: "https://git.example.com",
+          token: "tok",
+          repoOwner: "org",
+          repoName: "repo",
+          issueNumber: 89,
+          listenLabel: "agent-ready",
+          inProgressLabel: "agent-in-progress",
+        },
+        { paseo: {} as any, run: { projectId: "p1", workspaceId: "w1", runId: "r1" } },
+      );
+
+      expect(result.claimed).toBe(true);
+      expect(mockClient.claimIssue).toHaveBeenCalledWith(89, 202);
+    });
+
     it("aborts claim if readyLabel was already removed", async () => {
       const mockClient = {
         getIssue: vi.fn().mockResolvedValue({
