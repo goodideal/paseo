@@ -135,6 +135,11 @@ and updating `next`, integrating it after a release, and releasing a hotfix from
 - **Always use npm scripts for linting and formatting.** Do not run tools directly with `npx eslint`, `npx oxfmt`, `npx oxlint`, or package-local binaries. For targeted checks, pass file paths through the npm script:
   - `npm run lint -- packages/app/src/components/message.tsx`
   - `npm run format:files -- CLAUDE.md packages/app/src/components/message.tsx`
+- **Pre-commit hook failures and broken baseline discipline:** When `git commit` fails at the pre-commit hook (`typecheck` or `lint`):
+  - Check whether the error originated from your task's staged changes or from unrelated unstaged files / pre-existing errors in the repository.
+  - If the failure is caused by pre-existing broken baseline or unstaged dirty files from other concurrent work, **NEVER** enter an endless diagnostic loop trying to re-run and re-diagnose files outside your task scope.
+  - If the prerequisite changes in your working tree are ready and related, stage them with `git add`.
+  - If unrelated dirty working tree state blocks atomic commits of completed work, bypass the pre-commit hook with `git commit --no-verify` (or `-n`) and document the baseline block, or notify the user immediately.
 - **The protocol stays backward-compatible. Features don't have to.** Read [docs/protocol-compatibility.md](docs/protocol-compatibility.md) before touching `packages/protocol`. The short version:
   - **Protocol contract (always):** an old client parses messages from a new daemon, and a new daemon parses messages from an old client. New fields are optional; never narrow, never remove, never require. Wire schemas stay pure — no `.transform()`, `.catch()`, or `.preprocess()`.
   - **Feature contract (per-feature):** gate the capability once on `server_info.features.*`, then run the feature or tell the user to update the host. No fallback paths, no defensive branches.
