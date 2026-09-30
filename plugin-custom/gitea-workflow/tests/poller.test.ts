@@ -514,4 +514,95 @@ describe("MultiProjectPoller", () => {
       }),
     );
   });
+
+  it("posts gate prompt and approves workflow when approval comment is found during waiting_approval", async () => {
+    const mockSettings = {
+      current: { enabled: true, pollIntervalSeconds: 60, maxConcurrentRuns: 3 },
+      isProjectAuthorized: vi.fn().mockReturnValue(true),
+      getReadyLabel: vi.fn().mockReturnValue("agent-ready"),
+      getWorkflowPolicy: vi.fn().mockReturnValue("full_superpowers"),
+    };
+    const mockResolver = {
+      resolveProject: vi.fn().mockResolvedValue({
+        projectId: "proj-gate",
+        baseUrl: "https://git.example.com",
+        token: "tok",
+        repoOwner: "org",
+        repoName: "repo",
+      }),
+    };
+    const mockClient = {
+      fetchReadyIssues: vi
+        .fn()
+        .mockResolvedValue([
+          { number: 137, title: "Semantic cache", labels: [{ name: "agent-plan" }] },
+        ]),
+      addIssueLabel: vi.fn().mockResolvedValue(undefined),
+      removeIssueLabel: vi.fn().mockResolvedValue(undefined),
+      listIssueComments: vi.fn().mockResolvedValue([
+        {
+          id: 501,
+          body: "同意",
+          created_at: new Date(Date.now() + 1000).toISOString(),
+        },
+      ]),
+      createIssueComment: vi.fn().mockResolvedValue({ id: 502 }),
+    };
+    const mockIndexStore = {
+      getRunIdForIssue: vi.fn().mockResolvedValue("run-gate-137"),
+      hasActiveRunForIssue: vi.fn().mockResolvedValue(true),
+      recordRun: vi.fn(),
+      removeRun: vi.fn(),
+    };
+    const mockWorkflows = {
+      runCreate: vi.fn(),
+      runList: vi.fn().mockResolvedValue({ runs: [] }),
+      runInspect: vi.fn().mockResolvedValue({
+        run: {
+          runId: "run-gate-137",
+          workflowId: "gitea.issue-to-pr.plan",
+          status: "waiting_approval",
+          createdAt: Date.now() - 10_000,
+        },
+      }),
+      approvalList: vi.fn().mockResolvedValue({
+        approvals: [
+          {
+            approvalId: "app-1",
+            stepId: "gate-brainstorm",
+            status: "pending",
+            createdAt: new Date(Date.now() - 5000).toISOString(),
+            policyReason: "Brainstorm proposal requires confirmation",
+          },
+        ],
+      }),
+      approvalApprove: vi.fn().mockResolvedValue({ success: true }),
+    };
+    const mockWorkspaces = {
+      list: vi.fn().mockResolvedValue({
+        entries: [{ id: "wks-1", projectId: "proj-gate", workspaceKind: "local_checkout" }],
+      }),
+    };
+
+    const poller = new MultiProjectPoller({
+      settings: mockSettings as any,
+      resolver: mockResolver as any,
+      clientPool: { getClient: () => mockClient } as any,
+      indexStore: mockIndexStore as any,
+      getWorkflows: () => mockWorkflows as any,
+      getProjects: async () => [{ projectId: "proj-gate", projectKind: "git" }] as any,
+      getWorkspaces: () => mockWorkspaces as any,
+    });
+
+    await poller.poll();
+
+    expect(mockClient.addIssueLabel).toHaveBeenCalledWith(137, "agent-waiting-approval");
+    expect(mockWorkflows.approvalApprove).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-gate-137",
+        approvalId: "app-1",
+      }),
+    );
+    expect(mockClient.removeIssueLabel).toHaveBeenCalledWith(137, "agent-waiting-approval");
+  });
 });

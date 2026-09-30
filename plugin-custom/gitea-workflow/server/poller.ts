@@ -4,6 +4,8 @@ import type { SettingsManager } from "./settings-manager.js";
 import type { IssueRunIndexStore } from "./store.js";
 import type { PaseoWorkflowActions, PaseoWorkspaceActions } from "@getpaseo/client";
 import { resolveIssueWorkflowPreset } from "./preset-resolver.js";
+import { isApprovalComment } from "./adapters/dual-approval-gate.js";
+import { LIFECYCLE_LABELS } from "../shared/types.js";
 
 export interface PaseoProjectItem {
   projectId: string;
@@ -161,10 +163,72 @@ export class MultiProjectPoller {
                   runId: existingRunId,
                 });
 
-                // If this run is actively executing the EXACT same workflow preset AND was recently started (within 60s),
-                // it is in the middle of claiming this issue, so we must not double-create.
                 const isSameWorkflow =
                   !inspected?.run?.workflowId || inspected.run.workflowId === presetId;
+
+                // Handle waiting_approval for the active workflow run
+                if (isSameWorkflow && inspected?.run?.status === "waiting_approval") {
+                  const approvalsRes = await workflows
+                    .approvalList?.({
+                      projectId: project.projectId,
+                      workspaceId,
+                      runId: existingRunId,
+                    })
+                    .catch(() => null);
+                  const pending = approvalsRes?.approvals?.find((a: any) => a.status === "pending");
+                  if (pending) {
+                    await client
+                      .addIssueLabel(issue.number, LIFECYCLE_LABELS.WAITING_APPROVAL)
+                      .catch(() => {});
+
+                    const comments = await client.listIssueComments(issue.number).catch(() => []);
+                    const stepPromptTitle = `### 🛑 Paseo 门禁：等待确认（阶段：${pending.stepId}）`;
+                    const hasPostedPrompt = comments.some((c) => c.body.includes(stepPromptTitle));
+
+                    if (!hasPostedPrompt) {
+                      const promptBody = [
+                        stepPromptTitle,
+                        "",
+                        pending.policyReason || "当前阶段需要人工确认后方可继续执行。",
+                        "",
+                        "您可以通过以下方式推进或调整：",
+                        "1. **直接回复批准**：回复 `/approve`、`同意` 或选项编号（如 `A` / `方案A`）；",
+                        "2. **在 Paseo 中确认**：在移动端或 Web 控制台点击通过；",
+                        "3. **提出调整意见**：直接在评论中写下反馈。",
+                      ].join("\n");
+                      await client.createIssueComment(issue.number, promptBody).catch(() => {});
+                    }
+
+                    // Check for approval comment created after pending.createdAt
+                    const approvalComment = comments.find((c) => {
+                      const commentTime = new Date(c.created_at).getTime();
+                      return (
+                        commentTime >= new Date(pending.createdAt).getTime() - 2000 &&
+                        isApprovalComment(c.body)
+                      );
+                    });
+
+                    if (approvalComment) {
+                      await workflows.approvalApprove?.({
+                        projectId: project.projectId,
+                        workspaceId,
+                        runId: existingRunId,
+                        approvalId: pending.approvalId,
+                      });
+                      await client
+                        .removeIssueLabel(issue.number, LIFECYCLE_LABELS.WAITING_APPROVAL)
+                        .catch(() => {});
+                      await client
+                        .createIssueComment(
+                          issue.number,
+                          "✅ **Paseo Agent** 已捕获来自 Issue 评论的确认指令，门禁通过，工作流继续进入下一阶段。",
+                        )
+                        .catch(() => {});
+                    }
+                  }
+                  continue;
+                }
+
                 const isActivelyRunning = inspected?.run?.status === "running";
                 const isRecentlyStarted =
                   !inspected?.run?.createdAt ||
@@ -174,8 +238,7 @@ export class MultiProjectPoller {
                   continue;
                 }
 
-                // If the previous run is running/waiting on an older/different preset or stale waiting state,
-                // supersede and cancel it so the freshly triggered workflow can run.
+                // If running an older or mismatched workflow while user explicitly tagged, supersede
                 if (
                   inspected?.run &&
                   (inspected.run.status === "running" ||

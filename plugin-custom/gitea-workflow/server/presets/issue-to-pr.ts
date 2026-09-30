@@ -392,7 +392,7 @@ export function buildPlanWorkflowDefinition() {
     },
     {
       id: "gate-brainstorm",
-      type: "gitea.dual_approval_gate",
+      type: "approval.wait",
       dependsOn: ["brainstorm-agent"],
       input: { phase: "brainstorm", reason: "Brainstorm proposal requires confirmation" },
       timeoutMs: 60 * 60 * 1000,
@@ -412,7 +412,7 @@ export function buildPlanWorkflowDefinition() {
     },
     {
       id: "gate-spec",
-      type: "gitea.dual_approval_gate",
+      type: "approval.wait",
       dependsOn: ["spec-agent"],
       input: { phase: "spec", reason: "Design spec requires confirmation" },
       timeoutMs: 60 * 60 * 1000,
@@ -432,7 +432,7 @@ export function buildPlanWorkflowDefinition() {
     },
     {
       id: "gate-plan",
-      type: "gitea.dual_approval_gate",
+      type: "approval.wait",
       dependsOn: ["plan-agent"],
       input: { phase: "plan", reason: "Implementation plan requires confirmation" },
       timeoutMs: 60 * 60 * 1000,
@@ -481,7 +481,7 @@ export function buildPlanWorkflowDefinition() {
     },
     {
       id: "gate-delivery",
-      type: "gitea.dual_approval_gate",
+      type: "approval.wait",
       dependsOn: ["resolve-delivery"],
       input: { phase: "delivery", reason: "Final PR delivery requires confirmation" },
       timeoutMs: 60 * 60 * 1000,
