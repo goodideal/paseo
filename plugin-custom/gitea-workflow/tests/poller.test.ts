@@ -553,6 +553,15 @@ describe("MultiProjectPoller", () => {
       hasActiveRunForIssue: vi.fn().mockResolvedValue(true),
       recordRun: vi.fn(),
       removeRun: vi.fn(),
+      listEntries: vi.fn().mockResolvedValue([
+        {
+          issueNumber: 137,
+          runId: "run-gate-137",
+          projectId: "proj-gate",
+          repoOwner: "org",
+          repoName: "repo",
+        },
+      ]),
     };
     const mockWorkflows = {
       runCreate: vi.fn(),
@@ -604,5 +613,66 @@ describe("MultiProjectPoller", () => {
       }),
     );
     expect(mockClient.removeIssueLabel).toHaveBeenCalledWith(137, "agent-waiting-approval");
+  });
+  it("updates issue labels to agent-delivered when workflow run completes", async () => {
+    const mockSettings = {
+      current: { enabled: true, pollIntervalSeconds: 60 },
+      isProjectAuthorized: vi.fn().mockReturnValue(true),
+      getReadyLabel: vi.fn().mockReturnValue("agent-ready"),
+      getWorkflowPolicy: vi.fn().mockReturnValue("full_superpowers"),
+    };
+    const mockResolver = {
+      resolveProject: vi.fn().mockResolvedValue({
+        projectId: "proj-complete",
+        baseUrl: "https://gitea.local",
+        token: "tok",
+        repoOwner: "org",
+        repoName: "repo",
+      }),
+    };
+    const mockClient = {
+      fetchReadyIssues: vi.fn().mockResolvedValue([]),
+      removeIssueLabel: vi.fn().mockResolvedValue(undefined),
+      addIssueLabel: vi.fn().mockResolvedValue(undefined),
+    };
+    const mockIndexStore = {
+      listEntries: vi.fn().mockResolvedValue([
+        {
+          projectId: "proj-complete",
+          repoOwner: "org",
+          repoName: "repo",
+          issueNumber: 200,
+          runId: "run-complete-200",
+        },
+      ]),
+      removeRun: vi.fn().mockResolvedValue(undefined),
+    };
+    const mockWorkflows = {
+      runInspect: vi.fn().mockResolvedValue({
+        run: { runId: "run-complete-200", status: "succeeded" },
+      }),
+    };
+    const mockWorkspaces = {
+      list: vi.fn().mockResolvedValue({
+        entries: [{ id: "wks-1", projectId: "proj-complete", workspaceKind: "local_checkout" }],
+      }),
+    };
+
+    const poller = new MultiProjectPoller({
+      settings: mockSettings as any,
+      resolver: mockResolver as any,
+      clientPool: { getClient: () => mockClient } as any,
+      indexStore: mockIndexStore as any,
+      getWorkflows: () => mockWorkflows as any,
+      getProjects: async () => [{ projectId: "proj-complete", projectKind: "git" }] as any,
+      getWorkspaces: () => mockWorkspaces as any,
+    });
+
+    await poller.poll();
+
+    expect(mockIndexStore.removeRun).toHaveBeenCalledWith("proj-complete", "org", "repo", 200);
+    expect(mockClient.removeIssueLabel).toHaveBeenCalledWith(200, "agent-in-progress");
+    expect(mockClient.removeIssueLabel).toHaveBeenCalledWith(200, "agent-waiting-approval");
+    expect(mockClient.addIssueLabel).toHaveBeenCalledWith(200, "agent-delivered");
   });
 });

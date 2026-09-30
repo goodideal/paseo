@@ -136,6 +136,120 @@ export class MultiProjectPoller {
             listenLabel: readyLabel,
           });
 
+          // 1. Process active/waiting runs from indexStore
+          const trackedEntries =
+            (await this.options.indexStore.listEntries?.(project.projectId)) ?? [];
+          for (const entry of trackedEntries) {
+            try {
+              const inspected = await workflows.runInspect?.({
+                projectId: project.projectId,
+                workspaceId,
+                runId: entry.runId,
+              });
+
+              if (inspected?.run?.status === "waiting_approval") {
+                const approvalsRes = await workflows
+                  .approvalList?.({
+                    projectId: project.projectId,
+                    workspaceId,
+                    runId: entry.runId,
+                  })
+                  .catch(() => null);
+                const pending = approvalsRes?.approvals?.find((a: any) => a.status === "pending");
+                if (pending) {
+                  await client
+                    .addIssueLabel(entry.issueNumber, LIFECYCLE_LABELS.WAITING_APPROVAL)
+                    .catch(() => {});
+
+                  const comments = await client
+                    .listIssueComments(entry.issueNumber)
+                    .catch(() => []);
+                  const stepPromptTitle = `### 🛑 Paseo 门禁：等待确认（阶段：${pending.stepId}）`;
+                  const hasPostedPrompt = comments.some((c) => c.body.includes(stepPromptTitle));
+
+                  if (!hasPostedPrompt) {
+                    const promptBody = [
+                      stepPromptTitle,
+                      "",
+                      pending.policyReason || "当前阶段需要人工确认后方可继续执行。",
+                      "",
+                      "您可以通过以下方式推进或调整：",
+                      "1. **直接回复批准**：回复 `/approve`、`同意` 或选项编号（如 `A` / `方案A`）；",
+                      "2. **在 Paseo 中确认**：在移动端或 Web 控制台点击通过；",
+                      "3. **提出调整意见**：直接在评论中写下反馈。",
+                    ].join("\n");
+                    await client.createIssueComment(entry.issueNumber, promptBody).catch(() => {});
+                  }
+
+                  // Check for approval comment created after pending.createdAt
+                  const approvalComment = comments.find((c) => {
+                    const commentTime = new Date(c.created_at).getTime();
+                    return (
+                      commentTime >= new Date(pending.createdAt).getTime() - 2000 &&
+                      isApprovalComment(c.body)
+                    );
+                  });
+
+                  if (approvalComment) {
+                    await workflows.approvalApprove?.({
+                      projectId: project.projectId,
+                      workspaceId,
+                      runId: entry.runId,
+                      approvalId: pending.approvalId,
+                    });
+                    await client
+                      .removeIssueLabel(entry.issueNumber, LIFECYCLE_LABELS.WAITING_APPROVAL)
+                      .catch(() => {});
+                    await client
+                      .createIssueComment(
+                        entry.issueNumber,
+                        "✅ **Paseo Agent** 已捕获来自 Issue 评论的确认指令，门禁通过，工作流继续进入下一阶段。",
+                      )
+                      .catch(() => {});
+                  }
+                }
+              } else if (
+                inspected?.run?.status === "succeeded" ||
+                inspected?.run?.status === "failed" ||
+                inspected?.run?.status === "cancelled"
+              ) {
+                await this.options.indexStore.removeRun(
+                  project.projectId,
+                  resolved.repoOwner,
+                  resolved.repoName,
+                  entry.issueNumber,
+                );
+                if (
+                  inspected.run.status === "succeeded" ||
+                  (inspected.run.status as string) === "completed"
+                ) {
+                  await client
+                    .removeIssueLabel(entry.issueNumber, LIFECYCLE_LABELS.IN_PROGRESS)
+                    .catch(() => {});
+                  await client
+                    .removeIssueLabel(entry.issueNumber, LIFECYCLE_LABELS.WAITING_APPROVAL)
+                    .catch(() => {});
+                  await client
+                    .addIssueLabel(entry.issueNumber, LIFECYCLE_LABELS.DELIVERED)
+                    .catch(() => {});
+                } else if (inspected.run.status === "failed") {
+                  await client
+                    .removeIssueLabel(entry.issueNumber, LIFECYCLE_LABELS.IN_PROGRESS)
+                    .catch(() => {});
+                  await client
+                    .removeIssueLabel(entry.issueNumber, LIFECYCLE_LABELS.WAITING_APPROVAL)
+                    .catch(() => {});
+                  await client
+                    .addIssueLabel(entry.issueNumber, LIFECYCLE_LABELS.FAILED)
+                    .catch(() => {});
+                }
+              }
+            } catch {
+              // ignore inspection error
+            }
+          }
+
+          // 2. Discover and dispatch newly triggered ready issues
           const readyIssues = await client.fetchReadyIssues();
           for (const issue of readyIssues) {
             const target = resolveIssueWorkflowPreset(issue.labels ?? []);
@@ -165,71 +279,9 @@ export class MultiProjectPoller {
 
                 const isSameWorkflow =
                   !inspected?.run?.workflowId || inspected.run.workflowId === presetId;
-
-                // Handle waiting_approval for the active workflow run
-                if (isSameWorkflow && inspected?.run?.status === "waiting_approval") {
-                  const approvalsRes = await workflows
-                    .approvalList?.({
-                      projectId: project.projectId,
-                      workspaceId,
-                      runId: existingRunId,
-                    })
-                    .catch(() => null);
-                  const pending = approvalsRes?.approvals?.find((a: any) => a.status === "pending");
-                  if (pending) {
-                    await client
-                      .addIssueLabel(issue.number, LIFECYCLE_LABELS.WAITING_APPROVAL)
-                      .catch(() => {});
-
-                    const comments = await client.listIssueComments(issue.number).catch(() => []);
-                    const stepPromptTitle = `### 🛑 Paseo 门禁：等待确认（阶段：${pending.stepId}）`;
-                    const hasPostedPrompt = comments.some((c) => c.body.includes(stepPromptTitle));
-
-                    if (!hasPostedPrompt) {
-                      const promptBody = [
-                        stepPromptTitle,
-                        "",
-                        pending.policyReason || "当前阶段需要人工确认后方可继续执行。",
-                        "",
-                        "您可以通过以下方式推进或调整：",
-                        "1. **直接回复批准**：回复 `/approve`、`同意` 或选项编号（如 `A` / `方案A`）；",
-                        "2. **在 Paseo 中确认**：在移动端或 Web 控制台点击通过；",
-                        "3. **提出调整意见**：直接在评论中写下反馈。",
-                      ].join("\n");
-                      await client.createIssueComment(issue.number, promptBody).catch(() => {});
-                    }
-
-                    // Check for approval comment created after pending.createdAt
-                    const approvalComment = comments.find((c) => {
-                      const commentTime = new Date(c.created_at).getTime();
-                      return (
-                        commentTime >= new Date(pending.createdAt).getTime() - 2000 &&
-                        isApprovalComment(c.body)
-                      );
-                    });
-
-                    if (approvalComment) {
-                      await workflows.approvalApprove?.({
-                        projectId: project.projectId,
-                        workspaceId,
-                        runId: existingRunId,
-                        approvalId: pending.approvalId,
-                      });
-                      await client
-                        .removeIssueLabel(issue.number, LIFECYCLE_LABELS.WAITING_APPROVAL)
-                        .catch(() => {});
-                      await client
-                        .createIssueComment(
-                          issue.number,
-                          "✅ **Paseo Agent** 已捕获来自 Issue 评论的确认指令，门禁通过，工作流继续进入下一阶段。",
-                        )
-                        .catch(() => {});
-                    }
-                  }
-                  continue;
-                }
-
-                const isActivelyRunning = inspected?.run?.status === "running";
+                const isActivelyRunning =
+                  inspected?.run?.status === "running" ||
+                  inspected?.run?.status === "waiting_approval";
                 const isRecentlyStarted =
                   !inspected?.run?.createdAt ||
                   Date.now() - new Date(inspected.run.createdAt).getTime() < 60_000;
@@ -238,7 +290,7 @@ export class MultiProjectPoller {
                   continue;
                 }
 
-                // If running an older or mismatched workflow while user explicitly tagged, supersede
+                // If user explicitly re-tagged while old run is running/waiting, cancel old run
                 if (
                   inspected?.run &&
                   (inspected.run.status === "running" ||
