@@ -73,4 +73,39 @@ describe("Dual Approval Gate Adapter Execution", () => {
     expect(mockClient.removeIssueLabel).toHaveBeenCalledWith(42, "agent-waiting-approval");
     expect(mockClient.createIssueComment).toHaveBeenCalled();
   });
+  it("ignores old approval comments created prior to gate creation and only accepts newer comment IDs", async () => {
+    const mockClient = {
+      addIssueLabel: vi.fn().mockResolvedValue(undefined),
+      removeIssueLabel: vi.fn().mockResolvedValue(undefined),
+      createIssueComment: vi.fn().mockResolvedValue({ id: 500 }),
+      listIssueComments: vi.fn().mockResolvedValue([
+        {
+          id: 450, // older than gate comment (id: 500), but within 2s timestamp skew
+          body: "/approve",
+          created_at: new Date(Date.now() - 500).toISOString(),
+        },
+      ]),
+    };
+    const mockPool = { getClient: vi.fn().mockReturnValue(mockClient) };
+    const adapter = createDualApprovalGateAdapter(mockPool as any);
+
+    const res = await adapter.execute(
+      {
+        baseUrl: "https://git.example.com",
+        token: "tok",
+        repoOwner: "org",
+        repoName: "repo",
+        issueNumber: 42,
+        phase: "brainstorm",
+        pollIntervalMs: 50,
+        maxWaitMs: 50,
+      },
+      {
+        run: { runId: "r1" },
+        step: { stepId: "gate-brainstorm" },
+      } as any,
+    );
+
+    expect(res.approved).toBe(false);
+  });
 });

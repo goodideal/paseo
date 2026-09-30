@@ -165,9 +165,9 @@ export class MultiProjectPoller {
                     .listIssueComments(entry.issueNumber)
                     .catch(() => []);
                   const stepPromptTitle = `### 🛑 Paseo 门禁：等待确认（阶段：${pending.stepId}）`;
-                  const hasPostedPrompt = comments.some((c) => c.body.includes(stepPromptTitle));
+                  let promptComment = comments.find((c) => c.body.includes(stepPromptTitle));
 
-                  if (!hasPostedPrompt) {
+                  if (!promptComment) {
                     const promptBody = [
                       stepPromptTitle,
                       "",
@@ -181,13 +181,15 @@ export class MultiProjectPoller {
                     await client.createIssueComment(entry.issueNumber, promptBody).catch(() => {});
                   }
 
-                  // Check for approval comment created after pending.createdAt
+                  const baselineId = promptComment ? promptComment.id : 0;
+
+                  // Check for approval comment strictly newer than the gate prompt comment ID
                   const approvalComment = comments.find((c) => {
-                    const commentTime = new Date(c.created_at).getTime();
-                    return (
-                      commentTime >= new Date(pending.createdAt).getTime() - 2000 &&
-                      isApprovalComment(c.body)
-                    );
+                    const isNewer =
+                      baselineId > 0
+                        ? c.id > baselineId
+                        : new Date(c.created_at).getTime() >= new Date(pending.createdAt).getTime();
+                    return isNewer && isApprovalComment(c.body);
                   });
 
                   if (approvalComment) {

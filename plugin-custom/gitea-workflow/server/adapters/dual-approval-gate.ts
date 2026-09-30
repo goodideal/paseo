@@ -133,7 +133,15 @@ export function createDualApprovalGateAdapter(
         "3. **提出调整意见**：直接在评论中写下反馈。",
       ].join("\n");
 
-      await client.createIssueComment(issueNumber, gatePrompt).catch(() => {});
+      let baselineCommentId = 0;
+      try {
+        const posted = await client.createIssueComment(issueNumber, gatePrompt);
+        if (posted && typeof (posted as any).id === "number") {
+          baselineCommentId = (posted as any).id;
+        }
+      } catch {
+        // ignore
+      }
 
       const startTime = Date.now();
       const deadline = startTime + maxWaitMs;
@@ -142,9 +150,21 @@ export function createDualApprovalGateAdapter(
       while (Date.now() < deadline) {
         try {
           const comments = await client.listIssueComments(issueNumber);
+          if (baselineCommentId === 0) {
+            const promptComment = comments.find((c) =>
+              c.body.includes(`### 🛑 Paseo 门禁：等待确认（阶段：${phase}）`),
+            );
+            if (promptComment) {
+              baselineCommentId = promptComment.id;
+            }
+          }
+
           for (const comment of comments) {
-            const commentTime = new Date(comment.created_at).getTime();
-            if (commentTime >= startTime - 2000 && isApprovalComment(comment.body)) {
+            const isNewer =
+              baselineCommentId > 0
+                ? comment.id > baselineCommentId
+                : new Date(comment.created_at).getTime() >= startTime;
+            if (isNewer && isApprovalComment(comment.body)) {
               const selectedOption = isOptionSelection(comment.body);
               await client
                 .removeIssueLabel(issueNumber, LIFECYCLE_LABELS.WAITING_APPROVAL)

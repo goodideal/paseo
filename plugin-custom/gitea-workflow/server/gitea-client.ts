@@ -56,9 +56,7 @@ export class GiteaClient {
     const page = options?.page ?? 1;
     const limit = options?.limit ?? 50;
     const res = await fetch(
-      this.url(
-        `/issues?state=open&type=issues&labels=${encodeURIComponent(this.listenLabel)}&page=${page}&limit=${limit}`,
-      ),
+      this.url(`/issues?state=open&type=issues&page=${page}&limit=${limit}`),
       { headers: this.headers },
     );
     if (!res.ok) {
@@ -97,7 +95,7 @@ export class GiteaClient {
     return (await res.json()) as GiteaIssueDto;
   }
 
-  async createComment(issueNumber: number, body: string): Promise<void> {
+  async createComment(issueNumber: number, body: string): Promise<{ id: number } | void> {
     const res = await fetch(this.url(`/issues/${issueNumber}/comments`), {
       method: "POST",
       headers: this.headers,
@@ -107,6 +105,14 @@ export class GiteaClient {
       throw new Error(
         `Failed to post comment on issue #${issueNumber}: ${res.status} ${res.statusText}`,
       );
+    }
+    try {
+      const data = await res.json();
+      if (data && typeof data.id === "number") {
+        return { id: data.id };
+      }
+    } catch {
+      // ignore json parse error
     }
   }
 
@@ -206,7 +212,12 @@ export class GiteaClient {
         headers: this.headers,
       }).catch(() => {});
     }
-    await this.removeLabelsByName(issueNumber, [this.listenLabel, "status:backlog"]);
+    await this.removeLabelsByName(issueNumber, [
+      ...TRIGGER_LABELS.AUTO,
+      ...TRIGGER_LABELS.PLAN,
+      this.listenLabel,
+      "status:backlog",
+    ]);
 
     // 3. Add status:doing and inProgressLabel
     await this.addLabelsByName(issueNumber, ["status:doing", this.inProgressLabel]);
@@ -316,7 +327,7 @@ export class GiteaClient {
     await this.removeLabelsByName(issueNumber, [labelName]);
   }
 
-  async createIssueComment(issueNumber: number, body: string): Promise<void> {
-    await this.createComment(issueNumber, body);
+  async createIssueComment(issueNumber: number, body: string): Promise<{ id: number } | void> {
+    return await this.createComment(issueNumber, body);
   }
 }
