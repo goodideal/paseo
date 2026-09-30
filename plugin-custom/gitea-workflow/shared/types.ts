@@ -18,6 +18,26 @@ export const TaskStateSchema = z.enum([
 
 export type TaskState = z.infer<typeof TaskStateSchema>;
 
+// 触发模式由 Issue 标签决定：`auto` 全自动交付，`plan` 先出方案并等待人工审批。
+export const GiteaTriggerModeSchema = z.enum(["auto", "plan"]);
+
+export type GiteaTriggerMode = z.infer<typeof GiteaTriggerModeSchema>;
+
+// 触发标签同时支持连字符与冒号两种写法。
+// 标签匹配按小写归一化后比较，这里的常量必须保持小写。
+export const TRIGGER_LABELS = {
+  AUTO: ["agent-auto", "agent:auto"],
+  PLAN: ["agent-plan", "agent:plan"],
+} as const;
+
+// 工作流写回 Issue 的生命周期标签。
+export const LIFECYCLE_LABELS = {
+  IN_PROGRESS: "agent-in-progress",
+  WAITING_APPROVAL: "agent-waiting-approval",
+  DELIVERED: "agent-delivered",
+  FAILED: "agent-failed",
+} as const;
+
 export const ScreenshotMetadataSchema = z.object({
   id: z.string(),
   label: z.string(),
@@ -150,6 +170,8 @@ export const GiteaProjectSettingsSchema = z.object({
   enabled: z.boolean().default(false),
   readyLabel: z.string().default("agent-ready"),
   workflowPolicyOverride: GiteaWorkflowPolicySchema.optional(),
+  agentProviderOverride: z.string().optional(),
+  agentModelOverride: z.string().optional(),
 });
 
 export type GiteaProjectSettings = z.infer<typeof GiteaProjectSettingsSchema>;
@@ -160,6 +182,8 @@ export const GiteaHostSettingsSchema = z.object({
   maxConcurrentRuns: z.number().int().min(1).max(10).default(3),
   maxAutomaticRepairCycles: z.number().int().min(0).max(5).default(2),
   automationProfile: z.string().default("claude-code"),
+  agentProvider: z.string().default("claude"),
+  agentModel: z.string().default(""),
   workflowPolicy: GiteaWorkflowPolicySchema.default("full_superpowers"),
   projects: z.record(z.string(), GiteaProjectSettingsSchema).default({}),
   inProgressLabel: z.string().default("agent-in-progress"),
@@ -175,7 +199,10 @@ export const IssueRunIndexEntrySchema = z.object({
   repoOwner: z.string(),
   repoName: z.string(),
   issueNumber: z.number().int(),
+  issueTitle: z.string().optional(),
   runId: z.string(),
+  baseUrl: z.string().optional(),
+  token: z.string().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

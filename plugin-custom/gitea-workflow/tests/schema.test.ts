@@ -3,7 +3,10 @@ import {
   GiteaWorkflowTaskSchema,
   GiteaSettingsSchema,
   GiteaHostSettingsSchema,
+  GiteaTriggerModeSchema,
+  LIFECYCLE_LABELS,
   ResolvedProjectGiteaSchema,
+  TRIGGER_LABELS,
 } from "../shared/types.js";
 import {
   listTasksRpc,
@@ -113,5 +116,24 @@ describe("Gitea Workflow Schemas and RPCs", () => {
     });
     expect(settings.projects["proj-1"].readyLabel).toBe("bot-task");
     expect(settings.projects["proj-1"].workflowPolicyOverride).toBe("issue_preapproved");
+  });
+});
+
+describe("Trigger Mode and Label Schemas", () => {
+  it("validates valid trigger modes", () => {
+    expect(GiteaTriggerModeSchema.parse("auto")).toBe("auto");
+    expect(GiteaTriggerModeSchema.parse("plan")).toBe("plan");
+    expect(() => GiteaTriggerModeSchema.parse("ready")).toThrow();
+  });
+
+  it("exports expected trigger and lifecycle labels", () => {
+    expect(TRIGGER_LABELS.AUTO).toContain("agent-auto");
+    expect(TRIGGER_LABELS.AUTO).toContain("agent:auto");
+    expect(TRIGGER_LABELS.PLAN).toContain("agent-plan");
+    expect(TRIGGER_LABELS.PLAN).toContain("agent:plan");
+    expect(LIFECYCLE_LABELS.IN_PROGRESS).toBe("agent-in-progress");
+    expect(LIFECYCLE_LABELS.WAITING_APPROVAL).toBe("agent-waiting-approval");
+    expect(LIFECYCLE_LABELS.DELIVERED).toBe("agent-delivered");
+    expect(LIFECYCLE_LABELS.FAILED).toBe("agent-failed");
   });
 });
