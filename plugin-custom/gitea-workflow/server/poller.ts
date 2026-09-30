@@ -136,6 +136,17 @@ export class MultiProjectPoller {
 
           const readyIssues = await client.fetchReadyIssues();
           for (const issue of readyIssues) {
+            const target = resolveIssueWorkflowPreset(issue.labels ?? []);
+            const presetId = target
+              ? target.presetId
+              : policy === "issue_preapproved"
+                ? "gitea.issue-to-pr.preapproved"
+                : policy === "unattended"
+                  ? "gitea.issue-to-pr.unattended"
+                  : "gitea.issue-to-pr";
+            const mode = target?.mode ?? (policy === "unattended" ? "auto" : "plan");
+            const conflictWarning = target?.conflictWarning ?? false;
+
             const existingRunId = await this.options.indexStore.getRunIdForIssue(
               project.projectId,
               resolved.repoOwner,
@@ -149,12 +160,37 @@ export class MultiProjectPoller {
                   workspaceId,
                   runId: existingRunId,
                 });
+
+                // If this run is actively executing the EXACT same workflow preset AND was recently started (within 60s),
+                // it is in the middle of claiming this issue, so we must not double-create.
+                const isSameWorkflow =
+                  !inspected?.run?.workflowId || inspected.run.workflowId === presetId;
+                const isActivelyRunning = inspected?.run?.status === "running";
+                const isRecentlyStarted =
+                  !inspected?.run?.createdAt ||
+                  Date.now() - new Date(inspected.run.createdAt).getTime() < 60_000;
+
+                if (isSameWorkflow && isActivelyRunning && isRecentlyStarted) {
+                  continue;
+                }
+
+                // If the previous run is running/waiting on an older/different preset or stale waiting state,
+                // supersede and cancel it so the freshly triggered workflow can run.
                 if (
                   inspected?.run &&
                   (inspected.run.status === "running" ||
                     inspected.run.status === "waiting_approval")
                 ) {
-                  continue;
+                  try {
+                    await workflows.runCancel?.({
+                      projectId: project.projectId,
+                      workspaceId,
+                      runId: existingRunId,
+                      reason: `Superseded by new workflow run (${presetId})`,
+                    });
+                  } catch {
+                    // cancel attempt ignored
+                  }
                 }
               } catch {
                 // inspect failed, proceed to clean and retry
@@ -166,17 +202,6 @@ export class MultiProjectPoller {
                 issue.number,
               );
             }
-
-            const target = resolveIssueWorkflowPreset(issue.labels ?? []);
-            const presetId = target
-              ? target.presetId
-              : policy === "issue_preapproved"
-                ? "gitea.issue-to-pr.preapproved"
-                : policy === "unattended"
-                  ? "gitea.issue-to-pr.unattended"
-                  : "gitea.issue-to-pr";
-            const mode = target?.mode ?? (policy === "unattended" ? "auto" : "plan");
-            const conflictWarning = target?.conflictWarning ?? false;
 
             const createRes = await workflows.runCreate({
               projectId: project.projectId,

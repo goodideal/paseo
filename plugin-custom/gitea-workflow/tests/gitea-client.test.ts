@@ -90,6 +90,36 @@ describe("GiteaClient", () => {
     expect(issues[0].number).toBe(4);
   });
 
+  it("fetches issues matching agent-plan or agent-auto without restricting API query to agent-ready", async () => {
+    const client = new GiteaClient({
+      giteaUrl: "http://gitea.local",
+      giteaToken: "test-token",
+      repoOwner: "owner",
+      repoName: "repo",
+      listenLabel: "agent-ready",
+    });
+
+    vi.mocked(globalThis.fetch).mockImplementationOnce(async (url, init) => {
+      capturedRequests.push({ url: url.toString(), method: init?.method ?? "GET" });
+      return new Response(
+        JSON.stringify([
+          { number: 10, title: "Plan issue", labels: [{ name: "agent-plan" }] },
+          { number: 11, title: "Auto issue", labels: [{ name: "agent:auto" }] },
+          { number: 12, title: "Other issue", labels: [{ name: "bug" }] },
+        ]),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    });
+
+    const issues = await client.fetchReadyIssues();
+    expect(issues).toHaveLength(2);
+    expect(issues.map((i) => i.number)).toEqual([10, 11]);
+
+    const req = capturedRequests.find((r) => r.url.includes("/issues?state=open"));
+    expect(req).toBeDefined();
+    expect(req!.url).not.toContain("labels=agent-ready");
+  });
+
   it("fetches ready issues with pagination parameters", async () => {
     const client = new GiteaClient({
       giteaUrl: "http://gitea.local",

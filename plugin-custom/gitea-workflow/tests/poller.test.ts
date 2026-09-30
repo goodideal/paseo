@@ -440,4 +440,78 @@ describe("MultiProjectPoller", () => {
       }),
     );
   });
+
+  it("cancels and supersedes stale run in waiting_approval when user tags issue with agent-plan", async () => {
+    const mockSettings = {
+      current: { enabled: true, pollIntervalSeconds: 60, maxConcurrentRuns: 3 },
+      isProjectAuthorized: vi.fn().mockReturnValue(true),
+      getReadyLabel: vi.fn().mockReturnValue("agent-ready"),
+      getWorkflowPolicy: vi.fn().mockReturnValue("full_superpowers"),
+    };
+    const mockResolver = {
+      resolveProject: vi.fn().mockResolvedValue({
+        projectId: "proj-retrigger",
+        baseUrl: "https://git.example.com",
+        token: "tok",
+        repoOwner: "org",
+        repoName: "repo",
+      }),
+    };
+    const mockClient = {
+      fetchReadyIssues: vi
+        .fn()
+        .mockResolvedValue([
+          { number: 137, title: "Semantic cache", labels: [{ name: "agent-plan" }] },
+        ]),
+    };
+    const mockIndexStore = {
+      getRunIdForIssue: vi.fn().mockResolvedValue("run-stale-137"),
+      hasActiveRunForIssue: vi.fn().mockResolvedValue(false),
+      recordRun: vi.fn().mockResolvedValue(undefined),
+      removeRun: vi.fn().mockResolvedValue(undefined),
+    };
+    const mockWorkflows = {
+      runCreate: vi.fn().mockResolvedValue({ runId: "run-new-137" }),
+      runList: vi.fn().mockResolvedValue({ runs: [] }),
+      runInspect: vi.fn().mockResolvedValue({
+        run: {
+          runId: "run-stale-137",
+          workflowId: "gitea.issue-to-pr.unattended",
+          status: "waiting_approval",
+          createdAt: Date.now() - 3600_000,
+        },
+      }),
+      runCancel: vi.fn().mockResolvedValue({ success: true }),
+    };
+    const mockWorkspaces = {
+      list: vi.fn().mockResolvedValue({
+        entries: [{ id: "wks-1", projectId: "proj-retrigger", workspaceKind: "local_checkout" }],
+      }),
+    };
+
+    const poller = new MultiProjectPoller({
+      settings: mockSettings as any,
+      resolver: mockResolver as any,
+      clientPool: { getClient: () => mockClient } as any,
+      indexStore: mockIndexStore as any,
+      getWorkflows: () => mockWorkflows as any,
+      getProjects: async () => [{ projectId: "proj-retrigger", projectKind: "git" }] as any,
+      getWorkspaces: () => mockWorkspaces as any,
+    });
+
+    await poller.poll();
+
+    expect(mockWorkflows.runCancel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-stale-137",
+      }),
+    );
+    expect(mockIndexStore.removeRun).toHaveBeenCalledWith("proj-retrigger", "org", "repo", 137);
+    expect(mockWorkflows.runCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workflowId: "gitea.issue-to-pr.plan",
+        input: expect.objectContaining({ issueNumber: 137 }),
+      }),
+    );
+  });
 });
