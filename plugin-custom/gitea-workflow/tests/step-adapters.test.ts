@@ -243,5 +243,28 @@ describe("Gitea Dedicated Step Adapters", () => {
       });
       expect(result.manifestDigest).toMatch(/^[a-f0-9]{64}$/);
     });
+    it("auto-injects issue reference into pull request title and body when not provided", async () => {
+      const mockIndexStore = {
+        getEntryByRunId: vi.fn().mockResolvedValue({
+          issueNumber: 88,
+          issueTitle: "Memory leak in poller",
+        }),
+      };
+      const adapter = createResolveDeliveryAdapter(mockIndexStore as any, {
+        getCommitSha: async () => "1111111111111111111111111111111111111111",
+      });
+
+      const result = await adapter.execute(
+        {
+          sourceBranch: "agent/issue-88",
+          cwd: "/workspace/repo",
+        },
+        { paseo: {} as any, run: { runId: "run-88" } } as any,
+      );
+
+      expect((result.manifest as any).pullRequestTitle).toBe("fix: resolve issue #88");
+      expect((result.manifest as any).issueReference).toBe("#88");
+      expect((result as any).pullRequestBody).toContain("Resolves #88");
+    });
   });
 });
