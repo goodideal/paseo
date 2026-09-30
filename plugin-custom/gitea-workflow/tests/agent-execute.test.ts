@@ -61,12 +61,14 @@ describe("Agent Execute Adapter", () => {
       expect.objectContaining({
         cwd: "/tmp/worktrees/run-99",
         workspaceId: "ws-wt-run-99",
-        title: "[Issue #42] brainstorm",
+        title: "💡 [#42] 方案设计 · Implement vector caching",
       }),
     );
 
     // 2. Verifies agentHandle.run was called to await execution
-    expect(mockAgentHandle.run).toHaveBeenCalled();
+    expect(mockAgentHandle.run).toHaveBeenCalledWith(
+      expect.stringContaining("use the `gitea` skill to fetch Issue #42"),
+    );
 
     // 3. Verifies proposal summary is returned in result
     expect(result.summary).toContain("### 方案选型");

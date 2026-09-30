@@ -3,6 +3,14 @@ import type { PluginWorkflowStepAdapterRegistration } from "@getpaseo/plugin/ser
 import type { SettingsManager } from "../settings-manager.js";
 import type { IssueRunIndexStore } from "../store.js";
 
+const PHASE_META: Record<string, { icon: string; label: string }> = {
+  brainstorm: { icon: "💡", label: "方案设计" },
+  spec: { icon: "📝", label: "规范制定" },
+  plan: { icon: "📋", label: "计划编写" },
+  implement: { icon: "🛠️", label: "TDD编码" },
+  review: { icon: "🔍", label: "独立审查" },
+};
+
 export function createAgentExecuteAdapter(
   settingsManager: SettingsManager,
   indexStore: IssueRunIndexStore,
@@ -87,22 +95,26 @@ export function createAgentExecuteAdapter(
       if (!prompt) {
         if (phase === "implement") {
           prompt = `You are an automated software engineer assigned to Gitea Issue #${issueNum}: ${issueTitle}.
-Load and follow \`superpowers:executing-plans\` or \`superpowers:subagent-driven-development\`.
+First, use the \`gitea\` skill to fetch Issue #${issueNum} and review its complete context, requirements, acceptance criteria, and discussion comments.
+Then, load and follow \`superpowers:executing-plans\` or \`superpowers:subagent-driven-development\`.
 Strictly adhere to Test-Driven Development (TDD):
 1. Review the requirement and existing code;
 2. Write unit tests proving the intended behavior;
 3. Implement clean, focused code until all tests pass;
-4. Commit your changes to git with a clear conventional commit message.`;
+4. Verify with tests, lint, and typecheck;
+5. Commit your changes with clear conventional commit syntax.`;
         } else if (phase === "brainstorm") {
           prompt = `You are addressing Gitea Issue #${issueNum}: ${issueTitle}.
-Load and follow \`superpowers:brainstorming\` to analyze the requirements and design the approach.`;
+First, use the \`gitea\` skill to fetch Issue #${issueNum} and inspect its complete background, core scope, acceptance criteria, and discussion comments.
+Then, load and follow \`superpowers:brainstorming\` to thoroughly analyze the requirements, explore alternative technical architectures, and output distinct design proposals (方案 A / B / C) with clear pros, cons, and recommendations.`;
         } else {
-          prompt = `You are addressing Gitea Issue #${issueNum}: ${issueTitle}. Phase: ${phase}.
-Proceed with the engineering workflow and ensure high code quality.`;
+          prompt = `You are addressing Gitea Issue #${issueNum}: ${issueTitle} (Phase: ${phase}).
+First, use the \`gitea\` skill to fetch Issue #${issueNum} and review the context and requirements.
+Then, proceed with the engineering workflow and ensure high code quality.`;
         }
       }
 
-      // 4. Create and drive agent
+      // 4. Create and drive agent with friendly title
       if (!(context as any)?.paseo?.agents) {
         throw new Error("Paseo Agent API is not available");
       }
@@ -110,10 +122,14 @@ Proceed with the engineering workflow and ensure high code quality.`;
       const modelName = model || "gemini-flash[1M]";
       const providerSelection = `${provider}/${modelName}`;
 
+      const meta = PHASE_META[phase.toLowerCase()] || { icon: "🤖", label: phase };
+      const shortTitle = issueTitle ? ` · ${issueTitle.slice(0, 28)}` : "";
+      const agentTitle = `${meta.icon} [#${issueNum}] ${meta.label}${shortTitle}`;
+
       const agentHandle = await (context as any).paseo.agents.create({
         cwd: targetCwd,
         workspaceId: targetWorkspaceId,
-        title: `[Issue #${issueNum}] ${phase}`,
+        title: agentTitle,
         config: {
           provider: providerSelection,
           modeId: "auto",

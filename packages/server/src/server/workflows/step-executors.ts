@@ -677,7 +677,18 @@ export class StepExecutor {
     input: Record<string, unknown>,
     run: WorkflowRun,
   ): Promise<Record<string, unknown>> {
-    const branch = typeof input.branch === "string" ? input.branch : `workflow-${run.id}`;
+    let branch = `workflow-${run.id}`;
+    if (typeof input.branch === "string" && input.branch.trim()) {
+      branch = input.branch.trim();
+    } else if (
+      run.runInput &&
+      typeof (run.runInput as Record<string, unknown>).branch === "string"
+    ) {
+      const candidate = ((run.runInput as Record<string, unknown>).branch as string).trim();
+      if (candidate) {
+        branch = candidate;
+      }
+    }
     const existing = await this.host.checkWorktreeExists?.({
       workspaceId: run.workspaceId,
       workspaceRoot: run.workspaceRoot,

@@ -26,6 +26,29 @@ export interface MultiProjectPollerOptions {
   intervalMs?: number;
 }
 
+export const GATE_PHASE_LABELS: Record<string, string> = {
+  "gate-brainstorm": "💡 方案设计与选型确认 (Brainstorm)",
+  "gate-spec": "📝 架构规范确认 (Spec)",
+  "gate-plan": "📋 实施计划与测试方案确认 (Plan)",
+  "gate-delivery": "🚀 最终代码交付与 PR 确认 (Delivery)",
+  "design-approval": "💡 架构提案确认 (Design)",
+  "spec-approval": "📝 详细规范确认 (Spec)",
+  "plan-approval": "📋 实施计划确认 (Plan)",
+};
+
+export function deriveBranchSlug(issueNumber: number, title?: string): string {
+  if (!title) return `agent/issue-${issueNumber}`;
+  const clean = title
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, 30)
+    .replace(/^-|-$/g, "");
+  return `agent/issue-${issueNumber}${clean ? `-${clean}` : ""}`;
+}
+
 export class MultiProjectPoller {
   private timer: NodeJS.Timeout | null = null;
   private isRunning = false;
@@ -164,8 +187,12 @@ export class MultiProjectPoller {
                   const comments = await client
                     .listIssueComments(entry.issueNumber)
                     .catch(() => []);
-                  const stepPromptTitle = `### 🛑 Paseo 门禁：等待确认（阶段：${pending.stepId}）`;
-                  let promptComment = comments.find((c) => c.body.includes(stepPromptTitle));
+                  const friendlyPhase =
+                    GATE_PHASE_LABELS[pending.stepId] || `阶段确认（${pending.stepId}）`;
+                  const stepPromptTitle = `### 🛑 Paseo 门禁：等待 ${friendlyPhase}`;
+                  let promptComment = comments.find(
+                    (c) => c.body.includes(stepPromptTitle) || c.body.includes(pending.stepId),
+                  );
 
                   if (!promptComment) {
                     const stepAttempts = (inspected?.run as any)?.stepAttempts ?? [];
@@ -356,6 +383,7 @@ export class MultiProjectPoller {
                 issueNumber: issue.number,
                 issueTitle: issue.title,
                 issueBody: issue.body,
+                branch: deriveBranchSlug(issue.number, issue.title),
                 listenLabel: readyLabel,
                 policy,
                 mode,
