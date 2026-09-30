@@ -2,7 +2,8 @@ import type { ProjectGiteaResolver } from "./resolver.js";
 import type { GiteaClientPool } from "./client-pool.js";
 import type { SettingsManager } from "./settings-manager.js";
 import type { IssueRunIndexStore } from "./store.js";
-import type { PaseoWorkflowActions } from "@getpaseo/client";
+import type { PaseoWorkflowActions, PaseoWorkspaceActions } from "@getpaseo/client";
+import { resolveIssueWorkflowPreset } from "./preset-resolver.js";
 
 export interface PaseoProjectItem {
   projectId: string;
@@ -18,6 +19,8 @@ export interface MultiProjectPollerOptions {
   indexStore: IssueRunIndexStore;
   getWorkflows: () => PaseoWorkflowActions | undefined;
   getProjects: () => Promise<PaseoProjectItem[]>;
+  getWorkspaces?: () => PaseoWorkspaceActions | undefined;
+  resolveWorkspace?: (project: PaseoProjectItem) => Promise<string | null>;
   intervalMs?: number;
 }
 
@@ -44,6 +47,53 @@ export class MultiProjectPoller {
     }
   }
 
+  async resolveWorkspaceId(project: PaseoProjectItem): Promise<string | null> {
+    if (this.options.resolveWorkspace) {
+      return this.options.resolveWorkspace(project);
+    }
+
+    const workspaces = this.options.getWorkspaces?.();
+    if (!workspaces) return null;
+
+    try {
+      const list = await workspaces.list({ filter: { projectId: project.projectId } });
+      const entries = list?.entries ?? [];
+      const preferred =
+        entries.find(
+          (e) =>
+            !e.archivingAt &&
+            (e.workspaceKind === "local_checkout" || e.workspaceKind === "checkout"),
+        ) ||
+        entries.find((e) => !e.archivingAt) ||
+        entries[0];
+
+      if (preferred?.id) {
+        return preferred.id;
+      }
+    } catch (err) {
+      console.warn(
+        `[MultiProjectPoller] Failed to list workspaces for project ${project.projectId}:`,
+        err,
+      );
+    }
+
+    if (project.projectRootPath) {
+      try {
+        const handle = await workspaces.open({ cwd: project.projectRootPath });
+        if (handle?.id) {
+          return handle.id;
+        }
+      } catch (err) {
+        console.error(
+          `[MultiProjectPoller] Failed to open workspace for project ${project.projectId}:`,
+          err,
+        );
+      }
+    }
+
+    return null;
+  }
+
   async poll(): Promise<void> {
     if (this.isRunning) return;
     if (!this.options.settings.current.enabled) return;
@@ -65,6 +115,14 @@ export class MultiProjectPoller {
             continue;
           }
 
+          const workspaceId = await this.resolveWorkspaceId(project);
+          if (!workspaceId) {
+            console.warn(
+              `[MultiProjectPoller] No active workspace found or opened for project ${project.projectId} (${project.projectDisplayName ?? project.projectRootPath}), skipping`,
+            );
+            continue;
+          }
+
           const readyLabel = this.options.settings.getReadyLabel(project.projectId);
           const policy = this.options.settings.getWorkflowPolicy(project.projectId);
 
@@ -78,27 +136,55 @@ export class MultiProjectPoller {
 
           const readyIssues = await client.fetchReadyIssues();
           for (const issue of readyIssues) {
-            const alreadyHasRun = await this.options.indexStore.hasActiveRunForIssue(
+            const existingRunId = await this.options.indexStore.getRunIdForIssue(
               project.projectId,
               resolved.repoOwner,
               resolved.repoName,
               issue.number,
             );
-            if (alreadyHasRun) continue;
+            if (existingRunId) {
+              try {
+                const inspected = await workflows.runInspect?.({
+                  projectId: project.projectId,
+                  workspaceId,
+                  runId: existingRunId,
+                });
+                if (
+                  inspected?.run &&
+                  (inspected.run.status === "running" ||
+                    inspected.run.status === "waiting_approval")
+                ) {
+                  continue;
+                }
+              } catch {
+                // inspect failed, proceed to clean and retry
+              }
+              await this.options.indexStore.removeRun(
+                project.projectId,
+                resolved.repoOwner,
+                resolved.repoName,
+                issue.number,
+              );
+            }
 
-            const presetId =
-              policy === "issue_preapproved"
+            const target = resolveIssueWorkflowPreset(issue.labels ?? []);
+            const presetId = target
+              ? target.presetId
+              : policy === "issue_preapproved"
                 ? "gitea.issue-to-pr.preapproved"
                 : policy === "unattended"
                   ? "gitea.issue-to-pr.unattended"
                   : "gitea.issue-to-pr";
+            const mode = target?.mode ?? (policy === "unattended" ? "auto" : "plan");
+            const conflictWarning = target?.conflictWarning ?? false;
 
             const createRes = await workflows.runCreate({
               projectId: project.projectId,
-              workspaceId: project.projectId,
+              workspaceId,
               workflowId: presetId,
               input: {
                 baseUrl: resolved.baseUrl,
+                token: resolved.token,
                 repoOwner: resolved.repoOwner,
                 repoName: resolved.repoName,
                 issueNumber: issue.number,
@@ -106,6 +192,8 @@ export class MultiProjectPoller {
                 issueBody: issue.body,
                 listenLabel: readyLabel,
                 policy,
+                mode,
+                conflictWarning,
               },
             });
 
@@ -116,7 +204,13 @@ export class MultiProjectPoller {
                 repoName: resolved.repoName,
                 issueNumber: issue.number,
                 runId: createRes.runId,
+                baseUrl: resolved.baseUrl,
+                token: resolved.token,
               });
+            } else if (createRes.error) {
+              console.error(
+                `[MultiProjectPoller] Workflow run creation failed for ${resolved.repoOwner}/${resolved.repoName}#${issue.number}: ${createRes.error}`,
+              );
             }
           }
         } catch (err) {
