@@ -675,4 +675,91 @@ describe("MultiProjectPoller", () => {
     expect(mockClient.removeIssueLabel).toHaveBeenCalledWith(200, "agent-waiting-approval");
     expect(mockClient.addIssueLabel).toHaveBeenCalledWith(200, "agent-delivered");
   });
+  it("injects agent proposal summary into gate prompt comment when waiting for approval", async () => {
+    const mockSettings = {
+      current: { enabled: true, pollIntervalSeconds: 60 },
+      isProjectAuthorized: vi.fn().mockReturnValue(true),
+      getReadyLabel: vi.fn().mockReturnValue("agent-ready"),
+      getWorkflowPolicy: vi.fn().mockReturnValue("full_superpowers"),
+    };
+    const mockResolver = {
+      resolveProject: vi.fn().mockResolvedValue({
+        projectId: "proj-prop",
+        baseUrl: "https://gitea.local",
+        token: "tok",
+        repoOwner: "org",
+        repoName: "repo",
+      }),
+    };
+    const mockClient = {
+      fetchReadyIssues: vi.fn().mockResolvedValue([]),
+      addIssueLabel: vi.fn().mockResolvedValue(undefined),
+      removeIssueLabel: vi.fn().mockResolvedValue(undefined),
+      listIssueComments: vi.fn().mockResolvedValue([]),
+      createIssueComment: vi.fn().mockResolvedValue({ id: 888 }),
+    };
+    const mockIndexStore = {
+      listEntries: vi.fn().mockResolvedValue([
+        {
+          issueNumber: 155,
+          runId: "run-prop-155",
+          projectId: "proj-prop",
+          repoOwner: "org",
+          repoName: "repo",
+        },
+      ]),
+    };
+    const mockWorkflows = {
+      runInspect: vi.fn().mockResolvedValue({
+        run: {
+          runId: "run-prop-155",
+          workflowId: "gitea.issue-to-pr.plan",
+          status: "waiting_approval",
+          stepAttempts: [
+            {
+              stepId: "brainstorm-agent",
+              status: "succeeded",
+              declaredOutputs: {
+                summary:
+                  "#### 方案架构建议\n- 方案 A: Redis 缓存\n- 方案 B: 本地 SQLite\n推荐方案 A。",
+              },
+            },
+          ],
+        },
+      }),
+      approvalList: vi.fn().mockResolvedValue({
+        approvals: [
+          {
+            approvalId: "app-prop-1",
+            stepId: "gate-brainstorm",
+            status: "pending",
+            createdAt: new Date().toISOString(),
+            policyReason: "Brainstorm proposal requires confirmation",
+          },
+        ],
+      }),
+    };
+    const mockWorkspaces = {
+      list: vi.fn().mockResolvedValue({
+        entries: [{ id: "wks-1", projectId: "proj-prop", workspaceKind: "local_checkout" }],
+      }),
+    };
+
+    const poller = new MultiProjectPoller({
+      settings: mockSettings as any,
+      resolver: mockResolver as any,
+      clientPool: { getClient: () => mockClient } as any,
+      indexStore: mockIndexStore as any,
+      getWorkflows: () => mockWorkflows as any,
+      getProjects: async () => [{ projectId: "proj-prop", projectKind: "git" }] as any,
+      getWorkspaces: () => mockWorkspaces as any,
+    });
+
+    await poller.poll();
+
+    expect(mockClient.createIssueComment).toHaveBeenCalledWith(
+      155,
+      expect.stringContaining("#### 方案架构建议"),
+    );
+  });
 });

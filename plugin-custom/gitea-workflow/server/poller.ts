@@ -168,10 +168,34 @@ export class MultiProjectPoller {
                   let promptComment = comments.find((c) => c.body.includes(stepPromptTitle));
 
                   if (!promptComment) {
+                    const stepAttempts = (inspected?.run as any)?.stepAttempts ?? [];
+                    let proposalSummary = "";
+                    for (let i = stepAttempts.length - 1; i >= 0; i--) {
+                      const outputs = stepAttempts[i]?.declaredOutputs;
+                      if (
+                        outputs &&
+                        typeof outputs.summary === "string" &&
+                        outputs.summary.trim()
+                      ) {
+                        proposalSummary = outputs.summary.trim();
+                        break;
+                      } else if (
+                        outputs &&
+                        typeof outputs.outcome === "string" &&
+                        outputs.outcome.trim() &&
+                        outputs.outcome !== "completed"
+                      ) {
+                        proposalSummary = outputs.outcome.trim();
+                        break;
+                      }
+                    }
+
                     const promptBody = [
                       stepPromptTitle,
                       "",
-                      pending.policyReason || "当前阶段需要人工确认后方可继续执行。",
+                      proposalSummary ||
+                        pending.policyReason ||
+                        "当前阶段需要人工确认后方可继续执行。",
                       "",
                       "您可以通过以下方式推进或调整：",
                       "1. **直接回复批准**：回复 `/approve`、`同意` 或选项编号（如 `A` / `方案A`）；",
