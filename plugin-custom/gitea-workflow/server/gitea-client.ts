@@ -1,3 +1,5 @@
+import { TRIGGER_LABELS } from "../shared/types.js";
+
 export interface GiteaIssueDto {
   number: number;
   title: string;
@@ -68,14 +70,19 @@ export class GiteaClient {
     // CRITICAL GUARD:
     // If the label (e.g. "agent-ready") does NOT exist in the repository, Gitea API ignores
     // the labels query parameter and returns all open issues. In addition, /issues includes PRs.
-    // We strictly enforce that the issue is NOT a pull request and explicitly contains this.listenLabel.
+    // We strictly enforce that the issue is NOT a pull request and explicitly contains a valid trigger label.
+    const validTriggers: string[] = [
+      ...TRIGGER_LABELS.AUTO,
+      ...TRIGGER_LABELS.PLAN,
+      this.listenLabel.toLowerCase(),
+    ];
     return rawIssues.filter((issue) => {
       if ((issue as unknown as { pull_request?: unknown }).pull_request) {
         return false;
       }
       return (
         Array.isArray(issue.labels) &&
-        issue.labels.some((l) => l.name.toLowerCase() === this.listenLabel.toLowerCase())
+        issue.labels.some((l) => validTriggers.includes(l.name.trim().toLowerCase()))
       );
     });
   }
