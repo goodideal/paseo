@@ -11,7 +11,7 @@ import {
   RefreshCw,
   Archive,
 } from "lucide-react-native";
-import { getProviderIcon } from "@/components/provider-icons";
+import { useProviderIcon } from "@/components/provider-icons";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useArchiveSubagent } from "@/subagents";
 import type { SubagentRow } from "@/subagents/select";
@@ -62,10 +62,7 @@ export function SubagentItemRow({ row, serverId, onNavigateToAgent }: SubagentIt
   const archiveSubagent = useArchiveSubagent({ serverId: serverId ?? "" });
   const [isRetrying, setIsRetrying] = useState<boolean>(false);
 
-  const ProviderIcon = useMemo(
-    () => getProviderIcon(row.provider, serverId ?? ""),
-    [row.provider, serverId],
-  );
+  const ProviderIcon = useProviderIcon(row.provider, serverId ?? "");
 
   const handleClick = useCallback(() => {
     onNavigateToAgent?.(row.id);

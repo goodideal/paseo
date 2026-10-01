@@ -15,7 +15,7 @@ import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useInstalledPlugins } from "../registry";
 import { toPluginTheme } from "../theme";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
-import { PluginRuntimeBoundary } from "../runtime-boundary";
+import { PluginInstallationProvider } from "../installation-provider";
 import { usePluginHostNavigation } from "../host-navigation";
 import { createPluginClientStateSource } from "../client-state/source";
 import type { InstalledPlugin } from "../types";
@@ -100,11 +100,11 @@ const ThemedAccessoriesView = memo(function ThemedAccessoriesView({
           Surface={accessory.Component}
           resetKey={accessory.id}
         >
-          <PluginRuntimeBoundary plugin={plugin} client={client}>
+          <PluginInstallationProvider plugin={plugin}>
             <PluginClientStateProvider source={stateSource}>
               <accessory.Component {...hostProps} />
             </PluginClientStateProvider>
-          </PluginRuntimeBoundary>
+          </PluginInstallationProvider>
         </SurfaceErrorBoundary>
       ))}
     </ComposerApiProvider>

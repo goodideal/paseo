@@ -1,5 +1,7 @@
+import { useStore } from "zustand";
+import { providerSnapshotIcons } from "@/data/provider-icons";
 import { Bot, PackagePlus } from "lucide-react-native";
-import { createElement, type ComponentType } from "react";
+import { createElement, useCallback, type ComponentType } from "react";
 import { SvgXml } from "react-native-svg";
 import { ClaudeIcon } from "@/components/icons/claude-icon";
 import { CodexIcon } from "@/components/icons/codex-icon";
@@ -43,7 +45,7 @@ for (const name of TERMINAL_PROFILE_ICON_NAMES) {
 }
 
 const catalogIconComponents = new Map<string, ProviderIconComponent>();
-const snapshotIconComponents = new Map<string, { svg: string; component: ProviderIconComponent }>();
+const snapshotIconComponents = new Map<string, ProviderIconComponent>();
 
 /** Renders a sanitized SVG string from a host catalog, tinted through `currentColor`. */
 export function SvgIcon({ svg, size, color }: ProviderIconProps & { svg: string }) {
@@ -72,15 +74,15 @@ function getCatalogProviderIcon(provider: string): ProviderIconComponent {
 }
 
 function getSnapshotProviderIcon(provider: string, svg: string): ProviderIconComponent {
-  const cached = snapshotIconComponents.get(provider);
-  if (cached?.svg === svg) return cached.component;
+  const cached = snapshotIconComponents.get(svg);
+  if (cached) return cached;
   const component = createSvgIcon(provider, svg);
-  snapshotIconComponents.set(provider, { svg, component });
+  snapshotIconComponents.set(svg, component);
   return component;
 }
 
-export function getProviderIcon(provider: string, serverId?: string | null): ProviderIconComponent {
-  const name = resolveProviderIconName(provider, serverId);
+function resolveProviderIcon(provider: string, svg?: string): ProviderIconComponent {
+  const name = resolveProviderIconName(provider, svg);
   if (name.kind === "builtin") {
     return BUILTIN_PROVIDER_ICONS[name.id];
   }
@@ -88,7 +90,25 @@ export function getProviderIcon(provider: string, serverId?: string | null): Pro
     return getCatalogProviderIcon(name.id);
   }
   if (name.kind === "svg") {
-    return getSnapshotProviderIcon(`${serverId}:${provider}`, name.svg);
+    return getSnapshotProviderIcon(provider, name.svg);
   }
   return Bot;
+}
+
+export function useProviderIcon(provider: string, serverId?: string | null): ProviderIconComponent {
+  const svg = useStore(providerSnapshotIcons, (state) =>
+    serverId ? state.get(serverId)?.get(provider) : undefined,
+  );
+  return resolveProviderIcon(provider, svg);
+}
+
+/** Subscribe once for consumers that render a collection of providers. */
+export function useProviderIcons(serverId?: string | null) {
+  const icons = useStore(providerSnapshotIcons, (state) =>
+    serverId ? state.get(serverId) : undefined,
+  );
+  return useCallback(
+    (provider: string) => resolveProviderIcon(provider, icons?.get(provider)),
+    [icons],
+  );
 }

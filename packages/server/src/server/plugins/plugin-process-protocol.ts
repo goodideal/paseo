@@ -3,8 +3,13 @@ import type {
   ProviderCatalogOptions,
   ProviderEvent,
   ProviderInput,
+  ProviderStatusRequest,
 } from "@getpaseo/plugin/server/provider";
-import { ProviderEventSchema, ProviderInputSchema } from "@getpaseo/plugin/server/provider";
+import {
+  ProviderEventSchema,
+  ProviderInputSchema,
+  ProviderLaunchSchema,
+} from "@getpaseo/plugin/server/provider";
 import { z } from "zod";
 
 export interface PluginWorkflowPresetMetadata {
@@ -16,6 +21,8 @@ export interface PluginWorkflowPresetMetadata {
 
 export interface PluginProviderMetadata {
   hasCatalogCacheKey?: boolean;
+  hasStatus?: boolean;
+  command?: readonly [string, ...string[]];
   id: string;
   label: string;
   description?: string;
@@ -26,7 +33,6 @@ export interface PluginUsageSourceMetadata {
   id: string;
   label: string;
   icon?: string;
-  discover: boolean;
 }
 
 export interface PluginWorkflowStepAdapterMetadata {
@@ -43,6 +49,12 @@ export interface PluginWorkflowStepAdapterMetadata {
 }
 
 export type PluginProcessRequest =
+  | {
+      type: "provider.status";
+      requestId: string;
+      providerId: string;
+      request: ProviderStatusRequest;
+    }
   | {
       type: "initialize";
       pluginId: string;
@@ -123,6 +135,8 @@ const providerMetadataSchema = z
     description: z.string().optional(),
     iconPath: z.string().optional(),
     hasCatalogCacheKey: z.boolean().optional(),
+    hasStatus: z.boolean().optional(),
+    command: z.tuple([z.string().min(1)], z.string()).optional(),
   })
   .strict();
 const usageSourceMetadataSchema = z
@@ -130,11 +144,11 @@ const usageSourceMetadataSchema = z
     id: z.string().min(1),
     label: z.string().min(1),
     icon: z.string().optional(),
-    discover: z.boolean(),
   })
   .strict();
 const providerConnectRequestSchema = z
   .object({
+    launch: ProviderLaunchSchema.optional(),
     versions: z.array(z.number().int().positive()),
     capabilities: z.array(z.string()),
   })
@@ -147,6 +161,14 @@ const frameFields = {
 export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.discriminatedUnion(
   "type",
   [
+    z
+      .object({
+        type: z.literal("provider.status"),
+        requestId: z.string().min(1),
+        providerId: z.string().min(1),
+        request: z.object({ launch: ProviderLaunchSchema.optional() }).strict(),
+      })
+      .strict(),
     z
       .object({
         type: z.literal("initialize"),
@@ -163,12 +185,19 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
         requestId: z.string().min(1),
         providerId: z.string().min(1),
         options: z.discriminatedUnion("scope", [
-          z.object({ scope: z.literal("global"), force: z.boolean().optional() }).strict(),
+          z
+            .object({
+              scope: z.literal("global"),
+              force: z.boolean().optional(),
+              launch: ProviderLaunchSchema.optional(),
+            })
+            .strict(),
           z
             .object({
               scope: z.literal("workspace"),
               cwd: z.string(),
               force: z.boolean().optional(),
+              launch: ProviderLaunchSchema.optional(),
             })
             .strict(),
         ]),
