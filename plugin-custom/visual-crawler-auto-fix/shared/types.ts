@@ -9,15 +9,68 @@ export type AnomalyCategory = z.infer<typeof AnomalyCategorySchema>;
 export const CrawlStateSchema = z.enum(["idle", "running", "paused", "completed", "error"]);
 export type CrawlState = z.infer<typeof CrawlStateSchema>;
 
+export const TimeWindowConfigSchema = z.object({
+  enabled: z.boolean(),
+  startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+  endTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+});
+export type TimeWindowConfig = z.infer<typeof TimeWindowConfigSchema>;
+
+export const CrawlScheduleConfigSchema = z.object({
+  enabled: z.boolean(),
+  cron: z.string().optional(),
+  timeWindow: TimeWindowConfigSchema.optional(),
+  targetUrl: z.string(),
+  maxHops: z.number().min(1).default(50),
+  maxDepth: z.number().min(1).default(10).optional(),
+});
+export type CrawlScheduleConfig = z.infer<typeof CrawlScheduleConfigSchema>;
+
 export const CrawlConfigSchema = z.object({
   targetUrl: z.string(),
-  maxHops: z.number().min(1).max(200).default(50),
+  maxHops: z.number().min(1).max(500).default(50),
+  maxDepth: z.number().min(1).max(100).default(10).optional(),
   seedRoutes: z.array(z.string()).optional(),
   maxConcurrency: z.number().min(1).max(10).optional(),
   autoApproveP0: z.boolean().optional(),
   allowedOrigins: z.array(z.string()).optional(),
+  authHeaders: z.record(z.string(), z.string()).optional(),
+  timeWindow: TimeWindowConfigSchema.optional(),
 });
 export type CrawlConfig = z.infer<typeof CrawlConfigSchema>;
+
+export const ActionBreadcrumbSchema = z.object({
+  hopNumber: z.number(),
+  url: z.string(),
+  action: z.string(),
+});
+export type ActionBreadcrumb = z.infer<typeof ActionBreadcrumbSchema>;
+
+export const TaskStatusSchema = z.enum(["todo", "in_review", "ignored", "resolved"]);
+export type TaskStatus = z.infer<typeof TaskStatusSchema>;
+
+export const CrawlerTaskItemSchema = z.object({
+  id: z.string(),
+  clusterKey: z.string(),
+  title: z.string(),
+  severity: SeveritySchema,
+  category: AnomalyCategorySchema,
+  status: TaskStatusSchema,
+  occurrenceCount: z.number(),
+  affectedUrls: z.array(z.string()),
+  firstSeenAt: z.number(),
+  lastSeenAt: z.number(),
+  reproductionBreadcrumbs: z.array(ActionBreadcrumbSchema),
+  evidence: z.object({
+    screenshotPath: z.string().optional(),
+    consoleMessage: z.string().optional(),
+    stackTrace: z.string().optional(),
+    httpStatus: z.number().optional(),
+    failedUrl: z.string().optional(),
+    domSelector: z.string().optional(),
+  }),
+});
+export type CrawlerTaskItem = z.infer<typeof CrawlerTaskItemSchema>;
 
 export const SourceHintSchema = z.object({
   filePath: z.string(),
