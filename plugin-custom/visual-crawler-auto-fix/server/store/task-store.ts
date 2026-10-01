@@ -3,7 +3,9 @@ import { dirname } from "node:path";
 import type {
   AnomalyRecord,
   CrawlTelemetry,
+  CrawlerTaskItem,
   FixDirective,
+  TaskStatus,
   HopRecord,
   Severity,
   WorkerSlot,
@@ -14,6 +16,7 @@ interface SerializedState {
   hops: HopRecord[];
   anomalies: AnomalyRecord[];
   directives: FixDirective[];
+  tasks: CrawlerTaskItem[];
   slots: WorkerSlot[];
 }
 
@@ -23,6 +26,7 @@ export class TaskStore {
   private hops: HopRecord[] = [];
   private anomalies: AnomalyRecord[] = [];
   private directives: Map<string, FixDirective> = new Map();
+  private tasks: Map<string, CrawlerTaskItem> = new Map();
   private slots: WorkerSlot[] = [];
 
   constructor(filePath: string, defaultConcurrency = 3) {
@@ -99,6 +103,30 @@ export class TaskStore {
     this.persist();
   }
 
+  public getTasks(filter?: { severity?: Severity; status?: TaskStatus }): CrawlerTaskItem[] {
+    let list = Array.from(this.tasks.values());
+    if (filter?.severity) list = list.filter((task) => task.severity === filter.severity);
+    if (filter?.status) list = list.filter((task) => task.status === filter.status);
+    return list.sort((a, b) => b.lastSeenAt - a.lastSeenAt);
+  }
+
+  public upsertTask(task: CrawlerTaskItem): void {
+    this.tasks.set(task.id, task);
+    this.persist();
+  }
+
+  public updateTaskStatus(taskId: string, status: TaskStatus): boolean {
+    const task = this.tasks.get(taskId);
+    if (!task) return false;
+    this.tasks.set(taskId, { ...task, status });
+    this.persist();
+    return true;
+  }
+
+  public getHops(): HopRecord[] {
+    return [...this.hops];
+  }
+
   public getSlots(): WorkerSlot[] {
     return [...this.slots];
   }
@@ -126,6 +154,7 @@ export class TaskStore {
     this.hops = [];
     this.anomalies = [];
     this.directives.clear();
+    this.tasks.clear();
     this.telemetry = {
       state: "idle",
       currentHop: 0,
@@ -151,6 +180,7 @@ export class TaskStore {
         hops: this.hops,
         anomalies: this.anomalies,
         directives: Array.from(this.directives.values()),
+        tasks: Array.from(this.tasks.values()),
         slots: this.slots,
       };
       writeFileSync(this.filePath, JSON.stringify(data, null, 2), "utf-8");
@@ -169,6 +199,9 @@ export class TaskStore {
         if (Array.isArray(data.anomalies)) this.anomalies = data.anomalies;
         if (Array.isArray(data.directives)) {
           this.directives = new Map(data.directives.map((d) => [d.id, d]));
+        }
+        if (Array.isArray(data.tasks)) {
+          this.tasks = new Map(data.tasks.map((task) => [task.id, task]));
         }
         if (Array.isArray(data.slots) && data.slots.length > 0) {
           this.slots = data.slots;

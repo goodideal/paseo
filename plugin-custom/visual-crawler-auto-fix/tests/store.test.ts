@@ -104,4 +104,28 @@ describe("TaskStore", () => {
     store.setConcurrency(2);
     expect(store.getSlots().length).toBe(2);
   });
+
+  it("persists crawler tasks and their status transitions", () => {
+    store.upsertTask({
+      id: "task-1",
+      clusterKey: "cluster-1",
+      title: "Checkout crash",
+      severity: "P0",
+      category: "runtime_error",
+      status: "todo",
+      occurrenceCount: 1,
+      affectedUrls: ["http://localhost:3000/checkout"],
+      firstSeenAt: 1000,
+      lastSeenAt: 1000,
+      reproductionBreadcrumbs: [{ hopNumber: 1, url: "http://localhost:3000", action: "navigate" }],
+      evidence: { consoleMessage: "Uncaught TypeError" },
+    });
+
+    expect(store.getTasks()).toHaveLength(1);
+    expect(store.updateTaskStatus("task-1", "ignored")).toBe(true);
+    expect(store.getTasks({ status: "ignored" })).toHaveLength(1);
+
+    const restored = new TaskStore(testFile, 3);
+    expect(restored.getTasks({ status: "ignored" })).toHaveLength(1);
+  });
 });
