@@ -61,7 +61,7 @@ export class VisualCrawlerEngine {
     this.driver = driver;
   }
 
-  public async start(config: CrawlConfig): Promise<void> {
+  public async start(config: CrawlConfig, options?: { abortSignal?: AbortSignal }): Promise<void> {
     if (this.isRunning) {
       throw new Error("Crawler is already running");
     }
@@ -89,7 +89,7 @@ export class VisualCrawlerEngine {
     });
 
     try {
-      await this.runLoop(config);
+      await this.runLoop(config, options?.abortSignal);
       if (this.isRunning) {
         this.store.updateTelemetry({
           state: "completed",
@@ -157,11 +157,17 @@ export class VisualCrawlerEngine {
     return null;
   }
 
-  private async runLoop(config: CrawlConfig): Promise<void> {
+  private async runLoop(config: CrawlConfig, abortSignal?: AbortSignal): Promise<void> {
     const allowlist = config.allowedOrigins ?? [];
-    const queue: string[] = [config.targetUrl, ...(config.seedRoutes || [])];
+    const maxDepth = config.maxDepth ?? 10;
+    const queue: Array<{ url: string; depth: number }> = [
+      { url: config.targetUrl, depth: 0 },
+      ...(config.seedRoutes || []).map((url) => ({ url, depth: 1 })),
+    ];
+    const depths = new Map<string, number>();
     let hopCount = 0;
     let currentUrl = config.targetUrl;
+    let currentDepth = 0;
 
     // Initial navigation
     const initial = await this.driver.navigate(currentUrl);
@@ -169,14 +175,25 @@ export class VisualCrawlerEngine {
       throw new Error(`Browser redirected outside the workspace allowlist: ${initial.url}`);
     }
     this.visitedUrls.add(initial.url);
+    depths.set(initial.url, 0);
     hopCount++;
 
     await this.inspectAndRecordHop(hopCount, initial.url, "navigate", initial.domFingerprint);
 
-    while (this.isRunning && hopCount < config.maxHops) {
+    while (this.isRunning && !abortSignal?.aborted && hopCount < config.maxHops) {
       const elements = await this.driver.getInteractiveElements();
-      const nextAction = this.chooseNextAction(elements, queue, currentUrl, config, allowlist);
+      const nextAction = this.chooseNextAction(
+        elements,
+        queue.map((item) => item.url),
+        currentUrl,
+        config,
+        allowlist,
+      );
       if (!nextAction) {
+        break;
+      }
+
+      if (nextAction.type === "navigate" && currentDepth >= maxDepth) {
         break;
       }
 
@@ -193,6 +210,8 @@ export class VisualCrawlerEngine {
           throw new Error(`Browser redirected outside the workspace allowlist: ${res.url}`);
         }
         currentUrl = res.url;
+        currentDepth += 1;
+        depths.set(currentUrl, currentDepth);
         this.visitedUrls.add(currentUrl);
         newFingerprint = res.domFingerprint;
       } else {
@@ -202,6 +221,7 @@ export class VisualCrawlerEngine {
           throw new Error(`Browser click navigated outside the workspace allowlist: ${res.url}`);
         }
         currentUrl = res.url;
+        currentDepth = depths.get(currentUrl) ?? currentDepth;
         newFingerprint = res.domFingerprint;
       }
 

@@ -165,3 +165,87 @@ describe("VisualCrawlerEngine", () => {
     ).rejects.toThrow("not in the workspace allowlist");
   });
 });
+
+describe("crawl depth and cancellation", () => {
+  it("does not navigate beyond maxDepth", async () => {
+    const file = join(tmpdir(), `test-depth-${Date.now()}.json`);
+    const store = new TaskStore(file, 1);
+    let navigations = 0;
+    const driver: BrowserDriver = {
+      async navigate(url) {
+        navigations += 1;
+        return { url, domFingerprint: `fp-${navigations}`, title: url };
+      },
+      async getConsoleLogs() {
+        return [];
+      },
+      async getNetworkFailures() {
+        return [];
+      },
+      async getInteractiveElements() {
+        return [{ selector: "a.deep", tag: "a", text: "Deep", href: "/deep" }];
+      },
+      async click() {
+        return { domFingerprint: "click", url: "http://localhost:3000/click" };
+      },
+      async checkVisualAnomalies() {
+        return [];
+      },
+      async captureScreenshot() {
+        return "/tmp/screenshot.png";
+      },
+    };
+
+    await new VisualCrawlerEngine(store, driver).start({
+      targetUrl: "http://localhost:3000",
+      maxHops: 10,
+      maxDepth: 0,
+      allowedOrigins: ["http://localhost:3000"],
+    });
+
+    expect(navigations).toBe(1);
+    expect(store.getTelemetry().currentHop).toBe(1);
+  });
+
+  it("stops gracefully when the abort signal is raised", async () => {
+    const file = join(tmpdir(), `test-abort-${Date.now()}.json`);
+    const store = new TaskStore(file, 1);
+    const aborter = new AbortController();
+    const driver: BrowserDriver = {
+      async navigate(url) {
+        return { url, domFingerprint: "fp", title: url };
+      },
+      async getConsoleLogs() {
+        aborter.abort();
+        return [];
+      },
+      async getNetworkFailures() {
+        return [];
+      },
+      async getInteractiveElements() {
+        return [{ selector: "button.next", tag: "button", text: "Next" }];
+      },
+      async click() {
+        return { domFingerprint: "click", url: "http://localhost:3000" };
+      },
+      async checkVisualAnomalies() {
+        return [];
+      },
+      async captureScreenshot() {
+        return "/tmp/screenshot.png";
+      },
+    };
+
+    await new VisualCrawlerEngine(store, driver).start(
+      {
+        targetUrl: "http://localhost:3000",
+        maxHops: 10,
+        allowedOrigins: ["http://localhost:3000"],
+      },
+      { abortSignal: aborter.signal },
+    );
+
+    expect(store.getTelemetry().state).toBe("completed");
+    expect(store.getTelemetry().currentHop).toBe(1);
+  });
+});
