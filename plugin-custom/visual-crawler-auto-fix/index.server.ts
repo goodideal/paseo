@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import type { PluginServerContext, PluginHandlerContext } from "@getpaseo/plugin/server";
 import {
@@ -10,85 +10,22 @@ import {
   rejectDirectiveRpc,
   startCrawlRpc,
   stopCrawlRpc,
+  getScheduleRpc,
+  listTasksRpc,
+  saveScheduleRpc,
+  updateTaskStatusRpc,
 } from "./shared/contracts.js";
 import { TaskStore } from "./server/store/task-store.js";
 import { VisualCrawlerEngine, type BrowserDriver } from "./server/engine/crawler-engine.js";
+import { PlaywrightBrowserDriver } from "./server/engine/playwright-driver.js";
+import { createReportPath, writeMarkdownReport } from "./server/report/report-generator.js";
+import { CrawlerScheduler, isWithinTimeWindow } from "./server/scheduler/crawler-scheduler.js";
+import { TaskCompiler } from "./server/triage/task-compiler.js";
 import { ReviewTriageAgent } from "./server/triage/triage-agent.js";
 import { type WorktreeAdapter } from "./server/orchestrator/worktree-pool.js";
 
 export function createDefaultBrowserDriver(): BrowserDriver {
-  let step = 0;
-  return {
-    async navigate(url: string) {
-      step++;
-      return {
-        url,
-        domFingerprint: `fp-${url.replace(/[^a-z0-9]/gi, "_")}-${step}`,
-        title: `Page ${url}`,
-      };
-    },
-    async getConsoleLogs() {
-      if (step % 4 === 0) {
-        return [
-          {
-            level: "error",
-            text: "Uncaught TypeError: Cannot read properties of undefined (reading 'items')",
-          },
-        ];
-      }
-      return [];
-    },
-    async getNetworkFailures() {
-      if (step % 7 === 0) {
-        return [{ url: "/api/v1/telemetry", status: 500, statusText: "Internal Server Error" }];
-      }
-      return [];
-    },
-    async getInteractiveElements() {
-      return [
-        { selector: "button.submit-btn", tag: "button", text: "Submit" },
-        {
-          selector: "a.nav-link-dashboard",
-          tag: "a",
-          text: "Dashboard",
-          href: "http://localhost:3000/dashboard",
-        },
-        {
-          selector: "a.nav-link-settings",
-          tag: "a",
-          text: "Settings",
-          href: "http://localhost:3000/settings",
-        },
-      ];
-    },
-    async click(selector: string) {
-      step++;
-      return {
-        domFingerprint: `fp-click-${selector}-${step}`,
-        url: "http://localhost:3000/dashboard",
-      };
-    },
-    async checkVisualAnomalies() {
-      if (step % 5 === 0) {
-        return [
-          {
-            selector: "div.header-nav",
-            reason: "overlap",
-            boundingBox: { x: 0, y: 0, width: 800, height: 60 },
-            sourceHint: {
-              filePath: "src/components/HeaderNav.tsx",
-              componentName: "HeaderNav",
-              line: 42,
-            },
-          },
-        ];
-      }
-      return [];
-    },
-    async captureScreenshot() {
-      return `.evidence/screenshots/crawl-step-${step}.png`;
-    },
-  };
+  return new PlaywrightBrowserDriver();
 }
 
 export function createDefaultWorktreeAdapter(): WorktreeAdapter {
@@ -117,6 +54,7 @@ export interface VisualCrawlerPluginOptions {
   workflowRunner?: {
     createRun: (params: { directiveId: string }) => Promise<{ runId: string; status: string }>;
   };
+  scheduler?: CrawlerScheduler;
 }
 
 export default function contribute(
@@ -129,6 +67,27 @@ export default function contribute(
 
   const crawler = new VisualCrawlerEngine(store, driver);
   const triageAgent = new ReviewTriageAgent(store);
+  const taskCompiler = new TaskCompiler();
+  const scheduler = options?.scheduler ?? new CrawlerScheduler();
+  let abortController: AbortController | undefined;
+
+  const runCrawl = async (input: Parameters<typeof crawler.start>[0]): Promise<void> => {
+    abortController = new AbortController();
+    try {
+      await crawler.start(input, { abortSignal: abortController.signal });
+      const tasks = taskCompiler.compile(store.getHops(), store.getTasks());
+      for (const task of tasks) store.upsertTask(task);
+      const evidenceDir = join(dirname(storePath), "visual-crawler");
+      writeMarkdownReport(createReportPath(evidenceDir), {
+        targetUrl: input.targetUrl,
+        telemetry: store.getTelemetry(),
+        tasks: store.getTasks(),
+      });
+    } finally {
+      abortController = undefined;
+      if (driver instanceof PlaywrightBrowserDriver) await driver.close();
+    }
+  };
 
   // Register the visual-crawler-fix workflow preset with Core if available
   if (server.registerWorkflowPreset) {
@@ -185,37 +144,16 @@ export default function contribute(
 
   server.handle(startCrawlRpc, async (input) => {
     try {
-      void (async () => {
-        await crawler.start({
-          targetUrl: input.targetUrl,
-          maxHops: input.maxHops,
-          seedRoutes: input.seedRoutes,
-          maxConcurrency: input.maxConcurrency,
-          autoApproveP0: input.autoApproveP0,
-          allowedOrigins: input.allowedOrigins,
-        });
-
-        // Automatically triage detected anomalies after crawl finishes
-        const telemetry = store.getTelemetry();
-        if (telemetry.totalAnomalies > 0) {
-          const rawAnomalies = store.getAnomalies();
-          triageAgent.triageAnomalies(rawAnomalies, { autoApproveP0: input.autoApproveP0 });
-          if (input.autoApproveP0) {
-            const approved = store.getDirectives({ status: "approved" });
-            for (const dir of approved) {
-              // Auto-approved directives still need a concrete workspace scope from the user action.
-              dir.status = "approved";
-              dir.updatedAt = Date.now();
-              store.upsertDirective(dir);
-            }
-          }
-        }
-      })();
-
+      if (input.timeWindow && !isWithinTimeWindow(new Date(), input.timeWindow)) {
+        return { ok: false, error: "Current time is outside the configured crawl window" };
+      }
+      void runCrawl(input).catch((err: unknown) => {
+        store.updateTelemetry({ state: "error", endedAt: Date.now() });
+        console.error("Visual crawler failed:", err);
+      });
       return { ok: true };
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return { ok: false, error: msg };
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   });
 
@@ -256,8 +194,33 @@ export default function contribute(
   }
 
   server.handle(stopCrawlRpc, async () => {
+    abortController?.abort();
     crawler.stop();
     return { ok: true };
+  });
+
+  server.handle(saveScheduleRpc, async (input) => {
+    scheduler.updateConfig(input, async () => {
+      const allowedOrigins = [new URL(input.targetUrl).origin];
+      await runCrawl({
+        targetUrl: input.targetUrl,
+        maxHops: input.maxHops,
+        maxDepth: input.maxDepth,
+        allowedOrigins,
+        timeWindow: input.timeWindow,
+      });
+    });
+    return { ok: true };
+  });
+
+  server.handle(getScheduleRpc, async () => ({ schedule: scheduler.getConfig() }));
+
+  server.handle(listTasksRpc, async (input) => ({ tasks: store.getTasks(input) }));
+
+  server.handle(updateTaskStatusRpc, async ({ taskId, status }) => {
+    return store.updateTaskStatus(taskId, status)
+      ? { ok: true }
+      : { ok: false, error: "Task not found" };
   });
 
   server.handle(getCrawlStatusRpc, async () => {
@@ -318,7 +281,9 @@ export default function contribute(
   });
 
   return () => {
+    abortController?.abort();
     crawler.stop();
+    scheduler.stop();
     // On unload/reload: record actionable blocked status for active in-progress directives
     const inProgress = store.getDirectives({ status: "in_progress" });
     for (const d of inProgress) {

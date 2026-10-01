@@ -12,6 +12,10 @@ import {
   listDirectivesRpc,
   startCrawlRpc,
   stopCrawlRpc,
+  getScheduleRpc,
+  listTasksRpc,
+  saveScheduleRpc,
+  updateTaskStatusRpc,
 } from "../shared/contracts.js";
 import type { FixDirective } from "../shared/types.js";
 
@@ -145,5 +149,60 @@ describe("VisualCrawlerAutoFix Plugin Server Integration (Task 4.3)", () => {
 
     const statusRes = (await statusHandler({})) as { telemetry: { maxHops: number } };
     expect(statusRes.telemetry.maxHops).toBe(10);
+  });
+
+  it("handles schedule configuration and task management RPCs", async () => {
+    contribute(mockServerContext, { store });
+    const saveScheduleHandler = handlers.get(saveScheduleRpc.name)!;
+    const getScheduleHandler = handlers.get(getScheduleRpc.name)!;
+    const listTasksHandler = handlers.get(listTasksRpc.name)!;
+    const updateTaskStatusHandler = handlers.get(updateTaskStatusRpc.name)!;
+
+    const saveRes = (await saveScheduleHandler({
+      enabled: true,
+      targetUrl: "https://example.com",
+      maxHops: 30,
+      maxDepth: 5,
+      timeWindow: { enabled: true, startTime: "23:00", endTime: "06:00" },
+    })) as { ok: boolean };
+    expect(saveRes.ok).toBe(true);
+
+    const getRes = (await getScheduleHandler({})) as {
+      schedule: { targetUrl: string; maxHops: number };
+    };
+    expect(getRes.schedule.targetUrl).toBe("https://example.com");
+    expect(getRes.schedule.maxHops).toBe(30);
+
+    store.upsertTask({
+      id: "task-test-1",
+      clusterKey: "cluster-test-1",
+      title: "Broken submit button",
+      severity: "P1",
+      category: "runtime_error",
+      status: "todo",
+      occurrenceCount: 1,
+      affectedUrls: ["https://example.com/checkout"],
+      firstSeenAt: 1000,
+      lastSeenAt: 1000,
+      reproductionBreadcrumbs: [],
+      evidence: {},
+    });
+
+    const listRes = (await listTasksHandler({})) as {
+      tasks: Array<{ id: string; status: string }>;
+    };
+    expect(listRes.tasks).toHaveLength(1);
+    expect(listRes.tasks[0].id).toBe("task-test-1");
+
+    const updateRes = (await updateTaskStatusHandler({
+      taskId: "task-test-1",
+      status: "resolved",
+    })) as { ok: boolean };
+    expect(updateRes.ok).toBe(true);
+
+    const afterUpdate = (await listTasksHandler({ status: "resolved" })) as {
+      tasks: Array<{ id: string; status: string }>;
+    };
+    expect(afterUpdate.tasks).toHaveLength(1);
   });
 });
