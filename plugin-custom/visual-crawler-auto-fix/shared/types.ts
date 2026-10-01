@@ -16,10 +16,20 @@ export const TimeWindowConfigSchema = z.object({
 });
 export type TimeWindowConfig = z.infer<typeof TimeWindowConfigSchema>;
 
+export const AuthCredentialsSchema = z.object({
+  username: z.string().optional(),
+  password: z.string().optional(),
+  usernameSelector: z.string().optional(),
+  passwordSelector: z.string().optional(),
+  submitSelector: z.string().optional(),
+});
+export type AuthCredentials = z.infer<typeof AuthCredentialsSchema>;
+
 export const CrawlScheduleConfigSchema = z.object({
   enabled: z.boolean(),
   cron: z.string().optional(),
   timeWindow: TimeWindowConfigSchema.optional(),
+  credentials: AuthCredentialsSchema.optional(),
   targetUrl: z.string(),
   maxHops: z.number().min(1).default(50),
   maxDepth: z.number().min(1).default(10).optional(),
@@ -36,6 +46,7 @@ export const CrawlConfigSchema = z.object({
   allowedOrigins: z.array(z.string()).optional(),
   authHeaders: z.record(z.string(), z.string()).optional(),
   timeWindow: TimeWindowConfigSchema.optional(),
+  credentials: AuthCredentialsSchema.optional(),
 });
 export type CrawlConfig = z.infer<typeof CrawlConfigSchema>;
 

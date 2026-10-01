@@ -179,6 +179,23 @@ export class VisualCrawlerEngine {
     hopCount++;
 
     await this.inspectAndRecordHop(hopCount, initial.url, "navigate", initial.domFingerprint);
+    if (config.credentials && (this.driver as any).login) {
+      const loggedIn = await (this.driver as any).login(config.credentials);
+      if (loggedIn) {
+        hopCount++;
+        const state = (this.driver as any).getCurrentState
+          ? await (this.driver as any).getCurrentState()
+          : { url: currentUrl, domFingerprint: `login-${Date.now()}` };
+        currentUrl = state.url;
+        this.visitedUrls.add(currentUrl);
+        await this.inspectAndRecordHop(
+          hopCount,
+          currentUrl,
+          "login:credentials",
+          state.domFingerprint,
+        );
+      }
+    }
 
     while (this.isRunning && !abortSignal?.aborted && hopCount < config.maxHops) {
       const elements = await this.driver.getInteractiveElements();

@@ -15,6 +15,10 @@ export interface ConfigBarProps {
   onChangeWindowStart: (val: string) => void;
   windowEnd: string;
   onChangeWindowEnd: (val: string) => void;
+  username?: string;
+  onChangeUsername?: (val: string) => void;
+  password?: string;
+  onChangePassword?: (val: string) => void;
   isRunning: boolean;
   onStartCrawl: () => void;
   onStopCrawl: () => void;
@@ -34,6 +38,10 @@ export const ConfigBar = React.memo(function ConfigBar({
   onChangeWindowStart,
   windowEnd,
   onChangeWindowEnd,
+  username,
+  onChangeUsername,
+  password,
+  onChangePassword,
   isRunning,
   onStartCrawl,
   onStopCrawl,
@@ -160,6 +168,30 @@ export const ConfigBar = React.memo(function ConfigBar({
         >
           <Text style={styles.buttonOutlineText}>Save Schedule</Text>
         </Pressable>
+      </View>
+
+      {/* Optional Auth Credentials */}
+      <View style={styles.inputRow}>
+        <Text style={[styles.inputLabel, { width: 70 }]}>Auth</Text>
+        <TextInput
+          style={[styles.textInput, { flex: 1 }]}
+          value={username || ""}
+          onChangeText={onChangeUsername}
+          placeholder="Username (optional)"
+          placeholderTextColor="#656D76"
+          autoCapitalize="none"
+          autoCorrect={false}
+          editable={!isRunning}
+        />
+        <TextInput
+          style={[styles.textInput, { flex: 1 }]}
+          value={password || ""}
+          onChangeText={onChangePassword}
+          placeholder="Password (optional)"
+          placeholderTextColor="#656D76"
+          secureTextEntry
+          editable={!isRunning}
+        />
       </View>
 
       {/* Action Buttons */}

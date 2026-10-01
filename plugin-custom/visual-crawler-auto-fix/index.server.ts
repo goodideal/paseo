@@ -25,7 +25,9 @@ import { ReviewTriageAgent } from "./server/triage/triage-agent.js";
 import { type WorktreeAdapter } from "./server/orchestrator/worktree-pool.js";
 
 export function createDefaultBrowserDriver(): BrowserDriver {
-  return new PlaywrightBrowserDriver();
+  return new PlaywrightBrowserDriver({
+    screenshotDir: join(process.cwd(), ".evidence", "visual-crawler", "screenshots"),
+  });
 }
 
 export function createDefaultWorktreeAdapter(): WorktreeAdapter {
@@ -77,7 +79,7 @@ export default function contribute(
       await crawler.start(input, { abortSignal: abortController.signal });
       const tasks = taskCompiler.compile(store.getHops(), store.getTasks());
       for (const task of tasks) store.upsertTask(task);
-      const evidenceDir = join(dirname(storePath), "visual-crawler");
+      const evidenceDir = join(process.cwd(), ".evidence", "visual-crawler");
       writeMarkdownReport(createReportPath(evidenceDir), {
         targetUrl: input.targetUrl,
         telemetry: store.getTelemetry(),

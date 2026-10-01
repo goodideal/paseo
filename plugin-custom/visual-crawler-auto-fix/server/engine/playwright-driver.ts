@@ -2,7 +2,14 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Browser, type BrowserContext, type Page, chromium } from "playwright";
+import type { Browser, BrowserContext, Page } from "playwright";
+
+async function loadChromium() {
+  const pkg = "playwright";
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const pw = require(pkg);
+  return pw.chromium;
+}
 import type { BrowserDriver } from "./crawler-engine.js";
 
 export interface PlaywrightDriverOptions {
@@ -34,13 +41,17 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
     if (this.browser) return;
 
     try {
-      this.browser = await chromium.launch({
+      this.browser = await (
+        await loadChromium()
+      ).launch({
         headless: this.options.headless ?? true,
         channel: "chrome",
       });
     } catch {
       try {
-        this.browser = await chromium.launch({
+        this.browser = await (
+          await loadChromium()
+        ).launch({
           headless: this.options.headless ?? true,
         });
       } catch (err) {
@@ -52,7 +63,7 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
       }
     }
 
-    this.context = await this.browser.newContext({
+    this.context = await this.browser!.newContext({
       extraHTTPHeaders: this.options.authHeaders,
       viewport: { width: 1280, height: 800 },
     });
@@ -84,6 +95,57 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
         });
       }
     });
+  }
+
+  public async login(credentials: {
+    username?: string;
+    password?: string;
+    usernameSelector?: string;
+    passwordSelector?: string;
+    submitSelector?: string;
+  }): Promise<boolean> {
+    if (!this.page) await this.init();
+    const page = this.page!;
+    const userSel =
+      credentials.usernameSelector ||
+      'input[type="text"], input[name="username"], input[type="email"], input[placeholder*="用户"]';
+    const passSel =
+      credentials.passwordSelector || 'input[type="password"], input[placeholder*="密码"]';
+    const submitSel =
+      credentials.submitSelector ||
+      'button[type="submit"], button:has-text("登 录"), button:has-text("登录"), button:has-text("Log in"), button:has-text("Sign in")';
+
+    try {
+      if (credentials.username) {
+        const userEl = await page.$(userSel);
+        if (userEl) await userEl.fill(credentials.username);
+      }
+      if (credentials.password) {
+        const passEl = await page.$(passSel);
+        if (passEl) await passEl.fill(credentials.password);
+      }
+      const submitBtn = await page.$(submitSel);
+      if (submitBtn) {
+        await submitBtn.click();
+        await page.waitForTimeout(2000);
+        return true;
+      }
+    } catch (err) {
+      console.warn("Auto-login error:", err);
+    }
+    return false;
+  }
+
+  public async getCurrentState(): Promise<{ url: string; domFingerprint: string; title: string }> {
+    if (!this.page) await this.init();
+    const page = this.page!;
+    const title = await page.title();
+    const domFingerprint = await this.extractFingerprint(page);
+    return {
+      url: page.url(),
+      domFingerprint,
+      title: title || `Page at ${page.url()}`,
+    };
   }
 
   public async navigate(
@@ -146,11 +208,15 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
           selector = `${el.tagName.toLowerCase()}:nth-of-type(${i + 1})`;
         }
 
+        const href = el.getAttribute("href");
+        if (el.tagName.toLowerCase() === "a" && href) {
+          selector = `a[href="${href}"]`;
+        }
         return {
           selector,
           tag: el.tagName.toLowerCase(),
           text: (el.textContent || "").trim().slice(0, 50),
-          href: el.getAttribute("href") || undefined,
+          href: href || undefined,
         };
       });
     });

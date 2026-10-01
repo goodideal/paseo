@@ -10,6 +10,7 @@ import {
   SeveritySchema,
   TaskStatusSchema,
   TimeWindowConfigSchema,
+  AuthCredentialsSchema,
   WorkerSlotSchema,
 } from "./types.js";
 
@@ -25,6 +26,7 @@ export const startCrawlRpc = defineRpc({
     allowedOrigins: z.array(z.string().url()).min(1),
     authHeaders: z.record(z.string(), z.string()).optional(),
     timeWindow: TimeWindowConfigSchema.optional(),
+    credentials: AuthCredentialsSchema.optional(),
   }),
   output: z.object({
     ok: z.boolean(),

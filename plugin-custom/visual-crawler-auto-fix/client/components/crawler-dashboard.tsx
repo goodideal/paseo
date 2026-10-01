@@ -45,6 +45,8 @@ export function CrawlerDashboard(_props: Partial<PluginWorkspacePanelProps>) {
   const [timeWindowEnabled, setTimeWindowEnabled] = useState(false);
   const [windowStart, setWindowStart] = useState("23:00");
   const [windowEnd, setWindowEnd] = useState("06:00");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
 
   const refreshAll = useCallback(async () => {
     try {
@@ -108,6 +110,7 @@ export function CrawlerDashboard(_props: Partial<PluginWorkspacePanelProps>) {
           timeWindow: timeWindowEnabled
             ? { enabled: true, startTime: windowStart, endTime: windowEnd }
             : undefined,
+          credentials: username && password ? { username, password } : undefined,
         });
         await refreshAll();
       } catch (err) {
@@ -198,6 +201,10 @@ export function CrawlerDashboard(_props: Partial<PluginWorkspacePanelProps>) {
         onChangeWindowStart={setWindowStart}
         windowEnd={windowEnd}
         onChangeWindowEnd={setWindowEnd}
+        username={username}
+        onChangeUsername={setUsername}
+        password={password}
+        onChangePassword={setPassword}
         isRunning={telemetry.state === "running"}
         onStartCrawl={() => void handleStartCrawl()}
         onStopCrawl={handleStopCrawl}
