@@ -81,4 +81,35 @@ describe("PlaywrightBrowserDriver", () => {
     expect(screenshotPath).toContain("/tmp/crawler-test-screenshots");
     expect(screenshotPath.endsWith(".png")).toBe(true);
   });
+
+  it("does not report intentional ellipsis or icon spans as clipped defects", async () => {
+    driver = new PlaywrightBrowserDriver();
+    await driver.init();
+
+    const html = `
+      <html><body>
+        <span style="display:block;width:80px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="Long visible label">This intentionally long label is safely truncated</span>
+        <span aria-hidden="true" style="display:block;width:10px;overflow:hidden">••••</span>
+      </body></html>
+    `;
+    await driver.navigate(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+
+    expect(await driver.checkVisualAnomalies()).toEqual([]);
+  });
+
+  it("reports visible, materially clipped user-facing text without an accessible fallback", async () => {
+    driver = new PlaywrightBrowserDriver();
+    await driver.init();
+
+    const html = `
+      <html><body>
+        <p style="display:block;width:80px;white-space:nowrap;overflow:hidden">This is a long, user facing critical status message</p>
+      </body></html>
+    `;
+    await driver.navigate(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+
+    const anomalies = await driver.checkVisualAnomalies();
+    expect(anomalies).toHaveLength(1);
+    expect(anomalies[0]).toMatchObject({ selector: "p", reason: "clipped" });
+  });
 });

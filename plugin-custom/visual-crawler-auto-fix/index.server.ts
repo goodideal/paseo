@@ -76,8 +76,9 @@ export default function contribute(
   const runCrawl = async (input: Parameters<typeof crawler.start>[0]): Promise<void> => {
     abortController = new AbortController();
     try {
+      store.startRun();
       await crawler.start(input, { abortSignal: abortController.signal });
-      const tasks = taskCompiler.compile(store.getHops(), store.getTasks());
+      const tasks = taskCompiler.compile(store.getCurrentRunHops(), store.getTasks());
       for (const task of tasks) store.upsertTask(task);
       const evidenceDir = join(process.cwd(), ".evidence", "visual-crawler");
       writeMarkdownReport(createReportPath(evidenceDir), {

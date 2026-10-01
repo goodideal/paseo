@@ -249,3 +249,52 @@ describe("crawl depth and cancellation", () => {
     expect(store.getTelemetry().currentHop).toBe(1);
   });
 });
+
+describe("route coverage priority", () => {
+  it("visits each discovered route once before repeating a navigation link", async () => {
+    const file = join(tmpdir(), `test-routes-${Date.now()}.json`);
+    const store = new TaskStore(file, 1);
+    const visited: string[] = [];
+    const driver: BrowserDriver = {
+      async navigate(url) {
+        visited.push(url);
+        return { url, domFingerprint: `fp-${visited.length}`, title: url };
+      },
+      async getConsoleLogs() {
+        return [];
+      },
+      async getNetworkFailures() {
+        return [];
+      },
+      async getInteractiveElements() {
+        return [
+          { selector: 'a[href="#/dashboard"]', tag: "a", text: "Dashboard", href: "#/dashboard" },
+          { selector: 'a[href="#/logs"]', tag: "a", text: "Logs", href: "#/logs" },
+          { selector: 'a[href="#/providers"]', tag: "a", text: "Providers", href: "#/providers" },
+        ];
+      },
+      async click() {
+        throw new Error("visited navigation links must not be clicked again");
+      },
+      async checkVisualAnomalies() {
+        return [];
+      },
+      async captureScreenshot() {
+        return "/tmp/screenshot.png";
+      },
+    };
+
+    await new VisualCrawlerEngine(store, driver).start({
+      targetUrl: "https://example.com/#/dashboard",
+      maxHops: 3,
+      maxDepth: 10,
+      allowedOrigins: ["https://example.com"],
+    });
+
+    expect(visited).toEqual([
+      "https://example.com/#/dashboard",
+      "https://example.com/#/logs",
+      "https://example.com/#/providers",
+    ]);
+  });
+});

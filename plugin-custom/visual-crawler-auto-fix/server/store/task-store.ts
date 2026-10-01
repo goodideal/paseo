@@ -24,6 +24,8 @@ export class TaskStore {
   private filePath: string;
   private telemetry: CrawlTelemetry;
   private hops: HopRecord[] = [];
+  private currentRunId: string = "initial";
+  private currentRunHops: HopRecord[] = [];
   private anomalies: AnomalyRecord[] = [];
   private directives: Map<string, FixDirective> = new Map();
   private tasks: Map<string, CrawlerTaskItem> = new Map();
@@ -64,8 +66,19 @@ export class TaskStore {
     this.persist();
   }
 
+  public startRun(runId = `run-${Date.now()}`): string {
+    this.currentRunId = runId;
+    this.currentRunHops = [];
+    return runId;
+  }
+
+  public getCurrentRunHops(): HopRecord[] {
+    return [...this.currentRunHops];
+  }
+
   public recordHop(hop: HopRecord): void {
     this.hops.push(hop);
+    this.currentRunHops.push(hop);
     this.telemetry.currentHop = hop.hopNumber;
     this.telemetry.activeUrl = hop.url;
     this.persist();

@@ -14,11 +14,13 @@ describe("Live Crawler Verification against https://llm.ezcloud.cc", () => {
     const screenshotDir = path.join(evidenceDir, "screenshots");
 
     const store = new TaskStore(storePath, 1);
+    store.clear();
     const driver = new PlaywrightBrowserDriver({ screenshotDir });
     const crawler = new VisualCrawlerEngine(store, driver);
     const compiler = new TaskCompiler();
 
     try {
+      store.startRun();
       await crawler.start({
         targetUrl: "https://llm.ezcloud.cc",
         maxHops: 10,
@@ -34,7 +36,7 @@ describe("Live Crawler Verification against https://llm.ezcloud.cc", () => {
       expect(hops.length).toBeGreaterThanOrEqual(1);
 
       // Compile tasks from recorded anomalies
-      const tasks = compiler.compile(hops, store.getTasks());
+      const tasks = compiler.compile(store.getCurrentRunHops(), store.getTasks());
       for (const t of tasks) store.upsertTask(t);
 
       // Generate report

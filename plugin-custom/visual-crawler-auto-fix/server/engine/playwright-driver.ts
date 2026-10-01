@@ -277,27 +277,42 @@ export class PlaywrightBrowserDriver implements BrowserDriver {
         return anomalies;
       }
 
-      // Check text clipping
+      // Report only materially clipped, visible user-facing text. Legitimate
+      // ellipsis, icon spans, hidden content, and tooltip-backed labels are noise.
       const textElements = Array.from(
-        document.querySelectorAll("h1, h2, h3, p, button, span"),
+        document.querySelectorAll(
+          'h1, h2, h3, p, button, [role="button"], [role="tab"], label, td',
+        ),
       ).slice(0, 100);
       for (const el of textElements) {
-        if (el.scrollWidth > el.clientWidth && el.clientWidth > 0) {
-          const rect = el.getBoundingClientRect();
-          if (rect.width > 0 && rect.height > 0) {
-            const selector = el.id ? `#${el.id}` : el.tagName.toLowerCase();
-            anomalies.push({
-              selector,
-              reason: "clipped",
-              boundingBox: {
-                x: Math.round(rect.x),
-                y: Math.round(rect.y),
-                width: Math.round(rect.width),
-                height: Math.round(rect.height),
-              },
-            });
-            if (anomalies.length >= 3) break;
-          }
+        const text = (el.textContent || "").trim();
+        const style = window.getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        const isVisible =
+          style.display !== "none" &&
+          style.visibility !== "hidden" &&
+          style.opacity !== "0" &&
+          rect.width >= 24 &&
+          rect.height >= 12;
+        const hasAccessibleFallback =
+          Boolean(el.getAttribute("title")) ||
+          Boolean(el.getAttribute("aria-label")) ||
+          style.textOverflow === "ellipsis";
+        const isMateriallyClipped = el.scrollWidth - el.clientWidth >= 24;
+
+        if (text.length >= 12 && isVisible && !hasAccessibleFallback && isMateriallyClipped) {
+          const selector = el.id ? `#${el.id}` : el.tagName.toLowerCase();
+          anomalies.push({
+            selector,
+            reason: "clipped",
+            boundingBox: {
+              x: Math.round(rect.x),
+              y: Math.round(rect.y),
+              width: Math.round(rect.width),
+              height: Math.round(rect.height),
+            },
+          });
+          if (anomalies.length >= 3) break;
         }
       }
 

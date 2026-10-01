@@ -123,6 +123,7 @@ export class VisualCrawlerEngine {
     config: CrawlConfig,
     allowlist: string[],
   ): { selector: string; type: "click" | "navigate"; targetUrl?: string } | null {
+    // 1. First priority: discover and visit unvisited navigation routes
     for (const el of elements) {
       if (el.href) {
         const resolvedHref = new URL(el.href, currentUrl).href;
@@ -131,18 +132,9 @@ export class VisualCrawlerEngine {
           return { selector: el.selector, type: "navigate", targetUrl: resolvedHref };
         }
       }
-
-      const actionKey = `${currentUrl}::${el.selector}`;
-      const count = this.actionHistory.get(actionKey) || 0;
-      const routeCount = this.routeActionCount.get(currentUrl) || 0;
-
-      if (count < 2 && routeCount < 5) {
-        this.actionHistory.set(actionKey, count + 1);
-        this.routeActionCount.set(currentUrl, routeCount + 1);
-        return { selector: el.selector, type: "click" };
-      }
     }
 
+    // 2. Second priority: queued seed routes
     while (queue.length > 0) {
       const nextRoute = queue.shift();
       if (nextRoute) {
@@ -151,6 +143,23 @@ export class VisualCrawlerEngine {
         if (!this.visitedUrls.has(resolvedRoute)) {
           return { selector: "body", type: "navigate", targetUrl: resolvedRoute };
         }
+      }
+    }
+
+    // 3. Third priority: in-page interactive controls (buttons, tabs, inputs), NOT repeat link clicks
+    for (const el of elements) {
+      if (el.href) {
+        // Do not repeat click already-visited navigation links
+        continue;
+      }
+      const actionKey = `${currentUrl}::${el.selector}`;
+      const count = this.actionHistory.get(actionKey) || 0;
+      const routeCount = this.routeActionCount.get(currentUrl) || 0;
+
+      if (count < 1 && routeCount < 3) {
+        this.actionHistory.set(actionKey, count + 1);
+        this.routeActionCount.set(currentUrl, routeCount + 1);
+        return { selector: el.selector, type: "click" };
       }
     }
 

@@ -161,3 +161,68 @@ describe("TaskCompiler", () => {
     expect(updatedTasks[0].lastSeenAt).toBe(3000);
   });
 });
+
+it("increments occurrence count only for new hops and avoids multiplying on multiple compiles", () => {
+  const compiler = new TaskCompiler();
+  const run1Hops: HopRecord[] = [
+    {
+      hopNumber: 1,
+      url: "https://example.com/a",
+      action: "navigate",
+      timestamp: 1000,
+      domFingerprint: "fp-1",
+      anomalies: [
+        {
+          id: "ano-1",
+          type: "network_failure",
+          severity: "P1",
+          message: "HTTP 500 on /api/users",
+          httpStatus: 500,
+          url: "https://example.com/a",
+          timestamp: 1000,
+        },
+      ],
+    },
+  ];
+
+  const initialTasks = compiler.compile(run1Hops, []);
+  expect(initialTasks[0].occurrenceCount).toBe(1);
+
+  // If recompiled with an empty batch of new hops, occurrence count must not change
+  const untouched = compiler.compile([], initialTasks);
+  expect(untouched[0].occurrenceCount).toBe(1);
+
+  // If compiled with a second run containing 2 occurrences, it should be 1 + 2 = 3
+  const run2Hops: HopRecord[] = [
+    {
+      hopNumber: 2,
+      url: "https://example.com/b",
+      action: "navigate",
+      timestamp: 2000,
+      domFingerprint: "fp-2",
+      anomalies: [
+        {
+          id: "ano-2",
+          type: "network_failure",
+          severity: "P1",
+          message: "HTTP 500 on /api/users",
+          httpStatus: 500,
+          url: "https://example.com/b",
+          timestamp: 2000,
+        },
+        {
+          id: "ano-3",
+          type: "network_failure",
+          severity: "P1",
+          message: "HTTP 500 on /api/users",
+          httpStatus: 500,
+          url: "https://example.com/b",
+          timestamp: 2001,
+        },
+      ],
+    },
+  ];
+
+  const afterRun2 = compiler.compile(run2Hops, initialTasks);
+  expect(afterRun2[0].occurrenceCount).toBe(3);
+});

@@ -128,4 +128,30 @@ describe("TaskStore", () => {
     const restored = new TaskStore(testFile, 3);
     expect(restored.getTasks({ status: "ignored" })).toHaveLength(1);
   });
+
+  it("isolates hops per run so compile only processes the current run's hops", () => {
+    const run1Id = store.startRun();
+    store.recordHop({
+      hopNumber: 1,
+      url: "https://example.com/1",
+      action: "navigate",
+      timestamp: 1000,
+      domFingerprint: "fp-1",
+      anomalies: [],
+    });
+    expect(store.getCurrentRunHops()).toHaveLength(1);
+
+    const run2Id = store.startRun();
+    expect(store.getCurrentRunHops()).toHaveLength(0);
+    store.recordHop({
+      hopNumber: 1,
+      url: "https://example.com/2",
+      action: "navigate",
+      timestamp: 2000,
+      domFingerprint: "fp-2",
+      anomalies: [],
+    });
+    expect(store.getCurrentRunHops()).toHaveLength(1);
+    expect(store.getHops()).toHaveLength(2);
+  });
 });
