@@ -57,7 +57,8 @@ export interface StepExecutorHost {
     workspaceId: string;
     workspaceRoot: string;
     branch: string;
-  }): Promise<{ worktreePath: string; branch?: string }>;
+    title?: string;
+  }): Promise<{ worktreePath: string; branch?: string; workspaceId?: string }>;
   checkWorktreeExists?(params: {
     workspaceId: string;
     workspaceRoot: string;
@@ -149,6 +150,36 @@ function sha256(content: string): string {
 
 function requireJsonRecord(value: unknown): WorkflowStepAttempt["declaredOutputs"] {
   return value as WorkflowStepAttempt["declaredOutputs"];
+}
+
+function resolveWorktreeBranch(input: Record<string, unknown>, run: WorkflowRun): string {
+  if (typeof input.branch === "string" && input.branch.trim()) {
+    return input.branch.trim();
+  }
+  if (run.runInput && typeof (run.runInput as Record<string, unknown>).branch === "string") {
+    const candidate = ((run.runInput as Record<string, unknown>).branch as string).trim();
+    if (candidate) return candidate;
+  }
+  return `workflow-${run.id}`;
+}
+
+function resolveWorktreeTitle(
+  input: Record<string, unknown>,
+  run: WorkflowRun,
+): string | undefined {
+  if (typeof input.title === "string" && input.title.trim()) {
+    return input.title.trim();
+  }
+  if (!run.runInput || typeof run.runInput !== "object") return undefined;
+  const runInput = run.runInput as Record<string, unknown>;
+  if (typeof runInput.title === "string" && runInput.title.trim()) {
+    return runInput.title.trim();
+  }
+  if (typeof runInput.issueTitle === "string" && runInput.issueTitle.trim()) {
+    const prefix = typeof runInput.issueNumber === "number" ? `[#${runInput.issueNumber}] ` : "";
+    return `${prefix}${runInput.issueTitle.trim()}`.slice(0, 256);
+  }
+  return undefined;
 }
 
 export class StepExecutor {
@@ -677,18 +708,9 @@ export class StepExecutor {
     input: Record<string, unknown>,
     run: WorkflowRun,
   ): Promise<Record<string, unknown>> {
-    let branch = `workflow-${run.id}`;
-    if (typeof input.branch === "string" && input.branch.trim()) {
-      branch = input.branch.trim();
-    } else if (
-      run.runInput &&
-      typeof (run.runInput as Record<string, unknown>).branch === "string"
-    ) {
-      const candidate = ((run.runInput as Record<string, unknown>).branch as string).trim();
-      if (candidate) {
-        branch = candidate;
-      }
-    }
+    const branch = resolveWorktreeBranch(input, run);
+    const title = resolveWorktreeTitle(input, run);
+
     const existing = await this.host.checkWorktreeExists?.({
       workspaceId: run.workspaceId,
       workspaceRoot: run.workspaceRoot,
@@ -700,8 +722,13 @@ export class StepExecutor {
       workspaceId: run.workspaceId,
       workspaceRoot: run.workspaceRoot,
       branch,
+      ...(title ? { title } : {}),
     });
-    return { worktreePath: created.worktreePath, branch: created.branch ?? branch };
+    return {
+      worktreePath: created.worktreePath,
+      branch: created.branch ?? branch,
+      ...(created.workspaceId ? { workspaceId: created.workspaceId } : {}),
+    };
   }
 
   private async executeAgent(

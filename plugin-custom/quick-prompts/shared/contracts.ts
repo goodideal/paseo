@@ -27,6 +27,7 @@ export const QuickPromptItemSchema = z.object({
   ephemeral: z.boolean().optional(),
   createdAt: z.number(),
   order: z.number(),
+  targetModelId: z.string().optional(),
 });
 export type QuickPromptItem = z.infer<typeof QuickPromptItemSchema>;
 

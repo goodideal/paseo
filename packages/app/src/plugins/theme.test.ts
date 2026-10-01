@@ -73,6 +73,7 @@ describe("toPluginTheme", () => {
         surface0: lightTheme.colors.surface0,
         surface1: lightTheme.colors.surface1,
         surface2: lightTheme.colors.surface2,
+        surface3: lightTheme.colors.surface3,
         border: lightTheme.colors.border,
         foreground: lightTheme.colors.foreground,
         foregroundMuted: lightTheme.colors.foregroundMuted,

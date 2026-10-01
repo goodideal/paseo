@@ -111,6 +111,45 @@ describe("Workflow Core Step Adapters and Execution Lifecycle", () => {
     expect(result.run.stepAttempts[0].failureClassification).toBe("permission_denied");
   });
 
+  it("passes semantic title and returns workspaceId on worktree.create", async () => {
+    const { executor, host } = setup();
+    const run = {
+      ...makeRun("worktree_step", "worktree.create"),
+      runInput: {
+        issueNumber: 138,
+        issueTitle: "Cancel upstream stream",
+      },
+    };
+    vi.mocked(host.createWorktree!).mockResolvedValue({
+      worktreePath: "/worktrees/wsp_test/feat",
+      branch: "agent/issue-138",
+      workspaceId: "wks_new_138",
+    });
+
+    const permissions = new Set(["workspace.manage" as const, "workspace.read" as const]);
+    const result = await executor.execute({
+      run,
+      stepId: "worktree_step",
+      attemptId: "attempt_1",
+      input: { branch: "agent/issue-138" },
+      principalPermissions: permissions,
+      now: 1050,
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(host.createWorktree).toHaveBeenCalledWith({
+      workspaceId: run.workspaceId,
+      workspaceRoot: run.workspaceRoot,
+      branch: "agent/issue-138",
+      title: "[#138] Cancel upstream stream",
+    });
+    expect(result.declaredOutputs).toEqual({
+      worktreePath: "/worktrees/wsp_test/feat",
+      branch: "agent/issue-138",
+      workspaceId: "wks_new_138",
+    });
+  });
+
   it("creates approval request and elevates P0 findings for external writes (3.3)", async () => {
     const { executor } = setup();
     const run = makeRun("ship_step", "git.create_pr");

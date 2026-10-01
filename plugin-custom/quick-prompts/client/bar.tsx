@@ -46,11 +46,11 @@ const QuickPromptChip = memo(function QuickPromptChip({
   const accentColor = theme?.colors.accent ?? "#3b82f6";
   const fgColor = theme?.colors.foreground ?? "#f3f4f6";
   const surface2Color = theme?.colors.surface2 ?? "#262626";
-  const surface3Color = theme?.colors.surface1 ?? "#333333";
+  const surface3Color = theme?.colors.surface3 ?? theme?.colors.surface1 ?? "#333333";
   const borderColor = isEphemeral
     ? accentColor
     : isRule
-      ? (theme?.colors.accentForeground ?? "#60a5fa")
+      ? (theme?.colors.accent ?? "#60a5fa")
       : (theme?.colors.border ?? "#404040");
 
   return (
@@ -77,8 +77,7 @@ const QuickPromptChip = memo(function QuickPromptChip({
         style={[
           styles.chipText,
           {
-            color:
-              isEphemeral || isRule ? (theme?.colors.accentForeground ?? accentColor) : fgColor,
+            color: isEphemeral || isRule ? (theme?.colors.accent ?? accentColor) : fgColor,
             fontWeight: isEphemeral ? "600" : "500",
           },
         ]}
@@ -108,7 +107,7 @@ export const QuickPromptBar = memo(function QuickPromptBar({
   }
 
   const surface2 = theme?.colors.surface2 ?? "#262626";
-  const surface3 = theme?.colors.surface1 ?? "#333333";
+  const surface3 = theme?.colors.surface3 ?? theme?.colors.surface1 ?? "#333333";
   const border = theme?.colors.border ?? "#404040";
   const fgMuted = theme?.colors.foregroundMuted ?? "#9ca3af";
 

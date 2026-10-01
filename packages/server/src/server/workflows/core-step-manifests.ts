@@ -5,7 +5,11 @@ const AllPlatforms = ["darwin", "linux", "win32"] as const;
 
 const NoOutputSchema = z.object({}).strict();
 const WorktreeCreateOutputSchema = z
-  .object({ worktreePath: z.string(), branch: z.string() })
+  .object({
+    worktreePath: z.string(),
+    branch: z.string(),
+    workspaceId: z.string().optional(),
+  })
   .strict();
 const AgentDispatchOutputSchema = z
   .object({ agentId: z.string(), sessionId: z.string(), resumable: z.boolean() })
@@ -19,6 +23,7 @@ const WorktreeCreateInputSchema = z
   .object({
     sourceWorkspaceId: z.string().trim().min(1).max(256).optional(),
     branch: z.string().trim().min(1).max(256).optional(),
+    title: z.string().trim().min(1).max(256).optional(),
   })
   .strict();
 const AgentDispatchInputSchema = z

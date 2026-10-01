@@ -487,7 +487,9 @@ describe("createGiteaService", () => {
     expect(calls[0]).toContain("--fields");
     expect(calls[0]).toContain("-o");
     expect(calls[0]).toContain("json");
-    expect(calls[1]).toEqual(["pr", "5", "-o", "json"]);
+    expect(calls[0]).toContain("--repo");
+    expect(argValue(calls[0], "--repo")).toBe("example-user/sample-repo");
+    expect(calls[1]).toEqual(["pr", "5", "-o", "json", "--repo", "example-user/sample-repo"]);
     expect(calls[2]).toEqual([
       "api",
       "repos/example-user/sample-repo/commits/3333333333333333333333333333333333333333/status",
@@ -1628,8 +1630,10 @@ describe("createGiteaService", () => {
         "50",
         "--page",
         "1",
+        "--repo",
+        "example-user/sample-repo",
       ],
-      ["pr", "5", "-o", "json"],
+      ["pr", "5", "-o", "json", "--repo", "example-user/sample-repo"],
       ["api", `repos/example-user/sample-repo/commits/${STATUS_PR_VIEW.headSha}/status`],
     ]);
   });
@@ -1666,7 +1670,7 @@ describe("createGiteaService", () => {
 
     expect(details).toMatchObject({ checkRunId: 2, name: "ci/lint", status: "pending" });
     expect(calls).toEqual([
-      ["pr", "8", "-o", "json"],
+      ["pr", "8", "-o", "json", "--repo", "example-user/sample-repo"],
       ["api", `repos/example-user/sample-repo/commits/${headSha}/status`],
     ]);
   });
@@ -2256,6 +2260,8 @@ describe("createGiteaService", () => {
       "open",
       "-o",
       "json",
+      "--repo",
+      "example-user/sample-repo",
     ]);
   });
 
@@ -2280,7 +2286,7 @@ describe("createGiteaService", () => {
     expect(pr.number).toBe(6);
     expect(pr.headRefName).toBe("feat/conflict");
     // Fetched by number directly, not by scanning the recent-PR list.
-    expect(calls).toContainEqual(["pr", "6", "-o", "json"]);
+    expect(calls).toContainEqual(["pr", "6", "-o", "json", "--repo", "example-user/sample-repo"]);
   });
 
   it("maps a same-repo pull request to a checkout target", async () => {
@@ -2382,7 +2388,15 @@ describe("createGiteaService", () => {
     });
 
     expect(result).toEqual({ success: true });
-    expect(calls[0]).toEqual(["pr", "merge", "5", "--style", "squash"]);
+    expect(calls[0]).toEqual([
+      "pr",
+      "merge",
+      "5",
+      "--style",
+      "squash",
+      "--repo",
+      "example-user/sample-repo",
+    ]);
   });
 
   it("refuses to merge a pull request Gitea does not report as mergeable", async () => {
@@ -2426,7 +2440,7 @@ describe("createGiteaService", () => {
     });
 
     expect(calls).toEqual([
-      ["pr", "1", "-o", "json"],
+      ["pr", "1", "-o", "json", "--repo", "example-user/sample-repo"],
       ["api", "repos/example-user/sample-repo/issues/1/comments?page=1&limit=50"],
       ["api", "repos/example-user/sample-repo/pulls/1/reviews?page=1&limit=50"],
       ["api", "repos/example-user/sample-repo/pulls/1/reviews/2002/comments?page=1&limit=50"],
@@ -2881,6 +2895,8 @@ describe("createGiteaService", () => {
       "json",
       "--limit",
       "10",
+      "--repo",
+      "example-user/sample-repo",
     ]);
     expect(calls.find((args) => args[0] === "pr")).toEqual([
       "pr",
@@ -2893,6 +2909,8 @@ describe("createGiteaService", () => {
       "json",
       "--limit",
       "10",
+      "--repo",
+      "example-user/sample-repo",
     ]);
   });
 
@@ -2964,6 +2982,8 @@ describe("createGiteaService", () => {
         "open",
         "-o",
         "json",
+        "--repo",
+        "example-user/sample-repo",
       ],
     ]);
   });
@@ -3168,5 +3188,93 @@ describe("merged pull request head resolution", () => {
       headRefName: "agent/issue-78-bug-sb-s-p1-google-antigravity",
       baseRefName: "develop",
     });
+  });
+
+  it("passes explicit --repo to tea pr list and pr view when remote URL has embedded token credentials", async () => {
+    const customPr = {
+      ...OPEN_PR,
+      index: "156",
+      url: "https://git.ezcloud.cc/CoDevAI/codevai-hub/pulls/156",
+      head: "view-modelcv-model-library",
+    };
+    const customView = {
+      ...STATUS_PR_VIEW,
+      number: 156,
+      headSha: "60d3c50baeb4b78c9d4b1a43a6d482591605ec10",
+      headRef: "view-modelcv-model-library",
+    };
+    const { service, calls } = makeService(
+      (args) => {
+        if (args[0] === "pr" && args[1] === "list") return ok(JSON.stringify([customPr]));
+        if (args[0] === "pr" && args[1] === "156") return ok(JSON.stringify(customView));
+        if (args[0] === "api" && args[1].includes("/commits/")) {
+          return ok(JSON.stringify(SAMPLE_COMBINED_STATUS));
+        }
+        throw new Error(`unexpected call: ${args.join(" ")}`);
+      },
+      {
+        resolveRemoteUrl: async () =>
+          "https://luna_ai:df580562693677c590bd7bcd26f1fe048b5ac93e@git.ezcloud.cc/CoDevAI/codevai-hub.git",
+      },
+    );
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "view-modelcv-model-library",
+    });
+
+    expect(status).toMatchObject({
+      number: 156,
+      repoOwner: "CoDevAI",
+      repoName: "codevai-hub",
+      projectPath: "CoDevAI/codevai-hub",
+      headRefName: "view-modelcv-model-library",
+    });
+    expect(calls[0]).toContain("--repo");
+    expect(argValue(calls[0], "--repo")).toBe("CoDevAI/codevai-hub");
+    expect(calls[1]).toEqual(["pr", "156", "-o", "json", "--repo", "CoDevAI/codevai-hub"]);
+  });
+
+  it("omits --repo flag when origin remote URL cannot be resolved", async () => {
+    const { service, calls } = makeService(
+      (args) => {
+        if (args[0] === "pr" && args[1] === "list") return ok(JSON.stringify([OPEN_PR]));
+        if (args[0] === "pr" && args[1] === "5") return ok(JSON.stringify(STATUS_PR_VIEW));
+        if (args[0] === "api" && args[1].includes("/commits/")) {
+          return ok(JSON.stringify(SAMPLE_COMBINED_STATUS));
+        }
+        throw new Error(`unexpected call: ${args.join(" ")}`);
+      },
+      { resolveRemoteUrl: async () => null },
+    );
+
+    await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feat/sample-change",
+    });
+
+    expect(calls[0]).not.toContain("--repo");
+    expect(calls[1]).toEqual(["pr", "5", "-o", "json", "--repo", "example-user/sample-repo"]);
+  });
+
+  it("passes --repo when creating a pull request", async () => {
+    const { service, calls } = makeService(() =>
+      ok("https://gitea.com/example-user/sample-repo/pulls/10"),
+    );
+
+    const result = await service.createPullRequest({
+      cwd: "/repo",
+      title: "New feature",
+      head: "feat/new",
+      base: "main",
+      body: "Body",
+    });
+
+    expect(result).toEqual({
+      url: "https://gitea.com/example-user/sample-repo/pulls/10",
+      number: 10,
+    });
+    expect(calls[0]).toContain("--repo");
+    expect(argValue(calls[0], "--repo")).toBe("example-user/sample-repo");
   });
 });

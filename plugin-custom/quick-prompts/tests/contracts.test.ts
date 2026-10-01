@@ -23,6 +23,21 @@ describe("quick-prompts contracts", () => {
     }
   });
 
+  it("supports optional targetModelId in QuickPromptItemSchema", () => {
+    const itemWithModel = {
+      id: "custom-model",
+      label: "Model Prompt",
+      content: "Do this with opus",
+      triggerType: "fixed" as const,
+      enabled: true,
+      createdAt: 100,
+      order: 0,
+      targetModelId: "claude-3-7-sonnet",
+    };
+    const parsed = QuickPromptItemSchema.parse(itemWithModel);
+    expect(parsed.targetModelId).toBe("claude-3-7-sonnet");
+  });
+
   it("validates global get/set RPC payloads", () => {
     const defaultGet = quickPromptsGlobalGetRpc.input.parse({});
     expect(defaultGet).toEqual({});

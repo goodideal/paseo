@@ -7,6 +7,7 @@ export function toPluginTheme(theme: Theme): PluginTheme {
       surface0: theme.colors.surface0,
       surface1: theme.colors.surface1,
       surface2: theme.colors.surface2,
+      surface3: theme.colors.surface3,
       border: theme.colors.border,
       foreground: theme.colors.foreground,
       foregroundMuted: theme.colors.foregroundMuted,

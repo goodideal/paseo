@@ -7,10 +7,12 @@ import {
   usePaseo,
   useSettings,
 } from "@getpaseo/plugin/client";
+import { useToast } from "@getpaseo/plugin/client/react-native";
 import { QuickPromptBar } from "./bar.js";
 import { QuickPromptsModal } from "./modal.js";
 import { useEffectiveQuickPrompts } from "./use-quick-prompts.js";
 import { resolveActiveAgentProfileIds } from "./quick-prompt-resolver.js";
+import { executeQuickPrompt } from "./prompt-executor.js";
 import {
   quickPromptsSettings,
   type QuickPromptItem,
@@ -24,6 +26,7 @@ export const QuickPromptsAccessory = memo(function QuickPromptsAccessory({
 }: PluginComposerAccessoryProps) {
   const composerApi = useComposerApi();
   const paseo = usePaseo();
+  const toast = useToast();
 
   const workspace = useWorkspace(workspaceId, (ws) => ({
     projectId: ws.projectId,
@@ -120,12 +123,48 @@ export const QuickPromptsAccessory = memo(function QuickPromptsAccessory({
   });
 
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isExecutingModelSwitch, setIsExecutingModelSwitch] = useState(false);
+  const [availableModels, setAvailableModels] = useState<{ id: string; label: string }[]>([]);
+
+  useEffect(() => {
+    if (!agent?.provider || !paseo?.providers) {
+      setAvailableModels([]);
+      return;
+    }
+    let active = true;
+    paseo.providers
+      .listModels(agent.provider)
+      .then((res) => {
+        if (!active) return;
+        const models = (res?.models ?? []).map((m) => ({ id: m.id, label: m.label ?? m.id }));
+        setAvailableModels(models);
+      })
+      .catch(() => {
+        if (active) setAvailableModels([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [agent?.provider, paseo?.providers]);
 
   const handleSelectPrompt = useCallback(
-    (item: QuickPromptItem) => {
-      composerApi.submitText(item.content);
+    async (item: QuickPromptItem) => {
+      if (isExecutingModelSwitch) return;
+      setIsExecutingModelSwitch(true);
+      try {
+        await executeQuickPrompt({
+          item,
+          agentId: agentId ?? null,
+          paseo,
+          composerApi,
+          availableModelIds: availableModels.map((m) => m.id),
+          onToastError: (message) => toast?.error(message),
+        });
+      } finally {
+        setIsExecutingModelSwitch(false);
+      }
     },
-    [composerApi],
+    [agentId, paseo, composerApi, availableModels, isExecutingModelSwitch, toast],
   );
 
   const handleSelectForEdit = useCallback(
@@ -142,7 +181,7 @@ export const QuickPromptsAccessory = memo(function QuickPromptsAccessory({
         onSelectPrompt={handleSelectPrompt}
         onSelectForEdit={handleSelectForEdit}
         onOpenManage={() => setIsModalOpen(true)}
-        isSubmitDisabled={composerApi.isSubmitDisabled ?? false}
+        isSubmitDisabled={(composerApi.isSubmitDisabled ?? false) || isExecutingModelSwitch}
         theme={theme}
       />
       <QuickPromptsModal
@@ -156,6 +195,7 @@ export const QuickPromptsAccessory = memo(function QuickPromptsAccessory({
         onSaveGlobalItems={setGlobalItems}
         onResetGlobalDefaults={resetGlobalToDefaults}
         onSaveProjectConfig={setProjectConfig}
+        availableModels={availableModels}
         theme={theme}
       />
     </>

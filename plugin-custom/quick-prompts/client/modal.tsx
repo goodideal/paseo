@@ -1,6 +1,6 @@
 import React, { memo, useCallback, useMemo, useState } from "react";
 import { Pressable, Text, View, StyleSheet, Switch } from "react-native";
-import { Modal, ScrollView, TextInput } from "@getpaseo/plugin/client/react-native";
+import { Modal, ScrollView, TextInput, useToast } from "@getpaseo/plugin/client/react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
 import {
   type QuickPromptItem,
@@ -23,11 +23,26 @@ export interface QuickPromptsModalProps {
     disabledGlobalIds?: string[];
     order?: string[];
   }) => Promise<void>;
+  availableModels?: readonly { id: string; label: string }[];
   theme?: PluginTheme;
 }
 
 type ModalViewMode = "list" | "edit" | "create";
 type ScopeTab = "project" | "global";
+
+type ConfirmAction =
+  | { type: "reset" }
+  | { type: "delete"; id: string; label: string; scope: "global" | "project" }
+  | null;
+
+function useSafeToast() {
+  try {
+    return useToast();
+  } catch (err) {
+    console.error("EXECUTE CONFIRM ERROR:", err);
+    return null;
+  }
+}
 
 interface PromptFormState {
   label: string;
@@ -37,6 +52,7 @@ interface PromptFormState {
   keywords: string;
   regex: string;
   agentProfiles: string;
+  targetModelId: string;
 }
 
 const EMPTY_FORM: PromptFormState = {
@@ -47,6 +63,7 @@ const EMPTY_FORM: PromptFormState = {
   keywords: "",
   regex: "",
   agentProfiles: "",
+  targetModelId: "",
 };
 
 export const QuickPromptsModal = memo(function QuickPromptsModal({
@@ -60,6 +77,7 @@ export const QuickPromptsModal = memo(function QuickPromptsModal({
   onSaveGlobalItems,
   onResetGlobalDefaults,
   onSaveProjectConfig,
+  availableModels = [],
   theme,
 }: QuickPromptsModalProps) {
   const [activeTab, setActiveTab] = useState<ScopeTab>(projectId ? "project" : "global");
@@ -67,6 +85,9 @@ export const QuickPromptsModal = memo(function QuickPromptsModal({
   const [editingItem, setEditingItem] = useState<QuickPromptItem | null>(null);
   const [form, setForm] = useState<PromptFormState>(EMPTY_FORM);
   const [error, setError] = useState<string | null>(null);
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
+  const [isProcessingAction, setIsProcessingAction] = useState(false);
+  const toast = useSafeToast();
 
   const colors = useMemo(
     () => ({
@@ -86,6 +107,7 @@ export const QuickPromptsModal = memo(function QuickPromptsModal({
     setEditingItem(null);
     setForm(EMPTY_FORM);
     setError(null);
+    setConfirmAction(null);
     setViewMode("create");
   }, []);
 
@@ -99,8 +121,10 @@ export const QuickPromptsModal = memo(function QuickPromptsModal({
       keywords: (item.ruleCondition?.keywords ?? []).join(", "),
       regex: item.ruleCondition?.regex ?? "",
       agentProfiles: (item.ruleCondition?.agentProfiles ?? []).join(", "),
+      targetModelId: item.targetModelId ?? "",
     });
     setError(null);
+    setConfirmAction(null);
     setViewMode("edit");
   }, []);
 
@@ -108,6 +132,7 @@ export const QuickPromptsModal = memo(function QuickPromptsModal({
     setViewMode("list");
     setEditingItem(null);
     setError(null);
+    setConfirmAction(null);
   }, []);
 
   // Global toggle
@@ -116,19 +141,60 @@ export const QuickPromptsModal = memo(function QuickPromptsModal({
       const updated = globalItems.map((item) =>
         item.id === id ? { ...item, enabled: !item.enabled } : item,
       );
+      console.log("INSIDE DELETE: calling onSaveGlobalItems");
+      console.log("CALLING onSaveGlobalItems");
       await onSaveGlobalItems(updated);
+      console.log("FINISHED CALLING onSaveGlobalItems");
     },
     [globalItems, onSaveGlobalItems],
   );
 
-  // Global delete
-  const handleDeleteGlobalItem = useCallback(
-    async (id: string) => {
-      const updated = globalItems.filter((item) => item.id !== id);
-      await onSaveGlobalItems(updated);
-    },
-    [globalItems, onSaveGlobalItems],
-  );
+  // Confirm action executor (Reset or Delete)
+  const handleExecuteConfirm = useCallback(async () => {
+    if (!confirmAction) return;
+    setIsProcessingAction(true);
+    try {
+      if (confirmAction.type === "reset") {
+        await onResetGlobalDefaults();
+        setConfirmAction(null);
+        toast?.show("已成功恢复默认快捷提示词 / Reset to defaults successfully", {
+          variant: "success",
+        });
+      } else if (confirmAction.type === "delete") {
+        if (confirmAction.scope === "global") {
+          const updated = globalItems.filter((item) => item.id !== confirmAction.id);
+          await onSaveGlobalItems(updated);
+        } else if (onSaveProjectConfig) {
+          const updated = projectItems.filter((item) => item.id !== confirmAction.id);
+          await onSaveProjectConfig({ items: updated });
+        }
+        setConfirmAction(null);
+        toast?.show(`已删除提示词 "${confirmAction.label}" / Prompt deleted`, {
+          variant: "info",
+        });
+      }
+    } catch {
+      toast?.error(
+        confirmAction.type === "reset"
+          ? "重置失败，请重试 / Failed to reset"
+          : "删除失败，请重试 / Failed to delete",
+      );
+    } finally {
+      setIsProcessingAction(false);
+    }
+  }, [
+    confirmAction,
+    globalItems,
+    onResetGlobalDefaults,
+    onSaveGlobalItems,
+    onSaveProjectConfig,
+    projectItems,
+    toast,
+  ]);
+
+  const handleCancelConfirm = useCallback(() => {
+    setConfirmAction(null);
+  }, []);
 
   // Global move up/down
   const handleMoveGlobal = useCallback(
@@ -167,15 +233,10 @@ export const QuickPromptsModal = memo(function QuickPromptsModal({
     [disabledGlobalIds, onSaveProjectConfig, projectItems],
   );
 
-  // Project delete
-  const handleDeleteProjectItem = useCallback(
-    async (id: string) => {
-      if (!onSaveProjectConfig) return;
-      const updated = projectItems.filter((item) => item.id !== id);
-      await onSaveProjectConfig({ items: updated });
-    },
-    [onSaveProjectConfig, projectItems],
-  );
+  const handleSwitchTab = useCallback((tab: ScopeTab) => {
+    setActiveTab(tab);
+    setConfirmAction(null);
+  }, []);
 
   // Save form (create or edit)
   const handleSaveForm = useCallback(async () => {
@@ -215,6 +276,7 @@ export const QuickPromptsModal = memo(function QuickPromptsModal({
       enabled: editingItem ? editingItem.enabled : true,
       createdAt: editingItem?.createdAt ?? Date.now(),
       order: editingItem?.order ?? 999,
+      targetModelId: form.targetModelId.trim() || undefined,
     };
 
     if (activeTab === "global") {
@@ -253,7 +315,12 @@ export const QuickPromptsModal = memo(function QuickPromptsModal({
     <Modal
       title="快速提示词 / Quick Prompts"
       open={visible}
-      onOpenChange={(open) => !open && onClose()}
+      onOpenChange={(open) => {
+        if (!open) {
+          setConfirmAction(null);
+          onClose();
+        }
+      }}
     >
       <Modal.Content
         style={[styles.container, { backgroundColor: colors.surface0 }]}
@@ -263,7 +330,7 @@ export const QuickPromptsModal = memo(function QuickPromptsModal({
         {projectId && viewMode === "list" && (
           <View style={[styles.tabBar, { borderColor: colors.border }]}>
             <Pressable
-              onPress={() => setActiveTab("project")}
+              onPress={() => handleSwitchTab("project")}
               style={[
                 styles.tabItem,
                 activeTab === "project" && { backgroundColor: colors.surface2 },
@@ -279,7 +346,7 @@ export const QuickPromptsModal = memo(function QuickPromptsModal({
               </Text>
             </Pressable>
             <Pressable
-              onPress={() => setActiveTab("global")}
+              onPress={() => handleSwitchTab("global")}
               style={[
                 styles.tabItem,
                 activeTab === "global" && { backgroundColor: colors.surface2 },
@@ -308,15 +375,81 @@ export const QuickPromptsModal = memo(function QuickPromptsModal({
               </Pressable>
               {activeTab === "global" && (
                 <Pressable
-                  onPress={onResetGlobalDefaults}
-                  style={[styles.secondaryButton, { borderColor: colors.border }]}
+                  onPress={() => setConfirmAction({ type: "reset" })}
+                  style={[
+                    styles.secondaryButton,
+                    { borderColor: colors.border },
+                    confirmAction?.type === "reset" && { borderColor: colors.statusDanger },
+                  ]}
                 >
-                  <Text style={[styles.secondaryButtonText, { color: colors.foregroundMuted }]}>
+                  <Text
+                    style={[
+                      styles.secondaryButtonText,
+                      {
+                        color:
+                          confirmAction?.type === "reset"
+                            ? colors.statusDanger
+                            : colors.foregroundMuted,
+                      },
+                    ]}
+                  >
                     重置默认 / Reset
                   </Text>
                 </Pressable>
               )}
             </View>
+
+            {/* Confirmation Banner / Card */}
+            {confirmAction && (
+              <View
+                style={[
+                  styles.confirmCard,
+                  {
+                    backgroundColor: colors.surface1,
+                    borderColor: colors.statusDanger,
+                  },
+                ]}
+              >
+                <View style={styles.confirmHeader}>
+                  <Text style={[styles.confirmTitle, { color: colors.statusDanger }]}>
+                    {confirmAction.type === "reset"
+                      ? "⚠️ 确认恢复默认提示词？ / Reset to Defaults?"
+                      : `⚠️ 确认删除提示词？ / Delete "${confirmAction.label}"?`}
+                  </Text>
+                  <Text style={[styles.confirmMessage, { color: colors.foregroundMuted }]}>
+                    {confirmAction.type === "reset"
+                      ? "此操作将清除所有自定义全局快捷按钮并还原为初始默认配置，修改无法撤销。"
+                      : `确定要删除快捷提示词 “${confirmAction.label}” 吗？此操作不可撤销。`}
+                  </Text>
+                </View>
+                <View style={styles.confirmActionRow}>
+                  <Pressable
+                    onPress={handleCancelConfirm}
+                    disabled={isProcessingAction}
+                    style={[styles.secondaryButton, { borderColor: colors.border }]}
+                  >
+                    <Text style={[styles.secondaryButtonText, { color: colors.foreground }]}>
+                      取消 / Cancel
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={handleExecuteConfirm}
+                    disabled={isProcessingAction}
+                    style={[styles.dangerButton, { backgroundColor: colors.statusDanger }]}
+                  >
+                    <Text style={styles.dangerButtonText}>
+                      {isProcessingAction
+                        ? confirmAction.type === "reset"
+                          ? "重置中... / Resetting..."
+                          : "删除中... / Deleting..."
+                        : confirmAction.type === "reset"
+                          ? "确认重置 / Yes, Reset"
+                          : "确认删除 / Delete"}
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            )}
 
             {/* List items */}
             {activeTab === "global" ? (
@@ -377,7 +510,14 @@ export const QuickPromptsModal = memo(function QuickPromptsModal({
                       <Text style={{ color: colors.accent }}>✏️</Text>
                     </Pressable>
                     <Pressable
-                      onPress={() => handleDeleteGlobalItem(item.id)}
+                      onPress={() =>
+                        setConfirmAction({
+                          type: "delete",
+                          id: item.id,
+                          label: item.label,
+                          scope: "global",
+                        })
+                      }
                       style={styles.iconBtn}
                     >
                       <Text style={{ color: colors.statusDanger }}>🗑️</Text>
@@ -418,7 +558,14 @@ export const QuickPromptsModal = memo(function QuickPromptsModal({
                         <Text style={{ color: colors.accent }}>✏️</Text>
                       </Pressable>
                       <Pressable
-                        onPress={() => handleDeleteProjectItem(item.id)}
+                        onPress={() =>
+                          setConfirmAction({
+                            type: "delete",
+                            id: item.id,
+                            label: item.label,
+                            scope: "project",
+                          })
+                        }
                         style={styles.iconBtn}
                       >
                         <Text style={{ color: colors.statusDanger }}>🗑️</Text>
@@ -523,6 +670,46 @@ export const QuickPromptsModal = memo(function QuickPromptsModal({
               placeholder="e.g. fix / continue (optional)"
             />
 
+            <Text style={[styles.fieldLabel, { color: colors.foreground }]}>
+              执行模型 / Model (可选)
+            </Text>
+            {availableModels.length > 0 ? (
+              <View style={[styles.modelSelectBox, { borderColor: colors.border }]}>
+                {[
+                  { id: "", label: "使用当前模型 / Use current model" },
+                  ...availableModels.map((m) => ({ id: m.id, label: m.label })),
+                ].map((option) => {
+                  const isActive = form.targetModelId === option.id;
+                  return (
+                    <Pressable
+                      key={option.id || "__current__"}
+                      onPress={() => setForm((prev) => ({ ...prev, targetModelId: option.id }))}
+                      style={[
+                        styles.modelOption,
+                        isActive && {
+                          backgroundColor: colors.surface2,
+                          borderColor: colors.accent,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.modelOptionText,
+                          { color: isActive ? colors.accent : colors.foreground },
+                        ]}
+                      >
+                        {option.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ) : (
+              <Text style={[styles.modelUnavailable, { color: colors.foregroundMuted }]}>
+                暂无可用模型列表，将使用当前模型 / No models available, will use current model
+              </Text>
+            )}
+
             <View style={styles.formButtonRow}>
               <Pressable
                 onPress={handleBackToList}
@@ -576,6 +763,42 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 8,
+  },
+  confirmCard: {
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    marginBottom: 10,
+    gap: 10,
+  },
+  confirmHeader: {
+    gap: 4,
+  },
+  confirmTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  confirmMessage: {
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  confirmActionRow: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    alignItems: "center",
+    gap: 8,
+  },
+  dangerButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 6,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dangerButtonText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "600",
   },
   itemRow: {
     flexDirection: "row",
@@ -637,6 +860,28 @@ const styles = StyleSheet.create({
   errorText: {
     fontSize: 12,
     marginBottom: 6,
+  },
+  modelSelectBox: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 6,
+    padding: 8,
+  },
+  modelOption: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "transparent",
+  },
+  modelOptionText: {
+    fontSize: 13,
+  },
+  modelUnavailable: {
+    fontSize: 12,
+    lineHeight: 16,
   },
   formButtonRow: {
     flexDirection: "row",

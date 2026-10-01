@@ -1,0 +1,108 @@
+{
+  "telemetry": {
+    "state": "completed",
+    "currentHop": 10,
+    "maxHops": 10,
+    "activeUrl": "https://llm.ezcloud.cc/#/security-groups",
+    "totalAnomalies": 0,
+    "anomaliesBySeverity": {
+      "P0": 0,
+      "P1": 0,
+      "P2": 0,
+      "P3": 0
+    },
+    "startedAt": 1790845865626,
+    "endedAt": 1790845870446
+  },
+  "hops": [
+    {
+      "hopNumber": 1,
+      "url": "https://llm.ezcloud.cc/#/dashboard",
+      "action": "navigate",
+      "timestamp": 1790845867026,
+      "domFingerprint": "6d47b56f1137416e",
+      "anomalies": []
+    },
+    {
+      "hopNumber": 2,
+      "url": "https://llm.ezcloud.cc/#/dashboard",
+      "action": "login:credentials",
+      "timestamp": 1790845869107,
+      "domFingerprint": "9f82a09dad69fdf2",
+      "anomalies": []
+    },
+    {
+      "hopNumber": 3,
+      "url": "https://llm.ezcloud.cc/#/logs",
+      "action": "navigate:https://llm.ezcloud.cc/#/logs",
+      "timestamp": 1790845869265,
+      "domFingerprint": "8558e2b65bca21df",
+      "anomalies": []
+    },
+    {
+      "hopNumber": 4,
+      "url": "https://llm.ezcloud.cc/#/proficiency",
+      "action": "navigate:https://llm.ezcloud.cc/#/proficiency",
+      "timestamp": 1790845869425,
+      "domFingerprint": "47536d36aa387ced",
+      "anomalies": []
+    },
+    {
+      "hopNumber": 5,
+      "url": "https://llm.ezcloud.cc/#/providers",
+      "action": "navigate:https://llm.ezcloud.cc/#/providers",
+      "timestamp": 1790845869584,
+      "domFingerprint": "35a13c72f2078a23",
+      "anomalies": []
+    },
+    {
+      "hopNumber": 6,
+      "url": "https://llm.ezcloud.cc/#/models",
+      "action": "navigate:https://llm.ezcloud.cc/#/models",
+      "timestamp": 1790845869814,
+      "domFingerprint": "9323ef7134d09858",
+      "anomalies": []
+    },
+    {
+      "hopNumber": 7,
+      "url": "https://llm.ezcloud.cc/#/virtual-models",
+      "action": "navigate:https://llm.ezcloud.cc/#/virtual-models",
+      "timestamp": 1790845869976,
+      "domFingerprint": "cf504ef8a646434b",
+      "anomalies": []
+    },
+    {
+      "hopNumber": 8,
+      "url": "https://llm.ezcloud.cc/#/proxies",
+      "action": "navigate:https://llm.ezcloud.cc/#/proxies",
+      "timestamp": 1790845870132,
+      "domFingerprint": "a8f8ffbb671af0af",
+      "anomalies": []
+    },
+    {
+      "hopNumber": 9,
+      "url": "https://llm.ezcloud.cc/#/users",
+      "action": "navigate:https://llm.ezcloud.cc/#/users",
+      "timestamp": 1790845870290,
+      "domFingerprint": "2f7bd28022df49f8",
+      "anomalies": []
+    },
+    {
+      "hopNumber": 10,
+      "url": "https://llm.ezcloud.cc/#/security-groups",
+      "action": "navigate:https://llm.ezcloud.cc/#/security-groups",
+      "timestamp": 1790845870446,
+      "domFingerprint": "46ef0fcd46b20a60",
+      "anomalies": []
+    }
+  ],
+  "anomalies": [],
+  "directives": [],
+  "tasks": [],
+  "slots": [
+    {
+      "slotIndex": 0,
+      "status": "idle"
+    }
+  ]
+}

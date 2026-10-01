@@ -1410,14 +1410,19 @@ export async function createPaseoDaemon(
     return artifact;
   };
   const workflowExecutor = new StepExecutor(workflowRegistry, workflowProfiles, {
-    createWorktree: async ({ workspaceRoot, branch }) => {
+    createWorktree: async ({ workspaceRoot, branch, title }) => {
       const result = await createPaseoWorktreeForTools({
         cwd: workspaceRoot,
         branchName: branch,
         worktreeSlug: branch,
+        ...(title ? { title } : {}),
         firstAgentContext: { attachments: [] },
       });
-      return { worktreePath: result.worktree.worktreePath, branch: result.worktree.branchName };
+      return {
+        worktreePath: result.worktree.worktreePath,
+        branch: result.worktree.branchName,
+        workspaceId: result.workspace.workspaceId,
+      };
     },
     dispatchAgent: async ({ cwd, promptId, provider }) => {
       const result = await createAgent({

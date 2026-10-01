@@ -310,6 +310,34 @@ test("agent handles send permission responses for their agent", async () => {
   await client.close();
 });
 
+test("agent handles set model for their agent", async () => {
+  const { client, ws } = await connectClient();
+
+  const setPromise = client.agents.ref("agent_sdk").setModel("claude-3-7-sonnet");
+
+  const sent = parseSentSessionMessage(ws.sent.at(-1));
+  expect(sent).toMatchObject({
+    type: "set_agent_model_request",
+    agentId: "agent_sdk",
+    modelId: "claude-3-7-sonnet",
+  });
+
+  ws.message(
+    sessionMessage({
+      type: "set_agent_model_response",
+      payload: {
+        requestId: sent.requestId,
+        agentId: "agent_sdk",
+        accepted: true,
+        error: null,
+      },
+    }),
+  );
+
+  await expect(setPromise).resolves.toBeUndefined();
+  await client.close();
+});
+
 test("project actions list registered projects through the existing RPC", async () => {
   const { client, ws } = await connectClient();
 

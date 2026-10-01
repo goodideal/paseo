@@ -6,6 +6,7 @@ export interface PluginTheme {
     readonly surface0: string;
     readonly surface1: string;
     readonly surface2: string;
+    readonly surface3: string;
     readonly border: string;
     readonly foreground: string;
     readonly foregroundMuted: string;

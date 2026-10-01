@@ -380,6 +380,7 @@ export interface PaseoAgentHandle {
   commands(options?: PaseoAgentCommandsOptions): Promise<PaseoAgentCommandsResult>;
   archive(): Promise<{ archivedAt: string }>;
   detach(): Promise<void>;
+  setModel(modelId: string | null): Promise<void>;
   subscribe(handler: (update: PaseoAgentUpdate) => void): () => void;
 }
 
@@ -1013,6 +1014,12 @@ function createAgentHandleFactory(
       },
       detach: async () => {
         await daemonClient.detachAgent(id);
+      },
+      setModel: async (modelId) => {
+        await daemonClient.setAgentModel(id, modelId);
+        if (current) {
+          current = { ...current, model: modelId };
+        }
       },
       subscribe: (handler) =>
         listen((update) => {
