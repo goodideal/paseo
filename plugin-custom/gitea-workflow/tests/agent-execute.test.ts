@@ -25,6 +25,11 @@ describe("Agent Execute Adapter", () => {
       send: vi.fn().mockResolvedValue(undefined),
     };
 
+    const mockWsRef = {
+      current: vi.fn().mockReturnValue({ id: "ws-wt-run-99", title: null }),
+      setTitle: vi.fn().mockResolvedValue(undefined),
+    };
+
     const mockPaseo = {
       workspaces: {
         list: vi.fn().mockResolvedValue({
@@ -43,6 +48,7 @@ describe("Agent Execute Adapter", () => {
             },
           ],
         }),
+        ref: vi.fn().mockReturnValue(mockWsRef),
       },
       agents: {
         create: vi.fn().mockResolvedValue(mockAgentHandle),
@@ -74,6 +80,9 @@ describe("Agent Execute Adapter", () => {
     // 3. Verifies proposal summary is returned in result
     expect(result.summary).toContain("### 方案选型");
     expect(result.status).toBe("succeeded");
+
+    // 4. Verifies workspace title is set semantically
+    expect(mockWsRef.setTitle).toHaveBeenCalledWith("✨ #42 [Feature] Implement vector caching");
   });
   it("passes configured changeMode (e.g. Codex full-access) to agent create options", async () => {
     const mockSettings = {

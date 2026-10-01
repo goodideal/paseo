@@ -6,6 +6,7 @@ import type { PaseoWorkflowActions, PaseoWorkspaceActions } from "@getpaseo/clie
 import { resolveIssueWorkflowPreset } from "./preset-resolver.js";
 import { isApprovalComment } from "./adapters/dual-approval-gate.js";
 import { LIFECYCLE_LABELS } from "../shared/types.js";
+import { formatWorkflowWorkspaceTitle } from "./workspace-title.js";
 
 export interface PaseoProjectItem {
   projectId: string;
@@ -40,7 +41,7 @@ export function deriveBranchSlug(issueNumber: number, title?: string): string {
   if (!title) return `agent/issue-${issueNumber}`;
   const clean = title
     .toLowerCase()
-    .replace(/[^\w\s-]/g, "")
+    .replace(/[^\p{L}\p{N}\s-]/gu, "")
     .trim()
     .replace(/\s+/g, "-")
     .replace(/-+/g, "-")
@@ -371,6 +372,11 @@ export class MultiProjectPoller {
               );
             }
 
+            const semanticTitle = formatWorkflowWorkspaceTitle({
+              issueNumber: issue.number,
+              rawTitle: issue.title,
+              labels: issue.labels,
+            });
             const createRes = await workflows.runCreate({
               projectId: project.projectId,
               workspaceId,
@@ -383,6 +389,7 @@ export class MultiProjectPoller {
                 issueNumber: issue.number,
                 issueTitle: issue.title,
                 issueBody: issue.body,
+                title: semanticTitle,
                 branch: deriveBranchSlug(issue.number, issue.title),
                 listenLabel: readyLabel,
                 policy,
@@ -397,6 +404,7 @@ export class MultiProjectPoller {
                 repoOwner: resolved.repoOwner,
                 repoName: resolved.repoName,
                 issueNumber: issue.number,
+                issueTitle: issue.title,
                 runId: createRes.runId,
                 baseUrl: resolved.baseUrl,
                 token: resolved.token,

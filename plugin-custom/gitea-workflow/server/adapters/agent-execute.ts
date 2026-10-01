@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { PluginWorkflowStepAdapterRegistration } from "@getpaseo/plugin/server";
 import type { SettingsManager } from "../settings-manager.js";
 import type { IssueRunIndexStore } from "../store.js";
+import { formatWorkflowWorkspaceTitle, cleanIssueTitle } from "../workspace-title.js";
 
 const PHASE_META: Record<string, { icon: string; label: string }> = {
   brainstorm: { icon: "💡", label: "方案设计" },
@@ -50,17 +51,28 @@ export function createAgentExecuteAdapter(
         try {
           const list = await (context as any).paseo.workspaces.list({ filter: { projectId } });
           const entries = list?.entries ?? [];
-          const match = entries.find(
-            (w: any) => runId && (w.workspaceDirectory?.includes(runId) || w.name?.includes(runId)),
-          );
-          if (match?.workspaceDirectory) {
-            targetCwd = match.workspaceDirectory;
-            targetWorkspaceId = match.id;
-          } else {
-            // Check upstream worktree-create output if available
-            const wtOutput = (context as any)?.stepOutputs?.["worktree-create"];
-            if (wtOutput?.directory || wtOutput?.cwd) {
-              targetCwd = wtOutput.directory || wtOutput.cwd;
+          const wtOutput = (context as any)?.stepOutputs?.["worktree-create"];
+
+          if (wtOutput?.workspaceId) {
+            targetWorkspaceId = wtOutput.workspaceId;
+            const ws = entries.find((w: any) => w.id === targetWorkspaceId);
+            if (ws?.workspaceDirectory) {
+              targetCwd = ws.workspaceDirectory;
+            } else if (wtOutput?.directory || wtOutput?.cwd || wtOutput?.worktreePath) {
+              targetCwd = wtOutput.directory || wtOutput.cwd || wtOutput.worktreePath;
+            }
+          }
+
+          if (!targetWorkspaceId) {
+            const match = entries.find(
+              (w: any) =>
+                runId && (w.workspaceDirectory?.includes(runId) || w.name?.includes(runId)),
+            );
+            if (match?.workspaceDirectory) {
+              targetCwd = match.workspaceDirectory;
+              targetWorkspaceId = match.id;
+            } else if (wtOutput?.directory || wtOutput?.cwd || wtOutput?.worktreePath) {
+              targetCwd = wtOutput.directory || wtOutput.cwd || wtOutput.worktreePath;
               targetWorkspaceId = wtOutput.workspaceId;
             } else {
               const worktrees = entries.filter((w: any) => w.workspaceKind === "worktree");
@@ -68,6 +80,28 @@ export function createAgentExecuteAdapter(
                 targetCwd = worktrees[0].workspaceDirectory || targetCwd;
                 targetWorkspaceId = worktrees[0].id;
               }
+            }
+          }
+
+          // Ensure the workspace has a semantic title
+          if (targetWorkspaceId) {
+            try {
+              const wsRef = (context as any).paseo.workspaces.ref(targetWorkspaceId);
+              const currentWs = typeof wsRef?.current === "function" ? wsRef.current() : null;
+              const titleToSet =
+                entry?.issueTitle && entry?.issueNumber
+                  ? formatWorkflowWorkspaceTitle({
+                      issueNumber: entry.issueNumber,
+                      rawTitle: entry.issueTitle,
+                    })
+                  : entry?.issueNumber
+                    ? `#${entry.issueNumber}`
+                    : undefined;
+              if (titleToSet && !currentWs?.title && typeof wsRef?.setTitle === "function") {
+                await wsRef.setTitle(titleToSet);
+              }
+            } catch {
+              // ignore title sync error
             }
           }
         } catch {
@@ -126,7 +160,8 @@ Then, proceed with the engineering workflow and ensure high code quality.`;
         : "auto";
 
       const meta = PHASE_META[phase.toLowerCase()] || { icon: "🤖", label: phase };
-      const shortTitle = issueTitle ? ` · ${issueTitle.slice(0, 28)}` : "";
+      const cleanShort = issueTitle ? cleanIssueTitle(issueTitle) : "";
+      const shortTitle = cleanShort ? ` · ${cleanShort.slice(0, 28)}` : "";
       const agentTitle = `${meta.icon} [#${issueNum}] ${meta.label}${shortTitle}`;
 
       const agentHandle = await (context as any).paseo.agents.create({

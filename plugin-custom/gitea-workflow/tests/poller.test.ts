@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { MultiProjectPoller } from "../server/poller.js";
+import { MultiProjectPoller, deriveBranchSlug } from "../server/poller.js";
 
 describe("MultiProjectPoller", () => {
   it("skips unauthorized projects and creates workflow run for authorized ready issues", async () => {
@@ -58,11 +58,19 @@ describe("MultiProjectPoller", () => {
         projectId: "proj-auth",
         workspaceId: "wks-active",
         workflowId: "gitea.issue-to-pr",
-        input: expect.objectContaining({ issueNumber: 101, token: "tok" }),
+        input: expect.objectContaining({
+          issueNumber: 101,
+          token: "tok",
+          title: "🐞 #101 [Bug] Fix bug",
+        }),
       }),
     );
     expect(mockIndexStore.recordRun).toHaveBeenCalledWith(
-      expect.objectContaining({ issueNumber: 101, runId: "run-gitea-101" }),
+      expect.objectContaining({
+        issueNumber: 101,
+        issueTitle: "Fix bug",
+        runId: "run-gitea-101",
+      }),
     );
   });
 
@@ -762,4 +770,16 @@ describe("MultiProjectPoller", () => {
       expect.stringContaining("#### 方案架构建议"),
     );
   });
+});
+
+it("derives branch slug preserving unicode/chinese characters cleanly", () => {
+  const slug1 = deriveBranchSlug(
+    138,
+    "[req/TR] [S] [P1] 支持下游断连感知与上游流式推理的主动取消熔断",
+  );
+  expect(slug1).toContain("agent/issue-138");
+  expect(slug1).toContain("支持下游断连感知");
+
+  const slug2 = deriveBranchSlug(99, "修复登录白屏异常");
+  expect(slug2).toBe("agent/issue-99-修复登录白屏异常");
 });
