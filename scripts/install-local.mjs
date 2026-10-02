@@ -31,7 +31,7 @@ function runCapture(command, args, options = {}) {
 function getModTimestamp() {
   const now = new Date();
   const pad = (n) => String(n).padStart(2, "0");
-  return `${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}`;
+  return `d${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}`;
 }
 
 function formatModDisplayVersion(version) {
@@ -44,7 +44,7 @@ function formatModDisplayVersion(version) {
     return `v${bracketMatch[1]} [mod-${bracketMatch[2]}]`;
   }
   const customTimestampMatch = val.match(
-    /^(?:v)?(\d+\.\d+\.\d+(?:-beta\.\d+)?)-custom(?:(?:\.|-))(?:mod-)?(\d{6}|\w+)$/i,
+    /^(?:v)?(\d+\.\d+\.\d+(?:-beta\.\d+)?)-custom(?:(?:\.|-))(?:mod-|d)?(\d{6}|\w+)$/i,
   );
   if (customTimestampMatch) {
     return `v${customTimestampMatch[1]} [mod-${customTimestampMatch[2]}]`;
