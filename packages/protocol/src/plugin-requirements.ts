@@ -23,7 +23,12 @@ export function assertPluginCompatibility(input: PluginCompatibilityInput): void
   validatePluginRequirements(input.requirements);
   // COMPAT(plugin-requirements): added in v0.8.0-beta.1; remove after 2027-03-07 once pre-0.8 plugins and catalogs are unsupported. The legacy range excludes 0.8 prereleases and their stable core.
   const range = input.requirements?.paseo ?? "<0.8.0";
-  const cleanVersion = input.version ? input.version.replace(/\s*\[.*\]\s*$/, "").trim() : null;
+  const cleanVersion = input.version
+    ? input.version
+        .replace(/\s*\[.*\]\s*$/, "")
+        .replace(/-custom(?:\.[-\w]+)?$/, "")
+        .trim()
+    : null;
   const version = cleanVersion ? parse(cleanVersion) : null;
   if (!version) {
     throw new Error(
