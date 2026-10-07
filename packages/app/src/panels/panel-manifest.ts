@@ -120,11 +120,15 @@ const manifests = {
   workflow_runs: {
     kind: "workflow_runs",
     supportedHosts: ["main"],
+    showCloseButton: true,
+    singleton: false,
     resourceKey: (target) => target.workspaceId,
   },
   reader: {
     kind: "reader",
     supportedHosts: ["main", "explorer"],
+    showCloseButton: true,
+    singleton: false,
     resourceKey: (target) => target.workspaceId,
   },
 } satisfies PanelManifestByKind;

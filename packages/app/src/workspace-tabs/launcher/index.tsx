@@ -201,7 +201,6 @@ export function useWorkspaceTabLaunchCatalog(input: {
         Icon: workflowRunsPresentation.icon,
         disabled: false,
         panelKind: "workflow_runs",
-        toggleTarget: null,
         hidden: launcher.showWorkflowRuns === false,
         launch: (destination) =>
           launcher.launch(
