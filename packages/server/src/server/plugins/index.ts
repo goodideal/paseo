@@ -22,6 +22,7 @@ import { BUILTIN_PROVIDER_IDS } from "@getpaseo/protocol/provider-manifest";
 import type { DaemonConfigStore } from "../daemon-config-store.js";
 import { type ManagedPluginCandidate, ManagedPluginSources } from "./managed-source.js";
 import { readPluginManifest } from "./manifest.js";
+import { expandTilde } from "../../utils/path.js";
 import { runPluginBuild } from "./preparation.js";
 import { PluginRuntime } from "./runtime.js";
 import { BuiltinPluginLoader, type BuiltinPlugin } from "./builtin/index.js";
@@ -34,13 +35,18 @@ import type { WorkflowPresetRegistry } from "../workflows/workflow-preset-regist
 import type { StepAdapterRegistry } from "../workflows/step-adapter-registry.js";
 import type { WorkflowService } from "../workflows/workflow-service.js";
 import { readPluginProviderIcon } from "./provider-icon.js";
-import { UsageSourceRegistry } from "./usage-sources/index.js";
+import {
+  type AgentUsageLookup,
+  type ListUsageReportsOptions,
+  UsageSourceRegistry,
+} from "./usage-sources/index.js";
 import type { PluginUsageSourceMetadata } from "./plugin-process-protocol.js";
 
 const BUILTIN_PROVIDER_ID_SET: ReadonlySet<string> = new Set(BUILTIN_PROVIDER_IDS);
 
 interface PluginRuntimePort {
   emit?: PluginLifecycle["emit"];
+  drainEvents?: PluginRuntime["drainEvents"];
   before?: PluginLifecycle["before"];
   catalog: PluginRuntime["catalog"];
   invoke(pluginId: string, method: string, input: unknown): Promise<unknown>;
@@ -67,6 +73,7 @@ interface PluginRuntimePort {
 }
 
 interface PluginServiceDependencies {
+  usageAgents?: AgentUsageLookup;
   settingsDirectory?: string;
   workflowPresets?: WorkflowPresetRegistry;
   workflowRegistry?: StepAdapterRegistry;
@@ -110,7 +117,12 @@ export class PluginService {
     private readonly dependencies: PluginServiceDependencies = {},
   ) {
     this.logger = logger.child({ module: "plugin-service" });
-    this.usageSources = new UsageSourceRegistry(Date.now, 300_000, this.logger);
+    this.usageSources = new UsageSourceRegistry(
+      Date.now,
+      300_000,
+      this.logger,
+      dependencies.usageAgents,
+    );
     this.runtime =
       dependencies.runtime ??
       new PluginRuntime(logger, daemonVersion, {
@@ -133,6 +145,10 @@ export class PluginService {
   readonly emit: PluginLifecycle["emit"] = (name, event) => {
     this.runtime.emit?.(name, event);
   };
+
+  async drainEvents(): Promise<void> {
+    await this.runtime.drainEvents?.();
+  }
 
   readonly before: PluginLifecycle["before"] = async (name, request) => {
     if (this.runtime.before) {
@@ -159,7 +175,7 @@ export class PluginService {
     return [...this.providers.values()].sort((left, right) => left.id.localeCompare(right.id));
   }
 
-  listUsageReports(options?: { forceRefresh?: boolean; reportIds?: string[] }) {
+  listUsageReports(options?: ListUsageReportsOptions) {
     return this.usageSources.listReports(options);
   }
 
@@ -215,7 +231,12 @@ export class PluginService {
           }),
         };
         const manifest = await readPluginManifest(path.resolve(source.path)).catch(() => null);
-        if (manifest?.description) item.description = manifest.description;
+        if (manifest) {
+          item.name = manifest.name;
+          item.description = manifest.description;
+          item.icon = manifest.icon;
+          item.media = manifest.media;
+        }
         item.installation = await this.managedSources
           ?.describe(id, source.path)
           .catch(() => undefined);
@@ -286,16 +307,11 @@ export class PluginService {
     if (input.id && this.builtinPluginIds.has(input.id)) {
       throw new Error(`Plugin ID "${input.id}" is reserved for a built-in plugin`);
     }
-    const directDirectory = path.resolve(input.source);
-    const explicit = /^(npm:|github:|git:(?!\/\/))/.test(input.source);
-    const directInfo = await stat(directDirectory).catch(() => null);
-    const reference = directInfo?.isDirectory()
-      ? { source: input.source, pluginPath: undefined }
-      : parsePluginSourceReference(input.source);
-    const directory = path.resolve(reference.source);
-    let info = directInfo;
-    if (!info?.isDirectory() && !explicit) info = await stat(directory).catch(() => null);
-    if (info?.isDirectory()) {
+    const reference = parsePluginSourceReference(input.source);
+    if (reference.kind === "directory") {
+      const directory = path.resolve(expandTilde(reference.source));
+      const info = await stat(directory).catch(() => null);
+      if (!info?.isDirectory()) throw new Error(`Plugin directory does not exist: ${directory}`);
       if (input.ref) throw new Error("Plugin --ref is only valid for Git sources");
       const pluginDirectory = resolveLocalPluginPath(directory, reference.pluginPath);
       return this.installDirectory({ path: pluginDirectory, id: input.id });
@@ -646,8 +662,8 @@ export class PluginService {
           id: source.id,
           label: source.label,
           icon: source.icon,
-          discover: async () => {
-            const result = await this.runtime.discoverUsage(pluginId, source.id);
+          discover: async (scope) => {
+            const result = await this.runtime.discoverUsage(pluginId, source.id, scope);
             if (!Array.isArray(result))
               throw new Error(`Invalid usage discovery from ${source.id}`);
             return result;
