@@ -12,6 +12,7 @@ import {
 } from "@getpaseo/plugin/client/ui";
 import type { GiteaProjectDiagnostic } from "../shared/types.js";
 import { getAgentChangeModeOptions } from "./host-settings.js";
+import { PromptEditorField } from "./prompt-editor-field.js";
 import {
   DEFAULT_AGENT_AUTO_PROMPT,
   DEFAULT_AGENT_PLAN_PROMPT,
@@ -135,12 +136,24 @@ export function ProjectDetailSettings({
             label="可用插值变量"
             hint={PROMPT_PLACEHOLDERS.map((p) => `{{${p.key}}}`).join(", ")}
           />
-          <SettingsInput
-            key={`project-auto-${projectSettings.agentAutoPromptOverride ?? ""}`}
+          <PromptEditorField
             label="Agent Auto 提示词覆盖 (可选)"
             hint="留空继承全局配置。若需完全重置为继承全局，可点击下方清除覆盖"
-            initialValue={projectSettings.agentAutoPromptOverride ?? ""}
+            value={projectSettings.agentAutoPromptOverride ?? ""}
+            actionLabel="填充默认 Auto 模板"
             disabled={settings.saving}
+            theme={theme}
+            placeholder="留空继承全局配置..."
+            onAction={() => {
+              const updated = {
+                ...values.projects,
+                [projectId]: {
+                  ...projectSettings,
+                  agentAutoPromptOverride: DEFAULT_AGENT_AUTO_PROMPT,
+                },
+              };
+              void settings.save({ ...values, projects: updated }, settings.revision);
+            }}
             onChangeText={(val: string) => {
               const updated = {
                 ...values.projects,
@@ -152,48 +165,30 @@ export function ProjectDetailSettings({
               void settings.save({ ...values, projects: updated }, settings.revision);
             }}
           />
-          <SettingsAction
-            label=""
-            actionLabel="填充默认 Auto 模板"
+          <PromptEditorField
+            label="Agent Plan 提示词覆盖 (可选)"
+            hint="留空继承全局配置。若需完全重置为继承全局，可点击下方清除覆盖"
+            value={projectSettings.agentPlanPromptOverride ?? ""}
+            actionLabel="填充默认 Plan 模板"
             disabled={settings.saving}
-            onPress={() => {
+            theme={theme}
+            placeholder="留空继承全局配置..."
+            onAction={() => {
               const updated = {
                 ...values.projects,
                 [projectId]: {
                   ...projectSettings,
-                  agentAutoPromptOverride: DEFAULT_AGENT_AUTO_PROMPT,
+                  agentPlanPromptOverride: DEFAULT_AGENT_PLAN_PROMPT,
                 },
               };
               void settings.save({ ...values, projects: updated }, settings.revision);
             }}
-          />
-          <SettingsInput
-            key={`project-plan-${projectSettings.agentPlanPromptOverride ?? ""}`}
-            label="Agent Plan 提示词覆盖 (可选)"
-            hint="留空继承全局配置。若需完全重置为继承全局，可点击下方清除覆盖"
-            initialValue={projectSettings.agentPlanPromptOverride ?? ""}
-            disabled={settings.saving}
             onChangeText={(val: string) => {
               const updated = {
                 ...values.projects,
                 [projectId]: {
                   ...projectSettings,
                   agentPlanPromptOverride: val || undefined,
-                },
-              };
-              void settings.save({ ...values, projects: updated }, settings.revision);
-            }}
-          />
-          <SettingsAction
-            label=""
-            actionLabel="填充默认 Plan 模板"
-            disabled={settings.saving}
-            onPress={() => {
-              const updated = {
-                ...values.projects,
-                [projectId]: {
-                  ...projectSettings,
-                  agentPlanPromptOverride: DEFAULT_AGENT_PLAN_PROMPT,
                 },
               };
               void settings.save({ ...values, projects: updated }, settings.revision);
