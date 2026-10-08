@@ -4,6 +4,7 @@ import {
   type GiteaHostSettings,
   type GiteaWorkflowPolicy,
 } from "../shared/types.js";
+import { DEFAULT_AGENT_AUTO_PROMPT, DEFAULT_AGENT_PLAN_PROMPT } from "../shared/prompts.js";
 
 export class SettingsManager {
   private _current: GiteaHostSettings = GiteaHostSettingsSchema.parse({});
@@ -61,6 +62,38 @@ export class SettingsManager {
       return this._current.projects[projectId].agentModelOverride;
     }
     return this._current.agentModel || undefined;
+  }
+
+  getAgentAutoPrompt(projectId?: string): string {
+    const override = projectId
+      ? this._current.projects[projectId]?.agentAutoPromptOverride
+      : undefined;
+    if (typeof override === "string" && override.trim().length > 0) {
+      return override.trim();
+    }
+    if (
+      typeof this._current.agentAutoPrompt === "string" &&
+      this._current.agentAutoPrompt.trim().length > 0
+    ) {
+      return this._current.agentAutoPrompt.trim();
+    }
+    return DEFAULT_AGENT_AUTO_PROMPT;
+  }
+
+  getAgentPlanPrompt(projectId?: string): string {
+    const override = projectId
+      ? this._current.projects[projectId]?.agentPlanPromptOverride
+      : undefined;
+    if (typeof override === "string" && override.trim().length > 0) {
+      return override.trim();
+    }
+    if (
+      typeof this._current.agentPlanPrompt === "string" &&
+      this._current.agentPlanPrompt.trim().length > 0
+    ) {
+      return this._current.agentPlanPrompt.trim();
+    }
+    return DEFAULT_AGENT_PLAN_PROMPT;
   }
 
   dispose(): void {

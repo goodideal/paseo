@@ -128,4 +128,71 @@ describe("SettingsManager", () => {
     expect(manager.getAgentChangeMode("proj-default")).toBe("auto");
     expect(manager.getAgentChangeMode("proj-full-access")).toBe("full-access");
   });
+
+  it("resolves auto and plan prompts with cascading precedence and fallback", async () => {
+    const mockPluginSettings = {
+      read: vi.fn().mockResolvedValue({
+        status: "ready",
+        values: {
+          enabled: true,
+          agentAutoPrompt: "Host Auto Prompt {{issueNumber}}",
+          agentPlanPrompt: "Host Plan Prompt {{issueNumber}}",
+          projects: {
+            "proj-inherited": { enabled: true },
+            "proj-overridden": {
+              enabled: true,
+              agentAutoPromptOverride: "Project Auto Prompt {{issueTitle}}",
+              agentPlanPromptOverride: "Project Plan Prompt {{issueTitle}}",
+            },
+            "proj-whitespace": {
+              enabled: true,
+              agentAutoPromptOverride: "   ",
+              agentPlanPromptOverride: "",
+            },
+          },
+        },
+        revision: "rev-1",
+      }),
+      subscribe: vi.fn().mockReturnValue(() => {}),
+    };
+
+    const manager = new SettingsManager(mockPluginSettings as any);
+    await manager.initialize();
+
+    // 1. Project override takes precedence
+    expect(manager.getAgentAutoPrompt("proj-overridden")).toBe(
+      "Project Auto Prompt {{issueTitle}}",
+    );
+    expect(manager.getAgentPlanPrompt("proj-overridden")).toBe(
+      "Project Plan Prompt {{issueTitle}}",
+    );
+
+    // 2. Inherits host configuration when project override is absent or empty
+    expect(manager.getAgentAutoPrompt("proj-inherited")).toBe("Host Auto Prompt {{issueNumber}}");
+    expect(manager.getAgentPlanPrompt("proj-inherited")).toBe("Host Plan Prompt {{issueNumber}}");
+    expect(manager.getAgentAutoPrompt("proj-whitespace")).toBe("Host Auto Prompt {{issueNumber}}");
+    expect(manager.getAgentPlanPrompt("proj-whitespace")).toBe("Host Plan Prompt {{issueNumber}}");
+
+    // 3. Falls back to built-in default when host setting is empty
+    const emptyHostSettings = {
+      read: vi.fn().mockResolvedValue({
+        status: "ready",
+        values: {
+          enabled: true,
+          projects: {},
+        },
+        revision: "rev-1",
+      }),
+      subscribe: vi.fn().mockReturnValue(() => {}),
+    };
+    const emptyManager = new SettingsManager(emptyHostSettings as any);
+    await emptyManager.initialize();
+
+    expect(emptyManager.getAgentAutoPrompt()).toContain(
+      "## Workflow Instructions (agent-auto Mode):",
+    );
+    expect(emptyManager.getAgentPlanPrompt()).toContain(
+      "## Workflow Instructions (agent-plan Mode):",
+    );
+  });
 });
