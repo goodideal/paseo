@@ -43,15 +43,25 @@ vi.mock("@getpaseo/plugin/client/ui", () => ({
       </select>
     </label>
   ),
-  SettingsInput: ({ label, initialValue, onChangeText, disabled }: any) => (
+  SettingsInput: ({ label, initialValue, onChangeText, disabled, multiline }: any) => (
     <label>
       {label}
-      <input
-        type="text"
-        defaultValue={initialValue}
-        disabled={disabled}
-        onChange={(e) => onChangeText(String((e.target as { value?: string }).value))}
-      />
+      {multiline ? (
+        <textarea
+          aria-label={label}
+          defaultValue={initialValue}
+          disabled={disabled}
+          onChange={(e) => onChangeText(String((e.target as { value?: string }).value))}
+        />
+      ) : (
+        <input
+          aria-label={label}
+          type="text"
+          defaultValue={initialValue}
+          disabled={disabled}
+          onChange={(e) => onChangeText(String((e.target as { value?: string }).value))}
+        />
+      )}
     </label>
   ),
   SettingsAction: ({ label, actionLabel, onPress, disabled }: any) => (
@@ -72,6 +82,7 @@ afterEach(() => {
 });
 import { HostSettingsScreen } from "../client/host-settings.js";
 import { ProjectDetailSettings } from "../client/project-detail-settings.js";
+import { DEFAULT_AGENT_AUTO_PROMPT, DEFAULT_AGENT_PLAN_PROMPT } from "../shared/prompts.js";
 
 describe("HostSettingsScreen", () => {
   it("renders settings controls and allows toggling global automation", async () => {
@@ -243,6 +254,111 @@ describe("HostSettingsScreen", () => {
     );
   });
 
+  it("renders custom prompts section and allows modifying agentAutoPrompt and agentPlanPrompt", async () => {
+    const mockSave = vi.fn().mockResolvedValue(true);
+    const mockSettings = {
+      status: "ready" as const,
+      values: {
+        enabled: true,
+        pollIntervalSeconds: 60,
+        maxConcurrentRuns: 3,
+        maxAutomaticRepairCycles: 2,
+        automationProfile: "claude-code",
+        workflowPolicy: "full_superpowers" as const,
+        agentAutoPrompt: "Initial custom auto",
+        agentPlanPrompt: "Initial custom plan",
+        projects: {},
+        inProgressLabel: "agent-in-progress",
+        reviewedLabel: "agent-reviewed",
+        evidenceRetentionDays: 90,
+      },
+      revision: "rev-1",
+      saving: false,
+      saveError: null,
+      save: mockSave,
+      reload: vi.fn(),
+      reset: vi.fn(),
+    };
+
+    render(
+      <HostSettingsScreen
+        theme={{ colors: { foreground: "#000", surface0: "#fff" } } as any}
+        host={{ id: "h1", label: "Local" }}
+        layout={{ compact: false, platform: "web" }}
+        settingsOverride={mockSettings as any}
+        diagnosticsOverride={[]}
+      />,
+    );
+
+    expect(screen.getByText("提示词自定义 (Custom Prompts)")).toBeDefined();
+    expect(screen.getByText(/\{\{issueNumber\}\}/)).toBeDefined();
+
+    const autoInput = screen.getByLabelText("Agent Auto 提示词模板");
+    fireEvent.change(autoInput, { target: { value: "New Global Auto Prompt" } });
+    expect(mockSave).toHaveBeenCalledWith(
+      expect.objectContaining({ agentAutoPrompt: "New Global Auto Prompt" }),
+      "rev-1",
+    );
+
+    const planInput = screen.getByLabelText("Agent Plan 提示词模板");
+    fireEvent.change(planInput, { target: { value: "New Global Plan Prompt" } });
+    expect(mockSave).toHaveBeenCalledWith(
+      expect.objectContaining({ agentPlanPrompt: "New Global Plan Prompt" }),
+      "rev-1",
+    );
+  });
+
+  it("allows resetting agentAutoPrompt and agentPlanPrompt to built-in defaults in HostSettingsScreen", async () => {
+    const mockSave = vi.fn().mockResolvedValue(true);
+    const mockSettings = {
+      status: "ready" as const,
+      values: {
+        enabled: true,
+        pollIntervalSeconds: 60,
+        maxConcurrentRuns: 3,
+        maxAutomaticRepairCycles: 2,
+        automationProfile: "claude-code",
+        workflowPolicy: "full_superpowers" as const,
+        agentAutoPrompt: "Modified custom auto",
+        agentPlanPrompt: "Modified custom plan",
+        projects: {},
+        inProgressLabel: "agent-in-progress",
+        reviewedLabel: "agent-reviewed",
+        evidenceRetentionDays: 90,
+      },
+      revision: "rev-1",
+      saving: false,
+      saveError: null,
+      save: mockSave,
+      reload: vi.fn(),
+      reset: vi.fn(),
+    };
+
+    render(
+      <HostSettingsScreen
+        theme={{ colors: { foreground: "#000", surface0: "#fff" } } as any}
+        host={{ id: "h1", label: "Local" }}
+        layout={{ compact: false, platform: "web" }}
+        settingsOverride={mockSettings as any}
+        diagnosticsOverride={[]}
+      />,
+    );
+
+    const resetAutoBtn = screen.getByRole("button", { name: "恢复内置 Auto 模板" });
+    fireEvent.click(resetAutoBtn);
+    expect(mockSave).toHaveBeenCalledWith(
+      expect.objectContaining({ agentAutoPrompt: DEFAULT_AGENT_AUTO_PROMPT }),
+      "rev-1",
+    );
+
+    const resetPlanBtn = screen.getByRole("button", { name: "恢复内置 Plan 模板" });
+    fireEvent.click(resetPlanBtn);
+    expect(mockSave).toHaveBeenCalledWith(
+      expect.objectContaining({ agentPlanPrompt: DEFAULT_AGENT_PLAN_PROMPT }),
+      "rev-1",
+    );
+  });
+
   describe("ProjectDetailSettings", () => {
     it("renders trigger tag descriptions and removes readyLabel input", () => {
       const mockSettings = {
@@ -331,6 +447,128 @@ describe("HostSettingsScreen", () => {
           projects: expect.objectContaining({
             "proj-1": expect.objectContaining({
               agentChangeModeOverride: "full-access",
+            }),
+          }),
+        }),
+        "rev-1",
+      );
+    });
+
+    it("renders prompt overrides section and allows customizing project-level prompts", () => {
+      const mockSave = vi.fn().mockResolvedValue(true);
+      const mockSettings = {
+        values: {
+          projects: {
+            "proj-1": {
+              enabled: true,
+              agentAutoPromptOverride: "Project override auto",
+              agentPlanPromptOverride: "Project override plan",
+            },
+          },
+        },
+        revision: "rev-1",
+        saving: false,
+        save: mockSave,
+      };
+
+      render(
+        <ProjectDetailSettings
+          projectId="proj-1"
+          settings={mockSettings}
+          theme={{ colors: { foreground: "#000", foregroundMuted: "#888" } } as any}
+          onBack={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByText("提示词覆盖 (Prompt Overrides)")).toBeDefined();
+
+      const autoInput = screen.getByLabelText("Agent Auto 提示词覆盖 (可选)");
+      fireEvent.change(autoInput, { target: { value: "Updated Project Auto" } });
+      expect(mockSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projects: expect.objectContaining({
+            "proj-1": expect.objectContaining({
+              agentAutoPromptOverride: "Updated Project Auto",
+            }),
+          }),
+        }),
+        "rev-1",
+      );
+
+      const planInput = screen.getByLabelText("Agent Plan 提示词覆盖 (可选)");
+      fireEvent.change(planInput, { target: { value: "Updated Project Plan" } });
+      expect(mockSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projects: expect.objectContaining({
+            "proj-1": expect.objectContaining({
+              agentPlanPromptOverride: "Updated Project Plan",
+            }),
+          }),
+        }),
+        "rev-1",
+      );
+    });
+
+    it("supports filling default templates and clearing overrides to restore inheritance", () => {
+      const mockSave = vi.fn().mockResolvedValue(true);
+      const mockSettings = {
+        values: {
+          projects: {
+            "proj-1": {
+              enabled: true,
+              agentAutoPromptOverride: "Custom override auto",
+              agentPlanPromptOverride: "Custom override plan",
+            },
+          },
+        },
+        revision: "rev-1",
+        saving: false,
+        save: mockSave,
+      };
+
+      render(
+        <ProjectDetailSettings
+          projectId="proj-1"
+          settings={mockSettings}
+          theme={{ colors: { foreground: "#000", foregroundMuted: "#888" } } as any}
+          onBack={vi.fn()}
+        />,
+      );
+
+      const fillAutoBtn = screen.getByRole("button", { name: "填充默认 Auto 模板" });
+      fireEvent.click(fillAutoBtn);
+      expect(mockSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projects: expect.objectContaining({
+            "proj-1": expect.objectContaining({
+              agentAutoPromptOverride: DEFAULT_AGENT_AUTO_PROMPT,
+            }),
+          }),
+        }),
+        "rev-1",
+      );
+
+      const fillPlanBtn = screen.getByRole("button", { name: "填充默认 Plan 模板" });
+      fireEvent.click(fillPlanBtn);
+      expect(mockSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projects: expect.objectContaining({
+            "proj-1": expect.objectContaining({
+              agentPlanPromptOverride: DEFAULT_AGENT_PLAN_PROMPT,
+            }),
+          }),
+        }),
+        "rev-1",
+      );
+
+      const clearBtn = screen.getByRole("button", { name: "清除覆盖（恢复继承）" });
+      fireEvent.click(clearBtn);
+      expect(mockSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projects: expect.objectContaining({
+            "proj-1": expect.objectContaining({
+              agentAutoPromptOverride: undefined,
+              agentPlanPromptOverride: undefined,
             }),
           }),
         }),

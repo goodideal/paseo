@@ -51,10 +51,10 @@
 
 ## 4. UI Settings Screens & Component Tests
 
-- [ ] 4.1 在 `plugin-custom/gitea-workflow/tests/settings-screen.test.tsx` 中编写测试（Red），覆盖全局提示词自定义卡片展示、保存、恢复默认按钮以及项目级覆盖/清除继承
-- [ ] 4.2 更新 `plugin-custom/gitea-workflow/client/host-settings.tsx`，增加全局「提示词自定义 (Custom Prompts)」卡片、多行编辑框与「恢复内置默认」按钮（Green）
-- [ ] 4.3 更新 `plugin-custom/gitea-workflow/client/project-detail-settings.tsx`，增加项目级「提示词覆盖 (Prompt Overrides)」多行编辑框与「清除覆盖（恢复继承）」/「填充默认模板」操作（Green）
-- [ ] 4.4 运行验证命令确保前端设置组件测试通过（Verify: `npx vitest run plugin-custom/gitea-workflow/tests/settings-screen.test.tsx`）
+- [x] 4.1 在 `plugin-custom/gitea-workflow/tests/settings-screen.test.tsx` 中编写测试（Red），覆盖全局提示词自定义卡片展示、保存、恢复默认按钮以及项目级覆盖/清除继承
+- [x] 4.2 更新 `plugin-custom/gitea-workflow/client/host-settings.tsx`，增加全局「提示词自定义 (Custom Prompts)」卡片、多行编辑框与「恢复内置默认」按钮（Green）
+- [x] 4.3 更新 `plugin-custom/gitea-workflow/client/project-detail-settings.tsx`，增加项目级「提示词覆盖 (Prompt Overrides)」多行编辑框与「清除覆盖（恢复继承）」/「填充默认模板」操作（Green）
+- [x] 4.4 运行验证命令确保前端设置组件测试通过（Verify: `npx vitest run plugin-custom/gitea-workflow/tests/settings-screen.test.tsx`）
 
 ## 5. Full Pipeline Verification & Review
 

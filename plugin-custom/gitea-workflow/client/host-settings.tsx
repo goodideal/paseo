@@ -45,6 +45,11 @@ import { giteaSettingsDefinition } from "../shared/settings.js";
 import { diagnoseProjectsRpc } from "../shared/contracts.js";
 import type { GiteaHostSettings, GiteaProjectDiagnostic } from "../shared/types.js";
 import { ProjectDetailSettings } from "./project-detail-settings.js";
+import {
+  DEFAULT_AGENT_AUTO_PROMPT,
+  DEFAULT_AGENT_PLAN_PROMPT,
+  PROMPT_PLACEHOLDERS,
+} from "../shared/prompts.js";
 
 const policyOptions = [
   { label: "完整 Superpowers (推荐)", value: "full_superpowers" },
@@ -283,6 +288,63 @@ export function HostSettingsScreen({
             onValueChange={(agentChangeMode: string) =>
               settings.save({ ...values, agentChangeMode }, settings.revision)
             }
+          />
+        </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection title="提示词自定义 (Custom Prompts)">
+        <SettingsCard>
+          <SettingsRow
+            label="可用插值变量"
+            hint={PROMPT_PLACEHOLDERS.map((p) => `{{${p.key}}}`).join(", ")}
+          />
+          <SettingsInput
+            key={`agent-auto-${values.agentAutoPrompt ?? ""}`}
+            label="Agent Auto 提示词模板"
+            hint="全自动模式下的系统 Prompt 模板，留空使用内置默认"
+            initialValue={values.agentAutoPrompt ?? ""}
+            disabled={settings.saving}
+            onChangeText={(agentAutoPrompt) =>
+              settings.save(
+                { ...values, agentAutoPrompt: agentAutoPrompt || undefined },
+                settings.revision,
+              )
+            }
+          />
+          <SettingsAction
+            label=""
+            actionLabel="恢复内置 Auto 模板"
+            disabled={settings.saving}
+            onPress={() => {
+              void settings.save(
+                { ...values, agentAutoPrompt: DEFAULT_AGENT_AUTO_PROMPT },
+                settings.revision,
+              );
+            }}
+          />
+          <SettingsInput
+            key={`agent-plan-${values.agentPlanPrompt ?? ""}`}
+            label="Agent Plan 提示词模板"
+            hint="规划审查模式下的系统 Prompt 模板，留空使用内置默认"
+            initialValue={values.agentPlanPrompt ?? ""}
+            disabled={settings.saving}
+            onChangeText={(agentPlanPrompt) =>
+              settings.save(
+                { ...values, agentPlanPrompt: agentPlanPrompt || undefined },
+                settings.revision,
+              )
+            }
+          />
+          <SettingsAction
+            label=""
+            actionLabel="恢复内置 Plan 模板"
+            disabled={settings.saving}
+            onPress={() => {
+              void settings.save(
+                { ...values, agentPlanPrompt: DEFAULT_AGENT_PLAN_PROMPT },
+                settings.revision,
+              );
+            }}
           />
         </SettingsCard>
       </SettingsSection>
