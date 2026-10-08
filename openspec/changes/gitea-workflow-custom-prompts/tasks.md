@@ -58,6 +58,6 @@
 
 ## 5. Full Pipeline Verification & Review
 
-- [ ] 5.1 运行 `gitea-workflow` 模块全套单元与集成测试（Verify: `npx vitest run plugin-custom/gitea-workflow/tests/ --bail=1`）
-- [ ] 5.2 运行代码格式化与静态检查（Verify: `npm run typecheck && npm run lint && npm run format:check`）
-- [ ] 5.3 检查 OpenSpec 变更状态并通过 `openspec validate` 验证
+- [x] 5.1 运行 `gitea-workflow` 模块全套单元与集成测试（Verify: `npx vitest run plugin-custom/gitea-workflow/tests/ --bail=1`）
+- [x] 5.2 运行代码格式化与静态检查（Verify: `npm run typecheck && npm run lint && npm run format:check`）
+- [x] 5.3 检查 OpenSpec 变更状态并通过 `openspec validate` 验证
