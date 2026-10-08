@@ -111,7 +111,7 @@ describe("Agent Execute Adapter", () => {
     const adapter = createAgentExecuteAdapter(mockSettings as any, mockIndexStore as any);
     await adapter.execute({ phase: "implement" }, {
       paseo: mockPaseo as any,
-      run: { runId: "run-mode-55", projectId: "proj-codex" },
+      run: { runId: "run-mode-55", projectId: "proj-codex", workspaceRoot: "/projects/test-proj" },
       step: { stepId: "implement-agent" },
     } as any);
 
@@ -122,6 +122,307 @@ describe("Agent Execute Adapter", () => {
           modeId: "full-access",
         }),
       }),
+    );
+  });
+
+  it("locates worktree by issue number when multiple worktrees exist without runId", async () => {
+    const mockSettings = {
+      getAgentProvider: vi.fn().mockReturnValue("codex"),
+      getAgentModel: vi.fn().mockReturnValue("flash"),
+      getAgentChangeMode: vi.fn().mockReturnValue("auto"),
+    };
+    const mockIndexStore = {
+      getEntryByRunId: vi.fn().mockResolvedValue({
+        issueNumber: 201,
+        issueTitle: "Error on openai gateway",
+      }),
+    };
+
+    const mockAgentHandle = {
+      id: "agent-issue-201",
+      run: vi.fn().mockResolvedValue({ status: "idle", lastMessage: "Done" }),
+      send: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const mockPaseo = {
+      workspaces: {
+        list: vi.fn().mockResolvedValue({
+          entries: [
+            {
+              id: "ws-wt-199",
+              workspaceDirectory: "/tmp/worktrees/joyous-deer",
+              name: "agent/issue-199-some-fix",
+              workspaceKind: "worktree",
+              projectRootPath: "/projects/repo",
+            },
+            {
+              id: "ws-wt-201",
+              workspaceDirectory: "/tmp/worktrees/agent-issue-201-auto-incident",
+              name: "agent/issue-201-auto-incident",
+              title: "✨ #201 [Feature] Error on openai",
+              workspaceKind: "worktree",
+              projectRootPath: "/projects/repo",
+            },
+            {
+              id: "ws-main",
+              workspaceDirectory: "/projects/repo",
+              name: "main-checkout",
+              workspaceKind: "local_checkout",
+              projectRootPath: "/projects/repo",
+            },
+          ],
+        }),
+        ref: vi.fn().mockReturnValue({
+          current: vi
+            .fn()
+            .mockReturnValue({ id: "ws-wt-201", title: "✨ #201 [Feature] Error on openai" }),
+          setTitle: vi.fn().mockResolvedValue(undefined),
+        }),
+      },
+      agents: {
+        create: vi.fn().mockResolvedValue(mockAgentHandle),
+      },
+    };
+
+    const adapter = createAgentExecuteAdapter(mockSettings as any, mockIndexStore as any);
+
+    await adapter.execute({ phase: "auto_design" }, {
+      paseo: mockPaseo as any,
+      run: { runId: "run_e7ffe63d", projectId: "prj_test" },
+      step: { stepId: "auto-design" },
+    } as any);
+
+    expect(mockPaseo.agents.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: "/tmp/worktrees/agent-issue-201-auto-incident",
+        workspaceId: "ws-wt-201",
+        title: expect.stringContaining("[#201]"),
+      }),
+    );
+  });
+
+  it("never falls back to process.cwd() and safely uses project checkout root", async () => {
+    const mockSettings = {
+      getAgentProvider: vi.fn().mockReturnValue("codex"),
+      getAgentModel: vi.fn().mockReturnValue("flash"),
+      getAgentChangeMode: vi.fn().mockReturnValue("auto"),
+    };
+    const mockIndexStore = {
+      getEntryByRunId: vi.fn().mockResolvedValue({
+        issueNumber: 999,
+        issueTitle: "Unmatched issue",
+      }),
+    };
+
+    const mockAgentHandle = {
+      id: "agent-safe-fallback",
+      run: vi.fn().mockResolvedValue({ status: "idle", lastMessage: "Done" }),
+      send: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const mockPaseo = {
+      workspaces: {
+        list: vi.fn().mockResolvedValue({
+          entries: [
+            {
+              id: "ws-main",
+              workspaceDirectory: "/projects/my-safe-repo",
+              name: "main-checkout",
+              workspaceKind: "local_checkout",
+              projectRootPath: "/projects/my-safe-repo",
+            },
+          ],
+        }),
+        ref: vi.fn().mockReturnValue({
+          current: vi.fn().mockReturnValue({ id: "ws-main" }),
+          setTitle: vi.fn().mockResolvedValue(undefined),
+        }),
+      },
+      agents: {
+        create: vi.fn().mockResolvedValue(mockAgentHandle),
+      },
+    };
+
+    const adapter = createAgentExecuteAdapter(mockSettings as any, mockIndexStore as any);
+
+    await adapter.execute({ phase: "implement" }, {
+      paseo: mockPaseo as any,
+      run: { runId: "run_nomatch", projectId: "prj_test" },
+      step: { stepId: "implement-agent" },
+    } as any);
+
+    expect(mockPaseo.agents.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: "/projects/my-safe-repo",
+        workspaceId: "ws-main",
+      }),
+    );
+  });
+
+  it("locates worktree using stepOutputs from worktree-create when available", async () => {
+    const mockSettings = {
+      getAgentProvider: vi.fn().mockReturnValue("codex"),
+      getAgentModel: vi.fn().mockReturnValue("flash"),
+      getAgentChangeMode: vi.fn().mockReturnValue("auto"),
+    };
+    const mockIndexStore = {
+      getEntryByRunId: vi.fn().mockResolvedValue({
+        issueNumber: 300,
+        issueTitle: "Use step output",
+      }),
+    };
+
+    const mockAgentHandle = {
+      id: "agent-step-output",
+      run: vi.fn().mockResolvedValue({ status: "idle", lastMessage: "Done" }),
+      send: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const mockPaseo = {
+      workspaces: {
+        list: vi.fn().mockResolvedValue({
+          entries: [
+            {
+              id: "ws-wt-custom",
+              workspaceDirectory: "/tmp/worktrees/custom-slug",
+              name: "custom-slug",
+              workspaceKind: "worktree",
+              projectRootPath: "/projects/repo",
+            },
+          ],
+        }),
+        ref: vi.fn().mockReturnValue({
+          current: vi.fn().mockReturnValue({ id: "ws-wt-custom" }),
+          setTitle: vi.fn().mockResolvedValue(undefined),
+        }),
+      },
+      agents: {
+        create: vi.fn().mockResolvedValue(mockAgentHandle),
+      },
+    };
+
+    const adapter = createAgentExecuteAdapter(mockSettings as any, mockIndexStore as any);
+
+    await adapter.execute({ phase: "implement" }, {
+      paseo: mockPaseo as any,
+      run: { runId: "run_step_out", projectId: "prj_test" },
+      stepOutputs: {
+        "worktree-create": {
+          workspaceId: "ws-wt-custom",
+          worktreePath: "/tmp/worktrees/custom-slug",
+        },
+      },
+      step: { stepId: "implement-agent" },
+    } as any);
+
+    expect(mockPaseo.agents.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: "/tmp/worktrees/custom-slug",
+        workspaceId: "ws-wt-custom",
+      }),
+    );
+  });
+
+  it("interpolates and passes custom agentAutoPrompt for auto_design phase", async () => {
+    const mockSettings = {
+      getAgentProvider: vi.fn().mockReturnValue("claude"),
+      getAgentModel: vi.fn().mockReturnValue("sonnet"),
+      getAgentChangeMode: vi.fn().mockReturnValue("auto"),
+      getAgentAutoPrompt: vi
+        .fn()
+        .mockReturnValue(
+          "Custom Auto for #{{issueNumber}} in {{repoOwner}}/{{repoName}}: {{issueTitle}}. Description: {{issueBody}}",
+        ),
+      getAgentPlanPrompt: vi.fn().mockReturnValue("Custom Plan"),
+    };
+    const mockIndexStore = {
+      getEntryByRunId: vi.fn().mockResolvedValue({
+        issueNumber: 88,
+        issueTitle: "Auto fix memory leak",
+        issueBody: "Memory increases monotonically under load.",
+        repoOwner: "infra-team",
+        repoName: "cluster-agent",
+      }),
+    };
+    const mockAgentHandle = {
+      id: "agent-custom-prompt-auto",
+      run: vi.fn().mockResolvedValue({ status: "idle", lastMessage: "Done" }),
+      send: vi.fn().mockResolvedValue(undefined),
+    };
+    const mockPaseo = {
+      workspaces: {
+        list: vi.fn().mockResolvedValue({
+          entries: [
+            { id: "ws-1", workspaceDirectory: "/projects/repo", workspaceKind: "local_checkout" },
+          ],
+        }),
+        ref: vi.fn().mockReturnValue({ current: vi.fn().mockReturnValue({ id: "ws-1" }) }),
+      },
+      agents: {
+        create: vi.fn().mockResolvedValue(mockAgentHandle),
+      },
+    };
+
+    const adapter = createAgentExecuteAdapter(mockSettings as any, mockIndexStore as any);
+    await adapter.execute({ phase: "auto_design" }, {
+      paseo: mockPaseo as any,
+      run: { runId: "run-auto-88", projectId: "prj-infra" },
+      step: { stepId: "auto-design" },
+    } as any);
+
+    expect(mockSettings.getAgentAutoPrompt).toHaveBeenCalledWith("prj-infra");
+    expect(mockAgentHandle.run).toHaveBeenCalledWith(
+      "Custom Auto for #88 in infra-team/cluster-agent: Auto fix memory leak. Description: Memory increases monotonically under load.",
+    );
+  });
+
+  it("interpolates and passes custom agentPlanPrompt for brainstorm phase", async () => {
+    const mockSettings = {
+      getAgentProvider: vi.fn().mockReturnValue("claude"),
+      getAgentModel: vi.fn().mockReturnValue("sonnet"),
+      getAgentChangeMode: vi.fn().mockReturnValue("auto"),
+      getAgentAutoPrompt: vi.fn().mockReturnValue("Custom Auto"),
+      getAgentPlanPrompt: vi
+        .fn()
+        .mockReturnValue("Custom Plan for #{{issueNumber}}: {{issueTitle}} (repo: {{repoName}})"),
+    };
+    const mockIndexStore = {
+      getEntryByRunId: vi.fn().mockResolvedValue({
+        issueNumber: 77,
+        issueTitle: "Plan architectural migration",
+        repoOwner: "core-team",
+        repoName: "web-gateway",
+      }),
+    };
+    const mockAgentHandle = {
+      id: "agent-custom-prompt-plan",
+      run: vi.fn().mockResolvedValue({ status: "idle", lastMessage: "Done" }),
+      send: vi.fn().mockResolvedValue(undefined),
+    };
+    const mockPaseo = {
+      workspaces: {
+        list: vi.fn().mockResolvedValue({
+          entries: [
+            { id: "ws-1", workspaceDirectory: "/projects/repo", workspaceKind: "local_checkout" },
+          ],
+        }),
+        ref: vi.fn().mockReturnValue({ current: vi.fn().mockReturnValue({ id: "ws-1" }) }),
+      },
+      agents: {
+        create: vi.fn().mockResolvedValue(mockAgentHandle),
+      },
+    };
+
+    const adapter = createAgentExecuteAdapter(mockSettings as any, mockIndexStore as any);
+    await adapter.execute({ phase: "brainstorm" }, {
+      paseo: mockPaseo as any,
+      run: { runId: "run-plan-77", projectId: "prj-core" },
+      step: { stepId: "brainstorm-agent" },
+    } as any);
+
+    expect(mockSettings.getAgentPlanPrompt).toHaveBeenCalledWith("prj-core");
+    expect(mockAgentHandle.run).toHaveBeenCalledWith(
+      "Custom Plan for #77: Plan architectural migration (repo: web-gateway)",
     );
   });
 });

@@ -14,11 +14,12 @@ Issue Description:
 {{issueBody}}
 
 ## Workflow Instructions (agent-auto Mode):
-1. Use the \`gitea\` skill to inspect Issue #{{issueNumber}} context, requirements, and comments.
+1. First, use the \`gitea\` skill to fetch Issue #{{issueNumber}} and inspect its complete context, requirements, acceptance criteria, and discussion comments.
 2. Analyze the requirements and formulate alternative solutions (A/B/C) with trade-offs.
 3. Post your brief Architecture & Solution Decision to the Gitea Issue comments so it is transparent and auditable.
 4. Load and follow \`superpowers:subagent-driven-development\` or \`superpowers:executing-plans\`.
 5. Strictly adhere to Test-Driven Development (TDD):
+   - Review the requirement and existing code;
    - Write unit tests proving the intended behavior;
    - Implement clean, focused code until all tests pass;
    - Verify with tests, lint, and typecheck;
@@ -30,7 +31,7 @@ Issue Description:
 {{issueBody}}
 
 ## Workflow Instructions (agent-plan Mode):
-1. Use the \`gitea\` skill to fetch Issue #{{issueNumber}} and inspect its background and criteria.
+1. First, use the \`gitea\` skill to fetch Issue #{{issueNumber}} and inspect its complete background, core scope, acceptance criteria, and discussion comments.
 2. Load and follow the \`superpowers:brainstorming\` skill.
 3. Explore alternative technical architectures and propose distinct design options (Solution A / B / C) with clear pros, cons, and recommendations.
 4. Formulate the implementation plan and present it clearly for human review.`;

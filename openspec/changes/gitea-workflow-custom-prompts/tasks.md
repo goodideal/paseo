@@ -29,25 +29,25 @@
 
 ## 1. Schema & Standard Prompts (Data Contracts)
 
-- [ ] 1.1 在 `tests/schema.test.ts` 中编写失败测试（Red），断言 `GiteaHostSettingsSchema` 与 `GiteaProjectSettingsSchema` 支持 `agentAutoPrompt`、`agentPlanPrompt`、`agentAutoPromptOverride`、`agentPlanPromptOverride` 字段
-- [ ] 1.2 创建 `plugin-custom/gitea-workflow/shared/prompts.ts`，导出标准 `DEFAULT_AGENT_AUTO_PROMPT` 与 `DEFAULT_AGENT_PLAN_PROMPT` 常量及可用变量清单
-- [ ] 1.3 更新 `plugin-custom/gitea-workflow/shared/types.ts`，在 Schema 中加入可选的 Prompt 模板字段（Green）
-- [ ] 1.4 运行验证命令确保 Schema 测试通过（Verify: `npx vitest run plugin-custom/gitea-workflow/tests/schema.test.ts`）
+- [x] 1.1 在 `tests/schema.test.ts` 中编写失败测试（Red），断言 `GiteaHostSettingsSchema` 与 `GiteaProjectSettingsSchema` 支持 `agentAutoPrompt`、`agentPlanPrompt`、`agentAutoPromptOverride`、`agentPlanPromptOverride` 字段
+- [x] 1.2 创建 `plugin-custom/gitea-workflow/shared/prompts.ts`，导出标准 `DEFAULT_AGENT_AUTO_PROMPT` 与 `DEFAULT_AGENT_PLAN_PROMPT` 常量及可用变量清单
+- [x] 1.3 更新 `plugin-custom/gitea-workflow/shared/types.ts`，在 Schema 中加入可选的 Prompt 模板字段（Green）
+- [x] 1.4 运行验证命令确保 Schema 测试通过（Verify: `npx vitest run plugin-custom/gitea-workflow/tests/schema.test.ts`）
 
 ## 2. Interpolator & Settings Resolution (Core Engine)
 
-- [ ] 2.1 在 `plugin-custom/gitea-workflow/tests/prompt-interpolator.test.ts` 中编写失败测试（Red），覆盖全变量替换、带空格占位符、未知占位符安全保留与空输入边界
-- [ ] 2.2 创建 `plugin-custom/gitea-workflow/server/prompt-interpolator.ts`，实现 `interpolatePrompt` 纯函数（Green）
-- [ ] 2.3 运行验证命令确保插值器单元测试通过（Verify: `npx vitest run plugin-custom/gitea-workflow/tests/prompt-interpolator.test.ts`）
-- [ ] 2.4 在 `plugin-custom/gitea-workflow/tests/settings.test.ts` 中编写失败测试（Red），验证 `SettingsManager` 的三级级联解析（项目覆盖 > 全局设置 > 内置默认）与空白字符串回退
-- [ ] 2.5 更新 `plugin-custom/gitea-workflow/server/settings-manager.ts`，实现 `getAgentAutoPrompt(projectId)` 与 `getAgentPlanPrompt(projectId)`（Green）
-- [ ] 2.6 运行验证命令确保设置解析测试通过（Verify: `npx vitest run plugin-custom/gitea-workflow/tests/settings.test.ts`）
+- [x] 2.1 在 `plugin-custom/gitea-workflow/tests/prompt-interpolator.test.ts` 中编写失败测试（Red），覆盖全变量替换、带空格占位符、未知占位符安全保留与空输入边界
+- [x] 2.2 创建 `plugin-custom/gitea-workflow/server/prompt-interpolator.ts`，实现 `interpolatePrompt` 纯函数（Green）
+- [x] 2.3 运行验证命令确保插值器单元测试通过（Verify: `npx vitest run plugin-custom/gitea-workflow/tests/prompt-interpolator.test.ts`）
+- [x] 2.4 在 `plugin-custom/gitea-workflow/tests/settings.test.ts` 中编写失败测试（Red），验证 `SettingsManager` 的三级级联解析（项目覆盖 > 全局设置 > 内置默认）与空白字符串回退
+- [x] 2.5 更新 `plugin-custom/gitea-workflow/server/settings-manager.ts`，实现 `getAgentAutoPrompt(projectId)` 与 `getAgentPlanPrompt(projectId)`（Green）
+- [x] 2.6 运行验证命令确保设置解析测试通过（Verify: `npx vitest run plugin-custom/gitea-workflow/tests/settings.test.ts`）
 
 ## 3. Agent Execution Adapter Integration
 
-- [ ] 3.1 在 `plugin-custom/gitea-workflow/tests/agent-execute.test.ts` 中增加失败测试（Red），断言 `agent-auto` 与 `agent-plan` 模式下派发给 Agent 的 Prompt 优先采用配置的自定义模板并完成上下文插值
-- [ ] 3.2 改造 `plugin-custom/gitea-workflow/server/adapters/agent-execute.ts`，注入插值逻辑与 `settingsManager` 提示词解析（Green）
-- [ ] 3.3 运行验证命令确保适配器集成测试通过（Verify: `npx vitest run plugin-custom/gitea-workflow/tests/agent-execute.test.ts`）
+- [x] 3.1 在 `plugin-custom/gitea-workflow/tests/agent-execute.test.ts` 中增加失败测试（Red），断言 `agent-auto` 与 `agent-plan` 模式下派发给 Agent 的 Prompt 优先采用配置的自定义模板并完成上下文插值
+- [x] 3.2 改造 `plugin-custom/gitea-workflow/server/adapters/agent-execute.ts`，注入插值逻辑与 `settingsManager` 提示词解析（Green）
+- [x] 3.3 运行验证命令确保适配器集成测试通过（Verify: `npx vitest run plugin-custom/gitea-workflow/tests/agent-execute.test.ts`）
 
 ## 4. UI Settings Screens & Component Tests
 
