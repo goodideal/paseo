@@ -174,6 +174,8 @@ export const GiteaProjectSettingsSchema = z.object({
   agentProviderOverride: z.string().optional(),
   agentModelOverride: z.string().optional(),
   agentChangeModeOverride: z.string().optional(),
+  agentAutoPromptOverride: z.string().optional(),
+  agentPlanPromptOverride: z.string().optional(),
 });
 
 export type GiteaProjectSettings = z.infer<typeof GiteaProjectSettingsSchema>;
@@ -192,6 +194,8 @@ export const GiteaHostSettingsSchema = z.object({
   inProgressLabel: z.string().default("agent-in-progress"),
   reviewedLabel: z.string().default("agent-reviewed"),
   evidenceRetentionDays: z.number().int().min(1).default(90),
+  agentAutoPrompt: z.string().optional(),
+  agentPlanPrompt: z.string().optional(),
 });
 
 export type GiteaHostSettings = z.infer<typeof GiteaHostSettingsSchema>;

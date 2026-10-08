@@ -101,6 +101,31 @@ describe("Gitea Workflow Schemas and RPCs", () => {
     expect(settings.maxConcurrentRuns).toBe(3);
     expect(settings.evidenceRetentionDays).toBe(90);
     expect(settings.projects).toEqual({});
+    expect(settings.agentAutoPrompt).toBeUndefined();
+    expect(settings.agentPlanPrompt).toBeUndefined();
+  });
+
+  it("validates custom prompts in host and project schemas", () => {
+    const settings = GiteaHostSettingsSchema.parse({
+      agentAutoPrompt: "Custom auto prompt {{issueNumber}}",
+      agentPlanPrompt: "Custom plan prompt {{issueNumber}}",
+      projects: {
+        "proj-1": {
+          enabled: true,
+          agentAutoPromptOverride: "Project override auto {{issueTitle}}",
+          agentPlanPromptOverride: "Project override plan {{issueTitle}}",
+        },
+      },
+    });
+
+    expect(settings.agentAutoPrompt).toBe("Custom auto prompt {{issueNumber}}");
+    expect(settings.agentPlanPrompt).toBe("Custom plan prompt {{issueNumber}}");
+    expect(settings.projects["proj-1"].agentAutoPromptOverride).toBe(
+      "Project override auto {{issueTitle}}",
+    );
+    expect(settings.projects["proj-1"].agentPlanPromptOverride).toBe(
+      "Project override plan {{issueTitle}}",
+    );
   });
 
   it("validates project authorization and policy override in GiteaHostSettingsSchema", () => {
