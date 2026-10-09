@@ -1212,6 +1212,7 @@ export const ko: TranslationResources = {
       done: "완료",
     },
     display: {
+      showBackground: "백그라운드 표시",
       trigger: "표시 설정",
       heading: "표시",
       grouping: {

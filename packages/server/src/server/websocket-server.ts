@@ -1812,6 +1812,7 @@ export class VoiceAssistantWebSocketServer {
         ...(this.workflowService ? { workflowEngine: true } : {}),
         // COMPAT(workflowInteractions): added in v0.10.2, remove gate after 2027-03-29 once daemon floor supports Workflow Interactions.
         ...(this.workflowService ? { workflowInteractions: true } : {}),
+        backgroundWorkspaces: true,
         // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.
         directorySync: true,
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
@@ -1943,6 +1944,7 @@ export class VoiceAssistantWebSocketServer {
         explicitEventSubscriptions: true,
         // COMPAT(canonicalSubmittedPrompts): added in v0.2.6, remove gate after 2027-01-30.
         canonicalSubmittedPrompts: true,
+        agentMessageProvenance: true,
         // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.
         stableProjectIdentity: true,
         // COMPAT(workspaceScriptManagement): added in v0.1.105, remove gate after 2027-01-10.
