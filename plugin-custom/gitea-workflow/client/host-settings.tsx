@@ -267,9 +267,22 @@ export function HostSettingsScreen({
               ] as any
             }
             disabled={settings.saving}
-            onValueChange={(agentProvider) =>
-              settings.save({ ...values, agentProvider }, settings.revision)
-            }
+            onValueChange={(agentProvider) => {
+              const currentMode = values.agentChangeMode || "auto";
+              let nextMode = currentMode;
+              if (agentProvider === "claude" && currentMode === "full-access") {
+                nextMode = "bypassPermissions";
+              } else if (
+                agentProvider === "codex" &&
+                (currentMode === "bypassPermissions" || currentMode === "acceptEdits")
+              ) {
+                nextMode = "full-access";
+              }
+              void settings.save(
+                { ...values, agentProvider, agentChangeMode: nextMode },
+                settings.revision,
+              );
+            }}
           />
           <SettingsInput
             label="指定模型 (可选)"

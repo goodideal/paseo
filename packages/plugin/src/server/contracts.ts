@@ -17,12 +17,20 @@ export interface PluginWorkflowRunReference {
   projectId: string;
   workspaceId: string;
   runId: string;
+  workspaceRoot?: string;
+  stepOutputs?: Record<string, Record<string, unknown>>;
+}
+
+export interface PluginWorkflowStepExecutionContext {
+  paseo: PaseoApi;
+  run: PluginWorkflowRunReference;
+  stepOutputs?: Record<string, Record<string, unknown>>;
 }
 
 export interface PluginWorkflowStepAdapterRegistration extends PluginWorkflowStepAdapterManifest {
   execute(
     input: Record<string, unknown>,
-    context: { paseo: PaseoApi; run: PluginWorkflowRunReference },
+    context: PluginWorkflowStepExecutionContext,
   ): Promise<Record<string, unknown>>;
 }
 

@@ -13,6 +13,7 @@ export type {
   PluginSettingsState,
   PluginWorkflowStepAdapterManifest,
   PluginWorkflowStepAdapterRegistration,
+  PluginWorkflowStepExecutionContext,
   PluginWorkflowRunReference,
   PluginWorkflowPreset,
 } from "./contracts.js";

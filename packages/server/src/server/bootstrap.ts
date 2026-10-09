@@ -1683,8 +1683,14 @@ export async function createPaseoDaemon(
       const current = await github.getCurrentPullRequestStatus({ cwd, headRef });
       return current?.number ? { prUrl: current.url, prNumber: current.number } : null;
     },
-    executePluginAdapter: async ({ pluginId, adapterType, input, run }) => {
-      return pluginRuntime.executeWorkflowStepAdapter({ pluginId, adapterType, input, run });
+    executePluginAdapter: async ({ pluginId, adapterType, input, run, timeoutMs }) => {
+      return pluginRuntime.executeWorkflowStepAdapter({
+        pluginId,
+        adapterType,
+        input,
+        run,
+        timeoutMs,
+      });
     },
   });
   const scheduleService = new ScheduleService({

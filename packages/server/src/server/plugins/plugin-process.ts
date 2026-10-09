@@ -180,20 +180,34 @@ export function createPluginWorker(options: {
         name: `workflow.step.${type}`,
         input: z.object({
           input: z.record(z.string(), z.unknown()),
-          run: z.object({
-            projectId: z.string(),
-            workspaceId: z.string(),
-            runId: z.string(),
-          }),
+          run: z
+            .object({
+              projectId: z.string(),
+              workspaceId: z.string(),
+              runId: z.string(),
+              workspaceRoot: z.string().optional(),
+              stepOutputs: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
+            })
+            .passthrough(),
         }),
         output: z.record(z.string(), z.unknown()),
       } as unknown as PluginRpcContract,
       async (rawInput, context) => {
         const payload = rawInput as {
           input: Record<string, unknown>;
-          run: { projectId: string; workspaceId: string; runId: string };
+          run: {
+            projectId: string;
+            workspaceId: string;
+            runId: string;
+            workspaceRoot?: string;
+            stepOutputs?: Record<string, Record<string, unknown>>;
+          };
         };
-        return adapter.execute(payload.input, { paseo: context.paseo, run: payload.run });
+        return adapter.execute(payload.input, {
+          paseo: context.paseo,
+          run: payload.run,
+          stepOutputs: payload.run.stepOutputs,
+        });
       },
     );
   }

@@ -85,6 +85,7 @@ export interface PaseoClientConfig {
   appVersion?: string;
   runtimeGeneration?: number | null;
   password?: string;
+  localCredential?: DaemonClientConfig["localCredential"];
   authHeader?: string;
   suppressSendErrors?: boolean;
   logger?: PaseoLogger;

@@ -1,5 +1,6 @@
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
+import { readFileSync } from "node:fs";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { createPaseoClient, type PaseoClient, type PaseoApi } from "@getpaseo/client";
 import {
@@ -22,12 +23,44 @@ import { giteaWorkflowPresets } from "./server/presets/issue-to-pr.js";
 import { EvidenceManager } from "./server/evidence-manager.js";
 import { EvidencePruner } from "./server/cleanup.js";
 
-function getDaemonWsUrl(): string {
-  const listen = process.env.PASEO_LISTEN || "127.0.0.1:6767";
-  if (listen.startsWith("ws://") || listen.startsWith("wss://")) {
-    return listen.endsWith("/ws") ? listen : `${listen}/ws`;
+function getPaseoHome(): string {
+  return process.env.PASEO_HOME || join(homedir(), ".paseo");
+}
+
+function getLocalCredential(): string | undefined {
+  try {
+    const token = readFileSync(join(getPaseoHome(), "local-credential"), "utf8").trim();
+    return token || undefined;
+  } catch {
+    return undefined;
   }
-  return `ws://${listen.replace(/\/+$/, "")}/ws`;
+}
+
+function getDaemonWsUrl(): string {
+  if (process.env.PASEO_LISTEN) {
+    const listen = process.env.PASEO_LISTEN;
+    if (listen.startsWith("ws://") || listen.startsWith("wss://")) {
+      return listen.endsWith("/ws") ? listen : `${listen}/ws`;
+    }
+    return `ws://${listen.replace(/\/+$/, "")}/ws`;
+  }
+
+  try {
+    const lock = JSON.parse(readFileSync(join(getPaseoHome(), "paseo.pid"), "utf8")) as {
+      listen?: unknown;
+    };
+    if (typeof lock.listen === "string" && lock.listen) {
+      const listen = lock.listen;
+      if (listen.startsWith("ws://") || listen.startsWith("wss://")) {
+        return listen.endsWith("/ws") ? listen : `${listen}/ws`;
+      }
+      return `ws://${listen.replace(/\/+$/, "")}/ws`;
+    }
+  } catch {
+    // fallback to default port
+  }
+
+  return "ws://127.0.0.1:6767/ws";
 }
 
 export default function contribute(server: PluginServerContext) {
@@ -71,6 +104,7 @@ export default function contribute(server: PluginServerContext) {
     try {
       paseoClient = createPaseoClient({
         url: getDaemonWsUrl(),
+        localCredential: () => getLocalCredential(),
         reconnect: { enabled: true },
       });
       await paseoClient.connect();

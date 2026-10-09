@@ -49,7 +49,7 @@ interface PluginRuntimePort {
   drainEvents?: PluginRuntime["drainEvents"];
   before?: PluginLifecycle["before"];
   catalog: PluginRuntime["catalog"];
-  invoke(pluginId: string, method: string, input: unknown): Promise<unknown>;
+  invoke(pluginId: string, method: string, input: unknown, timeoutMs?: number): Promise<unknown>;
   getLogs(pluginId: string): PluginLogEntry[];
   clearLogs(pluginId: string): void;
   getProviderRegistrations?(pluginId: string): readonly PluginProviderMetadata[];
@@ -629,7 +629,14 @@ export class PluginService {
     adapterType: string;
     input: Record<string, unknown>;
     run: import("../workflows/workflow-models.js").WorkflowRun;
+    timeoutMs?: number;
   }): Promise<Record<string, unknown>> {
+    const stepOutputs: Record<string, Record<string, unknown>> = {};
+    for (const attempt of params.run.stepAttempts) {
+      if (attempt.declaredOutputs) {
+        stepOutputs[attempt.stepId] = attempt.declaredOutputs;
+      }
+    }
     const output = await this.runtime.invoke(
       params.pluginId,
       `workflow.step.${params.adapterType}`,
@@ -638,9 +645,12 @@ export class PluginService {
         run: {
           projectId: params.run.projectId,
           workspaceId: params.run.workspaceId,
+          workspaceRoot: params.run.workspaceRoot,
           runId: params.run.id,
+          stepOutputs,
         },
       },
+      params.timeoutMs,
     );
     return (output ?? {}) as Record<string, unknown>;
   }

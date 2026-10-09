@@ -79,11 +79,22 @@ export function ProjectDetailSettings({
             }
             disabled={settings.saving}
             onValueChange={(val: string) => {
+              const currentMode = projectSettings.agentChangeModeOverride;
+              let nextMode = currentMode;
+              if (val === "claude" && currentMode === "full-access") {
+                nextMode = "bypassPermissions";
+              } else if (
+                val === "codex" &&
+                (currentMode === "bypassPermissions" || currentMode === "acceptEdits")
+              ) {
+                nextMode = "full-access";
+              }
               const updated = {
                 ...values.projects,
                 [projectId]: {
                   ...projectSettings,
                   agentProviderOverride: val || undefined,
+                  agentChangeModeOverride: nextMode || undefined,
                 },
               };
               void settings.save({ ...values, projects: updated }, settings.revision);

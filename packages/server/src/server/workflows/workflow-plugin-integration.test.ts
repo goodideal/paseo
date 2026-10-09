@@ -289,4 +289,104 @@ describe("Workflow Plugin Contribution and Lifecycle Integration (Task 4.2)", ()
     expect(outcome.status).toBe("succeeded");
     expect(outcome.declaredOutputs).toEqual({ result: 3 });
   });
+
+  it("passes resolved step timeoutMs to executePluginAdapter", async () => {
+    const { registry } = setup();
+    const { StepExecutor } = await import("./step-executors.js");
+    const { VerificationProfileRegistry } = await import("./verification-profiles.js");
+
+    registry.registerPlugin({
+      pluginId: "long-task-plugin",
+      manifest: {
+        type: "task.long_runner",
+        version: "1.0.0",
+        inputSchema: z.object({}).strict(),
+        outputSchema: z.object({ done: z.boolean() }).strict(),
+        executionRisk: "workspace_observe",
+        requiredPermissions: ["workspace.read"],
+        repositoryCallable: true,
+        idempotency: "none",
+        cancellation: "supported",
+        recovery: "not_resumable",
+        supportedPlatforms: ["darwin", "linux", "win32"],
+        resourceConflictKey: "workspace:{{workspaceId}}:long",
+      },
+    });
+
+    let capturedTimeout: number | undefined;
+    const host: Partial<StepExecutorHost> = {
+      executePluginAdapter: async (params: {
+        pluginId: string;
+        adapterType: string;
+        input: Record<string, unknown>;
+        run: unknown;
+        timeoutMs?: number;
+      }) => {
+        capturedTimeout = params.timeoutMs;
+        return { done: true };
+      },
+    };
+
+    const executor = new StepExecutor(
+      registry,
+      new VerificationProfileRegistry([]),
+      host as StepExecutorHost,
+    );
+
+    const run = {
+      id: "run_long_1",
+      projectId: "prj_1",
+      workspaceId: "wsp_1",
+      definitionId: "def_long",
+      definitionRevision: "1",
+      definitionHash: "b".repeat(64),
+      workspaceRoot: "/workspace",
+      principalId: "user_1",
+      status: "running" as const,
+      createdAt: 1000,
+      updatedAt: 1000,
+      resolvedDefinition: {
+        id: "def_long",
+        revision: "1",
+        steps: [
+          {
+            id: "step_long",
+            type: "task.long_runner",
+            timeoutMs: 1_800_000, // 30 minutes
+          },
+        ],
+      },
+      stepAttempts: [
+        {
+          id: "attempt_long_1",
+          stepId: "step_long",
+          adapterType: "task.long_runner",
+          adapterVersion: "1.0.0",
+          status: "ready" as const,
+          input: {},
+        },
+      ],
+      approvals: [],
+      artifacts: [],
+      intents: [],
+      receipts: [],
+      leases: [],
+      unknownOutcomes: [],
+      interactions: [],
+    };
+
+    const prepared = executor.prepare({
+      run: run as unknown as import("./workflow-models.js").WorkflowRun,
+      attemptId: "attempt_long_1",
+      now: 1000,
+    });
+    const outcome = await executor.executePrepared({
+      run: prepared,
+      attemptId: "attempt_long_1",
+      now: 1000,
+    });
+
+    expect(outcome.status).toBe("succeeded");
+    expect(capturedTimeout).toBe(1_800_000);
+  });
 });

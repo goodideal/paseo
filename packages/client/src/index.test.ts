@@ -1747,3 +1747,25 @@ test("workflow actions delegate through the public PaseoApi group", async () => 
   });
   await client.close();
 });
+
+test("createPaseoClient passes localCredential to daemon client hello auth", async () => {
+  const client = createPaseoClient({
+    url: "ws://daemon.test",
+    localCredential: () => "mock-local-token-xyz",
+    webSocketFactory: (url) => new FakeWebSocket(url),
+    reconnect: { enabled: false },
+  });
+
+  void client.connect();
+  const ws = FakeWebSocket.instances.at(-1)!;
+  ws.open();
+  const hello = parseSentFrame(ws.sent.at(-1));
+  expect(hello).toMatchObject({
+    type: "hello",
+    auth: {
+      kind: "localCredential",
+      token: "mock-local-token-xyz",
+    },
+  });
+  await client.close();
+});

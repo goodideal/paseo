@@ -93,6 +93,7 @@ export interface StepExecutorHost {
     adapterType: string;
     input: Record<string, unknown>;
     run: WorkflowRun;
+    timeoutMs?: number;
   }): Promise<Record<string, unknown>>;
   runAgentUntilComplete?(
     params: RunWorkflowAgentInput & {
@@ -413,6 +414,13 @@ export class StepExecutor {
     );
   }
 
+  private resolveStepTimeout(run: WorkflowRun, stepId: string): number | undefined {
+    if (!run.resolvedDefinition || typeof run.resolvedDefinition !== "object") return undefined;
+    const def = run.resolvedDefinition as { steps?: Array<{ id: string; timeoutMs?: number }> };
+    const step = def.steps?.find((candidate) => candidate.id === stepId);
+    return typeof step?.timeoutMs === "number" && step.timeoutMs > 0 ? step.timeoutMs : undefined;
+  }
+
   private handleAgentTurnOutcome(
     turnResult: WorkflowAgentTurnResult,
     attempt: WorkflowStepAttempt,
@@ -584,6 +592,7 @@ export class StepExecutor {
         adapterType: adapter.type,
         input,
         run,
+        timeoutMs: this.resolveStepTimeout(run, attempt.stepId),
       });
     }
     switch (adapter.type) {

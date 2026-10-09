@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
-import { createAgentExecuteAdapter } from "../server/adapters/agent-execute.js";
+import {
+  createAgentExecuteAdapter,
+  normalizeAgentChangeMode,
+} from "../server/adapters/agent-execute.js";
 
 describe("Agent Execute Adapter", () => {
   it("locates worktree by runId and awaits agent.run to extract proposal summary", async () => {
@@ -483,5 +486,88 @@ describe("Agent Execute Adapter", () => {
     expect(mockAgentHandle.run).toHaveBeenCalledWith(
       expect.stringContaining("Stack trace: error in node fetch with self-signed certificate"),
     );
+  });
+
+  describe("normalizeAgentChangeMode", () => {
+    it("maps full-access to bypassPermissions for claude provider", () => {
+      expect(normalizeAgentChangeMode("claude", "full-access")).toBe("bypassPermissions");
+      expect(normalizeAgentChangeMode("claude", "auto")).toBe("auto");
+      expect(normalizeAgentChangeMode("claude", "plan")).toBe("plan");
+      expect(normalizeAgentChangeMode("claude", "default")).toBe("default");
+      expect(normalizeAgentChangeMode("claude", "acceptEdits")).toBe("acceptEdits");
+      expect(normalizeAgentChangeMode("claude", "bypassPermissions")).toBe("bypassPermissions");
+      expect(normalizeAgentChangeMode("claude", "invalid-mode")).toBe("auto");
+      expect(normalizeAgentChangeMode("claude", undefined)).toBe("auto");
+    });
+
+    it("maps bypassPermissions to full-access for codex provider", () => {
+      expect(normalizeAgentChangeMode("codex", "bypassPermissions")).toBe("full-access");
+      expect(normalizeAgentChangeMode("codex", "acceptEdits")).toBe("full-access");
+      expect(normalizeAgentChangeMode("codex", "auto")).toBe("auto");
+      expect(normalizeAgentChangeMode("codex", "auto-review")).toBe("auto-review");
+      expect(normalizeAgentChangeMode("codex", "full-access")).toBe("full-access");
+      expect(normalizeAgentChangeMode("codex", "invalid-mode")).toBe("auto");
+      expect(normalizeAgentChangeMode("codex", undefined)).toBe("auto");
+    });
+
+    it("safely passes through or falls back for other providers", () => {
+      expect(normalizeAgentChangeMode("opencode", "full-access")).toBe("auto");
+      expect(normalizeAgentChangeMode("opencode", "bypassPermissions")).toBe("auto");
+      expect(normalizeAgentChangeMode("opencode", "build")).toBe("build");
+      expect(normalizeAgentChangeMode("antigravity", "full-access")).toBe("full-access");
+    });
+
+    it("passes normalized bypassPermissions when agentProvider is claude and settings has full-access", async () => {
+      const mockSettings = {
+        getAgentProvider: vi.fn().mockReturnValue("claude"),
+        getAgentModel: vi.fn().mockReturnValue("gemini-flash[1M]"),
+        getAgentChangeMode: vi.fn().mockReturnValue("full-access"),
+      };
+      const mockIndexStore = {
+        getEntryByRunId: vi.fn().mockResolvedValue({
+          issueNumber: 174,
+          issueTitle: "Auto incident error on openai",
+        }),
+      };
+      const mockAgentHandle = {
+        id: "agent-mode-norm",
+        run: vi.fn().mockResolvedValue({ status: "idle", lastMessage: "Done" }),
+        send: vi.fn().mockResolvedValue(undefined),
+      };
+      const mockPaseo = {
+        workspaces: {
+          list: vi.fn().mockResolvedValue({
+            entries: [
+              {
+                id: "ws-wt-174",
+                workspaceDirectory: "/tmp/worktrees/issue-174",
+                workspaceKind: "worktree",
+                name: "issue-174",
+              },
+            ],
+          }),
+          ref: vi.fn().mockReturnValue({ current: vi.fn().mockReturnValue({ id: "ws-wt-174" }) }),
+        },
+        agents: {
+          create: vi.fn().mockResolvedValue(mockAgentHandle),
+        },
+      };
+
+      const adapter = createAgentExecuteAdapter(mockSettings as any, mockIndexStore as any);
+      await adapter.execute({ phase: "implement" }, {
+        paseo: mockPaseo as any,
+        run: { runId: "run-174", projectId: "prj-norm" },
+        step: { stepId: "implement-agent" },
+      } as any);
+
+      expect(mockPaseo.agents.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            provider: "claude/gemini-flash[1M]",
+            modeId: "bypassPermissions",
+          }),
+        }),
+      );
+    });
   });
 });

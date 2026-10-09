@@ -14,6 +14,36 @@ const PHASE_META: Record<string, { icon: string; label: string }> = {
   review: { icon: "🔍", label: "独立审查" },
 };
 
+export function normalizeAgentChangeMode(provider: string, rawMode?: string): string {
+  const p = (provider || "claude").toLowerCase();
+  const m = (rawMode || "").trim();
+
+  if (p.includes("claude")) {
+    if (m === "full-access") {
+      return "bypassPermissions";
+    }
+    const validClaudeModes = ["plan", "default", "acceptEdits", "auto", "bypassPermissions"];
+    return validClaudeModes.includes(m) ? m : "auto";
+  }
+
+  if (p.includes("codex")) {
+    if (m === "bypassPermissions" || m === "acceptEdits") {
+      return "full-access";
+    }
+    const validCodexModes = ["auto", "auto-review", "full-access"];
+    return validCodexModes.includes(m) ? m : "auto";
+  }
+
+  if (p.includes("opencode")) {
+    if (m === "full-access" || m === "bypassPermissions") {
+      return "auto";
+    }
+    return m || "auto";
+  }
+
+  return m || "auto";
+}
+
 export function createAgentExecuteAdapter(
   settingsManager: SettingsManager,
   indexStore: IssueRunIndexStore,
@@ -242,9 +272,10 @@ First, review the issue context and requirements. Then proceed with the engineer
 
       const modelName = model || "gemini-flash[1M]";
       const providerSelection = `${provider}/${modelName}`;
-      const modeId = settingsManager.getAgentChangeMode
+      const rawMode = settingsManager.getAgentChangeMode
         ? settingsManager.getAgentChangeMode(projectId)
         : "auto";
+      const modeId = normalizeAgentChangeMode(provider, rawMode);
 
       if (!targetCwd) {
         throw new Error(
