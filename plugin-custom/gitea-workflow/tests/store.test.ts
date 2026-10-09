@@ -74,4 +74,21 @@ describe("IssueRunIndexStore", () => {
     expect(await store.hasActiveRunForIssue("proj-1", "org", "repo", 100)).toBe(true);
     expect(await store.getRunIdForIssue("proj-1", "org", "repo", 100)).toBe("run-rebuilt-100");
   });
+
+  it("records and retrieves issueBody along with issueTitle", async () => {
+    await store.recordRun({
+      projectId: "proj-1",
+      repoOwner: "org",
+      repoName: "repo",
+      issueNumber: 393,
+      issueTitle: "Warning: Setting NODE_TLS_REJECT_UNAUTHORIZED",
+      issueBody: "Stack trace: error in node fetch with self-signed certificate",
+      runId: "run-393",
+    });
+
+    const entry = await store.getEntryByRunId("run-393");
+    expect(entry).not.toBeNull();
+    expect(entry?.issueTitle).toBe("Warning: Setting NODE_TLS_REJECT_UNAUTHORIZED");
+    expect(entry?.issueBody).toBe("Stack trace: error in node fetch with self-signed certificate");
+  });
 });

@@ -171,7 +171,10 @@ export function createAgentExecuteAdapter(
         const effectiveIssueBody = (entry as any)?.issueBody || runInput.issueBody || "";
         const repoOwner = entry?.repoOwner || runInput.repoOwner || "";
         const repoName = entry?.repoName || runInput.repoName || "";
-        const branchName = runInput.branch || "";
+        const wtOutput =
+          (context as any)?.stepOutputs?.["worktree-create"] ??
+          (context as any)?.run?.stepOutputs?.["worktree-create"];
+        const branchName = runInput.branch || wtOutput?.branch || "";
         const resolvedProjectId = projectId || entry?.projectId || runInput.projectId || "";
 
         const interpolationContext: PromptInterpolationContext = {
@@ -204,18 +207,31 @@ export function createAgentExecuteAdapter(
           );
         } else if (phase === "implement") {
           prompt = `You are an automated software engineer assigned to Gitea Issue #${effectiveIssueNum}: ${effectiveIssueTitle}.
-First, use the \`gitea\` skill to fetch Issue #${effectiveIssueNum} and review its complete context, requirements, acceptance criteria, and discussion comments.
-Then, load and follow \`superpowers:executing-plans\` or \`superpowers:subagent-driven-development\`.
-Strictly adhere to Test-Driven Development (TDD):
-1. Review the requirement and existing code;
-2. Write unit tests proving the intended behavior;
-3. Implement clean, focused code until all tests pass;
-4. Verify with tests, lint, and typecheck;
-5. Commit your changes with clear conventional commit syntax.`;
+Repository: ${repoOwner}/${repoName} | Branch: ${branchName}
+
+Issue Context:
+${effectiveIssueBody || "(No description provided)"}
+
+## Workflow Instructions:
+1. **Understand & Diagnose**:
+   - Review requirements, stack traces, and relevant existing code. If additional details are needed, check Issue #${effectiveIssueNum}.
+   - For bug fixes and warnings, identify the root cause; for new features, follow the established plan or specification.
+2. **Execute via TDD**:
+   - Strictly adhere to Test-Driven Development (TDD):
+     1) Review the requirement and write unit tests proving the intended behavior;
+     2) Implement clean, focused code until all tests pass;
+     3) Verify with tests, lint, and typecheck to ensure zero regressions.
+3. **Commit & Finalize**:
+   - Commit your changes with clear conventional commit syntax.
+   - Keep the workspace clean and ready for automatic Pull Request generation.`;
         } else {
           prompt = `You are addressing Gitea Issue #${effectiveIssueNum}: ${effectiveIssueTitle} (Phase: ${phase}).
-First, use the \`gitea\` skill to fetch Issue #${effectiveIssueNum} and review the context and requirements.
-Then, proceed with the engineering workflow and ensure high code quality.`;
+Repository: ${repoOwner}/${repoName} | Branch: ${branchName}
+
+Issue Context:
+${effectiveIssueBody || "(No description provided)"}
+
+First, review the issue context and requirements. Then proceed with the engineering workflow ensuring high code quality.`;
         }
       }
 

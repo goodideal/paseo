@@ -74,7 +74,7 @@ describe("Agent Execute Adapter", () => {
 
     // 2. Verifies agentHandle.run was called to await execution
     expect(mockAgentHandle.run).toHaveBeenCalledWith(
-      expect.stringContaining("use the `gitea` skill to fetch Issue #42"),
+      expect.stringContaining("superpowers:brainstorming"),
     );
 
     // 3. Verifies proposal summary is returned in result
@@ -423,6 +423,65 @@ describe("Agent Execute Adapter", () => {
     expect(mockSettings.getAgentPlanPrompt).toHaveBeenCalledWith("prj-core");
     expect(mockAgentHandle.run).toHaveBeenCalledWith(
       "Custom Plan for #77: Plan architectural migration (repo: web-gateway)",
+    );
+  });
+
+  it("interpolates default DEFAULT_AGENT_AUTO_PROMPT with issue body, repo, and branch", async () => {
+    const mockSettings = {
+      getAgentProvider: vi.fn().mockReturnValue("claude"),
+      getAgentModel: vi.fn().mockReturnValue("sonnet"),
+      getAgentChangeMode: vi.fn().mockReturnValue("auto"),
+      getAgentAutoPrompt: vi.fn().mockReturnValue(""),
+    };
+    const mockIndexStore = {
+      getEntryByRunId: vi.fn().mockResolvedValue({
+        issueNumber: 393,
+        issueTitle: "Warning: Setting NODE_TLS_REJECT_UNAUTHORIZED",
+        issueBody: "Stack trace: error in node fetch with self-signed certificate",
+        repoOwner: "infra-team",
+        repoName: "cluster-agent",
+      }),
+    };
+    const mockAgentHandle = {
+      id: "agent-default-auto",
+      run: vi.fn().mockResolvedValue({ status: "idle", lastMessage: "Done" }),
+      send: vi.fn().mockResolvedValue(undefined),
+    };
+    const mockPaseo = {
+      workspaces: {
+        list: vi.fn().mockResolvedValue({
+          entries: [
+            { id: "ws-1", workspaceDirectory: "/projects/repo", workspaceKind: "local_checkout" },
+          ],
+        }),
+        ref: vi.fn().mockReturnValue({ current: vi.fn().mockReturnValue({ id: "ws-1" }) }),
+      },
+      agents: {
+        create: vi.fn().mockResolvedValue(mockAgentHandle),
+      },
+    };
+
+    const adapter = createAgentExecuteAdapter(mockSettings as any, mockIndexStore as any);
+    await adapter.execute({ phase: "auto_design" }, {
+      paseo: mockPaseo as any,
+      run: {
+        runId: "run-393",
+        projectId: "prj-infra",
+        runInput: { branch: "agent/issue-393-tls-warning" },
+      },
+      step: { stepId: "auto-design" },
+    } as any);
+
+    expect(mockAgentHandle.run).toHaveBeenCalledWith(
+      expect.stringContaining("Gitea Issue #393: Warning: Setting NODE_TLS_REJECT_UNAUTHORIZED"),
+    );
+    expect(mockAgentHandle.run).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Repository: infra-team/cluster-agent | Branch: agent/issue-393-tls-warning",
+      ),
+    );
+    expect(mockAgentHandle.run).toHaveBeenCalledWith(
+      expect.stringContaining("Stack trace: error in node fetch with self-signed certificate"),
     );
   });
 });

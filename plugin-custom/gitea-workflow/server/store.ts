@@ -78,6 +78,7 @@ export class IssueRunIndexStore {
     repoName: string;
     issueNumber: number;
     issueTitle?: string;
+    issueBody?: string;
     runId: string;
     baseUrl?: string;
     token?: string;
@@ -92,6 +93,7 @@ export class IssueRunIndexStore {
       repoName: entry.repoName,
       issueNumber: entry.issueNumber,
       issueTitle: entry.issueTitle,
+      issueBody: entry.issueBody,
       runId: entry.runId,
       baseUrl: entry.baseUrl,
       token: entry.token,
@@ -172,6 +174,8 @@ export class IssueRunIndexStore {
           repoOwner: input.repoOwner,
           repoName: input.repoName,
           issueNumber: input.issueNumber,
+          issueTitle: typeof input.issueTitle === "string" ? input.issueTitle : undefined,
+          issueBody: typeof input.issueBody === "string" ? input.issueBody : undefined,
           runId: run.id,
           createdAt: now,
           updatedAt: now,

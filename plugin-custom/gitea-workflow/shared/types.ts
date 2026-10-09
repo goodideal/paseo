@@ -207,6 +207,7 @@ export const IssueRunIndexEntrySchema = z.object({
   repoName: z.string(),
   issueNumber: z.number().int(),
   issueTitle: z.string().optional(),
+  issueBody: z.string().optional(),
   runId: z.string(),
   baseUrl: z.string().optional(),
   token: z.string().optional(),

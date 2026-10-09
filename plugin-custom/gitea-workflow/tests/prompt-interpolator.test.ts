@@ -66,4 +66,17 @@ describe("interpolatePrompt", () => {
     const result = interpolatePrompt(template, partialContext);
     expect(result).toBe("Issue #99: Branch ");
   });
+
+  it("replaces empty or whitespace-only issueBody with fallback notice", () => {
+    const context: PromptInterpolationContext = {
+      issueNumber: 10,
+      issueTitle: "Missing body issue",
+      issueBody: "   \n\t  ",
+      repoOwner: "org",
+      repoName: "repo",
+    };
+    const template = "Context:\n{{issueBody}}";
+    const result = interpolatePrompt(template, context);
+    expect(result).toBe("Context:\n(No description provided)");
+  });
 });

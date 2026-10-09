@@ -13,10 +13,13 @@ export function interpolatePrompt(template: string, context: PromptInterpolation
     return "";
   }
 
+  const rawBody = typeof context?.issueBody === "string" ? context.issueBody.trim() : "";
+  const effectiveBody = rawBody || "(No description provided)";
+
   const replacements: Record<string, string> = {
     issueNumber: String(context?.issueNumber ?? ""),
     issueTitle: context?.issueTitle || "",
-    issueBody: context?.issueBody || "",
+    issueBody: effectiveBody,
     repoOwner: context?.repoOwner || "",
     repoName: context?.repoName || "",
     branchName: context?.branchName || "",

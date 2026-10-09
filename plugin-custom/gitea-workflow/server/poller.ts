@@ -405,6 +405,7 @@ export class MultiProjectPoller {
                 repoName: resolved.repoName,
                 issueNumber: issue.number,
                 issueTitle: issue.title,
+                issueBody: issue.body,
                 runId: createRes.runId,
                 baseUrl: resolved.baseUrl,
                 token: resolved.token,

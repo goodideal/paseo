@@ -9,29 +9,32 @@ export const PROMPT_PLACEHOLDERS = [
 ] as const;
 
 export const DEFAULT_AGENT_AUTO_PROMPT = `You are an automated software engineer assigned to Gitea Issue #{{issueNumber}}: {{issueTitle}}.
+Repository: {{repoOwner}}/{{repoName}} | Branch: {{branchName}}
 
-Issue Description:
+Issue Context:
 {{issueBody}}
 
 ## Workflow Instructions (agent-auto Mode):
-1. First, use the \`gitea\` skill to fetch Issue #{{issueNumber}} and inspect its complete context, requirements, acceptance criteria, and discussion comments.
-2. Analyze the requirements and formulate alternative solutions (A/B/C) with trade-offs.
-3. Post your brief Architecture & Solution Decision to the Gitea Issue comments so it is transparent and auditable.
-4. Load and follow \`superpowers:subagent-driven-development\` or \`superpowers:executing-plans\`.
-5. Strictly adhere to Test-Driven Development (TDD):
-   - Review the requirement and existing code;
-   - Write unit tests proving the intended behavior;
-   - Implement clean, focused code until all tests pass;
-   - Verify with tests, lint, and typecheck;
-   - Commit your changes with clear conventional commit syntax.`;
+1. **Understand & Diagnose**:
+   - Inspect the issue context, stack traces, and relevant code. If additional details are needed, check Issue #{{issueNumber}} via available Gitea tools.
+   - For bug fixes and warnings, identify the root cause; for new features, formulate a focused approach.
+2. **Execute via TDD**:
+   - Strictly adhere to Test-Driven Development (TDD):
+     1) Review requirements and write unit tests proving the intended behavior;
+     2) Implement clean, focused code until all tests pass;
+     3) Verify with tests, lint, and typecheck to ensure zero regressions.
+3. **Commit & Finalize**:
+   - Commit your changes using clear conventional commit syntax (e.g., fix(...), feat(...)).
+   - Keep the workspace clean and ready for automatic Pull Request generation.`;
 
 export const DEFAULT_AGENT_PLAN_PROMPT = `You are addressing Gitea Issue #{{issueNumber}}: {{issueTitle}}.
+Repository: {{repoOwner}}/{{repoName}} | Branch: {{branchName}}
 
-Issue Description:
+Issue Context:
 {{issueBody}}
 
 ## Workflow Instructions (agent-plan Mode):
-1. First, use the \`gitea\` skill to fetch Issue #{{issueNumber}} and inspect its complete background, core scope, acceptance criteria, and discussion comments.
+1. First, inspect the issue context, background, and existing codebase. If additional details are needed, check Issue #{{issueNumber}} via available Gitea tools.
 2. Load and follow the \`superpowers:brainstorming\` skill.
 3. Explore alternative technical architectures and propose distinct design options (Solution A / B / C) with clear pros, cons, and recommendations.
 4. Formulate the implementation plan and present it clearly for human review.`;
