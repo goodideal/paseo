@@ -39,7 +39,7 @@
 - Consumes: `zod`
 - Produces: `PetPrioritySchema`, `computeTaskPriority(task: TrackedTask): PetPriority`, `CompanionActionSchema`, `PetDashboardSnapshotSchema` (包含 `xpToNextLevel` 与已计算 `priority` 的 `TrackedTask`)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 在 `plugins/desktop-pet/tests/contracts.test.ts` 中增加优先级判定与动作契约测试：
 
@@ -87,12 +87,12 @@ it("computes task priority correctly and validates companion actions", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run plugins/desktop-pet/tests/contracts.test.ts --bail=1`
 Expected: FAIL with `computeTaskPriority is not defined` or schema mismatch.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 在 `plugins/desktop-pet/shared/types.ts` 中实现：
 
@@ -133,12 +133,12 @@ export type CompanionAction = z.infer<typeof CompanionActionSchema>;
 
 并在 `TrackedTaskSchema` 中追加 `priority: PetPrioritySchema.default("P2")`，在 `PetDashboardSnapshotSchema` 中追加 `xpToNextLevel: z.number().int().default(500)`。
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run plugins/desktop-pet/tests/contracts.test.ts --bail=1`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add plugins/desktop-pet/shared/types.ts plugins/desktop-pet/tests/contracts.test.ts
@@ -159,7 +159,7 @@ git commit -m "feat(desktop-pet): add priority computation and companion action 
 - Consumes: `computeTaskPriority`, `TrackedTask`, `PetDashboardSnapshot`
 - Produces: `DesktopPetAgentProjection.getSnapshot()`（自动将 P0 任务置顶并按剩余时间排序，计算宏观主情绪）
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 在 `plugins/desktop-pet/tests/agent-tracker.test.ts` 中添加排序与情绪判定测试：
 
@@ -232,12 +232,12 @@ it("sorts tasks by priority (P0 > P1 > P2) and determines pet mood", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run plugins/desktop-pet/tests/agent-tracker.test.ts --bail=1`
 Expected: FAIL with task ordering mismatch or missing priority field.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 在 `plugins/desktop-pet/server/agent-projection.ts` 中：
 
@@ -258,12 +258,12 @@ Expected: FAIL with task ordering mismatch or missing priority field.
   ```
 - 返回的 `PetDashboardSnapshot` 中携带当前等级所需的 `xpToNextLevel = 500`。
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run plugins/desktop-pet/tests/agent-tracker.test.ts --bail=1`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add plugins/desktop-pet/server/agent-projection.ts plugins/desktop-pet/tests/agent-tracker.test.ts
@@ -285,7 +285,7 @@ git commit -m "feat(desktop-pet): sort tasks by priority and compute snapshot we
 - Consumes: `CompanionService`, `CompanionActionSchema`
 - Produces: `companion.setActionHandler((action) => Promise<void>)` 处理 `decision.respond` 并直调 Agent 权限放行与经验累加
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 在 `plugins/desktop-pet/tests/companion-service.test.ts` 中添加接收 WebSocket action 的测试：
 
@@ -324,12 +324,12 @@ it("routes decision.respond action to actionHandler correctly", async () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run plugins/desktop-pet/tests/companion-service.test.ts --bail=1`
 Expected: FAIL with `setActionHandler is not a function` or action not called.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 在 `plugins/desktop-pet/server/companion-service.ts` 中添加 `setActionHandler` 方法：
 
@@ -358,12 +358,12 @@ companion.setActionHandler(async (command) => {
 });
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run plugins/desktop-pet/tests/companion-service.test.ts --bail=1`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add plugins/desktop-pet/server/companion-service.ts plugins/desktop-pet/index.server.ts plugins/desktop-pet/tests/companion-service.test.ts
@@ -385,16 +385,16 @@ git commit -m "feat(desktop-pet): wire companion actionHandler for inline permis
 - Consumes: WebSocket `state_update` 广播（含等级、XP、P0/P1/P2 排序任务）
 - Produces: 动态灵动药丸（常态简写/紧急态警报胶囊）、SVG 倒计时环、原地 `[✓ 放行]` / `[✗ 拒绝]` 按钮、Glassmorphism HUD 面板
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 在 `plugins/desktop-pet/tests/sound-synthesizer.test.ts` 中验证新增的音效类型（`playUrgent`、`playApproved`、`playLevelUp`）保持完备。
 
-- [ ] **Step 2: Run test to verify it passes**
+- [x] **Step 2: Run test to verify it passes**
 
 Run: `npx vitest run plugins/desktop-pet/tests/sound-synthesizer.test.ts --bail=1`
 Expected: PASS
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 在 `companion-desktop/src/index.html` 与 `companion-service.ts` 的 `COMPANION_HTML` / `COMPANION_JS` 中：
 
@@ -409,12 +409,12 @@ Expected: PASS
    - P1 区域展示运行中任务与时长；P2 区域折叠展示已归档任务；
    - 对所有动态文本使用 `escapeHtml` 彻底防止 XSS。
 
-- [ ] **Step 4: Verify syntax & build**
+- [x] **Step 4: Verify syntax & build**
 
 Run: `npm run lint -- plugins/desktop-pet/index.server.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add plugins/desktop-pet/companion-desktop/ plugins/desktop-pet/server/companion-service.ts
@@ -435,7 +435,7 @@ git commit -m "feat(desktop-pet): implement dynamic capsule and micro-hud in com
 - Consumes: 全部 `desktop-pet` 服务与客户端契约
 - Produces: 验证多 Agent 混合状态下的端到端优先级排序、原地审批触发、XP 累加与快照广播
 
-- [ ] **Step 1: Write integration test**
+- [x] **Step 1: Write integration test**
 
 在 `plugins/desktop-pet/tests/server-integration.test.ts` 中增加完整端到端流转测试：
 
@@ -443,22 +443,22 @@ git commit -m "feat(desktop-pet): implement dynamic capsule and micro-hud in com
 - 验证 `pet.get_dashboard` 返回的数据中 P0 任务置顶；
 - 模拟伴侣端发送 `decision.respond`，验证 `respondToPermission` 成功触发且 XP 累加。
 
-- [ ] **Step 2: Run targeted test**
+- [x] **Step 2: Run targeted test**
 
 Run: `npx vitest run plugins/desktop-pet/tests/server-integration.test.ts --bail=1`
 Expected: PASS
 
-- [ ] **Step 3: Run full plugin tests**
+- [x] **Step 3: Run full plugin tests**
 
 Run: `npx vitest run plugins/desktop-pet/tests/contracts.test.ts plugins/desktop-pet/tests/agent-tracker.test.ts plugins/desktop-pet/tests/companion-service.test.ts plugins/desktop-pet/tests/server-integration.test.ts --bail=1`
 Expected: ALL PASS
 
-- [ ] **Step 4: Monorepo Typecheck and Format**
+- [x] **Step 4: Monorepo Typecheck and Format**
 
 Run: `npm run typecheck && npm run format:check`
 Expected: Clean with 0 errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add plugins/desktop-pet/tests/server-integration.test.ts
