@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { CompanionService } from "../server/companion-service.js";
 import WebSocket from "ws";
 
@@ -39,5 +39,37 @@ describe("CompanionService", () => {
     expect(received.runningCount).toBe(1);
 
     client.close();
+  });
+
+  it("routes decision.respond action to actionHandler correctly", async () => {
+    service = new CompanionService(0);
+    const actionMock = vi.fn().mockResolvedValue(undefined);
+    service.setActionHandler(actionMock);
+    const port = await service.start();
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+    await new Promise((res) => ws.on("open", res));
+
+    ws.send(
+      JSON.stringify({
+        type: "decision.respond",
+        agentId: "agent-123",
+        requestId: "req-1",
+        behavior: "ALLOW",
+      }),
+    );
+
+    await vi.waitFor(() => {
+      expect(actionMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "decision.respond",
+          agentId: "agent-123",
+          requestId: "req-1",
+          behavior: "ALLOW",
+        }),
+      );
+    });
+
+    ws.close();
   });
 });
