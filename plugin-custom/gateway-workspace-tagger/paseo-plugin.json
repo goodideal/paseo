@@ -1,0 +1,8 @@
+{
+  "id": "gateway-workspace-tagger",
+  "name": "Gateway Workspace Tagger",
+  "description": "Injects source=paseo and workspace_id metadata into LLM gateway base URLs for unified tracing and aggregation",
+  "requirements": {
+    "paseo": ">=0.8.0"
+  }
+}
