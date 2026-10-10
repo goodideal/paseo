@@ -8,6 +8,8 @@ export const GatewayTaggerSettingsSchema = z.object({
   sourceParamName: z.string().default("source"),
   includeAgentId: z.boolean().default(true),
   agentParamName: z.string().default("agent_id"),
+  includeWorkspaceName: z.boolean().default(true),
+  workspaceNameParamName: z.string().default("workspace_name"),
   targetHosts: z.array(z.string()).default([]),
   extraEnvKeys: z.array(z.string()).default([]),
 });

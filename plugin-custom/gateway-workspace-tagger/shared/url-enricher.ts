@@ -16,10 +16,13 @@ export function isGatewayBaseUrl(key: string, extraEnvKeys: readonly string[] = 
 
 export interface EnrichUrlOptions {
   workspaceId: string;
+  workspaceName?: string;
   source?: string;
   agentId?: string;
   includeAgentId?: boolean;
+  includeWorkspaceName?: boolean;
   workspaceParamName?: string;
+  workspaceNameParamName?: string;
   sourceParamName?: string;
   agentParamName?: string;
   targetHosts?: readonly string[];
@@ -43,10 +46,13 @@ export function matchesHostWhitelist(hostname: string, targetHosts?: readonly st
 export function enrichUrlWithWorkspace(urlStr: string, options: EnrichUrlOptions): string {
   const source = options.source || "paseo";
   const workspaceId = options.workspaceId;
+  const workspaceName = options.workspaceName;
   const agentId = options.agentId;
   const includeAgentId = options.includeAgentId ?? false;
+  const includeWorkspaceName = options.includeWorkspaceName ?? false;
 
   const workspaceParam = options.workspaceParamName || "workspace_id";
+  const workspaceNameParam = options.workspaceNameParamName || "workspace_name";
   const sourceParam = options.sourceParamName || "source";
   const agentParam = options.agentParamName || "agent_id";
 
@@ -55,6 +61,9 @@ export function enrichUrlWithWorkspace(urlStr: string, options: EnrichUrlOptions
     urlStr.includes("${PASEO_WORKSPACE_ID}") ||
     urlStr.includes("${workspace_id}") ||
     urlStr.includes("{workspace_id}") ||
+    urlStr.includes("${PASEO_WORKSPACE_NAME}") ||
+    urlStr.includes("${workspace_name}") ||
+    urlStr.includes("{workspace_name}") ||
     urlStr.includes("${PASEO_SOURCE}") ||
     urlStr.includes("${source}") ||
     urlStr.includes("{source}") ||
@@ -70,6 +79,13 @@ export function enrichUrlWithWorkspace(urlStr: string, options: EnrichUrlOptions
       .replaceAll("${PASEO_SOURCE}", source)
       .replaceAll("${source}", source)
       .replaceAll("{source}", source);
+
+    if (workspaceName) {
+      interpolated = interpolated
+        .replaceAll("${PASEO_WORKSPACE_NAME}", workspaceName)
+        .replaceAll("${workspace_name}", workspaceName)
+        .replaceAll("{workspace_name}", workspaceName);
+    }
 
     if (agentId) {
       interpolated = interpolated
@@ -93,6 +109,10 @@ export function enrichUrlWithWorkspace(urlStr: string, options: EnrichUrlOptions
 
     parsed.searchParams.set(sourceParam, source);
     parsed.searchParams.set(workspaceParam, workspaceId);
+
+    if (includeWorkspaceName && workspaceName && workspaceName.trim().length > 0) {
+      parsed.searchParams.set(workspaceNameParam, workspaceName.trim());
+    }
 
     if (includeAgentId && agentId) {
       parsed.searchParams.set(agentParam, agentId);

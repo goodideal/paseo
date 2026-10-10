@@ -75,6 +75,28 @@ describe("enrichUrlWithWorkspace", () => {
     expect(skippedResult).toBe("https://api.anthropic.com/v1");
   });
 
+  test("injects workspace_name when includeWorkspaceName is true and name is provided", () => {
+    const result = enrichUrlWithWorkspace("https://gateway.example.com/v1", {
+      workspaceId: "ws_my_test",
+      workspaceName: "重构登录表单",
+      includeWorkspaceName: true,
+    });
+    expect(result).toBe(
+      "https://gateway.example.com/v1?source=paseo&workspace_id=ws_my_test&workspace_name=%E9%87%8D%E6%9E%84%E7%99%BB%E5%BD%95%E8%A1%A8%E5%8D%95",
+    );
+  });
+
+  test("injects fallback workspace_name from cwd if title is not yet available", () => {
+    const result = enrichUrlWithWorkspace("https://gateway.example.com/v1", {
+      workspaceId: "ws_my_test",
+      workspaceName: "feature-login",
+      includeWorkspaceName: true,
+    });
+    expect(result).toBe(
+      "https://gateway.example.com/v1?source=paseo&workspace_id=ws_my_test&workspace_name=feature-login",
+    );
+  });
+
   test("preserves existing query parameters", () => {
     const result = enrichUrlWithWorkspace("https://gateway.example.com/v1?foo=bar&debug=1", {
       workspaceId: "ws_my_test",

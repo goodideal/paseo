@@ -73,6 +73,8 @@ export function GatewayTaggerSettingsScreen({ theme }: PluginSurfaceProps) {
           sourceParamName: "source",
           includeAgentId: true,
           agentParamName: "agent_id",
+          includeWorkspaceName: true,
+          workspaceNameParamName: "workspace_name",
           targetHosts: [],
           extraEnvKeys: [],
         };
@@ -116,6 +118,20 @@ export function GatewayTaggerSettingsScreen({ theme }: PluginSurfaceProps) {
             initialValue={values.agentParamName}
             disabled={settings.saving}
             onChangeText={(val) => updateSetting({ agentParamName: val })}
+          />
+          <SettingsSwitch
+            label="注入 Workspace 名称"
+            hint="在 URL 中携带工作区名称/标题（若未生成则回退为目录名/分支名）"
+            value={values.includeWorkspaceName}
+            disabled={settings.saving}
+            onValueChange={(val) => updateSetting({ includeWorkspaceName: val })}
+          />
+          <SettingsInput
+            label="Workspace 名称参数名"
+            hint="默认值: workspace_name"
+            initialValue={values.workspaceNameParamName}
+            disabled={settings.saving}
+            onChangeText={(val) => updateSetting({ workspaceNameParamName: val })}
           />
         </SettingsCard>
       </SettingsSection>

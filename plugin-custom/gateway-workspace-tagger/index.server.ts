@@ -1,6 +1,7 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { gatewayTaggerSettings, type GatewayTaggerSettings } from "./shared/settings.js";
 import { enrichUrlWithWorkspace, isGatewayBaseUrl } from "./shared/url-enricher.js";
+import { resolveWorkspaceNameFast } from "./server/workspace-resolver.js";
 
 export default function contribute(server: PluginServerContext) {
   const settings = server.registerSettings(gatewayTaggerSettings);
@@ -12,6 +13,8 @@ export default function contribute(server: PluginServerContext) {
     sourceParamName: "source",
     includeAgentId: true,
     agentParamName: "agent_id",
+    includeWorkspaceName: true,
+    workspaceNameParamName: "workspace_name",
     targetHosts: [],
     extraEnvKeys: [],
   };
@@ -39,9 +42,12 @@ export default function contribute(server: PluginServerContext) {
     }
 
     const source = cachedSettings.source || "paseo";
+    const workspaceName = resolveWorkspaceNameFast(workspaceId, request.cwd);
+
     const nextEnv: Record<string, string> = {
       ...request.env,
       PASEO_WORKSPACE_ID: workspaceId,
+      PASEO_WORKSPACE_NAME: workspaceName,
       PASEO_SOURCE: source,
     };
 
@@ -57,10 +63,13 @@ export default function contribute(server: PluginServerContext) {
         if (typeof val === "string" && val.trim().length > 0) {
           nextEnv[key] = enrichUrlWithWorkspace(val, {
             workspaceId,
+            workspaceName,
             source,
             agentId: request.agentId,
             includeAgentId: cachedSettings.includeAgentId,
+            includeWorkspaceName: cachedSettings.includeWorkspaceName,
             workspaceParamName: cachedSettings.workspaceParamName,
+            workspaceNameParamName: cachedSettings.workspaceNameParamName,
             sourceParamName: cachedSettings.sourceParamName,
             agentParamName: cachedSettings.agentParamName,
             targetHosts: cachedSettings.targetHosts,
