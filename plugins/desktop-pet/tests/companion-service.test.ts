@@ -24,11 +24,13 @@ describe("CompanionService", () => {
     });
 
     service.broadcastSnapshot({
+      petMood: "running",
       runningCount: 1,
       waitingCount: 0,
       stoppedCount: 0,
       petXp: 100,
       petLevel: 1,
+      xpToNextLevel: 500,
       tasks: [],
     });
 

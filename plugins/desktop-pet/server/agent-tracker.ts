@@ -1,4 +1,9 @@
-import type { PendingDecision, PetDashboardSnapshot, TrackedTask } from "../shared/types.js";
+import {
+  type PendingDecision,
+  type PetDashboardSnapshot,
+  type TrackedTask,
+  computeTaskPriority,
+} from "../shared/types.js";
 
 interface InternalTask {
   agentId: string;
@@ -86,7 +91,7 @@ export class AgentTracker {
     const expired: Array<{ agentId: string; decision: PendingDecision }> = [];
     for (const [agentId, task] of this.tasks.entries()) {
       if (task.state === "WAITING_DECISION" && task.pendingDecision) {
-        if (now >= task.pendingDecision.expiresAt) {
+        if (task.pendingDecision.expiresAt && now >= task.pendingDecision.expiresAt) {
           expired.push({ agentId, decision: task.pendingDecision });
         }
       }
@@ -113,6 +118,7 @@ export class AgentTracker {
         agentId: task.agentId,
         taskTitle: task.taskTitle,
         state: task.state,
+        priority: computeTaskPriority(task),
         startedAt: task.startedAt,
         activeDurationMs,
         pendingDecision: task.pendingDecision,
@@ -120,11 +126,13 @@ export class AgentTracker {
     }
 
     return {
+      petMood: (waitingCount > 0 ? "waiting" : runningCount > 0 ? "running" : "idle") as any,
       runningCount,
       waitingCount,
       stoppedCount,
       petXp: this.xp,
       petLevel: this.level,
+      xpToNextLevel: 500,
       tasks: trackedTasks,
     };
   }

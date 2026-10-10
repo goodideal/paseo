@@ -92,7 +92,7 @@ export class DecisionEngine {
     taskTitle: string;
     decision: PendingDecision;
   }): Promise<AuditRecord> {
-    const evaluation = this.evaluateAction(params.decision.actionRequested);
+    const evaluation = this.evaluateAction(params.decision.actionRequested || "");
     const behavior = evaluation.decision;
 
     await params.agent.respondToPermission({
@@ -109,7 +109,7 @@ export class DecisionEngine {
       agentId: params.agentId,
       taskTitle: params.taskTitle,
       triggerType: "TIMEOUT_AUTO_DECISION",
-      requestedAction: params.decision.actionRequested,
+      requestedAction: params.decision.actionRequested || "N/A",
       decision: behavior === "allow" ? "ALLOW" : "DENY",
       riskLevel: evaluation.riskLevel,
       aiReason: evaluation.reason,

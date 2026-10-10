@@ -4,9 +4,53 @@ import {
   AuditRecordSchema,
   DesktopPetSettingsSchema,
   PetDashboardSnapshotSchema,
+  PetPrioritySchema,
+  computeTaskPriority,
+  CompanionActionSchema,
 } from "../shared/types.js";
 
 describe("Shared Schemas & Contracts", () => {
+  it("computes task priority correctly and validates companion actions", () => {
+    const p0Task = {
+      agentId: "agent-1",
+      taskTitle: "Refactor",
+      state: "WAITING_DECISION",
+      startedAt: Date.now(),
+      activeDurationMs: 1000,
+      pendingDecision: {
+        requestId: "req-1",
+        requestedAt: Date.now(),
+        riskHint: "high",
+      },
+    };
+    expect(computeTaskPriority(p0Task as any)).toBe("P0");
+
+    const p1Task = {
+      agentId: "agent-2",
+      taskTitle: "Running build",
+      state: "RUNNING",
+      startedAt: Date.now(),
+      activeDurationMs: 2000,
+    };
+    expect(computeTaskPriority(p1Task as any)).toBe("P1");
+
+    const p2Task = {
+      agentId: "agent-3",
+      taskTitle: "Idle task",
+      state: "IDLE",
+      startedAt: null,
+      activeDurationMs: null,
+    };
+    expect(computeTaskPriority(p2Task as any)).toBe("P2");
+
+    const validAction = {
+      type: "decision.respond",
+      agentId: "agent-1",
+      requestId: "req-1",
+      behavior: "ALLOW",
+    };
+    expect(CompanionActionSchema.parse(validAction)).toEqual(validAction);
+  });
   it("validates a valid TrackedTask payload", () => {
     const task = {
       agentId: "agent-123",
