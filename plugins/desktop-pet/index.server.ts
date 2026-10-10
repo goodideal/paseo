@@ -33,6 +33,7 @@ export default function contribute(server: PluginServerContext) {
   let timerHandle: NodeJS.Timeout | null = null;
   let subscriber: AgentSubscriber | null = null;
   let serverObservation: { dispose(): void } | null = null;
+  let lastPaseoContext: any = null;
 
   // 1. Authoritative observation via server.observeAgents if supported by daemon
   if (typeof (server as any).observeAgents === "function") {
@@ -65,14 +66,36 @@ export default function contribute(server: PluginServerContext) {
   companion.setActionHandler(async (command: any) => {
     try {
       if (command.type === "decision.respond") {
-        const agentRef = (server as any)?.paseo?.agents?.ref(command.agentId);
-        if (agentRef) {
+        const behavior = (command.behavior || "allow").toLowerCase() as "allow" | "deny";
+        let handled = false;
+
+        if (subscriber && subscriber.canRespond()) {
+          await subscriber.respondToPermission(command.agentId, command.requestId, { behavior });
+          handled = true;
+        } else if (lastPaseoContext?.agents?.ref) {
+          const agentRef = lastPaseoContext.agents.ref(command.agentId);
           await agentRef.respondToPermission({
             requestId: command.requestId,
-            response: { behavior: command.behavior.toLowerCase() },
+            response: { behavior },
           });
+          handled = true;
+        } else if ((server as any)?.paseo?.agents?.ref) {
+          const agentRef = (server as any).paseo.agents.ref(command.agentId);
+          await agentRef.respondToPermission({
+            requestId: command.requestId,
+            response: { behavior },
+          });
+          handled = true;
+        }
+
+        if (handled) {
           xpManager.awardManualPrompt();
           projection.setXpAndLevel(xpManager.getXp(), xpManager.getLevel());
+          companion.broadcastActionAck({
+            requestId: command.requestId,
+            behavior: command.behavior,
+            success: true,
+          });
           companion.broadcastSnapshot(projection.getSnapshot());
         }
       }
@@ -111,6 +134,9 @@ export default function contribute(server: PluginServerContext) {
   });
 
   server.handle(respondPermissionRpc, async (input, context) => {
+    if ((context as any)?.paseo) {
+      lastPaseoContext = (context as any).paseo;
+    }
     const agentRef =
       (context as any)?.paseo?.agents?.ref(input.agentId) ??
       (server as any)?.paseo?.agents?.ref(input.agentId);

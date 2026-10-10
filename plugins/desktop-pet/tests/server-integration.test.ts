@@ -166,6 +166,23 @@ describe("Server Entry Integration", () => {
     // petMood must be urgent due to high risk
     expect(dashboard.petMood).toBe("urgent");
 
+    // Also verify respond_permission updates XP and projection
+    const mockRespond = vi.fn().mockResolvedValue(undefined);
+    const mockPaseo = {
+      agents: {
+        ref: vi.fn().mockReturnValue({
+          respondToPermission: mockRespond,
+        }),
+      },
+    };
+    await registeredRpcs["pet.respond_permission"](
+      { agentId: "agent-urgent", requestId: "req-danger", behavior: "allow" },
+      { paseo: mockPaseo },
+    );
+
+    const updatedDashboard = await registeredRpcs["pet.get_dashboard"]({});
+    expect(updatedDashboard.petXp).toBe(15);
+
     cleanup();
   });
 });

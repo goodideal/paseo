@@ -67,16 +67,19 @@ const wsUrl = `${window.location.protocol === "https:" ? "wss://" : "ws://"}${ws
 
 let ws: WebSocket | null = null;
 let previousWaitingCount = 0;
+let previousLevel = 1;
+const pendingRequests = new Set<string>();
+const BACKOFF_DELAYS = [1000, 2000, 5000];
+let backoffIdx = 0;
 
-function sendDecision(
-  btn: HTMLButtonElement,
-  agentId: string,
-  requestId: string,
-  behavior: "ALLOW" | "DENY",
-) {
+function sendDecision(agentId: string, requestId: string, behavior: "ALLOW" | "DENY") {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  btn.disabled = true;
-  btn.innerText = "处理中...";
+  pendingRequests.add(requestId);
+  // Synchronously disable associated buttons across all UI surfaces
+  document.querySelectorAll<HTMLButtonElement>(`[data-req-id="${requestId}"]`).forEach((btn) => {
+    btn.disabled = true;
+    btn.innerText = "处理中...";
+  });
   ws.send(
     JSON.stringify({
       type: "decision.respond",
@@ -85,15 +88,13 @@ function sendDecision(
       behavior,
     }),
   );
-  if (behavior === "ALLOW") {
-    synth.playApproved();
-  }
 }
 
 function connectWs() {
   ws = new WebSocket(wsUrl);
 
   ws.onopen = () => {
+    backoffIdx = 0;
     if (connBanner) connBanner.innerHTML = "";
   };
 
@@ -105,12 +106,28 @@ function connectWs() {
   ws.onclose = () => {
     if (connBanner)
       connBanner.innerHTML = `<div class="disconnected-bar">🔌 连接已断开，自动重连中...</div>`;
-    setTimeout(connectWs, 3000);
+    document.querySelectorAll<HTMLButtonElement>(".pill-btn").forEach((btn) => {
+      btn.disabled = true;
+    });
+    const delay = BACKOFF_DELAYS[Math.min(backoffIdx++, BACKOFF_DELAYS.length - 1)];
+    setTimeout(connectWs, delay);
   };
 
   ws.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);
+
+      // Handle action acknowledgment from server
+      if (data.type === "action_ack") {
+        if (data.requestId) {
+          pendingRequests.delete(data.requestId);
+        }
+        if (data.success && data.behavior === "ALLOW") {
+          synth.playApproved();
+        }
+        return;
+      }
+
       if (data.type !== "state_update") return;
 
       const waitingCount = data.waitingCount || 0;
@@ -126,6 +143,25 @@ function connectWs() {
         synth.playDecisionRequired();
       }
       previousWaitingCount = waitingCount;
+
+      // Audio cue on Level Up
+      if (petLevel > previousLevel) {
+        synth.playLevelUp();
+        previousLevel = petLevel;
+      }
+
+      // Cleanup pending requests that are no longer active
+      const activeReqIds = new Set<string>();
+      for (const t of tasks) {
+        if (t.pendingDecision?.requestId) {
+          activeReqIds.add(t.pendingDecision.requestId);
+        }
+      }
+      for (const reqId of pendingRequests) {
+        if (!activeReqIds.has(reqId)) {
+          pendingRequests.delete(reqId);
+        }
+      }
 
       // Pet mood
       let mood: PetMood = data.petMood || "idle";
@@ -157,35 +193,50 @@ function connectWs() {
       const p1Tasks = tasks.filter(
         (t: any) => t.priority === "P1" || (t.state === "RUNNING" && !p0Tasks.includes(t)),
       );
-      const p2Tasks = tasks.filter((t: any) => !p0Tasks.includes(t) && !p1Tasks.includes(t));
+
+      const now = Date.now();
 
       // Render Dynamic Pill
       if (p0Tasks.length > 0) {
         const topP0 = p0Tasks[0];
         const dec = topP0.pendingDecision || {};
-        const safeReqId = escapeHtml(dec.requestId || "");
-        const safeAgentId = escapeHtml(topP0.agentId || "");
+        const reqId = dec.requestId || "";
+        const isPending = pendingRequests.has(reqId);
+        const remainingSec = Math.max(0, Math.ceil(((dec.expiresAt || 0) - now) / 1000));
+        const isExpired = remainingSec === 0 && Boolean(dec.expiresAt);
+
         dynamicPill.style.display = "flex";
         dynamicPill.className = "urgent";
-        pillText.innerHTML = `🚨 <b>待批:</b> ${escapeHtml(topP0.taskTitle || "高危操作")}`;
-        pillActions.innerHTML = `
-          <button class="pill-btn allow" id="pill-allow-btn">✓</button>
-          <button class="pill-btn deny" id="pill-deny-btn">✗</button>
-        `;
-        document.getElementById("pill-allow-btn")?.addEventListener("click", (e) => {
-          e.stopPropagation();
-          sendDecision(e.currentTarget as HTMLButtonElement, topP0.agentId, dec.requestId, "ALLOW");
-        });
-        document.getElementById("pill-deny-btn")?.addEventListener("click", (e) => {
-          e.stopPropagation();
-          sendDecision(e.currentTarget as HTMLButtonElement, topP0.agentId, dec.requestId, "DENY");
-        });
+        const titleSafe = escapeHtml(topP0.taskTitle || "高危操作");
+        pillText.innerHTML = `🚨 <b>待批:</b> <span title="${titleSafe}">${titleSafe}</span> (${remainingSec}s)`;
+
+        if (isExpired) {
+          pillActions.innerHTML = `<span style="font-size: 9px; color: #ef4444">已超时</span>`;
+        } else {
+          pillActions.innerHTML = `
+            <button class="pill-btn allow" data-req-id="${reqId}" ${isPending ? "disabled" : ""}>${
+              isPending ? "..." : "✓"
+            }</button>
+            <button class="pill-btn deny" data-req-id="${reqId}" ${isPending ? "disabled" : ""}>${
+              isPending ? "..." : "✗"
+            }</button>
+          `;
+          pillActions.querySelector(".allow")?.addEventListener("click", (e) => {
+            e.stopPropagation();
+            sendDecision(topP0.agentId, reqId, "ALLOW");
+          });
+          pillActions.querySelector(".deny")?.addEventListener("click", (e) => {
+            e.stopPropagation();
+            sendDecision(topP0.agentId, reqId, "DENY");
+          });
+        }
       } else if (p1Tasks.length > 0) {
         const topP1 = p1Tasks[0];
         const sec = Math.floor((topP1.activeDurationMs || 0) / 1000);
+        const titleSafe = escapeHtml(topP1.taskTitle);
         dynamicPill.style.display = "flex";
         dynamicPill.className = "";
-        pillText.innerHTML = `⚡ <b>${escapeHtml(topP1.taskTitle)}</b> (${sec}s)`;
+        pillText.innerHTML = `⚡ <b title="${titleSafe}">${titleSafe}</b> (${sec}s)`;
         pillActions.innerHTML = "";
       } else {
         dynamicPill.style.display = "none";
@@ -199,18 +250,37 @@ function connectWs() {
           ${p0Tasks
             .map((t: any, idx: number) => {
               const dec = t.pendingDecision || {};
+              const reqId = dec.requestId || "";
               const action = dec.actionRequested || "执行受保护操作";
               const risk = (dec.riskHint || "medium").toUpperCase();
+              const remainingSec = Math.max(0, Math.ceil(((dec.expiresAt || 0) - now) / 1000));
+              const isExpired = remainingSec === 0 && Boolean(dec.expiresAt);
+              const isPending = pendingRequests.has(reqId);
+              const titleSafe = escapeHtml(t.taskTitle);
+
               return `
               <div class="urgent-card" id="urgent-card-${idx}">
                 <div class="urgent-card-header">
-                  <span class="urgent-title">${escapeHtml(t.taskTitle)}</span>
-                  <span class="risk-badge">${escapeHtml(risk)}</span>
+                  <span class="urgent-title" title="${titleSafe}">${titleSafe}</span>
+                  <div style="display: flex; gap: 4px; align-items: center">
+                    <span style="font-size: 9px; color: ${remainingSec < 20 ? "#ef4444" : "#f59e0b"}">⏳ ${remainingSec}s</span>
+                    <span class="risk-badge">${escapeHtml(risk)}</span>
+                  </div>
                 </div>
                 <div class="action-preview">${escapeHtml(action)}</div>
                 <div class="card-actions">
-                  <button class="pill-btn allow" id="p0-allow-${idx}">✓ 放行</button>
-                  <button class="pill-btn deny" id="p0-deny-${idx}">✗ 拒绝</button>
+                  ${
+                    isExpired
+                      ? `<span style="font-size: 10px; color: #ef4444">⏳ 已超时自动拦截</span>`
+                      : `
+                    <button class="pill-btn allow" data-req-id="${reqId}" id="p0-allow-${idx}" ${
+                      isPending ? "disabled" : ""
+                    }>${isPending ? "处理中..." : "✓ 放行"}</button>
+                    <button class="pill-btn deny" data-req-id="${reqId}" id="p0-deny-${idx}" ${
+                      isPending ? "disabled" : ""
+                    }>${isPending ? "处理中..." : "✗ 拒绝"}</button>
+                  `
+                  }
                 </div>
               </div>`;
             })
@@ -218,11 +288,12 @@ function connectWs() {
         `;
         p0Tasks.forEach((t: any, idx: number) => {
           const dec = t.pendingDecision || {};
-          document.getElementById(`p0-allow-${idx}`)?.addEventListener("click", (e) => {
-            sendDecision(e.currentTarget as HTMLButtonElement, t.agentId, dec.requestId, "ALLOW");
+          const reqId = dec.requestId || "";
+          document.getElementById(`p0-allow-${idx}`)?.addEventListener("click", () => {
+            sendDecision(t.agentId, reqId, "ALLOW");
           });
-          document.getElementById(`p0-deny-${idx}`)?.addEventListener("click", (e) => {
-            sendDecision(e.currentTarget as HTMLButtonElement, t.agentId, dec.requestId, "DENY");
+          document.getElementById(`p0-deny-${idx}`)?.addEventListener("click", () => {
+            sendDecision(t.agentId, reqId, "DENY");
           });
         });
       } else {
@@ -237,10 +308,11 @@ function connectWs() {
             .map((t: any) => {
               const sec =
                 t.activeDurationMs !== null ? `${Math.floor(t.activeDurationMs / 1000)}s` : "--";
+              const titleSafe = escapeHtml(t.taskTitle);
               return `
               <div class="quest-card">
                 <div>
-                  <div class="quest-title">${escapeHtml(t.taskTitle)}</div>
+                  <div class="quest-title" title="${titleSafe}">${titleSafe}</div>
                   <div class="quest-meta">已运行: ${sec}</div>
                 </div>
                 <span class="state-tag running">${escapeHtml(t.state)}</span>

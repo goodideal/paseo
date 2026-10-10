@@ -8,8 +8,78 @@ import {
   computeTaskPriority,
 } from "../shared/types.js";
 
+function evaluateRisk(action: string, explicitHint?: string): "low" | "medium" | "high" {
+  if (explicitHint === "high" || explicitHint === "medium" || explicitHint === "low") {
+    return explicitHint;
+  }
+  const normalized = action.toLowerCase();
+  if (
+    normalized.includes("rm -rf") ||
+    normalized.includes("git push --force") ||
+    normalized.includes("git reset --hard") ||
+    normalized.includes("mkfs") ||
+    normalized.includes("dd ") ||
+    normalized.includes("chmod -r 777") ||
+    normalized.includes("drop table") ||
+    normalized.includes("truncate")
+  ) {
+    return "high";
+  }
+  if (
+    normalized.startsWith("git status") ||
+    normalized.startsWith("git log") ||
+    normalized.startsWith("git diff") ||
+    normalized.startsWith("ls") ||
+    normalized.startsWith("read ") ||
+    normalized.startsWith("npm test")
+  ) {
+    return "low";
+  }
+  return "medium";
+}
+
+function extractActionDescription(permission: any): string {
+  if (!permission) return "未知权限请求";
+  if (permission.detail) {
+    if (permission.detail.type === "shell" && permission.detail.command) {
+      return permission.detail.command;
+    }
+    if (permission.detail.command) {
+      return permission.detail.command;
+    }
+    if (permission.detail.filePath) {
+      return `${permission.detail.type || "file"}: ${permission.detail.filePath}`;
+    }
+  }
+  if (permission.input && typeof permission.input.command === "string") {
+    return permission.input.command;
+  }
+  if (permission.title && permission.title.trim().length > 0) {
+    return permission.title;
+  }
+  if (permission.description && permission.description.trim().length > 0) {
+    return permission.description;
+  }
+  if (permission.name && permission.name !== "execute") {
+    return `${permission.name} (${permission.kind || "tool"})`;
+  }
+  return permission.kind || "tool";
+}
+
+function getNextLevelThreshold(level: number): number {
+  if (level >= 5) return 6000;
+  if (level === 4) return 3000;
+  if (level === 3) return 1500;
+  if (level === 2) return 600;
+  return 200;
+}
+
 export class DesktopPetAgentProjection {
   private readonly agents = new Map<string, AgentSnapshotPayload>();
+  private readonly permissionTimers = new Map<
+    string,
+    { requestedAt: number; expiresAt: number; timeoutSeconds: number }
+  >();
   private xp = 0;
   private level = 1;
 
@@ -44,6 +114,7 @@ export class DesktopPetAgentProjection {
     let waitingCount = 0;
     let errorCount = 0;
     const tasks: TrackedTask[] = [];
+    const activePermissionIds = new Set<string>();
 
     for (const agent of this.agents.values()) {
       const taskTitle =
@@ -60,31 +131,37 @@ export class DesktopPetAgentProjection {
         state = "WAITING_DECISION";
         waitingCount++;
         const earliestPermission = agent.pendingPermissions[0] as any;
-        if (earliestPermission.requestedAt) {
-          startTimeMs = new Date(earliestPermission.requestedAt).getTime();
-        } else if (rawAgent.statusEnteredAt) {
-          startTimeMs = new Date(rawAgent.statusEnteredAt).getTime();
-        } else {
-          startTimeMs = null;
+        const permId = earliestPermission.id;
+        activePermissionIds.add(permId);
+
+        let timer = this.permissionTimers.get(permId);
+        if (!timer) {
+          const timeoutSec =
+            typeof earliestPermission.timeoutSeconds === "number"
+              ? earliestPermission.timeoutSeconds
+              : 60;
+          const reqAt = earliestPermission.requestedAt
+            ? new Date(earliestPermission.requestedAt).getTime()
+            : now;
+          timer = {
+            requestedAt: reqAt,
+            expiresAt: reqAt + timeoutSec * 1000,
+            timeoutSeconds: timeoutSec,
+          };
+          this.permissionTimers.set(permId, timer);
         }
 
-        const timeoutSec =
-          typeof earliestPermission.timeoutSeconds === "number"
-            ? earliestPermission.timeoutSeconds
-            : 60;
-        const requestedAt = startTimeMs ?? now;
-        const expiresAt = requestedAt + timeoutSec * 1000;
+        startTimeMs = timer.requestedAt;
+        const actionRequested = extractActionDescription(earliestPermission);
+        const riskHint = evaluateRisk(actionRequested, earliestPermission.riskHint);
 
         pendingDecision = {
-          requestId: earliestPermission.id,
-          actionRequested:
-            earliestPermission.kind === "shell"
-              ? earliestPermission.command
-              : earliestPermission.kind || "permission",
-          riskHint: earliestPermission.riskHint || "medium",
-          requestedAt,
-          timeoutSeconds: timeoutSec,
-          expiresAt,
+          requestId: permId,
+          actionRequested,
+          riskHint,
+          requestedAt: timer.requestedAt,
+          timeoutSeconds: timer.timeoutSeconds,
+          expiresAt: timer.expiresAt,
         };
       } else if (agent.status === "initializing") {
         state = "STARTING";
@@ -128,6 +205,13 @@ export class DesktopPetAgentProjection {
       });
     }
 
+    // Prune stale timers
+    for (const permId of this.permissionTimers.keys()) {
+      if (!activePermissionIds.has(permId)) {
+        this.permissionTimers.delete(permId);
+      }
+    }
+
     // Stable sort: P0 > P1 > P2
     // P0: shortest remaining expiration first
     // P1: longest running duration first
@@ -153,7 +237,7 @@ export class DesktopPetAgentProjection {
             (t.pendingDecision?.expiresAt && t.pendingDecision.expiresAt - now < 30000)),
       );
       petMood = hasUrgent ? "urgent" : "waiting";
-    } else if (runningCount > 0) {
+    } else if (runningCount > 0 || tasks.some((t) => t.priority === "P1")) {
       petMood = "running";
     } else if (errorCount > 0) {
       petMood = "dizzy";
@@ -168,7 +252,7 @@ export class DesktopPetAgentProjection {
       stoppedCount: 0,
       petXp: this.xp,
       petLevel: this.level,
-      xpToNextLevel: 500,
+      xpToNextLevel: getNextLevelThreshold(this.level),
       tasks,
     };
   }

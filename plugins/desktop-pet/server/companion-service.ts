@@ -240,42 +240,75 @@ const COMPANION_JS = `"use strict";
   var wsUrl = (window.location.protocol === "https:" ? "wss://" : "ws://") + wsHost + ":" + wsPort + (token ? "?token=" + encodeURIComponent(token) : "");
   var ws = null;
   var previousWaitingCount = 0;
+  var previousLevel = 1;
+  var pendingRequests = new Set();
+  var BACKOFF_DELAYS = [1000, 2000, 5000];
+  var backoffIdx = 0;
 
-  function sendDecision(btn, agentId, requestId, behavior) {
+  function sendDecision(agentId, requestId, behavior) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    btn.disabled = true;
-    btn.innerText = "处理中...";
-    ws.send(JSON.stringify({ type: "decision.respond", agentId, requestId, behavior }));
-    if (behavior === "ALLOW") synth.playApproved();
+    pendingRequests.add(requestId);
+    document.querySelectorAll('[data-req-id="' + requestId + '"]').forEach(function(btn) {
+      btn.disabled = true;
+      btn.innerText = "处理中...";
+    });
+    ws.send(JSON.stringify({ type: "decision.respond", agentId: agentId, requestId: requestId, behavior: behavior }));
   }
 
   function connectWs() {
     ws = new WebSocket(wsUrl);
-    ws.onopen = () => { if (connBanner) connBanner.innerHTML = ""; };
-    ws.onerror = () => { if (connBanner) connBanner.innerHTML = '<div class="disconnected-bar">⚠️ 伴侣服务连接受阻</div>'; };
-    ws.onclose = () => {
-      if (connBanner) connBanner.innerHTML = '<div class="disconnected-bar">🔌 连接断开，重连中...</div>';
-      setTimeout(connectWs, 3000);
+    ws.onopen = function() {
+      backoffIdx = 0;
+      if (connBanner) connBanner.innerHTML = "";
     };
-    ws.onmessage = (event) => {
+    ws.onerror = function() {
+      if (connBanner) connBanner.innerHTML = '<div class="disconnected-bar">⚠️ 伴侣服务连接受阻</div>';
+    };
+    ws.onclose = function() {
+      if (connBanner) connBanner.innerHTML = '<div class="disconnected-bar">🔌 连接断开，重连中...</div>';
+      document.querySelectorAll(".pill-btn").forEach(function(btn) { btn.disabled = true; });
+      var delay = BACKOFF_DELAYS[Math.min(backoffIdx++, BACKOFF_DELAYS.length - 1)];
+      setTimeout(connectWs, delay);
+    };
+    ws.onmessage = function(event) {
       try {
-        const data = JSON.parse(event.data);
+        var data = JSON.parse(event.data);
+        if (data.type === "action_ack") {
+          if (data.requestId) pendingRequests.delete(data.requestId);
+          if (data.success && data.behavior === "ALLOW") synth.playApproved();
+          return;
+        }
         if (data.type !== "state_update") return;
 
-        const waitingCount = data.waitingCount || 0;
-        const runningCount = data.runningCount || 0;
-        const stoppedCount = data.stoppedCount || 0;
-        const tasks = data.tasks || [];
-        const petLevel = data.petLevel || 1;
-        const petXp = data.petXp || 0;
-        const xpToNextLevel = data.xpToNextLevel || 500;
+        var waitingCount = data.waitingCount || 0;
+        var runningCount = data.runningCount || 0;
+        var stoppedCount = data.stoppedCount || 0;
+        var tasks = data.tasks || [];
+        var petLevel = data.petLevel || 1;
+        var petXp = data.petXp || 0;
+        var xpToNextLevel = data.xpToNextLevel || 500;
 
         if (waitingCount > previousWaitingCount) {
           synth.playDecisionRequired();
         }
         previousWaitingCount = waitingCount;
 
-        let mood = data.petMood || "idle";
+        if (petLevel > previousLevel) {
+          synth.playLevelUp();
+          previousLevel = petLevel;
+        }
+
+        var activeReqIds = new Set();
+        for (var i = 0; i < tasks.length; i++) {
+          if (tasks[i].pendingDecision && tasks[i].pendingDecision.requestId) {
+            activeReqIds.add(tasks[i].pendingDecision.requestId);
+          }
+        }
+        pendingRequests.forEach(function(reqId) {
+          if (!activeReqIds.has(reqId)) pendingRequests.delete(reqId);
+        });
+
+        var mood = data.petMood || "idle";
         engine.setMood(mood);
 
         if (hudPetLevel) hudPetLevel.innerText = "🐾 Lv." + petLevel + " Cyber Pet";
@@ -283,34 +316,47 @@ const COMPANION_JS = `"use strict";
           hudStatsBadges.innerHTML = '<span>' + waitingCount + ' 🚨</span><span>' + runningCount + ' ⚒️</span><span>' + stoppedCount + ' 🏆</span>';
         }
         if (hudXpFill) {
-          const pct = Math.min(100, Math.floor((petXp / xpToNextLevel) * 100));
+          var pct = Math.min(100, Math.floor((petXp / xpToNextLevel) * 100));
           hudXpFill.style.width = pct + "%";
         }
 
-        const p0Tasks = tasks.filter(t => t.priority === "P0" || t.state === "WAITING_DECISION");
-        const p1Tasks = tasks.filter(t => t.priority === "P1" || (t.state === "RUNNING" && !p0Tasks.includes(t)));
+        var p0Tasks = tasks.filter(function(t) { return t.priority === "P0" || t.state === "WAITING_DECISION"; });
+        var p1Tasks = tasks.filter(function(t) { return t.priority === "P1" || (t.state === "RUNNING" && !p0Tasks.includes(t)); });
+        var now = Date.now();
 
         if (p0Tasks.length > 0) {
-          const topP0 = p0Tasks[0];
-          const dec = topP0.pendingDecision || {};
+          var topP0 = p0Tasks[0];
+          var dec = topP0.pendingDecision || {};
+          var reqId = dec.requestId || "";
+          var isPending = pendingRequests.has(reqId);
+          var remainingSec = Math.max(0, Math.ceil(((dec.expiresAt || 0) - now) / 1000));
+          var isExpired = remainingSec === 0 && Boolean(dec.expiresAt);
+
           dynamicPill.style.display = "flex";
           dynamicPill.className = "urgent";
-          pillText.innerHTML = "🚨 <b>待批:</b> " + escapeHtml(topP0.taskTitle || "高危操作");
-          pillActions.innerHTML = '<button class="pill-btn allow" id="pill-allow-btn">✓</button><button class="pill-btn deny" id="pill-deny-btn">✗</button>';
-          document.getElementById("pill-allow-btn")?.addEventListener("click", (e) => {
-            e.stopPropagation();
-            sendDecision(e.currentTarget, topP0.agentId, dec.requestId, "ALLOW");
-          });
-          document.getElementById("pill-deny-btn")?.addEventListener("click", (e) => {
-            e.stopPropagation();
-            sendDecision(e.currentTarget, topP0.agentId, dec.requestId, "DENY");
-          });
+          var safeTitle = escapeHtml(topP0.taskTitle || "高危操作");
+          pillText.innerHTML = "🚨 <b>待批:</b> <span title=\"" + safeTitle + "\">" + safeTitle + "</span> (" + remainingSec + "s)";
+
+          if (isExpired) {
+            pillActions.innerHTML = '<span style="font-size: 9px; color: #ef4444">已超时</span>';
+          } else {
+            pillActions.innerHTML = '<button class="pill-btn allow" data-req-id="' + reqId + '" ' + (isPending ? 'disabled' : '') + '>' + (isPending ? '...' : '✓') + '</button><button class="pill-btn deny" data-req-id="' + reqId + '" ' + (isPending ? 'disabled' : '') + '>' + (isPending ? '...' : '✗') + '</button>';
+            pillActions.querySelector(".allow")?.addEventListener("click", function(e) {
+              e.stopPropagation();
+              sendDecision(topP0.agentId, reqId, "ALLOW");
+            });
+            pillActions.querySelector(".deny")?.addEventListener("click", function(e) {
+              e.stopPropagation();
+              sendDecision(topP0.agentId, reqId, "DENY");
+            });
+          }
         } else if (p1Tasks.length > 0) {
-          const topP1 = p1Tasks[0];
-          const sec = Math.floor((topP1.activeDurationMs || 0) / 1000);
+          var topP1 = p1Tasks[0];
+          var sec = Math.floor((topP1.activeDurationMs || 0) / 1000);
+          var p1Title = escapeHtml(topP1.taskTitle);
           dynamicPill.style.display = "flex";
           dynamicPill.className = "";
-          pillText.innerHTML = "⚡ <b>" + escapeHtml(topP1.taskTitle) + "</b> (" + sec + "s)";
+          pillText.innerHTML = "⚡ <b title=\"" + p1Title + "\">" + p1Title + "</b> (" + sec + "s)";
           pillActions.innerHTML = "";
         } else {
           dynamicPill.style.display = "none";
@@ -319,26 +365,34 @@ const COMPANION_JS = `"use strict";
 
         if (p0Tasks.length > 0) {
           p0Container.innerHTML = '<div class="section-title" style="color: #f87171">🚨 紧急审批 (P0)</div>' +
-            p0Tasks.map((t, idx) => {
-              const dec = t.pendingDecision || {};
-              const action = dec.actionRequested || "执行受保护操作";
-              const risk = (dec.riskHint || "medium").toUpperCase();
+            p0Tasks.map(function(t, idx) {
+              var pDec = t.pendingDecision || {};
+              var pReqId = pDec.requestId || "";
+              var action = pDec.actionRequested || "执行受保护操作";
+              var risk = (pDec.riskHint || "medium").toUpperCase();
+              var remSec = Math.max(0, Math.ceil(((pDec.expiresAt || 0) - now) / 1000));
+              var exp = remSec === 0 && Boolean(pDec.expiresAt);
+              var pend = pendingRequests.has(pReqId);
+              var tTitle = escapeHtml(t.taskTitle);
+
               return '<div class="urgent-card">' +
-                '<div class="urgent-card-header"><span class="urgent-title">' + escapeHtml(t.taskTitle) + '</span><span class="risk-badge">' + escapeHtml(risk) + '</span></div>' +
+                '<div class="urgent-card-header"><span class="urgent-title" title="' + tTitle + '">' + tTitle + '</span><div style="display:flex;gap:4px;align-items:center"><span style="font-size:9px;color:' + (remSec < 20 ? '#ef4444' : '#f59e0b') + '">⏳ ' + remSec + 's</span><span class="risk-badge">' + escapeHtml(risk) + '</span></div></div>' +
                 '<div class="action-preview">' + escapeHtml(action) + '</div>' +
                 '<div class="card-actions">' +
-                  '<button class="pill-btn allow" id="p0-allow-' + idx + '">✓ 放行</button>' +
-                  '<button class="pill-btn deny" id="p0-deny-' + idx + '">✗ 拒绝</button>' +
+                  (exp ? '<span style="font-size:10px;color:#ef4444">⏳ 已超时自动拦截</span>' :
+                  '<button class="pill-btn allow" data-req-id="' + pReqId + '" id="p0-allow-' + idx + '" ' + (pend ? 'disabled' : '') + '>' + (pend ? '处理中...' : '✓ 放行') + '</button>' +
+                  '<button class="pill-btn deny" data-req-id="' + pReqId + '" id="p0-deny-' + idx + '" ' + (pend ? 'disabled' : '') + '>' + (pend ? '处理中...' : '✗ 拒绝') + '</button>') +
                 '</div></div>';
             }).join("");
 
-          p0Tasks.forEach((t, idx) => {
-            const dec = t.pendingDecision || {};
-            document.getElementById("p0-allow-" + idx)?.addEventListener("click", (e) => {
-              sendDecision(e.currentTarget, t.agentId, dec.requestId, "ALLOW");
+          p0Tasks.forEach(function(t, idx) {
+            var pDec = t.pendingDecision || {};
+            var pReqId = pDec.requestId || "";
+            document.getElementById("p0-allow-" + idx)?.addEventListener("click", function() {
+              sendDecision(t.agentId, pReqId, "ALLOW");
             });
-            document.getElementById("p0-deny-" + idx)?.addEventListener("click", (e) => {
-              sendDecision(e.currentTarget, t.agentId, dec.requestId, "DENY");
+            document.getElementById("p0-deny-" + idx)?.addEventListener("click", function() {
+              sendDecision(t.agentId, pReqId, "DENY");
             });
           });
         } else {
@@ -347,9 +401,10 @@ const COMPANION_JS = `"use strict";
 
         if (p1Tasks.length > 0) {
           p1Container.innerHTML = '<div class="section-title">⚒️ 正在推进 (P1)</div>' +
-            p1Tasks.map(t => {
-              const sec = t.activeDurationMs !== null ? Math.floor(t.activeDurationMs / 1000) + "s" : "--";
-              return '<div class="quest-card"><div><div class="quest-title">' + escapeHtml(t.taskTitle) + '</div><div class="quest-meta">已运行: ' + sec + '</div></div><span class="state-tag running">' + escapeHtml(t.state) + '</span></div>';
+            p1Tasks.map(function(t) {
+              var s = t.activeDurationMs !== null ? Math.floor(t.activeDurationMs / 1000) + "s" : "--";
+              var safeP1 = escapeHtml(t.taskTitle);
+              return '<div class="quest-card"><div><div class="quest-title" title="' + safeP1 + '">' + safeP1 + '</div><div class="quest-meta">已运行: ' + s + '</div></div><span class="state-tag running">' + escapeHtml(t.state) + '</span></div>';
             }).join("");
         } else {
           p1Container.innerHTML = '<div style="color: #64748b; font-size: 10px; margin-bottom: 8px; text-align: center; padding: 10px 0;">☕ 当前无活跃打工任务</div>';
@@ -517,6 +572,19 @@ export class CompanionService {
     const payload = JSON.stringify({
       type: "state_update",
       ...snapshot,
+    });
+    for (const client of this.wss.clients) {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(payload);
+      }
+    }
+  }
+
+  public broadcastActionAck(ack: { requestId: string; behavior: string; success: boolean }): void {
+    if (!this.wss) return;
+    const payload = JSON.stringify({
+      type: "action_ack",
+      ...ack,
     });
     for (const client of this.wss.clients) {
       if (client.readyState === WebSocket.OPEN) {

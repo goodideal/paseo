@@ -132,4 +132,52 @@ describe("AgentTracker", () => {
     expect(snapshot.tasks[2].priority).toBe("P2");
     expect((snapshot as any).petMood).toBe("waiting");
   });
+
+  it("maintains stable expiresAt across ticks and extracts real tool permission details", () => {
+    const projection = new DesktopPetAgentProjection();
+    const t0 = 1700000000000;
+
+    projection.handleSnapshot([
+      {
+        id: "agent-p0",
+        title: "Danger Agent",
+        status: "running",
+        pendingPermissions: [
+          {
+            id: "req-danger-1",
+            provider: "claude",
+            name: "execute",
+            kind: "tool",
+            detail: {
+              type: "shell",
+              command: "rm -rf /var/log",
+            },
+          } as any,
+        ],
+        createdAt: "",
+        updatedAt: "",
+        cwd: "",
+        lastUserMessageAt: null,
+        capabilities: {} as any,
+        availableModes: [],
+        currentModeId: null,
+        persistence: null,
+      } as any,
+    ]);
+
+    const snap1 = projection.getSnapshot(t0);
+    const p0Task1 = snap1.tasks[0];
+    expect(p0Task1.pendingDecision).toBeDefined();
+    expect(p0Task1.pendingDecision?.actionRequested).toBe("rm -rf /var/log");
+    expect(p0Task1.pendingDecision?.riskHint).toBe("high");
+    const initialExpiresAt = p0Task1.pendingDecision!.expiresAt!;
+
+    // 45 seconds later, expiresAt must stay stable and remaining duration drops to 15s
+    const snap2 = projection.getSnapshot(t0 + 45000);
+    const p0Task2 = snap2.tasks[0];
+    expect(p0Task2.pendingDecision!.expiresAt).toBe(initialExpiresAt);
+    expect(p0Task2.pendingDecision!.expiresAt! - (t0 + 45000)).toBe(15000);
+    // Since remaining < 30s and high risk, mood should be urgent!
+    expect(snap2.petMood).toBe("urgent");
+  });
 });
