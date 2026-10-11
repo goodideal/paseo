@@ -1,6 +1,6 @@
 # Gateway Workspace Tagger Host-Level CLI Override Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Enable dual-track host-level CLI option override in Paseo for Claude Code and Codex so that LLM gateway requests reliably receive workspace metadata without being discarded by local static config files.
 
@@ -41,7 +41,7 @@
 - Consumes: `GatewayTaggerSettings`, `EnrichUrlOptions`, `PluginServerContext`
 - Produces: Enhanced `nextEnv` containing `ANTHROPIC_BASE_URL`, `CODEX_BASE_URL`, and `OPENAI_BASE_URL` with valid fallback defaults.
 
-- [ ] **Step 1: Write failing unit tests for default fallback and invalid local port detection**
+- [x] **Step 1: Write failing unit tests for default fallback and invalid local port detection**
 
 In `plugin-custom/gateway-workspace-tagger/tests/url-enricher.test.ts`, add:
 
@@ -73,12 +73,12 @@ describe("Gateway URL fallback & invalid endpoint resolution", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run plugin-custom/gateway-workspace-tagger/tests/url-enricher.test.ts --bail=1`
 Expected: FAIL with "isInvalidLocalEndpoint is not defined" or similar.
 
-- [ ] **Step 3: Implement settings and url-enricher fallback functions**
+- [x] **Step 3: Implement settings and url-enricher fallback functions**
 
 In `plugin-custom/gateway-workspace-tagger/shared/settings.ts`, add default URLs:
 
@@ -152,12 +152,12 @@ if (rawOpenAiUrl) {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run plugin-custom/gateway-workspace-tagger/tests/url-enricher.test.ts --bail=1`
 Expected: PASS
 
-- [ ] **Step 5: Format and commit Task 1**
+- [x] **Step 5: Format and commit Task 1**
 
 ```bash
 npm run format:files -- plugin-custom/gateway-workspace-tagger/shared/settings.ts plugin-custom/gateway-workspace-tagger/shared/url-enricher.ts plugin-custom/gateway-workspace-tagger/index.server.ts plugin-custom/gateway-workspace-tagger/tests/url-enricher.test.ts
@@ -181,7 +181,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 - Consumes: `this.launchEnv?.["ANTHROPIC_BASE_URL"]`
 - Produces: `ClaudeOptions.settings` with merged `env.ANTHROPIC_BASE_URL`
 
-- [ ] **Step 1: Write failing test in `agent.env.test.ts`**
+- [x] **Step 1: Write failing test in `agent.env.test.ts`**
 
 In `packages/server/src/server/agent/providers/claude/agent.env.test.ts`, add:
 
@@ -226,12 +226,12 @@ test("embeds ANTHROPIC_BASE_URL from launchEnv into settings options to override
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run packages/server/src/server/agent/providers/claude/agent.env.test.ts --bail=1`
 Expected: FAIL (capturedSettings does not have `env.ANTHROPIC_BASE_URL`)
 
-- [ ] **Step 3: Update `buildSettingsOptions` in `claude/agent.ts`**
+- [x] **Step 3: Update `buildSettingsOptions` in `claude/agent.ts`**
 
 In `packages/server/src/server/agent/providers/claude/agent.ts:3440`:
 
@@ -267,12 +267,12 @@ In `packages/server/src/server/agent/providers/claude/agent.ts:3440`:
   }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run packages/server/src/server/agent/providers/claude/agent.env.test.ts --bail=1`
 Expected: PASS
 
-- [ ] **Step 5: Format and commit Task 2**
+- [x] **Step 5: Format and commit Task 2**
 
 ```bash
 npm run format:files -- packages/server/src/server/agent/providers/claude/agent.ts packages/server/src/server/agent/providers/claude/agent.env.test.ts
@@ -296,7 +296,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 - Consumes: `launchEnv?.["CODEX_BASE_URL"] || launchEnv?.["OPENAI_BASE_URL"]`
 - Produces: Codex spawn args containing `-c model_providers.custom.base_url="<url>"`
 
-- [ ] **Step 1: Write failing test in `codex-app-server-agent.test.ts`**
+- [x] **Step 1: Write failing test in `codex-app-server-agent.test.ts`**
 
 In `packages/server/src/server/agent/providers/codex-app-server-agent.test.ts`, add test for `-c` flag injection:
 
@@ -334,12 +334,12 @@ test("injects -c model_providers.custom.base_url flag when launchEnv contains CO
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run packages/server/src/server/agent/providers/codex-app-server-agent.test.ts -t "injects -c model_providers.custom.base_url" --bail=1`
 Expected: Test fails until `spawnAppServer` implementation is updated.
 
-- [ ] **Step 3: Implement `-c` argument injection in `spawnAppServer`**
+- [x] **Step 3: Implement `-c` argument injection in `spawnAppServer`**
 
 In `packages/server/src/server/agent/providers/codex-app-server-agent.ts:7323`:
 
@@ -355,12 +355,12 @@ if (codexBaseUrl) {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run packages/server/src/server/agent/providers/codex-app-server-agent.test.ts -t "injects -c model_providers.custom.base_url" --bail=1`
 Expected: PASS
 
-- [ ] **Step 5: Format and commit Task 3**
+- [x] **Step 5: Format and commit Task 3**
 
 ```bash
 npm run format:files -- packages/server/src/server/agent/providers/codex-app-server-agent.ts packages/server/src/server/agent/providers/codex-app-server-agent.test.ts
@@ -378,17 +378,17 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 
 - Repository-wide typecheck and lint
 
-- [ ] **Step 1: Run typecheck**
+- [x] **Step 1: Run typecheck**
 
 Run: `npm run typecheck`
 Expected: 0 errors across all workspaces
 
-- [ ] **Step 2: Run linter**
+- [x] **Step 2: Run linter**
 
 Run: `npm run lint`
 Expected: 0 errors
 
-- [ ] **Step 3: Run targeted test suite**
+- [x] **Step 3: Run targeted test suite**
 
 Run:
 
