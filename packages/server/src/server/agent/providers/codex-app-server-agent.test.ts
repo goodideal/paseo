@@ -17,6 +17,7 @@ import type {
   AgentStreamEvent,
 } from "../agent-sdk-types.js";
 import {
+  buildCodexAppServerArgs,
   buildCodexAppServerEnv,
   CodexAppServerAgentClient,
   CodexAppServerAgentSession,
@@ -3088,6 +3089,45 @@ describe("Codex app-server provider", () => {
 
     expect(env.PASEO_AGENT_ID).toBe(launchContext.env?.PASEO_AGENT_ID);
     expect(env.PASEO_TEST_FLAG).toBe(launchContext.env?.PASEO_TEST_FLAG);
+  });
+
+  describe("buildCodexAppServerArgs", () => {
+    test("injects -c model_providers.custom.base_url when launchEnv contains CODEX_BASE_URL", () => {
+      const args = buildCodexAppServerArgs(
+        [],
+        { goalsEnabled: true },
+        {
+          CODEX_BASE_URL: "https://llm.ezcloud.cc/v1/?source=paseo&workspace_id=wks_456",
+        },
+      );
+      expect(args).toEqual([
+        "app-server",
+        "--enable",
+        "goals",
+        "-c",
+        'model_providers.custom.base_url="https://llm.ezcloud.cc/v1/?source=paseo&workspace_id=wks_456"',
+      ]);
+    });
+
+    test("injects -c model_providers.custom.base_url when launchEnv contains OPENAI_BASE_URL", () => {
+      const args = buildCodexAppServerArgs(
+        [],
+        {},
+        {
+          OPENAI_BASE_URL: "https://llm.ezcloud.cc/v1/?source=paseo&workspace_id=wks_789",
+        },
+      );
+      expect(args).toEqual([
+        "app-server",
+        "-c",
+        'model_providers.custom.base_url="https://llm.ezcloud.cc/v1/?source=paseo&workspace_id=wks_789"',
+      ]);
+    });
+
+    test("omits -c flag when no base URL override is present in launchEnv", () => {
+      const args = buildCodexAppServerArgs([], { goalsEnabled: false }, {});
+      expect(args).toEqual(["app-server"]);
+    });
   });
 
   test("projects request_user_input into a question permission and running timeline tool call", () => {
