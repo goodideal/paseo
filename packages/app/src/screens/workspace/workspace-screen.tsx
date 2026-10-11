@@ -1,4 +1,5 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { getPathBasename } from "@/utils/path";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { getOpenAgentTabLabel } from "@getpaseo/protocol/agent-labels";
 import {
@@ -331,7 +332,7 @@ function getFallbackTabOptionLabel(
     return labels.browser;
   }
   if (tab.target.kind === "file") {
-    return tab.target.path.split("/").findLast(Boolean) ?? tab.target.path;
+    return getPathBasename(tab.target.path);
   }
   if (tab.target.kind === "working_diff" || tab.target.kind === "changes_tree") {
     return labels.changes;

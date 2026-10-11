@@ -103,6 +103,7 @@ import {
 } from "@/keyboard/keyboard-action-dispatcher-context";
 import { polyfillCrypto } from "@/polyfills/crypto";
 import { polyfillNavigator } from "@/polyfills/navigator";
+import { polyfillArray } from "@/polyfills/array";
 import {
   getHostRuntimeStore,
   hasConfiguredLocalDaemonOverride,
@@ -140,6 +141,7 @@ import {
 
 polyfillNavigator();
 polyfillCrypto();
+polyfillArray();
 
 export interface HostRuntimeBootstrapState {
   splashError: string | null;
