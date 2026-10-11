@@ -4,6 +4,8 @@ import { z } from "zod";
 export const GatewayTaggerSettingsSchema = z.object({
   enabled: z.boolean().default(true),
   source: z.string().default("paseo"),
+  defaultAnthropicBaseUrl: z.string().default("https://llm.ezcloud.cc/anthropic"),
+  defaultOpenAiBaseUrl: z.string().default("https://llm.ezcloud.cc/v1"),
   workspaceParamName: z.string().default("workspace_id"),
   sourceParamName: z.string().default("source"),
   includeAgentId: z.boolean().default(true),

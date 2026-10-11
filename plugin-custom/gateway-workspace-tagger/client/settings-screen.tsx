@@ -69,6 +69,8 @@ export function GatewayTaggerSettingsScreen({ theme }: PluginSurfaceProps) {
       : {
           enabled: true,
           source: "paseo",
+          defaultAnthropicBaseUrl: "https://llm.ezcloud.cc/anthropic",
+          defaultOpenAiBaseUrl: "https://llm.ezcloud.cc/v1",
           workspaceParamName: "workspace_id",
           sourceParamName: "source",
           includeAgentId: true,
@@ -90,6 +92,20 @@ export function GatewayTaggerSettingsScreen({ theme }: PluginSurfaceProps) {
             value={values.enabled}
             disabled={settings.saving}
             onValueChange={(val) => updateSetting({ enabled: val })}
+          />
+          <SettingsInput
+            label="Anthropic 网关基地址"
+            hint="默认值: https://llm.ezcloud.cc/anthropic"
+            initialValue={values.defaultAnthropicBaseUrl}
+            disabled={settings.saving}
+            onChangeText={(val) => updateSetting({ defaultAnthropicBaseUrl: val })}
+          />
+          <SettingsInput
+            label="OpenAI / Codex 网关基地址"
+            hint="默认值: https://llm.ezcloud.cc/v1"
+            initialValue={values.defaultOpenAiBaseUrl}
+            disabled={settings.saving}
+            onChangeText={(val) => updateSetting({ defaultOpenAiBaseUrl: val })}
           />
           <SettingsInput
             label="来源参数标识 (Source)"

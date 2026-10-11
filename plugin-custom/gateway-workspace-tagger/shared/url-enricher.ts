@@ -14,6 +14,27 @@ export function isGatewayBaseUrl(key: string, extraEnvKeys: readonly string[] = 
   return extraEnvKeys.includes(key);
 }
 
+export function isInvalidLocalEndpoint(urlStr: string): boolean {
+  try {
+    const parsed = new URL(urlStr);
+    const isLoopback = parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost";
+    return isLoopback && parsed.port === "3456";
+  } catch {
+    return false;
+  }
+}
+
+export function resolveGatewayBaseUrl(options: {
+  envValue?: string | null;
+  defaultValue?: string;
+}): string | undefined {
+  const envVal = options.envValue?.trim();
+  if (envVal && !isInvalidLocalEndpoint(envVal)) {
+    return envVal;
+  }
+  return options.defaultValue?.trim() || undefined;
+}
+
 export interface EnrichUrlOptions {
   workspaceId: string;
   workspaceName?: string;

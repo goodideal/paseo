@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { enrichUrlWithWorkspace, isGatewayBaseUrl } from "../shared/url-enricher.js";
+import {
+  enrichUrlWithWorkspace,
+  isGatewayBaseUrl,
+  isInvalidLocalEndpoint,
+  resolveGatewayBaseUrl,
+} from "../shared/url-enricher.js";
 
 describe("isGatewayBaseUrl", () => {
   test("matches well-known LLM gateway base URL keys", () => {
@@ -130,5 +135,29 @@ describe("enrichUrlWithWorkspace", () => {
   test("safely returns invalid url without throwing", () => {
     const invalid = "some:invalid:url";
     expect(enrichUrlWithWorkspace(invalid, { workspaceId: "ws_test" })).toBe(invalid);
+  });
+});
+
+describe("Gateway URL fallback & invalid endpoint resolution", () => {
+  test("identifies invalid local port 3456 as dead endpoint", () => {
+    expect(isInvalidLocalEndpoint("http://127.0.0.1:3456")).toBe(true);
+    expect(isInvalidLocalEndpoint("http://localhost:3456/")).toBe(true);
+    expect(isInvalidLocalEndpoint("https://llm.ezcloud.cc/anthropic")).toBe(false);
+  });
+
+  test("resolves fallback default URL when env value is invalid local port or empty", () => {
+    const resolved = resolveGatewayBaseUrl({
+      envValue: "http://127.0.0.1:3456",
+      defaultValue: "https://llm.ezcloud.cc/anthropic",
+    });
+    expect(resolved).toBe("https://llm.ezcloud.cc/anthropic");
+  });
+
+  test("preserves valid user env value when it is not an invalid local port", () => {
+    const resolved = resolveGatewayBaseUrl({
+      envValue: "https://custom-gateway.internal/v1",
+      defaultValue: "https://llm.ezcloud.cc/v1",
+    });
+    expect(resolved).toBe("https://custom-gateway.internal/v1");
   });
 });
