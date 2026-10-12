@@ -28,12 +28,18 @@ export const audioBriefSettings = defineSettings({
   scope: "host",
   version: 1,
   schema: z.object({
+    enableLlmSummary: z.boolean().default(true),
+    llmBaseUrl: z.string().default("https://llm.ezcloud.cc/v1"),
+    llmApiKey: z.string().default("sk-ant-d9b07fe4e0eec51d903e6f55365c3415"),
+    llmModel: z.string().default("gemini-flash"),
+    llmTimeoutSeconds: z.number().int().min(5).max(120).default(30),
     enableBackendTts: z.boolean().default(true),
     ttsBaseUrl: z.string().default("http://127.0.0.1:8001/v1"),
     ttsApiKey: z.string().default("sk-local"),
     ttsModel: z.string().default("tts-1"),
     ttsVoice: z.string().default("alloy"),
     ttsTimeoutSeconds: z.number().int().min(5).max(180).default(60),
+    enableMacOsSayFallback: z.boolean().default(true),
     instructions: z.string().default(DEFAULT_AUDIO_BRIEF_INSTRUCTIONS),
   }),
 });

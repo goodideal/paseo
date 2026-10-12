@@ -23,6 +23,12 @@ export default function contribute(server: PluginServerContext) {
 
   const service = new AudioBriefService({
     getSettings: () => currentSettings,
+    logger: {
+      debug: (msg, ...args) => console.log(`[audio-brief] ${msg}`, ...args),
+      info: (msg, ...args) => console.log(`[audio-brief] ${msg}`, ...args),
+      warn: (msg, ...args) => console.warn(`[audio-brief] ${msg}`, ...args),
+      error: (msg, ...args) => console.error(`[audio-brief] ${msg}`, ...args),
+    },
   });
 
   server.handle(audioBriefSynthesizeRpc, async (input) => {

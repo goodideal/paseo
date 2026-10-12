@@ -7,6 +7,8 @@ import {
   AudioBriefService,
   DEFAULT_AUDIO_BRIEF_INSTRUCTIONS,
   createOpenAiTtsSynthesizer,
+  createOpenAiTextGenerator,
+  createMacOsSaySynthesizer,
 } from "../server/audio-brief-service.js";
 import contribute from "../index.server.js";
 import { audioBriefSynthesizeRpc } from "../shared/contracts.js";
@@ -287,6 +289,100 @@ describe("AudioBriefService", () => {
       });
 
       await expect(synthesizer("测试错误")).rejects.toThrow("TTS server HTTP 500");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("createOpenAiTextGenerator posts messages and parses content response", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: "这是大模型生成的口播总结。",
+            },
+          },
+        ],
+      }),
+    });
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch as any;
+
+    try {
+      const generator = createOpenAiTextGenerator({
+        baseUrl: "https://llm.ezcloud.cc/v1",
+        apiKey: "test-key",
+        model: "gemini-flash",
+      });
+
+      const result = await generator({
+        prompt: "System Prompt",
+        text: "User message text",
+      });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://llm.ezcloud.cc/v1/chat/completions",
+        expect.objectContaining({
+          method: "POST",
+          headers: {
+            Authorization: "Bearer test-key",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "gemini-flash",
+            messages: [
+              { role: "system", content: "System Prompt" },
+              { role: "user", content: "User message text" },
+            ],
+            temperature: 0.3,
+            max_tokens: 800,
+          }),
+        }),
+      );
+      expect(result).toBe("这是大模型生成的口播总结。");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("createOpenAiTextGenerator throws error on HTTP failure", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      statusText: "Unauthorized",
+    });
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch as any;
+
+    try {
+      const generator = createOpenAiTextGenerator({
+        baseUrl: "https://llm.ezcloud.cc/v1",
+      });
+
+      await expect(generator({ prompt: "P", text: "T" })).rejects.toThrow("LLM server HTTP 401");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("createOpenAiTextGenerator throws error on empty choices", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [] }),
+    });
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch as any;
+
+    try {
+      const generator = createOpenAiTextGenerator();
+      await expect(generator({ prompt: "P", text: "T" })).rejects.toThrow(
+        "LLM response did not contain content",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }
