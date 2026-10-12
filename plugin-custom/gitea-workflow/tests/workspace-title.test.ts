@@ -30,6 +30,20 @@ describe("Workspace Title Formatter", () => {
     it("defaults to feature when ambiguous", () => {
       expect(detectIssueKind("重构网络模块")).toBe("feature");
     });
+
+    it("detects incident, runtime error and auto alerts as bug", () => {
+      expect(
+        detectIssueKind(
+          "[Auto-Incident] Error on openai (google1): The upstream provider token expired",
+        ),
+      ).toBe("bug");
+      expect(
+        detectIssueKind("[Auto][MEETING] 会场映射必须是Array类型 in meeting updateAsync"),
+      ).toBe("bug");
+      expect(detectIssueKind('[Auto][TABLE] Invalid sort direction: "name"')).toBe("bug");
+      expect(detectIssueKind("[Auto][SYS] E11000 duplicate key error")).toBe("bug");
+      expect(detectIssueKind("[Auto][SCHEDULE] Warning: TLS rejected")).toBe("bug");
+    });
   });
 
   describe("cleanIssueTitle", () => {
@@ -57,6 +71,22 @@ describe("Workspace Title Formatter", () => {
       const raw = "[req/TR] [P1] [Core] 引擎热重载 (Beta)";
       // [req/TR] and [P1] are noise, while non-noise brackets like [Core] are kept if not in noise pattern
       expect(cleanIssueTitle(raw)).toBe("[Core] 引擎热重载 (Beta)");
+    });
+
+    it("strips auto-monitoring metadata brackets like [Auto], [Auto-Incident], [MEETING], [TABLE]", () => {
+      expect(
+        cleanIssueTitle(
+          "[Auto-Incident] Error on openai (google1): The upstream provider token has expired",
+        ),
+      ).toBe("Error on openai (google1): The upstream provider token has expired");
+
+      expect(
+        cleanIssueTitle("[Auto][MEETING] 会场映射必须是Array类型 in meeting updateAsync"),
+      ).toBe("会场映射必须是Array类型 in meeting updateAsync");
+
+      expect(cleanIssueTitle('[Auto][TABLE] Invalid sort direction: "name"')).toBe(
+        'Invalid sort direction: "name"',
+      );
     });
 
     it("falls back to truncated raw title if everything was stripped", () => {
@@ -88,6 +118,17 @@ describe("Workspace Title Formatter", () => {
         labels: [{ name: "bug" }],
       });
       expect(title).toBe("🐞 #42 [Bug] 页面滑动卡顿");
+    });
+
+    it("truncates excessively long titles to fit compact UI rails", () => {
+      const title = formatWorkflowWorkspaceTitle({
+        issueNumber: 180,
+        rawTitle:
+          "[Auto-Incident] Error on openai (google1): The upstream provider 'google1' authentication token has expired and requires refresh",
+      });
+      expect(title.startsWith("🐞 #180 [Bug] Error on openai (google1):")).toBe(true);
+      expect(title.endsWith("...")).toBe(true);
+      expect(title.length).toBeLessThanOrEqual(55);
     });
   });
 });

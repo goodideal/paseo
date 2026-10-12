@@ -6,7 +6,7 @@ import type { PaseoWorkflowActions, PaseoWorkspaceActions } from "@getpaseo/clie
 import { resolveIssueWorkflowPreset } from "./preset-resolver.js";
 import { isApprovalComment } from "./adapters/dual-approval-gate.js";
 import { LIFECYCLE_LABELS } from "../shared/types.js";
-import { formatWorkflowWorkspaceTitle } from "./workspace-title.js";
+import { formatWorkflowWorkspaceTitle, cleanIssueTitle } from "./workspace-title.js";
 
 export interface PaseoProjectItem {
   projectId: string;
@@ -39,7 +39,8 @@ export const GATE_PHASE_LABELS: Record<string, string> = {
 
 export function deriveBranchSlug(issueNumber: number, title?: string): string {
   if (!title) return `agent/issue-${issueNumber}`;
-  const clean = title
+  const unnoised = cleanIssueTitle(title);
+  const clean = unnoised
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s-]/gu, "")
     .trim()
