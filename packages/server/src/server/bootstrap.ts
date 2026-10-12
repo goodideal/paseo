@@ -1655,16 +1655,29 @@ export async function createPaseoDaemon(
       };
     },
     runVerification: async ({ profile, cwd }) => {
-      const result = await execFileAsync(profile.command, profile.args, {
-        cwd,
-        timeout: profile.timeoutMs,
-        env: Object.fromEntries(
-          (profile.envAllowlist ?? []).flatMap((key) =>
-            process.env[key] === undefined ? [] : [[key, process.env[key]]],
+      try {
+        const result = await execFileAsync(profile.command, profile.args, {
+          cwd,
+          timeout: profile.timeoutMs,
+          maxBuffer: 32 * 1024 * 1024,
+          env: Object.fromEntries(
+            (profile.envAllowlist ?? []).flatMap((key) =>
+              process.env[key] === undefined ? [] : [[key, process.env[key]]],
+            ),
           ),
-        ),
-      });
-      return { passed: true, report: `${result.stdout}${result.stderr}` };
+        });
+        return { passed: true, report: `${result.stdout}${result.stderr}` };
+      } catch (err: unknown) {
+        const errorRecord =
+          typeof err === "object" && err !== null ? (err as Record<string, unknown>) : null;
+        const out = typeof errorRecord?.stdout === "string" ? errorRecord.stdout : "";
+        const errOut = typeof errorRecord?.stderr === "string" ? errorRecord.stderr : "";
+        let report = `${out}\n${errOut}`.trim();
+        if (!report) {
+          report = err instanceof Error ? err.message : String(err);
+        }
+        return { passed: false, report: report.slice(0, 1024 * 1024) };
+      }
     },
     gitPush: async ({ cwd }) => {
       await pushCurrentBranch(cwd, github);
