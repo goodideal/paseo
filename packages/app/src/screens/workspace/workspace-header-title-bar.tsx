@@ -68,9 +68,9 @@ export interface WorkspaceHeaderTitleBarProps {
   createTerminalDisabled: boolean;
   importAgentDisabled: boolean;
   copyPathDisabled: boolean;
-  onCreateDraftTab: () => void;
+  onCreateDraftTab?: () => void;
   onCreateNewTab?: () => void;
-  onCreateTerminal: () => void;
+  onCreateTerminal?: () => void;
   onCreateTerminalWithProfile: (profile: TerminalProfile) => void;
   onCreateBrowser: () => void;
   onOpenImportSheet: () => void;
@@ -101,9 +101,6 @@ export function WorkspaceHeaderTitleBar({
   createTerminalDisabled,
   importAgentDisabled,
   copyPathDisabled,
-  onCreateDraftTab,
-  onCreateNewTab,
-  onCreateTerminal,
   onCreateTerminalWithProfile,
   onCreateBrowser,
   onOpenImportSheet,
@@ -153,9 +150,6 @@ export function WorkspaceHeaderTitleBar({
             createTerminalDisabled={createTerminalDisabled}
             importAgentDisabled={importAgentDisabled}
             copyPathDisabled={copyPathDisabled}
-            onCreateDraftTab={onCreateDraftTab}
-            onCreateNewTab={onCreateNewTab}
-            onCreateTerminal={onCreateTerminal}
             onCreateTerminalWithProfile={onCreateTerminalWithProfile}
             onCreateBrowser={onCreateBrowser}
             onOpenImportSheet={onOpenImportSheet}

@@ -8,9 +8,7 @@ import {
   Ellipsis,
   Globe,
   Import as ImportIcon,
-  Plus,
   Settings,
-  SquarePen,
 } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
@@ -26,6 +24,7 @@ import {
   extraMutedIconColorMapping,
   iconButtonChromeGlyphSize,
   iconButtonChromeStyle,
+  useIconButtonChromeStyle,
 } from "@/components/ui/icon-button-chrome";
 import { TerminalProfileIcon } from "@/components/terminal-profile-icon";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
@@ -38,20 +37,15 @@ import type { Theme } from "@/styles/theme";
 
 const ThemedEllipsis = withUnistyles(Ellipsis);
 const ThemedCopy = withUnistyles(Copy);
-const ThemedSquarePen = withUnistyles(SquarePen);
 const ThemedGlobe = withUnistyles(Globe);
 const ThemedImport = withUnistyles(ImportIcon);
 const ThemedSettings = withUnistyles(Settings);
 const ThemedActivity = withUnistyles(Activity);
-const ThemedPlus = withUnistyles(Plus);
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
-const MENU_NEW_AGENT_ICON = <ThemedSquarePen size={16} uniProps={mutedColorMapping} />;
-const MENU_NEW_TAB_ICON = <ThemedPlus size={16} uniProps={mutedColorMapping} />;
 const MENU_WORKFLOW_RUNS_ICON = <ThemedActivity size={16} uniProps={mutedColorMapping} />;
 const MENU_NEW_BROWSER_ICON = <ThemedGlobe size={16} uniProps={mutedColorMapping} />;
-const MENU_NEW_TERMINAL_ICON = <TerminalProfileIcon iconKey={undefined} size={16} />;
 const MENU_IMPORT_ICON = <ThemedImport size={16} uniProps={mutedColorMapping} />;
 const MENU_COPY_ICON = <ThemedCopy size={16} uniProps={mutedColorMapping} />;
 const MENU_SETTINGS_ICON = <ThemedSettings size={16} uniProps={mutedColorMapping} />;
@@ -210,26 +204,20 @@ export interface WorkspaceHeaderMenuMobileProps extends WorkspaceHeaderWorkspace
   showCreateBrowserTab: boolean;
   createTerminalDisabled: boolean;
   showWorkflowRuns?: boolean;
-  onCreateDraftTab: () => void;
-  onCreateNewTab?: () => void;
-  onCreateTerminal: () => void;
   onCreateTerminalWithProfile: (profile: TerminalProfile) => void;
   onCreateBrowser: () => void;
   onOpenWorkflowRuns?: () => void;
 }
 
 /**
- * Compact layouts have no tab strip to launch from, so new tabs live here alongside the workspace
- * actions.
+ * Compact layouts have no tab strip. New agent and New terminal sit in the tab switcher's footer;
+ * the rarer launches stay here alongside the workspace actions.
  */
 export function WorkspaceHeaderMenuMobile({
   normalizedServerId,
   showCreateBrowserTab,
   createTerminalDisabled,
   showWorkflowRuns = false,
-  onCreateDraftTab,
-  onCreateNewTab,
-  onCreateTerminal,
   onCreateTerminalWithProfile,
   onCreateBrowser,
   onOpenWorkflowRuns,
@@ -237,6 +225,7 @@ export function WorkspaceHeaderMenuMobile({
 }: WorkspaceHeaderMenuMobileProps) {
   const { t } = useTranslation();
   const router = useRouter();
+  const triggerStyle = useIconButtonChromeStyle({ size: "large" });
   const { config } = useDaemonConfig(normalizedServerId);
   const profiles = useMemo(
     () => resolveTerminalProfiles(config?.terminalProfiles),
@@ -251,7 +240,7 @@ export function WorkspaceHeaderMenuMobile({
     <DropdownMenu compactMode="sheet">
       <DropdownMenuTrigger
         testID="workspace-header-menu-trigger"
-        style={workspaceHeaderMenuButtonStyle}
+        style={triggerStyle}
         hitSlop={COMPACT_HEADER_BUTTON_HIT_SLOP}
         accessibilityRole="button"
         accessibilityLabel={t("workspace.header.actions.workspaceActions")}
@@ -264,22 +253,6 @@ export function WorkspaceHeaderMenuMobile({
         testID="workspace-header-menu"
         sheetTitle={t("workspace.header.actions.workspaceActions")}
       >
-        <DropdownMenuItem
-          testID="workspace-header-new-agent"
-          leading={MENU_NEW_AGENT_ICON}
-          onSelect={onCreateDraftTab}
-        >
-          {t("workspace.header.actions.newAgent")}
-        </DropdownMenuItem>
-        {onCreateNewTab ? (
-          <DropdownMenuItem
-            testID="workspace-header-new-tab"
-            leading={MENU_NEW_TAB_ICON}
-            onSelect={onCreateNewTab}
-          >
-            {t("workspace.tabs.actions.newTab")}
-          </DropdownMenuItem>
-        ) : null}
         {showWorkflowRuns && onOpenWorkflowRuns ? (
           <DropdownMenuItem
             testID="workspace-header-workflow-runs"
@@ -301,14 +274,6 @@ export function WorkspaceHeaderMenuMobile({
         <WorkspaceHeaderWorkspaceActionItems {...workspaceActions} />
         <DropdownMenuSeparator />
         <DropdownMenuLabel>{t("workspace.tabs.actions.terminalProfilesMenu")}</DropdownMenuLabel>
-        <DropdownMenuItem
-          testID="workspace-header-new-terminal"
-          leading={MENU_NEW_TERMINAL_ICON}
-          disabled={createTerminalDisabled}
-          onSelect={onCreateTerminal}
-        >
-          {t("workspace.header.actions.newTerminal")}
-        </DropdownMenuItem>
         {profiles.map((profile) => (
           <HeaderMenuProfileItem
             key={profile.id}

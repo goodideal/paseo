@@ -30,6 +30,7 @@ export const es: TranslationResources = {
     back: "Atrás",
     loading: "Cargando...",
     actions: {
+      save: "Guardar",
       back: "Atrás",
       cancel: "Cancelar",
       close: "Cerrar",
@@ -123,6 +124,8 @@ export const es: TranslationResources = {
     input: {
       accessibilityLabel: "Agente de mensajes...",
       terminalAccessibilityLabel: "Terminal prompt",
+      fullscreen: "Pantalla completa",
+      exitFullscreen: "Salir de pantalla completa",
       focusHint: "{{shortcut}}para enfocar",
       addAttachment: "Agregar archivo adjunto",
       interruptAgent: "agente de interrupción",
@@ -2120,6 +2123,17 @@ export const es: TranslationResources = {
     accessibility: "Ventana de contexto{{percentage}}% utilizada",
   },
   review: {
+    feedback: {
+      send: "Enviar comentarios ({{count}})",
+      sending: "Enviando comentarios ({{count}})",
+      chooseAgent: "Elegir un agente",
+      sent: "Comentarios enviados a {{recipient}}",
+      "no-agents": "Abre una pestaña de agente en este espacio de trabajo para enviar comentarios.",
+      disconnected: "Conéctate al host para enviar comentarios.",
+      "no-context": "Los comentarios guardados ya no coinciden con este diff.",
+      failed: "No se pudieron enviar los comentarios. Inténtalo de nuevo.",
+      prompt: "Por favor, atiende esta revisión de código.",
+    },
     comment: {
       add: "Agregar comentario de revisión",
       edit: "Editar comentario de revisión",
