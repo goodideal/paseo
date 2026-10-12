@@ -3513,14 +3513,31 @@ class ClaudeAgentSession implements AgentSession {
     // Internal agents do daemon work such as naming a branch, so the user's and
     // project's hooks must not run for them.
     const disableAllHooks = this.config.internal === true;
-    if (fastMode === null && !input.ultracode && !disableAllHooks) {
+    const envOverrides: Record<string, string> = {};
+    if (this.launchEnv?.["ANTHROPIC_BASE_URL"]) {
+      envOverrides.ANTHROPIC_BASE_URL = this.launchEnv["ANTHROPIC_BASE_URL"];
+    }
+    const hasEnvOverrides = Object.keys(envOverrides).length > 0;
+    if (fastMode === null && !input.ultracode && !disableAllHooks && !hasEnvOverrides) {
       return {};
     }
+    const baseSettings = providerOptions.settings;
+    const existingEnv =
+      typeof baseSettings === "object" &&
+      baseSettings !== null &&
+      "env" in baseSettings &&
+      typeof (baseSettings as Record<string, unknown>).env === "object" &&
+      (baseSettings as Record<string, unknown>).env !== null
+        ? ((baseSettings as Record<string, unknown>).env as Record<string, string>)
+        : {};
+    const mergedEnv = hasEnvOverrides ? { ...existingEnv, ...envOverrides } : undefined;
+
     return {
       settings: mergeClaudeSettings(providerOptions.settings, {
         ...(fastMode === null ? {} : { fastMode }),
         ...(input.ultracode ? { ultracode: true } : {}),
         ...(disableAllHooks ? { disableAllHooks: true } : {}),
+        ...(mergedEnv ? { env: mergedEnv } : {}),
       }),
     };
   }

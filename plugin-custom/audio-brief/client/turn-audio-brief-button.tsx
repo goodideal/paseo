@@ -4,6 +4,7 @@ import type { PluginTurnActionProps } from "@getpaseo/plugin/client";
 import { useTurnState, useRpc } from "@getpaseo/plugin/client";
 import { audioBriefSynthesizeRpc } from "../shared/contracts.js";
 import { useAudioBriefStore } from "./audio-brief-store.js";
+import { primeAudioOnUserGesture } from "./platform-player.js";
 
 export const TurnAudioBriefButton = memo(function TurnAudioBriefButton({
   turnId,
@@ -28,6 +29,9 @@ export const TurnAudioBriefButton = memo(function TurnAudioBriefButton({
       stopBrief();
       return;
     }
+
+    // Synchronously prime/unlock HTML5 Audio on user tap (required by iOS Safari)
+    primeAudioOnUserGesture();
 
     const content = turnState.getContent?.() ?? "";
     if (!content) return;

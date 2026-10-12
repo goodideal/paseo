@@ -16,6 +16,17 @@ const BUG_TITLE_KEYWORDS = [
   "异常",
   "崩溃",
   "白屏",
+  "error",
+  "incident",
+  "invalid",
+  "exception",
+  "failed",
+  "failure",
+  "warning",
+  "timeout",
+  "超时",
+  "告警",
+  "故障",
 ];
 
 const FEATURE_TITLE_KEYWORDS = ["feat", "feature", "req", "需求", "支持", "新增", "实现", "优化"];
@@ -47,6 +58,12 @@ export function detectIssueKind(rawTitle: string, labels?: LabelLike[]): IssueKi
     }
   }
 
+  // If issue is an automated alert / monitoring issue (e.g. [Auto], [Auto-Incident])
+  // and has no feature keywords, treat it as a bug/incident
+  if (/^\[\s*auto(?:-incident)?\s*\]/i.test(rawTitle)) {
+    return "bug";
+  }
+
   return "feature";
 }
 
@@ -59,8 +76,9 @@ export function cleanIssueTitle(rawTitle: string): string {
 
   // 1. Repeatedly strip leading noise bracket tags:
   // e.g. [req/TR], [S], [P1], [SP1], [BUG], [Feat], [Fix], [Core] only when preceded by other noise
+  // Also strip automated monitoring tags like [Auto], [Auto-Incident], [MEETING], [TABLE], [APPLICATION], etc.
   const bracketNoisePattern =
-    /^\[\s*(?:sp\d+|p[0-4]|s|m|l|xl|req\/[^\]]+|req|feat(?:ure)?|bug|defect|fix|task|chore|doc(?:s)?)\s*\]\s*/i;
+    /^\[\s*(?:auto(?:-incident)?|sp\d+|p[0-4]|[smlx]|xl|req\/[^\]]+|req|feat(?:ure)?|bug|defect|fix|task|chore|doc(?:s)?|meeting|table|application|sys|schedule|exportexceldata|single|login|incident)\s*\]\s*/i;
 
   let matched = true;
   while (matched) {
@@ -95,6 +113,7 @@ export interface FormatWorkspaceTitleOptions {
   issueNumber: number;
   rawTitle: string;
   labels?: LabelLike[];
+  maxLength?: number;
 }
 
 /**
@@ -110,6 +129,15 @@ export function formatWorkflowWorkspaceTitle(options: FormatWorkspaceTitleOption
 
   const prefix = kind === "bug" ? "🐞" : "✨";
   const tag = kind === "bug" ? "[Bug]" : "[Feature]";
+  const basePrefix = `${prefix} #${issueNumber} ${tag} `;
 
-  return `${prefix} #${issueNumber} ${tag} ${clean}`;
+  const maxTotal = options.maxLength ?? 52;
+  const maxCleanLength = Math.max(12, maxTotal - basePrefix.length);
+
+  let displayClean = clean;
+  if (displayClean.length > maxCleanLength) {
+    displayClean = `${displayClean.slice(0, maxCleanLength - 3).trim()}...`;
+  }
+
+  return `${basePrefix}${displayClean}`;
 }

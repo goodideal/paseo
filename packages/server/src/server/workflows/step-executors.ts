@@ -153,6 +153,13 @@ function requireJsonRecord(value: unknown): WorkflowStepAttempt["declaredOutputs
   return value as WorkflowStepAttempt["declaredOutputs"];
 }
 
+function sanitizeFailureClassification(message?: string): string | undefined {
+  if (!message) return undefined;
+  const trimmed = message.trim();
+  if (!trimmed) return undefined;
+  return trimmed.slice(0, 256);
+}
+
 function resolveWorktreeBranch(input: Record<string, unknown>, run: WorkflowRun): string {
   if (typeof input.branch === "string" && input.branch.trim()) {
     return input.branch.trim();
@@ -401,7 +408,7 @@ export class StepExecutor {
         attemptId: attempt.id,
         status: "failed",
         completedAt: input.now,
-        failureClassification: message,
+        failureClassification: sanitizeFailureClassification(message),
       };
     }
   }
@@ -548,7 +555,7 @@ export class StepExecutor {
               status: outcome.status,
               completedAt: outcome.status === "running" ? undefined : outcome.completedAt,
               declaredOutputs: outcome.declaredOutputs,
-              failureClassification: outcome.failureClassification,
+              failureClassification: sanitizeFailureClassification(outcome.failureClassification),
             }
           : attempt,
       ),

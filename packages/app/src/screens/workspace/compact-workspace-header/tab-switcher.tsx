@@ -17,6 +17,7 @@ import {
   type WorkspaceTabMenuLabels,
 } from "@/screens/workspace/workspace-tab-menu";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
+import { getPathBasename } from "@/utils/path";
 
 // The trigger draws at 32pt beside its island neighbours, so only vertical slop is free.
 const TAB_SWITCHER_TRIGGER_HIT_SLOP = { top: 8, bottom: 8 } as const;
@@ -51,7 +52,7 @@ function getFallbackTabOptionLabel(
     return labels.browser;
   }
   if (tab.target.kind === "file") {
-    return tab.target.path.split("/").findLast(Boolean) ?? tab.target.path;
+    return getPathBasename(tab.target.path);
   }
   if (tab.target.kind === "working_diff" || tab.target.kind === "changes_tree") {
     return labels.changes;
@@ -67,6 +68,9 @@ function getFallbackTabOptionLabel(
   }
   if (tab.target.kind === "workflow_runs") {
     return "Agent Radar";
+  }
+  if (tab.target.kind === "reader") {
+    return "Agent Reader";
   }
   return labels.agent;
 }
@@ -123,6 +127,9 @@ function getFallbackTabOptionDescription(
   }
   if (tab.target.kind === "workflow_runs") {
     return "Agent Radar";
+  }
+  if (tab.target.kind === "reader") {
+    return "Agent Reader";
   }
   if ("path" in tab.target) {
     return tab.target.path;

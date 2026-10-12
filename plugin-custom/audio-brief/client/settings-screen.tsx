@@ -19,6 +19,13 @@ const TIMEOUT_OPTIONS = [
   { label: "120 秒", value: "120" },
 ] as const;
 
+const TIMEOUT_LLM_OPTIONS = [
+  { label: "10 秒", value: "10" },
+  { label: "20 秒", value: "20" },
+  { label: "30 秒 (推荐)", value: "30" },
+  { label: "60 秒", value: "60" },
+] as const;
+
 export function AudioBriefSettingsScreen({ theme }: PluginSurfaceProps) {
   const settings = useSettings(audioBriefSettings);
   const [instructionsDraft, setInstructionsDraft] = useState<string | null>(null);
@@ -28,10 +35,68 @@ export function AudioBriefSettingsScreen({ theme }: PluginSurfaceProps) {
 
   const activeInstructions = instructionsDraft !== null ? instructionsDraft : values.instructions;
 
+  const handleToggleLlmSummary = useCallback(
+    (enabled: boolean) => {
+      if (settings.status === "ready") {
+        void settings.save({ ...settings.values, enableLlmSummary: enabled }, settings.revision);
+      }
+    },
+    [settings],
+  );
+
+  const handleUpdateLlmBaseUrl = useCallback(
+    (url: string) => {
+      if (settings.status === "ready") {
+        void settings.save({ ...settings.values, llmBaseUrl: url.trim() }, settings.revision);
+      }
+    },
+    [settings],
+  );
+
+  const handleUpdateLlmApiKey = useCallback(
+    (key: string) => {
+      if (settings.status === "ready") {
+        void settings.save({ ...settings.values, llmApiKey: key.trim() }, settings.revision);
+      }
+    },
+    [settings],
+  );
+
+  const handleUpdateLlmModel = useCallback(
+    (model: string) => {
+      if (settings.status === "ready") {
+        void settings.save({ ...settings.values, llmModel: model.trim() }, settings.revision);
+      }
+    },
+    [settings],
+  );
+
+  const handleSelectLlmTimeout = useCallback(
+    (value: string) => {
+      const parsed = parseInt(value, 10);
+      if (!isNaN(parsed) && settings.status === "ready") {
+        void settings.save({ ...settings.values, llmTimeoutSeconds: parsed }, settings.revision);
+      }
+    },
+    [settings],
+  );
+
   const handleToggleBackendTts = useCallback(
     (enabled: boolean) => {
       if (settings.status === "ready") {
         void settings.save({ ...settings.values, enableBackendTts: enabled }, settings.revision);
+      }
+    },
+    [settings],
+  );
+
+  const handleToggleMacOsSay = useCallback(
+    (enabled: boolean) => {
+      if (settings.status === "ready") {
+        void settings.save(
+          { ...settings.values, enableMacOsSayFallback: enabled },
+          settings.revision,
+        );
       }
     },
     [settings],
@@ -111,8 +176,57 @@ export function AudioBriefSettingsScreen({ theme }: PluginSurfaceProps) {
   return (
     <View style={{ gap: 16 }}>
       <SettingsSection
+        title="大模型总结服务 (LLM Summarization)"
+        info="配置用于理解和提炼消息内容的大模型服务（兼容 OpenAI Chat 接口）。开启后将按照自定义提示词指令生成结构化简报；未开启或调用失败时，自动降级为纯文本快速提取。"
+      >
+        <SettingsCard>
+          <SettingsSwitch
+            label="启用大模型智能提炼 (Enable LLM Summary)"
+            hint="根据自定义 Prompt 生成高可读性口语简报"
+            value={values.enableLlmSummary}
+            disabled={settings.saving}
+            onValueChange={handleToggleLlmSummary}
+          />
+          {values.enableLlmSummary ? (
+            <>
+              <SettingsInput
+                label="服务地址 (Base URL)"
+                hint="例如 https://llm.ezcloud.cc/v1 或 http://127.0.0.1:8317/v1"
+                initialValue={values.llmBaseUrl}
+                disabled={settings.saving}
+                onChangeText={handleUpdateLlmBaseUrl}
+              />
+              <SettingsInput
+                label="API Key"
+                hint="访问令牌，例如 sk-ant-..."
+                initialValue={values.llmApiKey}
+                disabled={settings.saving}
+                secureTextEntry
+                onChangeText={handleUpdateLlmApiKey}
+              />
+              <SettingsInput
+                label="模型标识 (Model)"
+                hint="例如 gemini-flash, deepseek-ai/DeepSeek-V3 等"
+                initialValue={values.llmModel}
+                disabled={settings.saving}
+                onChangeText={handleUpdateLlmModel}
+              />
+              <SettingsSelect
+                label="生成超时时间 (Timeout)"
+                hint="请求大模型生成简报的超时时间限制"
+                value={String(values.llmTimeoutSeconds)}
+                options={TIMEOUT_LLM_OPTIONS}
+                disabled={settings.saving}
+                onValueChange={handleSelectLlmTimeout}
+              />
+            </>
+          ) : null}
+        </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection
         title="语音合成服务 (TTS Service)"
-        info="配置用于语音简报的高品质后端神经网络语音合成服务。未开启或服务不可用时，自动降级为浏览器原生语音朗读。"
+        info="配置用于语音简报的高品质后端神经网络语音合成服务。未开启或服务不可用时，自动降级为 macOS 系统语音朗读或浏览器原生语音朗读。"
       >
         <SettingsCard>
           <SettingsSwitch
@@ -163,6 +277,13 @@ export function AudioBriefSettingsScreen({ theme }: PluginSurfaceProps) {
               />
             </>
           ) : null}
+          <SettingsSwitch
+            label="启用 macOS 系统本地语音降级 (macOS Say Fallback)"
+            hint="当后端 TTS 不可用或未启动时，在 Mac 上使用原生发音引擎生成高质量 WAV"
+            value={values.enableMacOsSayFallback}
+            disabled={settings.saving}
+            onValueChange={handleToggleMacOsSay}
+          />
         </SettingsCard>
       </SettingsSection>
 

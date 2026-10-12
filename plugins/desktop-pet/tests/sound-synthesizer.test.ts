@@ -11,5 +11,8 @@ describe("SoundSynthesizer", () => {
 
     // When muted, playing sounds does not fail
     expect(() => synth.playApproved()).not.toThrow();
+    expect(() => synth.playUrgent()).not.toThrow();
+    expect(() => synth.playDecisionRequired()).not.toThrow();
+    expect(() => synth.playLevelUp()).not.toThrow();
   });
 });

@@ -8,6 +8,8 @@ export interface AudioBriefState {
   currentTurnId: string | null;
   status: AudioBriefStatus;
   briefText: string | null;
+  audioBase64: string | null;
+  mimeType: string | null;
   error: string | null;
 
   playBrief: (params: {
@@ -19,12 +21,16 @@ export interface AudioBriefState {
   }) => Promise<void>;
 
   stopBrief: () => void;
+  pauseAudio: () => void;
+  replayAudio: () => void;
 }
 
 export const useAudioBriefStore = create<AudioBriefState>((set, get) => ({
   currentTurnId: null,
   status: "idle",
   briefText: null,
+  audioBase64: null,
+  mimeType: null,
   error: null,
 
   playBrief: async ({ callRpc, agentId, turnId, text, forceRefresh }) => {
@@ -44,6 +50,8 @@ export const useAudioBriefStore = create<AudioBriefState>((set, get) => ({
       currentTurnId: turnId,
       status: "loading",
       briefText: null,
+      audioBase64: null,
+      mimeType: null,
       error: null,
     });
 
@@ -64,6 +72,8 @@ export const useAudioBriefStore = create<AudioBriefState>((set, get) => ({
           status: "idle",
           currentTurnId: null,
           briefText: null,
+          audioBase64: null,
+          mimeType: null,
           error: response.error,
         });
         return;
@@ -72,6 +82,8 @@ export const useAudioBriefStore = create<AudioBriefState>((set, get) => ({
       set({
         status: "playing",
         briefText: response.briefText,
+        audioBase64: response.audioBase64 ?? null,
+        mimeType: response.mimeType ?? null,
         error: null,
       });
 
@@ -101,10 +113,39 @@ export const useAudioBriefStore = create<AudioBriefState>((set, get) => ({
           status: "idle",
           currentTurnId: null,
           briefText: null,
+          audioBase64: null,
+          mimeType: null,
           error: err instanceof Error ? err.message : String(err),
         });
       }
     }
+  },
+
+  replayAudio: () => {
+    const state = get();
+    if (!state.currentTurnId || (!state.audioBase64 && !state.briefText)) {
+      return;
+    }
+    stopPlatformAudio();
+    set({ status: "playing", error: null });
+    playPlatformAudio({
+      audioBase64: state.audioBase64 ?? undefined,
+      mimeType: state.mimeType ?? undefined,
+      fallbackText: state.briefText ?? undefined,
+      onEnded: () => {
+        set({ status: "idle" });
+      },
+      onError: (err) => {
+        set({ status: "idle", error: err.message });
+      },
+    });
+  },
+
+  pauseAudio: () => {
+    stopPlatformAudio();
+    set({
+      status: "idle",
+    });
   },
 
   stopBrief: () => {
@@ -113,6 +154,8 @@ export const useAudioBriefStore = create<AudioBriefState>((set, get) => ({
       currentTurnId: null,
       status: "idle",
       briefText: null,
+      audioBase64: null,
+      mimeType: null,
       error: null,
     });
   },

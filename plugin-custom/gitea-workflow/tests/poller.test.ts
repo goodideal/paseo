@@ -782,4 +782,11 @@ it("derives branch slug preserving unicode/chinese characters cleanly", () => {
 
   const slug2 = deriveBranchSlug(99, "修复登录白屏异常");
   expect(slug2).toBe("agent/issue-99-修复登录白屏异常");
+
+  const slug3 = deriveBranchSlug(
+    406,
+    "[Auto][MEETING] 会场映射必须是Array类型 in meeting updateAsync",
+  );
+  expect(slug3).not.toContain("automeeting");
+  expect(slug3).toContain("agent/issue-406-会场映射必须是array类型");
 });

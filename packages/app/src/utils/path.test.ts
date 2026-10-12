@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isAbsolutePath } from "./path";
+import { getPathBasename, isAbsolutePath } from "./path";
 
 describe("isAbsolutePath", () => {
   it("returns true for Unix absolute paths", () => {
@@ -35,5 +35,26 @@ describe("isAbsolutePath", () => {
   it("handles mixed separators in absolute paths", () => {
     expect(isAbsolutePath("C:/Users\\mixed/path")).toBe(true);
     expect(isAbsolutePath("/tmp\\mixed/path")).toBe(true);
+  });
+});
+
+describe("getPathBasename", () => {
+  it("returns the last segment of unix paths", () => {
+    expect(getPathBasename("/home/user/project")).toBe("project");
+    expect(getPathBasename("/home/user/project/")).toBe("project");
+  });
+
+  it("returns the last segment of windows paths", () => {
+    expect(getPathBasename("C:\\Users\\user\\project")).toBe("project");
+    expect(getPathBasename("C:\\Users\\user\\project\\")).toBe("project");
+  });
+
+  it("returns filename for simple filenames", () => {
+    expect(getPathBasename("file.txt")).toBe("file.txt");
+  });
+
+  it("returns original path if empty or only separators", () => {
+    expect(getPathBasename("")).toBe("");
+    expect(getPathBasename("/")).toBe("/");
   });
 });

@@ -4,6 +4,7 @@ import { StepAdapterRegistry } from "./step-adapter-registry.js";
 import { StepExecutor, type StepExecutorHost } from "./step-executors.js";
 import { VerificationProfileRegistry } from "./verification-profiles.js";
 import type { WorkflowRun, WorkflowStepAttempt } from "./workflow-models.js";
+import { WorkflowStepAttemptSchema } from "./workflow-models.js";
 
 function makeRun(
   stepId: string,
@@ -694,5 +695,27 @@ describe("Workflow Core Step Adapters and Execution Lifecycle", () => {
 
     expect(result.status).toBe("succeeded");
     expect(host.gitPush).toHaveBeenCalledWith(expect.objectContaining({ branch: "agent/feat" }));
+  });
+
+  it("truncates failureClassification to 256 characters when step execution throws a long error", async () => {
+    const { executor, host } = setup();
+    const run = makeRun("verify_step", "verify.command");
+    const longErrorMessage = "A".repeat(500);
+    vi.mocked(host.runVerification!).mockRejectedValueOnce(new Error(longErrorMessage));
+
+    const result = await executor.execute({
+      run,
+      stepId: "verify_step",
+      attemptId: "attempt_1",
+      input: { verificationProfile: "typecheck" },
+      principalPermissions: new Set(["workspace.read" as const]),
+      now: 1050,
+    });
+
+    expect(result.status).toBe("failed");
+    const attempt = result.run.stepAttempts[0];
+    expect(attempt.failureClassification).toBeDefined();
+    expect(attempt.failureClassification!.length).toBeLessThanOrEqual(256);
+    expect(() => WorkflowStepAttemptSchema.parse(attempt)).not.toThrow();
   });
 });

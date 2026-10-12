@@ -3422,6 +3422,22 @@ export function buildCodexAppServerEnv(
   });
 }
 
+export function buildCodexAppServerArgs(
+  prefixArgs: readonly string[],
+  options?: { goalsEnabled?: boolean },
+  launchEnv?: Record<string, string>,
+): string[] {
+  const args = [...prefixArgs, "app-server"];
+  if (options?.goalsEnabled) {
+    args.push("--enable", "goals");
+  }
+  const codexBaseUrl = launchEnv?.["CODEX_BASE_URL"] || launchEnv?.["OPENAI_BASE_URL"];
+  if (codexBaseUrl) {
+    args.push("-c", `model_providers.custom.base_url=${JSON.stringify(codexBaseUrl)}`);
+  }
+  return args;
+}
+
 function buildCodexAppServerInitializeParams(): {
   clientInfo: { name: string; title: string; version: string };
   capabilities: { experimentalApi: true; mcpServerOpenaiFormElicitation: true };
@@ -7320,10 +7336,7 @@ export class CodexAppServerAgentClient implements AgentClient {
     options?: { goalsEnabled?: boolean; agentId?: string; environment?: Record<string, string> },
   ): Promise<ChildProcessWithoutNullStreams> {
     const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
-    const args = [...launchPrefix.args, "app-server"];
-    if (options?.goalsEnabled) {
-      args.push("--enable", "goals");
-    }
+    const args = buildCodexAppServerArgs(launchPrefix.args, options, launchEnv);
     this.logger.trace(
       {
         agentId: options?.agentId,

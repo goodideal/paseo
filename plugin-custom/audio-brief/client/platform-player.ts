@@ -10,6 +10,7 @@ interface AudioElement {
   play(): Promise<void>;
   pause(): void;
   currentTime: number;
+  src?: string;
   addEventListener(type: string, listener: () => void, options?: { once?: boolean }): void;
   removeEventListener(type: string, listener: () => void): void;
 }
@@ -26,7 +27,7 @@ interface WindowLike {
   atob?(data: string): string;
   Uint8Array?: typeof Uint8Array;
   Blob?: new (parts: unknown[], options?: { type?: string }) => unknown;
-  Audio?: new (src: string) => AudioElement;
+  Audio?: new (src?: string) => AudioElement;
   SpeechSynthesisUtterance?: new (text: string) => {
     lang?: string;
     onend?: (() => void) | null;
@@ -47,6 +48,31 @@ let currentAudioUrl: string | null = null;
 let currentEndedListener: (() => void) | null = null;
 let currentErrorListener: (() => void) | null = null;
 let currentUtterance: unknown = null;
+let primedAudio: AudioElement | null = null;
+
+/**
+ * Prime and unlock HTML5 Audio synchronously inside a user gesture (tap/click).
+ * Essential for Mobile Safari / iOS which blocks async audio.play() calls.
+ */
+export function primeAudioOnUserGesture(): void {
+  const w = getWindow();
+  if (!w?.Audio) return;
+  try {
+    if (!primedAudio) {
+      primedAudio = new w.Audio();
+    }
+    // Mobile Safari / iOS requires play() within a user gesture.
+    // Playing a silent 1-sample base64 WAV unlocks this Audio instance for subsequent async playback.
+    primedAudio.src =
+      "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+    const playPromise = primedAudio.play();
+    if (playPromise && typeof playPromise.then === "function") {
+      playPromise.catch(() => {});
+    }
+  } catch {
+    // Ignored
+  }
+}
 
 export function stopPlatformAudio(): void {
   const w = getWindow();
@@ -108,7 +134,9 @@ export function playPlatformAudio(params: PlayPlatformAudioParams): void {
         const url = w.URL.createObjectURL(blob);
         currentAudioUrl = url;
 
-        const audio = new w.Audio(url);
+        // Use the pre-primed Audio element if available, or create a new one
+        const audio = primedAudio || new w.Audio(url);
+        audio.src = url;
         currentAudio = audio;
 
         const onEnded = () => {
@@ -125,10 +153,14 @@ export function playPlatformAudio(params: PlayPlatformAudioParams): void {
         currentErrorListener = onError;
         audio.addEventListener("error", onError, { once: true });
 
-        audio.play().catch((err: unknown) => {
-          stopPlatformAudio();
-          params.onError(err instanceof Error ? err : new Error(String(err)));
-        });
+        const playPromise = audio.play();
+        if (playPromise && typeof playPromise.catch === "function") {
+          playPromise.catch((err: unknown) => {
+            stopPlatformAudio();
+            const message = err instanceof Error ? err.message : String(err);
+            params.onError(new Error(message));
+          });
+        }
         return;
       }
     } catch (err: unknown) {

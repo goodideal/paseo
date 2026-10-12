@@ -37,6 +37,7 @@ import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-disp
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import type { MessagePayload } from "@/composer/types";
+import { resolveWorkspaceTitle } from "./workspace-setup-title";
 
 function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): string | null {
   if (!icon) {
@@ -46,24 +47,6 @@ function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): 
 }
 
 const SNAP_POINTS: string[] = ["82%", "94%"];
-
-function resolveWorkspaceTitle({
-  workspace,
-  displayName,
-  sourceDirectory,
-}: {
-  workspace: { name?: string | null; projectDisplayName?: string | null } | null;
-  displayName: string;
-  sourceDirectory: string;
-}): string {
-  return (
-    workspace?.name ||
-    workspace?.projectDisplayName ||
-    displayName ||
-    sourceDirectory.split(/[\\/]/).findLast(Boolean) ||
-    sourceDirectory
-  );
-}
 
 function buildChatDraftComposerArgs({
   serverId,

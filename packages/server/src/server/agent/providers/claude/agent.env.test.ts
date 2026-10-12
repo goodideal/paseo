@@ -173,4 +173,60 @@ describe("Claude SDK env", () => {
       expect(session.usageSession?.()).toBeNull();
     }
   });
+
+  test("embeds ANTHROPIC_BASE_URL from launchEnv into settings options to override static user settings", async () => {
+    let capturedSettings: unknown;
+    const launchContext: AgentLaunchContext = {
+      env: {
+        ANTHROPIC_BASE_URL: "https://llm.ezcloud.cc/anthropic?source=paseo&workspace_id=wks_123",
+      },
+    };
+    const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
+      capturedSettings = options.settings;
+      return createQueryMock([
+        {
+          type: "system",
+          subtype: "init",
+          session_id: "override-session",
+          permissionMode: "default",
+          model: "opus",
+        },
+        {
+          type: "assistant",
+          message: { content: "done" },
+        },
+        {
+          type: "result",
+          subtype: "success",
+          usage: {
+            input_tokens: 1,
+            output_tokens: 1,
+          },
+        },
+      ]);
+    });
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      resolveBinary: async () => "/fake/claude",
+    });
+    const session = await client.createSession(
+      {
+        provider: "claude",
+        cwd: process.cwd(),
+        model: "opus",
+      },
+      launchContext,
+    );
+    try {
+      await session.run("test prompt");
+      expect(capturedSettings).toMatchObject({
+        env: {
+          ANTHROPIC_BASE_URL: "https://llm.ezcloud.cc/anthropic?source=paseo&workspace_id=wks_123",
+        },
+      });
+    } finally {
+      await session.close();
+    }
+  });
 });

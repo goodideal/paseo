@@ -2,8 +2,12 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 import { DEFAULT_AUDIO_BRIEF_INSTRUCTIONS, type AudioBriefSettings } from "../shared/settings.js";
+
+const execFileAsync = promisify(execFile);
 
 export { DEFAULT_AUDIO_BRIEF_INSTRUCTIONS };
 
@@ -25,7 +29,115 @@ export interface AudioBriefServiceOptions {
   };
   getSettings?: () => AudioBriefSettings;
   ttsSynthesizer?: ((text: string) => Promise<{ audioBase64: string; mimeType: string }>) | null;
-  textGenerator?: (params: { prompt: string; text: string }) => Promise<string>;
+  textGenerator?: ((params: { prompt: string; text: string }) => Promise<string>) | null;
+}
+
+export interface OpenAiLlmOptions {
+  baseUrl?: string;
+  apiKey?: string;
+  model?: string;
+  timeoutMs?: number;
+}
+
+export function createOpenAiTextGenerator(options: OpenAiLlmOptions = {}) {
+  const baseUrl = (
+    options.baseUrl ||
+    process.env.OPENAI_BASE_URL ||
+    process.env.LLM_BASE_URL ||
+    "https://llm.ezcloud.cc/v1"
+  ).replace(/\/+$/, "");
+  const apiKey =
+    options.apiKey ||
+    process.env.OPENAI_API_KEY ||
+    process.env.LLM_API_KEY ||
+    "sk-ant-d9b07fe4e0eec51d903e6f55365c3415";
+  const model = options.model || process.env.LLM_MODEL || "gemini-flash";
+  const timeoutMs = options.timeoutMs ?? 30000;
+
+  return async (params: { prompt: string; text: string }): Promise<string> => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            {
+              role: "system",
+              content: params.prompt,
+            },
+            {
+              role: "user",
+              content: params.text,
+            },
+          ],
+          temperature: 0.3,
+          max_tokens: 800,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        throw new Error(`LLM server HTTP ${res.status}: ${res.statusText}`);
+      }
+
+      const json = (await res.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      const content = json.choices?.[0]?.message?.content?.trim();
+      if (!content) {
+        throw new Error("LLM response did not contain content");
+      }
+      return content;
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+}
+
+export interface MacOsSayOptions {
+  voice?: string;
+  chineseVoice?: string;
+}
+
+export function createMacOsSaySynthesizer(options: MacOsSayOptions = {}) {
+  const defaultChineseVoice = options.chineseVoice || "Tingting";
+  const defaultVoice = options.voice;
+
+  return async (text: string): Promise<{ audioBase64: string; mimeType: string }> => {
+    if (process.platform !== "darwin") {
+      throw new Error("macOS say synthesizer is only available on macOS");
+    }
+
+    const isChinese = /[一-龥]/.test(text);
+    const chosenVoice = isChinese ? defaultChineseVoice : defaultVoice;
+
+    const tmpId = `paseo-say-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const tmpAiff = path.join(os.tmpdir(), `${tmpId}.aiff`);
+    const tmpWav = path.join(os.tmpdir(), `${tmpId}.wav`);
+
+    try {
+      const sayArgs = chosenVoice
+        ? ["-v", chosenVoice, "-o", tmpAiff, text]
+        : ["-o", tmpAiff, text];
+      await execFileAsync("say", sayArgs);
+      await execFileAsync("afconvert", ["-f", "WAVE", "-d", "LEI16", tmpAiff, tmpWav]);
+
+      const buffer = await fs.readFile(tmpWav);
+      return {
+        audioBase64: buffer.toString("base64"),
+        mimeType: "audio/wav",
+      };
+    } finally {
+      await fs.unlink(tmpAiff).catch(() => {});
+      await fs.unlink(tmpWav).catch(() => {});
+    }
+  };
 }
 
 export interface OpenAiTtsOptions {
@@ -166,7 +278,12 @@ export class AudioBriefService {
     }
 
     const s = this.options.getSettings?.();
+    const enableMacOsSay = s?.enableMacOsSayFallback ?? true;
+
     if (s && !s.enableBackendTts) {
+      if (process.platform === "darwin" && enableMacOsSay) {
+        return createMacOsSaySynthesizer();
+      }
       return null;
     }
 
@@ -182,7 +299,61 @@ export class AudioBriefService {
     const timeoutSeconds = s?.ttsTimeoutSeconds ?? 60;
     const timeoutMs = timeoutSeconds * 1000;
 
-    return createOpenAiTtsSynthesizer({ baseUrl, apiKey, model, voice, timeoutMs });
+    const neuralSynthesizer = createOpenAiTtsSynthesizer({
+      baseUrl,
+      apiKey,
+      model,
+      voice,
+      timeoutMs,
+    });
+
+    return async (text: string) => {
+      try {
+        return await neuralSynthesizer(text);
+      } catch (err) {
+        if (process.platform === "darwin" && enableMacOsSay) {
+          this.options.logger?.warn?.(
+            "Backend TTS failed, falling back to macOS say synthesizer",
+            err,
+          );
+          const macSay = createMacOsSaySynthesizer();
+          return await macSay(text);
+        }
+        throw err;
+      }
+    };
+  }
+
+  private getTextGenerator():
+    | ((params: { prompt: string; text: string }) => Promise<string>)
+    | null {
+    if (this.options.textGenerator !== undefined) {
+      return this.options.textGenerator;
+    }
+    if (process.env.NODE_ENV === "test") {
+      return null;
+    }
+
+    const s = this.options.getSettings?.();
+    if (s && !s.enableLlmSummary) {
+      return null;
+    }
+
+    const baseUrl =
+      s?.llmBaseUrl ||
+      process.env.OPENAI_BASE_URL ||
+      process.env.LLM_BASE_URL ||
+      "https://llm.ezcloud.cc/v1";
+    const apiKey =
+      s?.llmApiKey ||
+      process.env.OPENAI_API_KEY ||
+      process.env.LLM_API_KEY ||
+      "sk-ant-d9b07fe4e0eec51d903e6f55365c3415";
+    const model = s?.llmModel || process.env.LLM_MODEL || "gemini-flash";
+    const timeoutSeconds = s?.llmTimeoutSeconds ?? 30;
+    const timeoutMs = timeoutSeconds * 1000;
+
+    return createOpenAiTextGenerator({ baseUrl, apiKey, model, timeoutMs });
   }
 
   private getCacheFilePath(hash: string): string | null {
@@ -341,11 +512,12 @@ export class AudioBriefService {
     const startTime = Date.now();
     let briefText = "";
 
-    // 1. Heuristic or custom LLM generator
-    if (this.options.textGenerator) {
+    // 1. LLM text generator or fallback
+    const generator = this.getTextGenerator();
+    if (generator) {
       try {
         briefText = (
-          await this.options.textGenerator({
+          await generator({
             prompt,
             text: params.text,
           })

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { AgentTracker } from "../server/agent-tracker.js";
+import { DesktopPetAgentProjection } from "../server/agent-projection.js";
 
 describe("AgentTracker", () => {
   it("tracks running tasks and calculates duration accurately", () => {
@@ -62,5 +63,121 @@ describe("AgentTracker", () => {
     tracker.startTask("agent-1", "Task 1", t0);
     const snapshot = tracker.getSnapshot(t0 - 5000);
     expect(snapshot.tasks[0].activeDurationMs).toBe(0);
+  });
+
+  it("sorts tasks by priority (P0 > P1 > P2) and computes petMood in DesktopPetAgentProjection", () => {
+    const projection = new DesktopPetAgentProjection();
+    projection.handleSnapshot([
+      {
+        id: "agent-idle",
+        title: "Idle Agent",
+        status: "idle",
+        pendingPermissions: [],
+        activeTurn: null,
+        createdAt: "",
+        updatedAt: "",
+        cwd: "",
+        lastUserMessageAt: null,
+        capabilities: {} as any,
+        availableModes: [],
+        currentModeId: null,
+        persistence: null,
+      } as any,
+      {
+        id: "agent-running",
+        title: "Running Agent",
+        status: "running",
+        activeTurn: { turnId: "turn-1", startedAt: new Date(Date.now() - 5000).toISOString() },
+        pendingPermissions: [],
+        createdAt: "",
+        updatedAt: "",
+        cwd: "",
+        lastUserMessageAt: null,
+        capabilities: {} as any,
+        availableModes: [],
+        currentModeId: null,
+        persistence: null,
+      } as any,
+      {
+        id: "agent-waiting",
+        title: "Waiting Agent",
+        status: "running",
+        activeTurn: { turnId: "turn-2", startedAt: new Date(Date.now() - 10000).toISOString() },
+        pendingPermissions: [
+          {
+            id: "req-1",
+            kind: "shell",
+            command: "rm -rf cache",
+            requestedAt: new Date().toISOString(),
+          } as any,
+        ],
+        createdAt: "",
+        updatedAt: "",
+        cwd: "",
+        lastUserMessageAt: null,
+        capabilities: {} as any,
+        availableModes: [],
+        currentModeId: null,
+        persistence: null,
+      } as any,
+    ]);
+
+    const snapshot = projection.getSnapshot();
+    expect(snapshot.tasks.length).toBe(3);
+    expect(snapshot.tasks[0].agentId).toBe("agent-waiting");
+    expect(snapshot.tasks[0].priority).toBe("P0");
+    expect(snapshot.tasks[1].agentId).toBe("agent-running");
+    expect(snapshot.tasks[1].priority).toBe("P1");
+    expect(snapshot.tasks[2].agentId).toBe("agent-idle");
+    expect(snapshot.tasks[2].priority).toBe("P2");
+    expect((snapshot as any).petMood).toBe("waiting");
+  });
+
+  it("maintains stable expiresAt across ticks and extracts real tool permission details", () => {
+    const projection = new DesktopPetAgentProjection();
+    const t0 = 1700000000000;
+
+    projection.handleSnapshot([
+      {
+        id: "agent-p0",
+        title: "Danger Agent",
+        status: "running",
+        pendingPermissions: [
+          {
+            id: "req-danger-1",
+            provider: "claude",
+            name: "execute",
+            kind: "tool",
+            detail: {
+              type: "shell",
+              command: "rm -rf /var/log",
+            },
+          } as any,
+        ],
+        createdAt: "",
+        updatedAt: "",
+        cwd: "",
+        lastUserMessageAt: null,
+        capabilities: {} as any,
+        availableModes: [],
+        currentModeId: null,
+        persistence: null,
+      } as any,
+    ]);
+
+    const snap1 = projection.getSnapshot(t0);
+    const p0Task1 = snap1.tasks[0];
+    expect(p0Task1.pendingDecision).toBeDefined();
+    expect(p0Task1.pendingDecision?.actionRequested).toBe("rm -rf /var/log");
+    expect(p0Task1.pendingDecision?.riskHint).toBe("high");
+    const initialExpiresAt = p0Task1.pendingDecision!.expiresAt!;
+
+    // 45 seconds later, expiresAt must stay stable and remaining duration drops to 15s
+    const snap2 = projection.getSnapshot(t0 + 45000);
+    const p0Task2 = snap2.tasks[0];
+    expect(p0Task2.pendingDecision!.expiresAt).toBe(initialExpiresAt);
+    expect(p0Task2.pendingDecision!.expiresAt! - (t0 + 45000)).toBe(15000);
+    // Since remaining < 30s and high risk, mood should be urgent!
+    expect(snap2.petMood).toBe("urgent");
   });
 });
