@@ -69,6 +69,7 @@ export function GatewayTaggerSettingsScreen({ theme }: PluginSurfaceProps) {
       : {
           enabled: true,
           source: "paseo",
+          enableQueryString: false,
           defaultAnthropicBaseUrl: "https://llm.ezcloud.cc/anthropic",
           defaultOpenAiBaseUrl: "https://llm.ezcloud.cc/v1",
           workspaceParamName: "workspace_id",
@@ -92,6 +93,13 @@ export function GatewayTaggerSettingsScreen({ theme }: PluginSurfaceProps) {
             value={values.enabled}
             disabled={settings.saving}
             onValueChange={(val) => updateSetting({ enabled: val })}
+          />
+          <SettingsSwitch
+            label="允许 Query 参数注入（已弃用/默认禁用）"
+            hint="默认禁用。大模型客户端（Claude/Codex）会直接追加端点路径，开启 Query 将破坏 URL 导致 404 报错"
+            value={values.enableQueryString ?? false}
+            disabled={settings.saving}
+            onValueChange={(val) => updateSetting({ enableQueryString: val })}
           />
           <SettingsInput
             label="Anthropic 网关基地址"

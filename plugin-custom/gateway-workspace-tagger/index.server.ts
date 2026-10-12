@@ -13,6 +13,7 @@ export default function contribute(server: PluginServerContext) {
   let cachedSettings: GatewayTaggerSettings = {
     enabled: true,
     source: "paseo",
+    enableQueryString: false,
     defaultAnthropicBaseUrl: "https://llm.ezcloud.cc/anthropic",
     defaultOpenAiBaseUrl: "https://llm.ezcloud.cc/v1",
     workspaceParamName: "workspace_id",
@@ -73,6 +74,7 @@ export default function contribute(server: PluginServerContext) {
       sourceParamName: cachedSettings.sourceParamName,
       agentParamName: cachedSettings.agentParamName,
       targetHosts: cachedSettings.targetHosts,
+      enableQueryString: cachedSettings.enableQueryString ?? false,
     };
 
     // 1. Explicitly enrich Anthropic Base URL with fallback

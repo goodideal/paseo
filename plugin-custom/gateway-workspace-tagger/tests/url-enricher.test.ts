@@ -29,26 +29,36 @@ describe("isGatewayBaseUrl", () => {
 });
 
 describe("enrichUrlWithWorkspace", () => {
-  test("appends source and workspace_id to standard HTTP URL", () => {
+  test("returns original URL without query string by default (query injection disabled)", () => {
     const result = enrichUrlWithWorkspace("https://gateway.example.com/v1", {
       workspaceId: "ws_my_test",
       source: "paseo",
     });
+    expect(result).toBe("https://gateway.example.com/v1");
+  });
+
+  test("appends source and workspace_id to standard HTTP URL when enableQueryString is true", () => {
+    const result = enrichUrlWithWorkspace("https://gateway.example.com/v1", {
+      workspaceId: "ws_my_test",
+      source: "paseo",
+      enableQueryString: true,
+    });
     expect(result).toBe("https://gateway.example.com/v1?source=paseo&workspace_id=ws_my_test");
   });
 
-  test("injects agent_id when includeAgentId is true", () => {
+  test("injects agent_id when enableQueryString and includeAgentId are true", () => {
     const result = enrichUrlWithWorkspace("https://gateway.example.com/v1", {
       workspaceId: "ws_my_test",
       agentId: "agent_abc123",
       includeAgentId: true,
+      enableQueryString: true,
     });
     expect(result).toBe(
       "https://gateway.example.com/v1?source=paseo&workspace_id=ws_my_test&agent_id=agent_abc123",
     );
   });
 
-  test("supports customized parameter names", () => {
+  test("supports customized parameter names when enableQueryString is true", () => {
     const result = enrichUrlWithWorkspace("https://gateway.example.com/v1", {
       workspaceId: "ws_my_test",
       agentId: "agent_abc123",
@@ -56,80 +66,87 @@ describe("enrichUrlWithWorkspace", () => {
       workspaceParamName: "workspaceId",
       sourceParamName: "client",
       agentParamName: "sessionId",
-      source: "pasu",
+      source: "paseo",
+      enableQueryString: true,
     });
     expect(result).toBe(
-      "https://gateway.example.com/v1?client=pasu&workspaceId=ws_my_test&sessionId=agent_abc123",
+      "https://gateway.example.com/v1?client=paseo&workspaceId=ws_my_test&sessionId=agent_abc123",
     );
   });
 
-  test("filters by targetHosts whitelist", () => {
+  test("filters by targetHosts whitelist when enableQueryString is true", () => {
     const gatewayUrl = "https://gateway.my-corp.com/v1";
     const officialUrl = "https://api.anthropic.com/v1";
 
     const allowedResult = enrichUrlWithWorkspace(gatewayUrl, {
       workspaceId: "ws_123",
       targetHosts: ["gateway.my-corp.com"],
+      enableQueryString: true,
     });
     expect(allowedResult).toBe("https://gateway.my-corp.com/v1?source=paseo&workspace_id=ws_123");
 
     const skippedResult = enrichUrlWithWorkspace(officialUrl, {
       workspaceId: "ws_123",
       targetHosts: ["gateway.my-corp.com"],
+      enableQueryString: true,
     });
     expect(skippedResult).toBe("https://api.anthropic.com/v1");
   });
 
-  test("injects workspace_name when includeWorkspaceName is true and name is provided", () => {
+  test("injects workspace_name when enableQueryString and includeWorkspaceName are true and name is provided", () => {
     const result = enrichUrlWithWorkspace("https://gateway.example.com/v1", {
       workspaceId: "ws_my_test",
       workspaceName: "重构登录表单",
       includeWorkspaceName: true,
+      enableQueryString: true,
     });
     expect(result).toBe(
       "https://gateway.example.com/v1?source=paseo&workspace_id=ws_my_test&workspace_name=%E9%87%8D%E6%9E%84%E7%99%BB%E5%BD%95%E8%A1%A8%E5%8D%95",
     );
   });
 
-  test("injects fallback workspace_name from cwd if title is not yet available", () => {
+  test("injects fallback workspace_name from cwd when enableQueryString is true and title is not yet available", () => {
     const result = enrichUrlWithWorkspace("https://gateway.example.com/v1", {
       workspaceId: "ws_my_test",
       workspaceName: "feature-login",
       includeWorkspaceName: true,
+      enableQueryString: true,
     });
     expect(result).toBe(
       "https://gateway.example.com/v1?source=paseo&workspace_id=ws_my_test&workspace_name=feature-login",
     );
   });
 
-  test("preserves existing query parameters", () => {
+  test("preserves existing query parameters when enableQueryString is true", () => {
     const result = enrichUrlWithWorkspace("https://gateway.example.com/v1?foo=bar&debug=1", {
       workspaceId: "ws_my_test",
       source: "paseo",
+      enableQueryString: true,
     });
     expect(result).toBe(
       "https://gateway.example.com/v1?foo=bar&debug=1&source=paseo&workspace_id=ws_my_test",
     );
   });
 
-  test("handles custom source", () => {
+  test("handles custom source when enableQueryString is true", () => {
     const result = enrichUrlWithWorkspace("https://gateway.example.com/v1", {
       workspaceId: "ws_my_test",
-      source: "custom-pasu",
+      source: "custom-paseo",
+      enableQueryString: true,
     });
     expect(result).toBe(
-      "https://gateway.example.com/v1?source=custom-pasu&workspace_id=ws_my_test",
+      "https://gateway.example.com/v1?source=custom-paseo&workspace_id=ws_my_test",
     );
   });
 
-  test("interpolates placeholders if present", () => {
-    const template =
-      "https://gateway.example.com/pasu/${PASEO_WORKSPACE_ID}/v1?client=${PASEO_SOURCE}";
+  test("interpolates placeholders if present even when enableQueryString is false", () => {
+    const template = "https://gateway.example.com/paseo/${PASEO_WORKSPACE_ID}/v1";
     const result = enrichUrlWithWorkspace(template, {
       workspaceId: "ws_12345",
       source: "paseo",
+      enableQueryString: false,
     });
-    expect(result).toBe("https://gateway.example.com/pasu/ws_12345/v1?client=paseo");
+    expect(result).toBe("https://gateway.example.com/paseo/ws_12345/v1");
   });
 
   test("safely returns invalid url without throwing", () => {
