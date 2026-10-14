@@ -1880,6 +1880,13 @@ export async function createPaseoDaemon(
       const incomingMcpVersion = req.header("mcp-protocol-version");
       if (incomingMcpVersion && incomingMcpVersion > "2025-11-25") {
         req.headers["mcp-protocol-version"] = "2025-11-25";
+        if (Array.isArray(req.rawHeaders)) {
+          for (let i = 0; i < req.rawHeaders.length; i += 2) {
+            if (req.rawHeaders[i]?.toLowerCase() === "mcp-protocol-version") {
+              req.rawHeaders[i + 1] = "2025-11-25";
+            }
+          }
+        }
       }
       if (config.mcpDebug) {
         logger.debug(
