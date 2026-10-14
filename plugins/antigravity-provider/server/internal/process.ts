@@ -157,14 +157,14 @@ export function startDriver(options: DriverOptions): Driver {
         return;
       }
       if (reason === "close") child.stdin.end();
-      else signalGroup(child, "SIGINT");
-      const terminate = setTimeout(() => signalGroup(child, "SIGTERM"), 1000);
-      const kill = setTimeout(() => signalGroup(child, "SIGKILL"), 2000);
+      else safeSignalGroup(child, "SIGINT");
+      const terminate = setTimeout(() => safeSignalGroup(child, "SIGTERM"), 1000);
+      const kill = setTimeout(() => safeSignalGroup(child, "SIGKILL"), 2000);
       await exited;
       clearTimeout(terminate);
       clearTimeout(kill);
       // A tool can keep running after its CLI leader exits.
-      signalGroup(child, "SIGKILL");
+      safeSignalGroup(child, "SIGKILL");
     },
   };
 }
@@ -175,6 +175,14 @@ function signalGroup(
 ): void | Promise<void> {
   if (!child.pid) return;
   return signalProcess({ platform: process.platform, pid: child.pid, signal });
+}
+
+function safeSignalGroup(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
+  try {
+    void signalGroup(child, signal);
+  } catch {
+    // Ignore cleanup races during process teardown
+  }
 }
 
 interface ProbeOptions {
@@ -193,11 +201,15 @@ export function probe(options: ProbeOptions): Promise<string> {
     let stdout = "";
     let stderr = "";
     const deadline = setTimeout(() => {
-      const termination = Promise.resolve(signalGroup(child, "SIGKILL"));
-      void termination.then(() => {
+      try {
+        const termination = Promise.resolve(signalGroup(child, "SIGKILL"));
+        void termination.then(() => {
+          reject(new AntigravityError("Antigravity discovery timed out", "PROBE_TIMEOUT"));
+          return undefined;
+        }, reject);
+      } catch {
         reject(new AntigravityError("Antigravity discovery timed out", "PROBE_TIMEOUT"));
-        return undefined;
-      }, reject);
+      }
     }, 10_000);
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();

@@ -1874,6 +1874,13 @@ export async function createPaseoDaemon(
         res.status(401).json({ error: "Unauthorized" });
         return;
       }
+      // Forward-compatibility shim: newer agents (e.g. Claude Code SDK) may request
+      // MCP protocol versions newer than our bundled @modelcontextprotocol/sdk supports.
+      // Normalize to latest known supported version so requests are not rejected with HTTP 400.
+      const incomingMcpVersion = req.header("mcp-protocol-version");
+      if (incomingMcpVersion && incomingMcpVersion > "2025-11-25") {
+        req.headers["mcp-protocol-version"] = "2025-11-25";
+      }
       if (config.mcpDebug) {
         logger.debug(
           {
