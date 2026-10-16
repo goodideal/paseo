@@ -47,9 +47,6 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
 });
 
 interface FilePreviewBodyProps {
-  client: DaemonClient | null;
-  serverId: string;
-  cwd: string;
   preview: ExplorerFile | null;
   mode?: "preview" | "source";
   isLoading: boolean;
@@ -57,6 +54,9 @@ interface FilePreviewBodyProps {
   location: WorkspaceFileLocation;
   navigationRevision: number;
   imagePreviewUri: string | null;
+  workspaceRoot: string;
+  client: DaemonClient | null;
+  serverId: string;
 }
 
 type TextExplorerFile = ExplorerFile & { kind: "text" };
@@ -131,9 +131,6 @@ function TooLargeSource({ size }: { size?: number }) {
 }
 
 function FilePreviewBody({
-  client,
-  serverId,
-  cwd,
   preview,
   mode,
   isLoading,
@@ -141,6 +138,9 @@ function FilePreviewBody({
   location,
   navigationRevision,
   imagePreviewUri,
+  workspaceRoot,
+  client,
+  serverId,
 }: FilePreviewBodyProps) {
   const { t } = useTranslation();
   const filePath = location.path;
@@ -190,8 +190,8 @@ function FilePreviewBody({
           >
             <FileMarkdownPreview
               source={preview.content ?? ""}
-              filePath={location.path}
-              workspaceRoot={cwd}
+              filePath={filePath}
+              workspaceRoot={workspaceRoot}
               client={client}
               serverId={serverId}
             />
@@ -309,6 +309,7 @@ export function FilePane({
   return (
     <FilePanePresentation
       serverId={serverId}
+      workspaceRoot={normalizedWorkspaceRoot}
       client={client}
       readTarget={readTarget}
       preview={preview}
@@ -350,6 +351,7 @@ function isEditableTextFile(input: {
 
 function FilePanePresentation({
   serverId,
+  workspaceRoot,
   client,
   readTarget,
   preview,
@@ -371,6 +373,7 @@ function FilePanePresentation({
   imagePreviewUri,
 }: {
   serverId: string;
+  workspaceRoot: string;
   client: DaemonClient | null;
   readTarget: { cwd: string; path: string } | null;
   preview: ExplorerFile | null;
@@ -404,8 +407,9 @@ function FilePanePresentation({
   if (editable && client && readTarget && preview?.kind === "text") {
     return (
       <EditableFilePane
-        serverId={serverId}
         key={`${serverId}:${readTarget.cwd}:${readTarget.path}`}
+        serverId={serverId}
+        workspaceRoot={workspaceRoot}
         client={client}
         cwd={readTarget.cwd}
         path={readTarget.path}
@@ -462,9 +466,9 @@ function FilePanePresentation({
         location={location}
         navigationRevision={navigationRevision}
         imagePreviewUri={imagePreviewUri}
+        workspaceRoot={workspaceRoot}
         client={client}
         serverId={serverId}
-        cwd={readTarget?.cwd ?? ""}
       />
     </View>
   );
@@ -472,6 +476,7 @@ function FilePanePresentation({
 
 function EditableFilePane({
   serverId,
+  workspaceRoot,
   client,
   cwd,
   path,
@@ -488,6 +493,7 @@ function EditableFilePane({
   navigationRevision,
 }: {
   serverId: string;
+  workspaceRoot: string;
   client: DaemonClient;
   cwd: string;
   path: string;
@@ -640,9 +646,9 @@ function EditableFilePane({
           location={location}
           navigationRevision={navigationRevision}
           imagePreviewUri={null}
+          workspaceRoot={workspaceRoot}
           client={client}
           serverId={serverId}
-          cwd={cwd}
         />
       )}
     </View>

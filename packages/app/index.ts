@@ -1,10 +1,6 @@
-// Polyfill crypto.randomUUID for React Native before any other imports
-import { polyfillCrypto } from "./src/polyfills/crypto";
-polyfillCrypto();
-
-// Polyfill screen.orientation for WebKitGTK desktop runtimes that lack the API.
-import { polyfillScreenOrientation } from "./src/polyfills/screen-orientation";
-polyfillScreenOrientation();
+// Install runtime polyfills before any other module evaluates. Keep this the first import.
+// oxlint-disable-next-line import/no-unassigned-import -- Polyfills install on import.
+import "./src/polyfills/install-early";
 
 // Polyfill ES2023 array methods (findLast, findLastIndex, toReversed, toSorted, etc.)
 // for web runtimes that lack the APIs.

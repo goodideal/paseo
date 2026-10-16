@@ -1,11 +1,16 @@
 import { useMemo } from "react";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { ASTNode, RenderRules } from "react-native-markdown-display";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { MarkdownRenderer } from "@/components/markdown/renderer";
-import type { RenderRules, ASTNode } from "react-native-markdown-display";
+import {
+  createSharedMarkdownRules,
+  MarkdownRenderer,
+  type MarkdownStyles,
+} from "@/components/markdown/renderer";
 import { parseMarkdownPreviewDocument } from "./document";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { MarkdownLocalImage } from "./image";
+import { resolveMarkdownPreviewImageSource } from "./image-source";
+import { FileMarkdownPreviewImage } from "./preview-image";
 
 export interface FileMarkdownPreviewProps {
   source: string;
@@ -23,24 +28,34 @@ export function FileMarkdownPreview({
   serverId,
 }: FileMarkdownPreviewProps) {
   const document = useMemo(() => parseMarkdownPreviewDocument(source), [source]);
+  const rules = useMemo<RenderRules>(
+    () => ({
+      ...createSharedMarkdownRules(),
+      image: (node: ASTNode, _children, _parent: ASTNode[], _styles: MarkdownStyles) => {
+        const resolved = resolveMarkdownPreviewImageSource({
+          source: String(node.attributes?.src ?? ""),
+          markdownPath: filePath,
+          workspaceRoot,
+        });
+        if (!resolved) {
+          return null;
+        }
 
-  const rules = useMemo<RenderRules>(() => {
-    return {
-      image: (node: ASTNode) => {
         return (
-          <MarkdownLocalImage
+          <FileMarkdownPreviewImage
             key={node.key}
-            source={node.attributes.src}
-            alt={node.attributes.alt}
-            documentPath={filePath}
-            workspaceRoot={workspaceRoot}
+            source={resolved}
+            occurrenceKey={`${filePath}:${node.key}`}
+            alt={typeof node.attributes?.alt === "string" ? node.attributes.alt : undefined}
             client={client}
+            workspaceRoot={workspaceRoot}
             serverId={serverId}
           />
         );
       },
-    };
-  }, [filePath, workspaceRoot, client, serverId]);
+    }),
+    [client, filePath, serverId, workspaceRoot],
+  );
 
   return (
     <View style={styles.outerGutter}>
