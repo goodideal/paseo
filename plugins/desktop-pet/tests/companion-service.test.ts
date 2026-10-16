@@ -72,4 +72,19 @@ describe("CompanionService", () => {
 
     ws.close();
   });
+
+  it("serves valid JavaScript without syntax errors from /bundle.js", async () => {
+    service = new CompanionService(0);
+    const port = await service.start();
+
+    const response = await fetch(`http://127.0.0.1:${port}/bundle.js`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("application/javascript");
+
+    const jsText = await response.text();
+    expect(jsText.length).toBeGreaterThan(100);
+
+    // Verify syntax is 100% valid by parsing as a JS function
+    expect(() => new Function(jsText)).not.toThrow();
+  });
 });

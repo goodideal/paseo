@@ -335,7 +335,7 @@ const COMPANION_JS = `"use strict";
           dynamicPill.style.display = "flex";
           dynamicPill.className = "urgent";
           var safeTitle = escapeHtml(topP0.taskTitle || "高危操作");
-          pillText.innerHTML = "🚨 <b>待批:</b> <span title=\"" + safeTitle + "\">" + safeTitle + "</span> (" + remainingSec + "s)";
+          pillText.innerHTML = '🚨 <b>待批:</b> <span title="' + safeTitle + '">' + safeTitle + '</span> (' + remainingSec + 's)';
 
           if (isExpired) {
             pillActions.innerHTML = '<span style="font-size: 9px; color: #ef4444">已超时</span>';
@@ -356,7 +356,7 @@ const COMPANION_JS = `"use strict";
           var p1Title = escapeHtml(topP1.taskTitle);
           dynamicPill.style.display = "flex";
           dynamicPill.className = "";
-          pillText.innerHTML = "⚡ <b title=\"" + p1Title + "\">" + p1Title + "</b> (" + sec + "s)";
+          pillText.innerHTML = '⚡ <b title="' + p1Title + '">' + p1Title + '</b> (' + sec + 's)';
           pillActions.innerHTML = "";
         } else {
           dynamicPill.style.display = "none";
@@ -550,14 +550,16 @@ export class CompanionService {
         this.boundPort = addr && typeof addr === "object" ? addr.port : this.port;
 
         try {
-          const portFilePath = join(
-            process.env.PASEO_HOME || join(homedir(), ".paseo"),
-            "plugins",
-            "desktop-pet",
-            "companion-port.json",
-          );
-          await mkdir(join(portFilePath, ".."), { recursive: true });
-          await writeFile(portFilePath, JSON.stringify({ port: this.boundPort }), "utf-8");
+          if (this.port !== 0) {
+            const portFilePath = join(
+              process.env.PASEO_HOME || join(homedir(), ".paseo"),
+              "plugins",
+              "desktop-pet",
+              "companion-port.json",
+            );
+            await mkdir(join(portFilePath, ".."), { recursive: true });
+            await writeFile(portFilePath, JSON.stringify({ port: this.boundPort }), "utf-8");
+          }
         } catch {
           // Ignore port file write failure
         }
