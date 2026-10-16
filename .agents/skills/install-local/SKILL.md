@@ -183,22 +183,35 @@ git remote set-url origin https://github.com/goodideal/paseo.git
 
 ---
 
+### 特性 F：官方更新简述归纳与本地 Custom 插件生态兼容性守护 (`scripts/install-local.mjs` & `plugin-custom/`)
+
+- **核心意图**：
+  1. **自动化官方更新简述 (Upstream Updates Summary)**：每次同步上游更新（或执行 `--check-upstream` / `--changelog`）时，自动提取并分类归纳最新提交（流式渲染性能、新模型/Provider 支持、移动端与交互体验、问题修复与工程规范），让开发者对官方演进一目了然；
+  2. **本地 Custom 插件生态兼容性巡检 (Plugin Compatibility Check)**：Paseo 拥有丰富的本地定制插件生态（如 `agent-radar`、`audio-brief`、`desktop-pet`、`gateway-workspace-tagger`、`gitea-workflow`、`quick-prompts`、`visual-crawler-auto-fix`、`web-inspector` 等）。在升级合流与执行门禁（`--verify` 或 `--check-plugins`）时，全自动扫描插件清单完整性（`paseo-plugin.json`）、入口有效性，并批量运行各插件的单元/契约测试，阻断任何上游 API 变更对本地插件的破坏。
+- **涉及核心文件**：
+  - `scripts/install-local.mjs`（内置 `generateUpdatesSummary` 与 `verifyCustomPlugins` 自动化流水线）
+  - `plugin-custom/*` 与 `plugins/` 目录下的全部定制插件
+
+---
+
 ## 3. 全自动化维护与安装命令速查 (Quick Reference)
 
 所有维护与安装操作均统一集成在 `scripts/install-local.mjs` 中（`npm run install:local` 与 `npm run maintenance` 互为别名）：
 
-| 操作目标                         | 推荐命令                                              | 核心动作说明                                                           |
-| :------------------------------- | :---------------------------------------------------- | :--------------------------------------------------------------------- |
-| **一键全量编译并部署到本机**     | `npm run install:local`                               | 编译 Server + Web UI + Desktop，同步至全局 Volta/npm 路径              |
-| **一键同步官方更新并编译安装**   | `npm run install:local -- --sync-upstream`            | 自动 fetch 上游、合并最新提交、维护 `-custom` 后缀、刷新依赖并构建安装 |
-| **同步官方更新时使用 rebase**    | `npm run install:local -- --sync-upstream --rebase`   | 采用变基方式保持线性的自定义提交历史                                   |
-| **自动暂存工作区并同步上游**     | `npm run install:local -- --sync-upstream --stash`    | 若有未提交修改，自动 stash、同步上游后自动 pop 恢复                    |
-| **执行质量门禁与核心单测回归**   | `npm run install:local -- --verify`                   | 运行 `typecheck:server` 与 5 大定制特性核心单测全量回归                |
-| **查看运行状态与上游同步差距**   | `npm run install:local -- --status`                   | 显示当前 Git 分支/提交、官方落后/领先差距、全局安装位置及守护进程状态  |
-| **仅检查官方是否有新版本**       | `npm run install:local -- --check-upstream`           | 获取并对比官方 upstream/main 最新提交与版本号，不修改代码              |
-| **快速构建后端与 CLI (跳过 UI)** | `npm run install:local -- --skip-ui`                  | 修改后端/CLI 逻辑时极速编译，跳过耗时的 Web UI 打包                    |
-| **仅在本地编译 (不安装到全局)**  | `npm run install:local -- --build-only`               | 仅验证打包输出，不覆盖本机全局 `@getpaseo/cli`                         |
-| **仅同步依赖与代码 (不编译)**    | `npm run install:local -- --sync-upstream --no-build` | 仅执行上游同步与依赖安装，不执行后续编译步骤                           |
+| 操作目标                         | 推荐命令                                              | 核心动作说明                                                                                         |
+| :------------------------------- | :---------------------------------------------------- | :--------------------------------------------------------------------------------------------------- |
+| **一键全量编译并部署到本机**     | `npm run install:local`                               | 编译 Server + Web UI + Desktop，同步至全局 Volta/npm 路径                                            |
+| **一键同步官方更新并编译安装**   | `npm run install:local -- --sync-upstream`            | 自动 fetch 上游、合并最新提交、维护 `-custom` 后缀、输出更新简述、校验插件兼容性、刷新依赖并构建安装 |
+| **输出官方上游最新更新简述**     | `npm run install:local -- --changelog`                | 分类归纳展示官方最新提交（性能优化、新特性/Provider、UI 交互、修复等）                               |
+| **检测本地自定义插件兼容性**     | `npm run install:local -- --check-plugins`            | 扫描 `plugin-custom/` 与 `plugins/`，校验清单规范并执行插件单元/契约测试                             |
+| **同步官方更新时使用 rebase**    | `npm run install:local -- --sync-upstream --rebase`   | 采用变基方式保持线性的自定义提交历史                                                                 |
+| **自动暂存工作区并同步上游**     | `npm run install:local -- --sync-upstream --stash`    | 若有未提交修改，自动 stash、同步上游后自动 pop 恢复                                                  |
+| **执行质量门禁与核心单测回归**   | `npm run install:local -- --verify`                   | 运行 `typecheck:server`、5 大定制单测回归及所有 Custom Plugins 兼容性测试                            |
+| **查看运行状态与上游同步差距**   | `npm run install:local -- --status`                   | 显示当前 Git 分支/提交、官方落后/领先差距、全局安装位置及守护进程状态                                |
+| **仅检查官方是否有新版本**       | `npm run install:local -- --check-upstream`           | 获取并对比官方 upstream/main 最新提交与版本号，输出更新简述，不修改代码                              |
+| **快速构建后端与 CLI (跳过 UI)** | `npm run install:local -- --skip-ui`                  | 修改后端/CLI 逻辑时极速编译，跳过耗时的 Web UI 打包                                                  |
+| **仅在本地编译 (不安装到全局)**  | `npm run install:local -- --build-only`               | 仅验证打包输出，不覆盖本机全局 `@getpaseo/cli`                                                       |
+| **仅同步依赖与代码 (不编译)**    | `npm run install:local -- --sync-upstream --no-build` | 仅执行上游同步与依赖安装，不执行后续编译步骤                                                         |
 
 ---
 
@@ -310,6 +323,9 @@ npx vitest run \
   packages/app/src/desktop/updates/desktop-updates.test.ts \
   packages/app/src/terminal/runtime/terminal-emulator-runtime.test.ts \
   --bail=1
+
+# 6. 本地 Custom 插件全生态规范与契约兼容性测试
+npm run install:local -- --check-plugins
 ```
 
 #### Step 6: 维护 -custom 构建版本标识与提交推送

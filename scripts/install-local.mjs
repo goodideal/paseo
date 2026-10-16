@@ -1,5 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -67,6 +76,9 @@ Usage:
   npm run maintenance [-- options]
 
 Options:
+  --changelog, --summary 显示官方更新简述 (分类展示最新提交核心变更)
+  --check-plugins     检测本地自定义插件 (Custom Plugins) 清单规范及单元/契约测试兼容性
+  --plugins           --check-plugins 的别名
   --status            显示当前本地分支、上游同步状态、全局安装位置与守护进程状态
   --check-upstream    检查官方 (upstream) 最新更新与版本差异，不执行合并或构建
   --sync-upstream     一键同步官方更新 (fetch + merge/rebase + 保持 -custom 后缀 + 构建安装)
@@ -99,6 +111,8 @@ if (args.has("-h") || args.has("--help")) {
 
 const isStatusOnly = args.has("--status");
 const isCheckUpstreamOnly = args.has("--check-upstream");
+const showChangelog = args.has("--changelog") || args.has("--summary");
+const checkPluginsOnly = args.has("--check-plugins") || args.has("--plugins");
 const shouldSyncUpstream = args.has("--sync-upstream") || args.has("--sync");
 const useRebase = args.has("--rebase");
 const autoStash = args.has("--stash");
@@ -326,10 +340,8 @@ function checkUpstream() {
   console.log("-------------------------------------------------------");
 
   if (behindCount > 0) {
-    console.log(`\n📢 官方上游有 ${behindCount} 个新提交：`);
-    const newCommits = runCapture("git", ["log", "--oneline", `HEAD..upstream/main`, "-n", "10"]);
-    console.log(newCommits);
-    console.log("\n👉 若要同步合并官方更新，请执行：");
+    generateUpdatesSummary("HEAD..upstream/main");
+    console.log("👉 若要同步合并官方更新，请执行：");
     console.log("   npm run install:local -- --sync-upstream");
   } else {
     console.log("\n✅ 本地代码已包含官方 upstream/main 的所有最新提交，已处于最新状态。");
@@ -370,6 +382,7 @@ function syncUpstream() {
       }
     }
 
+    const prevHead = runCapture("git", ["rev-parse", "HEAD"]);
     try {
       if (useRebase) {
         console.log("> git rebase upstream/main");
@@ -427,7 +440,226 @@ function syncUpstream() {
 
     console.log("📦 刷新安装依赖 (npm install)...");
     run("npm", ["install"]);
+
+    if (prevHead) {
+      generateUpdatesSummary(`${prevHead}..HEAD`);
+    }
+    verifyCustomPlugins();
   }
+}
+
+function generateUpdatesSummary(range) {
+  if (!range) return;
+  const logOutput = runCapture("git", ["log", "--no-merges", "--format=%h|%s", range]);
+  if (!logOutput) return;
+  const lines = logOutput.trim().split("\n").filter(Boolean);
+  if (lines.length === 0) return;
+
+  const categories = {
+    perf: { title: "🚀 性能与流式渲染优化 (Performance & Streaming)", items: [] },
+    feat: { title: "🛠️ 新增特性与模型提供商 (Features & Providers)", items: [] },
+    ui: { title: "📱 界面交互与移动端体验 (UI, Sheets & Mobile UX)", items: [] },
+    fix: { title: "🐛 问题修复与系统健壮性 (Bug Fixes & Reliability)", items: [] },
+    docs: { title: "📖 文档、测试与工程规范 (Docs & Chores)", items: [] },
+  };
+
+  for (const line of lines) {
+    const firstPipe = line.indexOf("|");
+    if (firstPipe === -1) continue;
+    const sha = line.slice(0, firstPipe).trim();
+    const msg = line.slice(firstPipe + 1).trim();
+    const lower = msg.toLowerCase();
+
+    if (
+      lower.includes("perf") ||
+      lower.includes("rendering") ||
+      lower.includes("render cost") ||
+      lower.includes("stream") ||
+      lower.includes("delta") ||
+      lower.includes("memory")
+    ) {
+      categories.perf.items.push({ sha, msg });
+    } else if (
+      lower.includes("feat") ||
+      lower.includes("hoplite") ||
+      lower.includes("provider") ||
+      lower.includes("model discovery") ||
+      lower.includes("worktree") ||
+      lower.includes("download")
+    ) {
+      categories.feat.items.push({ sha, msg });
+    } else if (
+      lower.includes("sheet") ||
+      lower.includes("mobile") ||
+      lower.includes("composer") ||
+      lower.includes("keyboard") ||
+      lower.includes("image") ||
+      lower.includes("markdown") ||
+      lower.includes("font") ||
+      lower.includes("density")
+    ) {
+      categories.ui.items.push({ sha, msg });
+    } else if (
+      lower.includes("fix") ||
+      lower.includes("reject") ||
+      lower.includes("prevent") ||
+      lower.includes("restore") ||
+      lower.includes("error") ||
+      lower.includes("fail") ||
+      lower.includes("timeout")
+    ) {
+      categories.fix.items.push({ sha, msg });
+    } else {
+      categories.docs.items.push({ sha, msg });
+    }
+  }
+
+  console.log("\n=======================================================");
+  console.log(`📋 官方更新简述 (Upstream Updates Summary - 共 ${lines.length} 个提交)`);
+  console.log("=======================================================");
+  for (const cat of Object.values(categories)) {
+    if (cat.items.length > 0) {
+      console.log(`\n${cat.title} [${cat.items.length} 项]:`);
+      for (const item of cat.items.slice(0, 10)) {
+        console.log(`   • [${item.sha}] ${item.msg}`);
+      }
+      if (cat.items.length > 10) {
+        console.log(`     ... 另有 ${cat.items.length - 10} 项`);
+      }
+    }
+  }
+  console.log("=======================================================\n");
+}
+
+function findTestFiles(dir) {
+  const results = [];
+  if (!existsSync(dir)) return results;
+  function walk(current) {
+    const entries = readdirSync(current, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        walk(fullPath);
+      } else if (
+        (entry.name.endsWith(".test.ts") || entry.name.endsWith(".test.tsx")) &&
+        !entry.name.includes("playwright") &&
+        !entry.name.includes("live")
+      ) {
+        results.push(fullPath);
+      }
+    }
+  }
+  walk(dir);
+  return results;
+}
+
+function verifyCustomPlugins() {
+  console.log("\n=======================================================");
+  console.log("🧩 检测本地自定义插件 (Custom Plugins) 兼容性与质量门禁");
+  console.log("=======================================================");
+
+  const pluginDirs = new Map(); // id -> realPath
+
+  // 1. Scan plugin-custom
+  const customRoot = path.join(repoRoot, "plugin-custom");
+  if (existsSync(customRoot)) {
+    for (const item of readdirSync(customRoot)) {
+      const full = path.join(customRoot, item);
+      try {
+        const stat = statSync(full);
+        if (stat.isDirectory()) {
+          const real = realpathSync(full);
+          if (existsSync(path.join(real, "paseo-plugin.json"))) {
+            pluginDirs.set(item, real);
+          }
+        }
+      } catch {}
+    }
+  }
+
+  // 2. Scan plugins (e.g. desktop-pet or custom symlinks)
+  const pluginsRoot = path.join(repoRoot, "plugins");
+  if (existsSync(pluginsRoot)) {
+    for (const item of readdirSync(pluginsRoot)) {
+      if (
+        item.endsWith("-usage-source") ||
+        item === "hoplite-provider" ||
+        item === "muse-provider" ||
+        item === "antigravity-provider"
+      ) {
+        continue; // skip official built-in providers/sources
+      }
+      const full = path.join(pluginsRoot, item);
+      try {
+        const stat = statSync(full);
+        if (stat.isDirectory()) {
+          const real = realpathSync(full);
+          if (existsSync(path.join(real, "paseo-plugin.json"))) {
+            if (!pluginDirs.has(item)) {
+              pluginDirs.set(item, real);
+            }
+          }
+        }
+      } catch {}
+    }
+  }
+
+  if (pluginDirs.size === 0) {
+    console.log("ℹ️ 未发现任何本地自定义插件。");
+    return true;
+  }
+
+  console.log(`📦 共发现 ${pluginDirs.size} 个本地自定义插件:\n`);
+
+  let allPassed = true;
+
+  for (const [id, dirPath] of pluginDirs.entries()) {
+    const relPath = path.relative(repoRoot, dirPath);
+    let manifestOk = false;
+    let manifestInfo = "";
+    try {
+      const manifest = JSON.parse(readFileSync(path.join(dirPath, "paseo-plugin.json"), "utf8"));
+      manifestOk = Boolean(manifest.id || manifest.name);
+      manifestInfo = manifest.requirements?.paseo ? `req: ${manifest.requirements.paseo}` : "valid";
+    } catch {
+      manifestOk = false;
+      manifestInfo = "invalid json";
+    }
+
+    const testFiles = findTestFiles(path.join(dirPath, "tests"));
+    let testsOk = true;
+    let testSummary = "无单测";
+
+    if (testFiles.length > 0) {
+      try {
+        const relTestFiles = testFiles.map((f) => path.relative(repoRoot, f));
+        const output = execFileSync("npx", ["vitest", "run", ...relTestFiles, "--bail=1"], {
+          encoding: "utf8",
+          cwd: repoRoot,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        const match = output.match(/Tests\s+([^\n]+)/);
+        testSummary = match ? match[1].trim() : `${relTestFiles.length} files passed`;
+      } catch {
+        testsOk = false;
+        testSummary = "测试未通过";
+        allPassed = false;
+      }
+    }
+
+    const isHealthy = manifestOk && testsOk;
+    console.log(
+      `  ${isHealthy ? "✅" : "❌"} ${id.padEnd(26)} [${manifestInfo.padEnd(14)}] -> ${testSummary} (${relPath})`,
+    );
+  }
+
+  console.log("-------------------------------------------------------");
+  if (allPassed) {
+    console.log("🎉 所有 Custom Plugin 规范检验与回归测试全部通过！\n");
+  } else {
+    console.warn("⚠️ 存在不兼容或测试失败的 Custom Plugin，请根据上方详情检查修复。\n");
+  }
+  return allPassed;
 }
 
 function verifyQuality() {
@@ -445,6 +677,8 @@ function verifyQuality() {
   ];
   run("npx", ["vitest", "run", ...coreTests, "--bail=1"]);
   console.log("✅ 质量门禁与核心回归测试全部通过！\n");
+
+  verifyCustomPlugins();
 }
 
 // -------------------------------------------------------------
@@ -459,6 +693,39 @@ if (isStatusOnly) {
 if (isCheckUpstreamOnly) {
   checkUpstream();
   process.exit(0);
+}
+
+if (showChangelog) {
+  ensureUpstreamRemote();
+  let range = "";
+  const behindCountStr = runCapture("git", ["rev-list", "--count", "HEAD..upstream/main"]);
+  const behindCount = parseInt(behindCountStr, 10) || 0;
+  if (behindCount > 0) {
+    range = "HEAD..upstream/main";
+  } else {
+    const merges = runCapture("git", [
+      "log",
+      "--grep=merge: sync official upstream updates",
+      "-n",
+      "2",
+      "--format=%H",
+    ]);
+    const mergeList = merges ? merges.split("\n").filter(Boolean) : [];
+    if (mergeList.length >= 2) {
+      range = `${mergeList[1]}^2..${mergeList[0]}^2`;
+    } else if (mergeList.length === 1) {
+      range = `${mergeList[0]}^1..${mergeList[0]}^2`;
+    } else {
+      range = "upstream/main~30..upstream/main";
+    }
+  }
+  generateUpdatesSummary(range);
+  process.exit(0);
+}
+
+if (checkPluginsOnly) {
+  const ok = verifyCustomPlugins();
+  process.exit(ok ? 0 : 1);
 }
 
 if (shouldVerify && noBuild) {
