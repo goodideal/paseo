@@ -3,7 +3,7 @@
     "state": "completed",
     "currentHop": 10,
     "maxHops": 10,
-    "activeUrl": "https://llm.ezcloud.cc/#/security-groups",
+    "activeUrl": "https://llm.ezcloud.cc/#/proxies",
     "totalAnomalies": 0,
     "anomaliesBySeverity": {
       "P0": 0,
@@ -11,15 +11,15 @@
       "P2": 0,
       "P3": 0
     },
-    "startedAt": 1790845865626,
-    "endedAt": 1790845870446
+    "startedAt": 1792193815994,
+    "endedAt": 1792193831512
   },
   "hops": [
     {
       "hopNumber": 1,
       "url": "https://llm.ezcloud.cc/#/dashboard",
       "action": "navigate",
-      "timestamp": 1790845867026,
+      "timestamp": 1792193825800,
       "domFingerprint": "6d47b56f1137416e",
       "anomalies": []
     },
@@ -27,72 +27,72 @@
       "hopNumber": 2,
       "url": "https://llm.ezcloud.cc/#/dashboard",
       "action": "login:credentials",
-      "timestamp": 1790845869107,
-      "domFingerprint": "9f82a09dad69fdf2",
+      "timestamp": 1792193828992,
+      "domFingerprint": "a4ca2a7d7f6fb103",
       "anomalies": []
     },
     {
       "hopNumber": 3,
-      "url": "https://llm.ezcloud.cc/#/logs",
-      "action": "navigate:https://llm.ezcloud.cc/#/logs",
-      "timestamp": 1790845869265,
-      "domFingerprint": "8558e2b65bca21df",
+      "url": "https://llm.ezcloud.cc/#/analytics",
+      "action": "navigate:https://llm.ezcloud.cc/#/analytics",
+      "timestamp": 1792193829354,
+      "domFingerprint": "8cbdfaf3637fbeb2",
       "anomalies": []
     },
     {
       "hopNumber": 4,
-      "url": "https://llm.ezcloud.cc/#/proficiency",
-      "action": "navigate:https://llm.ezcloud.cc/#/proficiency",
-      "timestamp": 1790845869425,
-      "domFingerprint": "47536d36aa387ced",
+      "url": "https://llm.ezcloud.cc/#/logs",
+      "action": "navigate:https://llm.ezcloud.cc/#/logs",
+      "timestamp": 1792193829889,
+      "domFingerprint": "e2a24f5ece9d21a7",
       "anomalies": []
     },
     {
       "hopNumber": 5,
-      "url": "https://llm.ezcloud.cc/#/providers",
-      "action": "navigate:https://llm.ezcloud.cc/#/providers",
-      "timestamp": 1790845869584,
-      "domFingerprint": "35a13c72f2078a23",
+      "url": "https://llm.ezcloud.cc/#/observability",
+      "action": "navigate:https://llm.ezcloud.cc/#/observability",
+      "timestamp": 1792193830173,
+      "domFingerprint": "0a07327eaf287836",
       "anomalies": []
     },
     {
       "hopNumber": 6,
-      "url": "https://llm.ezcloud.cc/#/models",
-      "action": "navigate:https://llm.ezcloud.cc/#/models",
-      "timestamp": 1790845869814,
-      "domFingerprint": "9323ef7134d09858",
+      "url": "https://llm.ezcloud.cc/#/proficiency",
+      "action": "navigate:https://llm.ezcloud.cc/#/proficiency",
+      "timestamp": 1792193830431,
+      "domFingerprint": "41aca58f16c2139a",
       "anomalies": []
     },
     {
       "hopNumber": 7,
-      "url": "https://llm.ezcloud.cc/#/virtual-models",
-      "action": "navigate:https://llm.ezcloud.cc/#/virtual-models",
-      "timestamp": 1790845869976,
-      "domFingerprint": "cf504ef8a646434b",
+      "url": "https://llm.ezcloud.cc/#/providers",
+      "action": "navigate:https://llm.ezcloud.cc/#/providers",
+      "timestamp": 1792193830717,
+      "domFingerprint": "ce5eebc1c25802ff",
       "anomalies": []
     },
     {
       "hopNumber": 8,
-      "url": "https://llm.ezcloud.cc/#/proxies",
-      "action": "navigate:https://llm.ezcloud.cc/#/proxies",
-      "timestamp": 1790845870132,
-      "domFingerprint": "a8f8ffbb671af0af",
+      "url": "https://llm.ezcloud.cc/#/models",
+      "action": "navigate:https://llm.ezcloud.cc/#/models",
+      "timestamp": 1792193831110,
+      "domFingerprint": "b150ee76d92d4482",
       "anomalies": []
     },
     {
       "hopNumber": 9,
-      "url": "https://llm.ezcloud.cc/#/users",
-      "action": "navigate:https://llm.ezcloud.cc/#/users",
-      "timestamp": 1790845870290,
-      "domFingerprint": "2f7bd28022df49f8",
+      "url": "https://llm.ezcloud.cc/#/virtual-models",
+      "action": "navigate:https://llm.ezcloud.cc/#/virtual-models",
+      "timestamp": 1792193831323,
+      "domFingerprint": "429821493b3cfe39",
       "anomalies": []
     },
     {
       "hopNumber": 10,
-      "url": "https://llm.ezcloud.cc/#/security-groups",
-      "action": "navigate:https://llm.ezcloud.cc/#/security-groups",
-      "timestamp": 1790845870446,
-      "domFingerprint": "46ef0fcd46b20a60",
+      "url": "https://llm.ezcloud.cc/#/proxies",
+      "action": "navigate:https://llm.ezcloud.cc/#/proxies",
+      "timestamp": 1792193831511,
+      "domFingerprint": "9166697ca11554a5",
       "anomalies": []
     }
   ],
