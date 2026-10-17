@@ -10,7 +10,7 @@ user-invocable: true
 
 本项目技能整合了 **本地工程编译安装** 与 **官方上游更新维护 (Paseo Maintenance)** 两大核心能力，为 Paseo 深度定制开发提供全流程闭环：
 
-1. **自动化编译与本地部署 (Auto Build & Local Deploy)**：自动化按 Monorepo 依赖拓扑编译 Paseo 服务端组件、内置 Web UI、Electron 桌面端主进程，并将产物增量同步到本地全局运行时（如 Volta 或全局 npm），使本地终端命令 `paseo` 和后台守护进程立即生效。
+1. **自动化编译与本地部署 (Auto Build & Local Deploy)**：自动化按 Monorepo 依赖拓扑编译 Paseo 服务端组件、按需打包内置 Web UI（智能跳过无变更 UI 打包）、Electron 桌面端主进程，并将产物增量同步到本地全局运行时（如 Volta 或全局 npm），提供守护进程运行态漂移比对与重启预警。
 2. **官方更新无缝整合 (Upstream Integration)**：自动追踪官方上游仓库 (`getpaseo/paseo`)，对比版本差异与最新提交，提供一键拉取合并（或变基）、自动维护 `-custom` 自定义版本标识、秒级处理多包版本冲突、刷新第三方依赖及自动化编译安装的一站式流水线。
 3. **定制特性与质量门禁守护 (Custom Features & Quality Gates)**：深度沉淀五大定制特性（纯黑终端、中英双语 STT、中文字体与重测、`-custom` 全链路兼容、插件化 Usage Source 与 Workflow 引擎整合）的架构要点、编码规范（如 oxlint 圈复杂度、i18n 多语言类型约束与 Monorepo Workspace 依赖构建链）以及核心单测回归验证。
 
@@ -206,10 +206,12 @@ git remote set-url origin https://github.com/goodideal/paseo.git
 | **检测本地自定义插件兼容性**     | `npm run install:local -- --check-plugins`            | 扫描 `plugin-custom/` 与 `plugins/`，校验清单规范并执行插件单元/契约测试                             |
 | **同步官方更新时使用 rebase**    | `npm run install:local -- --sync-upstream --rebase`   | 采用变基方式保持线性的自定义提交历史                                                                 |
 | **自动暂存工作区并同步上游**     | `npm run install:local -- --sync-upstream --stash`    | 若有未提交修改，自动 stash、同步上游后自动 pop 恢复                                                  |
-| **执行质量门禁与核心单测回归**   | `npm run install:local -- --verify`                   | 运行 `typecheck:server`、5 大定制单测回归及所有 Custom Plugins 兼容性测试                            |
+| **执行质量门禁与核心单测回归**   | `npm run install:local -- --verify`                   | 门禁前置 (Fail-Fast)，批量秒测 Custom Plugins，运行 `typecheck:server` 及 5 大定制单测回归           |
 | **查看运行状态与上游同步差距**   | `npm run install:local -- --status`                   | 显示当前 Git 分支/提交、官方落后/领先差距、全局安装位置及守护进程状态                                |
 | **仅检查官方是否有新版本**       | `npm run install:local -- --check-upstream`           | 获取并对比官方 upstream/main 最新提交与版本号，输出更新简述，不修改代码                              |
 | **快速构建后端与 CLI (跳过 UI)** | `npm run install:local -- --skip-ui`                  | 修改后端/CLI 逻辑时极速编译，跳过耗时的 Web UI 打包                                                  |
+| **强制重新全量打包 Web UI**      | `npm run install:local -- --force-ui`                 | 默认在 packages/app 无修改且产物就绪时自动跳过，加此参数强制重新打包 Metro Web UI                    |
+| **刷新构建时刻时间戳版本**       | `npm run install:local -- --bump`                     | 将版本更新为当前时刻标识 `-custom.<DDhhmm>` 并级联重写所有子包 package.json                          |
 | **仅在本地编译 (不安装到全局)**  | `npm run install:local -- --build-only`               | 仅验证打包输出，不覆盖本机全局 `@getpaseo/cli`                                                       |
 | **仅同步依赖与代码 (不编译)**    | `npm run install:local -- --sync-upstream --no-build` | 仅执行上游同步与依赖安装，不执行后续编译步骤                                                         |
 

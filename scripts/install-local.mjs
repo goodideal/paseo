@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import {
   cpSync,
   existsSync,
+  mkdirSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -85,7 +86,9 @@ Options:
   --sync              --sync-upstream 的别名
   --rebase            与 --sync-upstream 配合使用，使用 rebase 替代默认的 merge
   --stash             与 --sync-upstream 配合使用，如果有未提交的更改则自动 stash 并恢复
-  --verify            运行核心质量门禁验证 (typecheck:server 与 5 个核心定制特性单测回归)
+  --verify            运行核心质量门禁验证 (typecheck:server 与 5 个核心定制特性单测回归，失败即停)
+  --bump, --stamp     刷新当前构建时刻版本标识 (-custom.<DDhhmm>) 并同步各子包
+  --force-ui          强制重新打包编译 Web UI (默认在 packages/app 无改动且产物就绪时自动跳过)
   --skip-ui           跳过 Web UI 编译打包 (仅构建服务端和桌面端，大幅提升快速调试效率)
   --skip-desktop      跳过 Electron 桌面端主进程编译
   --build-only        仅执行本地编译，不拷贝同步到全局安装目录 (Volta / npm global)
@@ -118,6 +121,8 @@ const useRebase = args.has("--rebase");
 const autoStash = args.has("--stash");
 const shouldVerify = args.has("--verify") || args.has("--test");
 const skipUi = args.has("--skip-ui");
+const forceUi = args.has("--force-ui") || args.has("--build-ui");
+const shouldBump = args.has("--bump") || args.has("--stamp");
 const skipDesktop = args.has("--skip-desktop");
 const buildOnly = args.has("--build-only");
 const noBuild = args.has("--no-build");
@@ -227,6 +232,51 @@ function getGlobalInstallTargets() {
   return targets;
 }
 
+function checkDaemonDrift() {
+  const pidFile = path.join(os.homedir(), ".paseo", "paseo.pid");
+  if (!existsSync(pidFile)) return null;
+  try {
+    const pidInfo = JSON.parse(readFileSync(pidFile, "utf8"));
+    const startedAt = new Date(pidInfo.startedAt);
+    if (Number.isNaN(startedAt.getTime())) return null;
+
+    const now = new Date();
+    const diffMs = Math.max(0, now.getTime() - startedAt.getTime());
+    const diffHours = (diffMs / (1000 * 60 * 60)).toFixed(1);
+    const diffDays = (diffMs / (1000 * 60 * 60 * 24)).toFixed(1);
+
+    const ageStr = Number(diffDays) >= 1 ? `${diffDays} 天前` : `${diffHours} 小时前`;
+
+    // Check Volta/npm global installed mtime
+    const targets = getGlobalInstallTargets();
+    let isStale = false;
+    let mtimeStr = null;
+    if (targets.length > 0) {
+      const cliEntry = path.join(targets[0].cliDir, "dist", "index.js");
+      if (existsSync(cliEntry)) {
+        const installedMtime = statSync(cliEntry).mtime;
+        mtimeStr = installedMtime.toLocaleString();
+        if (installedMtime.getTime() > startedAt.getTime() + 5000) {
+          isStale = true;
+        }
+      }
+    }
+
+    return {
+      pid: pidInfo.pid,
+      listen: pidInfo.listen,
+      startedAt: pidInfo.startedAt,
+      diffHours,
+      diffDays,
+      ageStr,
+      isStale,
+      mtimeStr,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function showStatus() {
   console.log("=======================================================");
   console.log("🔍 Paseo 本地运行与环境状态报告 (Paseo Status)");
@@ -270,18 +320,26 @@ function showStatus() {
 
   // 4. Daemon status
   console.log(`\n⚡ 守护进程 (Daemon) 状态:`);
-  const pidFile = path.join(os.homedir(), ".paseo", "paseo.pid");
-  if (existsSync(pidFile)) {
-    try {
-      const pidInfo = JSON.parse(readFileSync(pidFile, "utf8"));
+  const drift = checkDaemonDrift();
+  if (drift) {
+    console.log(
+      `   - 配置文件记录 PID: ${drift.pid}, 监听: ${drift.listen}, 启动于: ${drift.startedAt} (${drift.ageStr})`,
+    );
+    if (drift.isStale) {
       console.log(
-        `   - 配置文件记录 PID: ${pidInfo.pid}, 监听: ${pidInfo.listen}, 启动于: ${pidInfo.startedAt}`,
+        `   ⚠️ 运行态漂移: 守护进程启动于 ${drift.ageStr}，早于全局最新构建 (${drift.mtimeStr})！`,
       );
-    } catch {
-      console.log(`   - 配置文件存在但无法读取: ${pidFile}`);
+      console.log(`   👉 建议在宿主终端执行: paseo restart 载入最新运行时`);
+    } else {
+      console.log(`   ✅ 守护进程运行正常，已是最新构建实例`);
     }
   } else {
-    console.log(`   - 未找到 ~/.paseo/paseo.pid 文件`);
+    const pidFile = path.join(os.homedir(), ".paseo", "paseo.pid");
+    if (!existsSync(pidFile)) {
+      console.log(`   - 未找到 ~/.paseo/paseo.pid 文件`);
+    } else {
+      console.log(`   - 配置文件存在但无法读取: ${pidFile}`);
+    }
   }
 
   const lsofOutput = runCapture("lsof", ["-i", ":6767"]);
@@ -345,6 +403,26 @@ function checkUpstream() {
     console.log("   npm run install:local -- --sync-upstream");
   } else {
     console.log("\n✅ 本地代码已包含官方 upstream/main 的所有最新提交，已处于最新状态。");
+  }
+}
+
+function bumpCustomVersion() {
+  console.log("🏷️ 校验并维护自定义版本标识 (-custom)...");
+  try {
+    const rootPkgPath = path.join(repoRoot, "package.json");
+    const rootPkg = JSON.parse(readFileSync(rootPkgPath, "utf8"));
+    const baseVersion = rootPkg.version
+      .replace(/^v/i, "")
+      .replace(/-custom(?:\.[\w-]+)?$/, "")
+      .replace(/\s*\[[^\]]+\]$/, "");
+    rootPkg.version = `${baseVersion}-custom.${getModTimestamp()}`;
+    writeFileSync(rootPkgPath, `${JSON.stringify(rootPkg, null, 2)}\n`);
+    console.log(
+      `   -> 更新根版本号为: ${rootPkg.version} (${formatModDisplayVersion(rootPkg.version)})`,
+    );
+    run("node", ["scripts/sync-workspace-versions.mjs"]);
+  } catch (err) {
+    console.warn("⚠️ 同步子包版本号时出现提示:", err.message);
   }
 }
 
@@ -419,24 +497,7 @@ function syncUpstream() {
       }
     }
 
-    // Ensure custom version suffix is preserved with mod timestamp
-    console.log("🏷️ 校验并维护自定义版本标识 (-custom)...");
-    try {
-      const rootPkgPath = path.join(repoRoot, "package.json");
-      const rootPkg = JSON.parse(readFileSync(rootPkgPath, "utf8"));
-      const baseVersion = rootPkg.version
-        .replace(/^v/i, "")
-        .replace(/-custom(?:\.[\w-]+)?$/, "")
-        .replace(/\s*\[[^\]]+\]$/, "");
-      rootPkg.version = `${baseVersion}-custom.${getModTimestamp()}`;
-      writeFileSync(rootPkgPath, `${JSON.stringify(rootPkg, null, 2)}\n`);
-      console.log(
-        `   -> 更新根版本号为: ${rootPkg.version} (${formatModDisplayVersion(rootPkg.version)})`,
-      );
-      run("node", ["scripts/sync-workspace-versions.mjs"]);
-    } catch (err) {
-      console.warn("⚠️ 同步子包版本号时出现提示:", err.message);
-    }
+    bumpCustomVersion();
 
     console.log("📦 刷新安装依赖 (npm install)...");
     run("npm", ["install"]);
@@ -446,6 +507,33 @@ function syncUpstream() {
     }
     verifyCustomPlugins();
   }
+}
+
+const PERF_PATTERNS = ["perf", "rendering", "render cost", "stream", "delta", "memory"];
+const FEAT_PATTERNS = ["feat", "hoplite", "provider", "model discovery", "worktree", "download"];
+const UI_PATTERNS = [
+  "sheet",
+  "mobile",
+  "composer",
+  "keyboard",
+  "image",
+  "markdown",
+  "font",
+  "density",
+];
+const FIX_PATTERNS = ["fix", "reject", "prevent", "restore", "error", "fail", "timeout"];
+
+function matchesAny(str, patterns) {
+  return patterns.some((p) => str.includes(p));
+}
+
+function classifyCommit(msg) {
+  const lower = msg.toLowerCase();
+  if (matchesAny(lower, PERF_PATTERNS)) return "perf";
+  if (matchesAny(lower, FEAT_PATTERNS)) return "feat";
+  if (matchesAny(lower, UI_PATTERNS)) return "ui";
+  if (matchesAny(lower, FIX_PATTERNS)) return "fix";
+  return "docs";
 }
 
 function generateUpdatesSummary(range) {
@@ -468,50 +556,8 @@ function generateUpdatesSummary(range) {
     if (firstPipe === -1) continue;
     const sha = line.slice(0, firstPipe).trim();
     const msg = line.slice(firstPipe + 1).trim();
-    const lower = msg.toLowerCase();
-
-    if (
-      lower.includes("perf") ||
-      lower.includes("rendering") ||
-      lower.includes("render cost") ||
-      lower.includes("stream") ||
-      lower.includes("delta") ||
-      lower.includes("memory")
-    ) {
-      categories.perf.items.push({ sha, msg });
-    } else if (
-      lower.includes("feat") ||
-      lower.includes("hoplite") ||
-      lower.includes("provider") ||
-      lower.includes("model discovery") ||
-      lower.includes("worktree") ||
-      lower.includes("download")
-    ) {
-      categories.feat.items.push({ sha, msg });
-    } else if (
-      lower.includes("sheet") ||
-      lower.includes("mobile") ||
-      lower.includes("composer") ||
-      lower.includes("keyboard") ||
-      lower.includes("image") ||
-      lower.includes("markdown") ||
-      lower.includes("font") ||
-      lower.includes("density")
-    ) {
-      categories.ui.items.push({ sha, msg });
-    } else if (
-      lower.includes("fix") ||
-      lower.includes("reject") ||
-      lower.includes("prevent") ||
-      lower.includes("restore") ||
-      lower.includes("error") ||
-      lower.includes("fail") ||
-      lower.includes("timeout")
-    ) {
-      categories.fix.items.push({ sha, msg });
-    } else {
-      categories.docs.items.push({ sha, msg });
-    }
+    const cat = classifyCommit(msg);
+    categories[cat].items.push({ sha, msg });
   }
 
   console.log("\n=======================================================");
@@ -553,27 +599,30 @@ function findTestFiles(dir) {
   return results;
 }
 
-function verifyCustomPlugins() {
-  console.log("\n=======================================================");
-  console.log("🧩 检测本地自定义插件 (Custom Plugins) 兼容性与质量门禁");
-  console.log("=======================================================");
+function findPluginManifest(dir) {
+  try {
+    const stat = statSync(dir);
+    if (!stat.isDirectory()) return null;
+    const real = realpathSync(dir);
+    const manifestPath = path.join(real, "paseo-plugin.json");
+    if (existsSync(manifestPath)) {
+      return real;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
 
-  const pluginDirs = new Map(); // id -> realPath
+function collectCustomPluginDirs() {
+  const pluginDirs = new Map();
 
   // 1. Scan plugin-custom
   const customRoot = path.join(repoRoot, "plugin-custom");
   if (existsSync(customRoot)) {
     for (const item of readdirSync(customRoot)) {
-      const full = path.join(customRoot, item);
-      try {
-        const stat = statSync(full);
-        if (stat.isDirectory()) {
-          const real = realpathSync(full);
-          if (existsSync(path.join(real, "paseo-plugin.json"))) {
-            pluginDirs.set(item, real);
-          }
-        }
-      } catch {}
+      const real = findPluginManifest(path.join(customRoot, item));
+      if (real) pluginDirs.set(item, real);
     }
   }
 
@@ -587,23 +636,124 @@ function verifyCustomPlugins() {
         item === "muse-provider" ||
         item === "antigravity-provider"
       ) {
-        continue; // skip official built-in providers/sources
+        continue;
       }
-      const full = path.join(pluginsRoot, item);
+      const real = findPluginManifest(path.join(pluginsRoot, item));
+      if (real && !pluginDirs.has(item)) {
+        pluginDirs.set(item, real);
+      }
+    }
+  }
+
+  return pluginDirs;
+}
+
+function readPluginManifestInfo(dirPath) {
+  try {
+    const manifest = JSON.parse(readFileSync(path.join(dirPath, "paseo-plugin.json"), "utf8"));
+    const manifestOk = Boolean(manifest.id || manifest.name);
+    const manifestInfo = manifest.requirements?.paseo
+      ? `req: ${manifest.requirements.paseo}`
+      : "valid";
+    return { manifestOk, manifestInfo };
+  } catch {
+    return { manifestOk: false, manifestInfo: "invalid json" };
+  }
+}
+
+function countAssertions(results) {
+  let passed = 0;
+  let failed = 0;
+  for (const res of results) {
+    for (const a of res.assertionResults || []) {
+      if (a.status === "passed") passed++;
+      else if (a.status === "failed") failed++;
+    }
+  }
+  return { passed, failed };
+}
+
+function runBatchPluginTests(pluginDirs) {
+  const pluginTestStats = new Map();
+  const cacheDir = path.join(repoRoot, "node_modules", ".cache");
+  if (!existsSync(cacheDir)) {
+    mkdirSync(cacheDir, { recursive: true });
+  }
+  const tempConfigPath = path.join(cacheDir, "vitest.plugins.config.ts");
+  const resultsJsonPath = path.join(cacheDir, "vitest.plugins.results.json");
+
+  const includeGlobs = Array.from(pluginDirs.values()).map((dir) => {
+    const rel = path.relative(repoRoot, dir);
+    return `${rel}/tests/**/*.{test,spec}.{ts,tsx}`;
+  });
+
+  const configContent = `import { defineConfig, mergeConfig } from "vitest/config";
+import baseConfig from "${path.join(repoRoot, "vitest.config.ts")}";
+
+export default mergeConfig(
+  baseConfig,
+  defineConfig({
+    test: {
+      include: ${JSON.stringify(includeGlobs)},
+      exclude: ["**/*playwright*", "**/*live*", "**/node_modules/**"]
+    }
+  })
+);
+`;
+  writeFileSync(tempConfigPath, configContent);
+
+  try {
+    execFileSync(
+      "npx",
+      [
+        "vitest",
+        "run",
+        "-c",
+        tempConfigPath,
+        "--bail=1",
+        "--reporter=json",
+        `--outputFile=${resultsJsonPath}`,
+      ],
+      {
+        encoding: "utf8",
+        cwd: repoRoot,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+  } catch {
+    // Vitest exits with 1 on test failure, resultsJsonPath is still populated
+  }
+
+  if (existsSync(resultsJsonPath)) {
+    try {
+      const report = JSON.parse(readFileSync(resultsJsonPath, "utf8"));
+      const testResults = report.testResults || [];
+      for (const [id, dirPath] of pluginDirs.entries()) {
+        const matching = testResults.filter((r) => r.name.startsWith(dirPath));
+        if (matching.length === 0) continue;
+        const { passed, failed } = countAssertions(matching);
+        const isOk = failed === 0 && passed > 0;
+        pluginTestStats.set(id, { passed, failed, isOk });
+      }
+    } catch (e) {
+      console.warn("⚠️ 解析测试报告失败:", e.message);
+    } finally {
       try {
-        const stat = statSync(full);
-        if (stat.isDirectory()) {
-          const real = realpathSync(full);
-          if (existsSync(path.join(real, "paseo-plugin.json"))) {
-            if (!pluginDirs.has(item)) {
-              pluginDirs.set(item, real);
-            }
-          }
-        }
+        rmSync(tempConfigPath, { force: true });
+        rmSync(resultsJsonPath, { force: true });
       } catch {}
     }
   }
 
+  return pluginTestStats;
+}
+
+function verifyCustomPlugins() {
+  console.log("\n=======================================================");
+  console.log("🧩 检测本地自定义插件 (Custom Plugins) 兼容性与质量门禁");
+  console.log("=======================================================");
+
+  const pluginDirs = collectCustomPluginDirs();
   if (pluginDirs.size === 0) {
     console.log("ℹ️ 未发现任何本地自定义插件。");
     return true;
@@ -611,40 +761,44 @@ function verifyCustomPlugins() {
 
   console.log(`📦 共发现 ${pluginDirs.size} 个本地自定义插件:\n`);
 
-  let allPassed = true;
+  const pluginManifests = new Map();
+  const pluginsWithTests = new Map();
+  for (const [id, dirPath] of pluginDirs.entries()) {
+    pluginManifests.set(id, readPluginManifestInfo(dirPath));
+    const testFiles = findTestFiles(path.join(dirPath, "tests"));
+    if (testFiles.length > 0) {
+      pluginsWithTests.set(id, testFiles);
+    }
+  }
 
+  let pluginTestStats = new Map();
+  if (pluginsWithTests.size > 0) {
+    pluginTestStats = runBatchPluginTests(pluginDirs);
+  }
+
+  let allPassed = true;
   for (const [id, dirPath] of pluginDirs.entries()) {
     const relPath = path.relative(repoRoot, dirPath);
-    let manifestOk = false;
-    let manifestInfo = "";
-    try {
-      const manifest = JSON.parse(readFileSync(path.join(dirPath, "paseo-plugin.json"), "utf8"));
-      manifestOk = Boolean(manifest.id || manifest.name);
-      manifestInfo = manifest.requirements?.paseo ? `req: ${manifest.requirements.paseo}` : "valid";
-    } catch {
-      manifestOk = false;
-      manifestInfo = "invalid json";
-    }
-
-    const testFiles = findTestFiles(path.join(dirPath, "tests"));
+    const { manifestOk, manifestInfo } = pluginManifests.get(id);
     let testsOk = true;
     let testSummary = "无单测";
 
-    if (testFiles.length > 0) {
-      try {
-        const relTestFiles = testFiles.map((f) => path.relative(repoRoot, f));
-        const output = execFileSync("npx", ["vitest", "run", ...relTestFiles, "--bail=1"], {
-          encoding: "utf8",
-          cwd: repoRoot,
-          stdio: ["ignore", "pipe", "pipe"],
-        });
-        const match = output.match(/Tests\s+([^\n]+)/);
-        testSummary = match ? match[1].trim() : `${relTestFiles.length} files passed`;
-      } catch {
+    if (pluginsWithTests.has(id)) {
+      const stats = pluginTestStats.get(id);
+      if (stats) {
+        testsOk = stats.isOk;
+        testSummary =
+          stats.failed > 0
+            ? `${stats.failed} failed, ${stats.passed} passed`
+            : `${stats.passed} passed`;
+      } else {
         testsOk = false;
         testSummary = "测试未通过";
-        allPassed = false;
       }
+    }
+
+    if (!manifestOk || !testsOk) {
+      allPassed = false;
     }
 
     const isHealthy = manifestOk && testsOk;
@@ -660,6 +814,47 @@ function verifyCustomPlugins() {
     console.warn("⚠️ 存在不兼容或测试失败的 Custom Plugin，请根据上方详情检查修复。\n");
   }
   return allPassed;
+}
+
+function shouldBuildWebUi() {
+  if (skipUi) return false;
+  if (forceUi) return true;
+
+  const targetUi = path.join(
+    repoRoot,
+    "packages",
+    "server",
+    "dist",
+    "server",
+    "web-ui",
+    "index.html",
+  );
+  if (!existsSync(targetUi)) {
+    return true;
+  }
+
+  // Check if packages/app has changes in working tree or staged
+  const appStatus = runCapture("git", ["status", "--porcelain", "packages/app"]) || "";
+  if (appStatus.trim().length > 0) {
+    return true;
+  }
+
+  // Check if HEAD commit touched packages/app
+  const headDiff =
+    runCapture("git", [
+      "diff-tree",
+      "--no-commit-id",
+      "--name-only",
+      "-r",
+      "HEAD",
+      "--",
+      "packages/app",
+    ]) || "";
+  if (headDiff.trim().length > 0) {
+    return true;
+  }
+
+  return false;
 }
 
 function verifyQuality() {
@@ -742,6 +937,8 @@ if (shouldSyncUpstream) {
     console.log("\n✅ 官方更新同步完成 (--no-build，跳过构建)。");
     process.exit(0);
   }
+} else if (shouldBump) {
+  bumpCustomVersion();
 }
 
 // Build Step
@@ -749,7 +946,13 @@ ensureBuiltinPluginsTsconfig();
 console.log("\n=== [Build] Building Paseo Server & Components ===");
 run("npm", ["run", "build:server"]);
 
-if (!skipUi) {
+// 1. Fail-Fast: 质量门禁前置 (若有错误立即中断，避免耗费数分钟构建 UI)
+if (shouldVerify) {
+  verifyQuality();
+}
+
+// 2. 按需构建 Web UI (若 packages/app 无改动且产物就绪则自动复用，传入 --force-ui 强制重新打包)
+if (shouldBuildWebUi()) {
   console.log("\n=== [Build] Building Daemon Web UI ===");
   run("node", ["scripts/build-daemon-web-ui.mjs"], {
     env: {
@@ -758,18 +961,17 @@ if (!skipUi) {
     },
   });
 } else {
-  console.log("⏩ 已跳过 Web UI 构建 (--skip-ui)");
+  console.log(
+    "⏩ 跳过 Web UI 构建 (packages/app 无代码变更且产物就绪；传入 --force-ui 强制重新打包)",
+  );
 }
 
+// 3. 构建桌面端主进程
 if (!skipDesktop) {
   console.log("\n=== [Build] Building Paseo Desktop Client ===");
   run("npm", ["run", "build:main", "--workspace=@getpaseo/desktop"]);
 } else {
   console.log("⏩ 已跳过 Desktop 构建 (--skip-desktop)");
-}
-
-if (shouldVerify) {
-  verifyQuality();
 }
 
 function copySubpackageToTarget(target, pkg) {
@@ -819,6 +1021,12 @@ console.log("✅ Paseo 本地编译与安装全部就绪！");
 console.log("=======================================================");
 console.log("⚠️  重要提示 (Critical Safety Notice):");
 console.log("   切勿让 AI Agent 自动 kill 或重启 6767 端口的守护进程！");
+const driftAfterInstall = checkDaemonDrift();
+if (driftAfterInstall && driftAfterInstall.isStale) {
+  console.log(
+    `🚨 运行态漂移告警: 守护进程 (PID ${driftAfterInstall.pid}) 启动于 ${driftAfterInstall.ageStr}，落后于刚刚安装的最新版本！`,
+  );
+}
 console.log("👉 请在你的宿主终端手动执行以下命令重启守护进程以生效：");
 console.log("   paseo restart");
 console.log("=======================================================\n");
