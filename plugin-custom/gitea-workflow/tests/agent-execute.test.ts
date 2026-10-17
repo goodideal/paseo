@@ -78,6 +78,7 @@ describe("Agent Execute Adapter", () => {
     // 2. Verifies agentHandle.run was called to await execution
     expect(mockAgentHandle.run).toHaveBeenCalledWith(
       expect.stringContaining("superpowers:brainstorming"),
+      expect.objectContaining({ timeoutMs: expect.any(Number) }),
     );
 
     // 3. Verifies proposal summary is returned in result
@@ -376,6 +377,7 @@ describe("Agent Execute Adapter", () => {
     expect(mockSettings.getAgentAutoPrompt).toHaveBeenCalledWith("prj-infra");
     expect(mockAgentHandle.run).toHaveBeenCalledWith(
       "Custom Auto for #88 in infra-team/cluster-agent: Auto fix memory leak. Description: Memory increases monotonically under load.",
+      expect.objectContaining({ timeoutMs: expect.any(Number) }),
     );
   });
 
@@ -426,6 +428,7 @@ describe("Agent Execute Adapter", () => {
     expect(mockSettings.getAgentPlanPrompt).toHaveBeenCalledWith("prj-core");
     expect(mockAgentHandle.run).toHaveBeenCalledWith(
       "Custom Plan for #77: Plan architectural migration (repo: web-gateway)",
+      expect.objectContaining({ timeoutMs: expect.any(Number) }),
     );
   });
 
@@ -477,14 +480,17 @@ describe("Agent Execute Adapter", () => {
 
     expect(mockAgentHandle.run).toHaveBeenCalledWith(
       expect.stringContaining("Gitea Issue #393: Warning: Setting NODE_TLS_REJECT_UNAUTHORIZED"),
+      expect.objectContaining({ timeoutMs: expect.any(Number) }),
     );
     expect(mockAgentHandle.run).toHaveBeenCalledWith(
       expect.stringContaining(
         "Repository: infra-team/cluster-agent | Branch: agent/issue-393-tls-warning",
       ),
+      expect.objectContaining({ timeoutMs: expect.any(Number) }),
     );
     expect(mockAgentHandle.run).toHaveBeenCalledWith(
       expect.stringContaining("Stack trace: error in node fetch with self-signed certificate"),
+      expect.objectContaining({ timeoutMs: expect.any(Number) }),
     );
   });
 
@@ -569,5 +575,87 @@ describe("Agent Execute Adapter", () => {
         }),
       );
     });
+  });
+  it("passes custom timeoutMs from input to agentHandle.run", async () => {
+    const mockSettings = {
+      getAgentProvider: vi.fn().mockReturnValue("claude"),
+      getAgentModel: vi.fn().mockReturnValue("flash"),
+      getAgentChangeMode: vi.fn().mockReturnValue("auto"),
+    };
+    const mockIndexStore = {
+      getEntryByRunId: vi.fn().mockResolvedValue({
+        issueNumber: 123,
+        issueTitle: "Test timeout",
+      }),
+    };
+    const mockAgentHandle = {
+      id: "agent-timeout-test",
+      run: vi.fn().mockResolvedValue({ status: "idle", lastMessage: "Done" }),
+      detach: vi.fn().mockResolvedValue(undefined),
+    };
+    const mockPaseo = {
+      workspaces: {
+        list: vi.fn().mockResolvedValue({
+          entries: [
+            { id: "ws-1", workspaceDirectory: "/projects/repo", workspaceKind: "local_checkout" },
+          ],
+        }),
+        ref: vi.fn().mockReturnValue({ current: vi.fn().mockReturnValue({ id: "ws-1" }) }),
+      },
+      agents: { create: vi.fn().mockResolvedValue(mockAgentHandle) },
+    };
+
+    const adapter = createAgentExecuteAdapter(mockSettings as any, mockIndexStore as any);
+    await adapter.execute({ phase: "auto_design", timeoutMs: 15 * 60 * 1000 }, {
+      paseo: mockPaseo as any,
+      run: { runId: "run-123", projectId: "prj-1" },
+      step: { stepId: "auto-design" },
+    } as any);
+
+    expect(mockAgentHandle.run).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ timeoutMs: 15 * 60 * 1000 }),
+    );
+  });
+
+  it("throws error and detaches agent when agentHandle.run times out", async () => {
+    const mockSettings = {
+      getAgentProvider: vi.fn().mockReturnValue("claude"),
+      getAgentModel: vi.fn().mockReturnValue("flash"),
+      getAgentChangeMode: vi.fn().mockReturnValue("auto"),
+    };
+    const mockIndexStore = {
+      getEntryByRunId: vi.fn().mockResolvedValue({
+        issueNumber: 123,
+        issueTitle: "Test timeout failure",
+      }),
+    };
+    const mockAgentHandle = {
+      id: "agent-timeout-fail",
+      run: vi.fn().mockResolvedValue({ status: "timeout", error: "Execution timed out" }),
+      detach: vi.fn().mockResolvedValue(undefined),
+    };
+    const mockPaseo = {
+      workspaces: {
+        list: vi.fn().mockResolvedValue({
+          entries: [
+            { id: "ws-1", workspaceDirectory: "/projects/repo", workspaceKind: "local_checkout" },
+          ],
+        }),
+        ref: vi.fn().mockReturnValue({ current: vi.fn().mockReturnValue({ id: "ws-1" }) }),
+      },
+      agents: { create: vi.fn().mockResolvedValue(mockAgentHandle) },
+    };
+
+    const adapter = createAgentExecuteAdapter(mockSettings as any, mockIndexStore as any);
+    await expect(
+      adapter.execute({ phase: "auto_design", timeoutMs: 10 * 60 * 1000 }, {
+        paseo: mockPaseo as any,
+        run: { runId: "run-123", projectId: "prj-1" },
+        step: { stepId: "auto-design" },
+      } as any),
+    ).rejects.toThrow('Agent run failed with status "timeout"');
+
+    expect(mockAgentHandle.detach).toHaveBeenCalled();
   });
 });

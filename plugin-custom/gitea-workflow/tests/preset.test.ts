@@ -58,7 +58,7 @@ describe("Gitea Workflow Presets (Auto & Plan)", () => {
     expect(ids).toContain("claim-issue");
     expect(ids).toContain("worktree-create");
     expect(ids).toContain("auto-design");
-    expect(ids).toContain("implement-agent");
+    expect(ids).not.toContain("implement-agent");
     expect(ids).toContain("verify-command");
     expect(ids).toContain("independent-review");
     expect(ids).toContain("resolve-delivery");

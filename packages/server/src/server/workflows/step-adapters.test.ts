@@ -718,4 +718,76 @@ describe("Workflow Core Step Adapters and Execution Lifecycle", () => {
     expect(attempt.failureClassification!.length).toBeLessThanOrEqual(256);
     expect(() => WorkflowStepAttemptSchema.parse(attempt)).not.toThrow();
   });
+  it("resolves worktreePath and branch from previous worktree.create output for git.push", async () => {
+    const { executor, host } = setup();
+    const manifest = {
+      sourceBranch: "agent/issue-42",
+      targetBranch: "main",
+      commitSha: "sha1",
+      pullRequestTitle: "title",
+      pullRequestBodyDigest: "dig1",
+      issueReference: "42",
+    };
+    const { createHash } = await import("node:crypto");
+    const digest = createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
+
+    const run = makeRun("push_step", "git.push", {
+      deliveryApprovalManifest: manifest,
+      stepAttempts: [
+        {
+          id: "attempt_wt",
+          stepId: "worktree_step",
+          adapterType: "worktree.create",
+          adapterVersion: "1",
+          status: "succeeded",
+          declaredOutputs: {
+            worktreePath: "/tmp/worktrees/agent-issue-42",
+            branch: "agent/issue-42",
+            workspaceId: "ws-wt-42",
+          },
+          startedAt: 1000,
+          completedAt: 1001,
+        },
+        {
+          id: "attempt_1",
+          stepId: "push_step",
+          adapterType: "git.push",
+          adapterVersion: "1",
+          status: "ready",
+          input: {},
+          startedAt: 1500,
+        },
+      ],
+      approvals: [
+        {
+          id: "app_1",
+          stepId: "push_step",
+          attemptId: "attempt_1",
+          status: "approved",
+          manifestDigest: digest,
+          consumedAt: 1000,
+          requesterId: "principal_1",
+          requestedAt: 1000,
+          expiresAt: 2000,
+          reason: "delivery",
+        },
+      ],
+    });
+
+    const result = await executor.execute({
+      run,
+      stepId: "push_step",
+      attemptId: "attempt_1",
+      input: {},
+      principalPermissions: new Set(["workspace.write" as const]),
+      now: 1500,
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(host.gitPush).toHaveBeenCalledWith({
+      cwd: "/tmp/worktrees/agent-issue-42",
+      remote: "origin",
+      branch: "agent/issue-42",
+    });
+  });
 });

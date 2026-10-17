@@ -10,6 +10,7 @@ const PHASE_META: Record<string, { icon: string; label: string }> = {
   brainstorm: { icon: "💡", label: "方案设计" },
   spec: { icon: "📝", label: "规范制定" },
   plan: { icon: "📋", label: "计划编写" },
+  auto_design: { icon: "🤖", label: "全自动交付" },
   implement: { icon: "🛠️", label: "TDD编码" },
   review: { icon: "🔍", label: "独立审查" },
 };
@@ -54,6 +55,7 @@ export function createAgentExecuteAdapter(
     inputSchema: z.object({
       phase: z.string().default("implement"),
       prompt: z.string().optional(),
+      timeoutMs: z.number().int().positive().optional(),
     }),
     outputSchema: z.object({
       agentId: z.string(),
@@ -70,7 +72,7 @@ export function createAgentExecuteAdapter(
     supportedPlatforms: ["darwin", "linux", "win32"],
     resourceConflictKey: "workspace:agent",
     execute: async (rawInput, context) => {
-      const input = rawInput as { phase?: string; prompt?: string };
+      const input = rawInput as { phase?: string; prompt?: string; timeoutMs?: number };
       const runId = (context as any)?.run?.runId;
       const projectId = (context as any)?.run?.projectId;
       const entry = runId ? await indexStore.getEntryByRunId(runId) : null;
@@ -298,20 +300,39 @@ First, review the issue context and requirements. Then proceed with the engineer
         },
       });
 
+      const timeoutMs =
+        input.timeoutMs ??
+        (context as any)?.step?.timeoutMs ??
+        (context as any)?.definitionStep?.timeoutMs ??
+        30 * 60 * 1000;
+
       // Execute prompt and await completion
       let outcome = "completed";
       let summary = "";
       if (typeof agentHandle.run === "function") {
-        const runRes = await agentHandle.run(prompt);
-        if (runRes.status === "error") {
-          throw new Error(`Agent run failed: ${runRes.error || runRes.status}`);
+        const runRes = await agentHandle.run(prompt, { timeoutMs });
+        if (runRes.status !== "idle") {
+          if (typeof agentHandle.detach === "function") {
+            await agentHandle.detach().catch(() => {});
+          }
+          throw new Error(
+            `Agent run failed with status "${runRes.status}"${runRes.error ? `: ${runRes.error}` : ""}`,
+          );
         }
         outcome = runRes.lastMessage || outcome;
         summary = runRes.lastMessage || "";
       } else {
         await agentHandle.send(prompt);
         if (typeof agentHandle.waitForFinish === "function") {
-          const waitRes = await agentHandle.waitForFinish();
+          const waitRes = await agentHandle.waitForFinish(timeoutMs);
+          if (waitRes.status !== "idle") {
+            if (typeof agentHandle.detach === "function") {
+              await agentHandle.detach().catch(() => {});
+            }
+            throw new Error(
+              `Agent run failed with status "${waitRes.status}"${waitRes.error ? `: ${waitRes.error}` : ""}`,
+            );
+          }
           outcome = waitRes.lastMessage || outcome;
           summary = waitRes.lastMessage || "";
         }

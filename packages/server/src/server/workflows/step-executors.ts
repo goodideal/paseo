@@ -602,20 +602,21 @@ export class StepExecutor {
         timeoutMs: this.resolveStepTimeout(run, attempt.stepId),
       });
     }
+    const effectiveCwd = this.resolveWorkflowCwd(run);
     switch (adapter.type) {
       case "worktree.create":
         return this.executeWorktree(input, run);
       case "agent.dispatch":
       case "review.agent":
-        return this.executeAgent(input, run.workspaceRoot);
+        return this.executeAgent(input, effectiveCwd);
       case "verify.command":
-        return this.executeVerify(input, run.workspaceRoot);
+        return this.executeVerify(input, effectiveCwd);
       case "approval.wait":
         return { approved: true };
       case "git.push":
-        return this.executePush(input, run.workspaceRoot, run);
+        return this.executePush(input, effectiveCwd, run);
       case "git.create_pr":
-        return this.executePr(input, run.workspaceRoot, run);
+        return this.executePr(input, effectiveCwd, run);
       case "agent.run_until_complete":
         return this.executeRunAgentUntilComplete(input, run, attempt);
       case "agent.continue_until_complete":
@@ -635,7 +636,7 @@ export class StepExecutor {
     if (!this.host.runAgentUntilComplete) {
       throw new Error("Agent adapter host is unavailable: runAgentUntilComplete");
     }
-    const cwd = typeof input.cwd === "string" ? input.cwd : run.workspaceRoot;
+    const cwd = typeof input.cwd === "string" ? input.cwd : this.resolveWorkflowCwd(run);
     const prompt = typeof input.prompt === "string" ? input.prompt : "";
     const profile = (input.profile as WorkflowAgentProfile) ?? "default";
     const mode = (input.mode as "plan" | "execute" | "review") ?? "plan";
@@ -659,7 +660,7 @@ export class StepExecutor {
     if (!this.host.continueAgentUntilComplete) {
       throw new Error("Agent adapter host is unavailable: continueAgentUntilComplete");
     }
-    const cwd = typeof input.cwd === "string" ? input.cwd : run.workspaceRoot;
+    const cwd = typeof input.cwd === "string" ? input.cwd : this.resolveWorkflowCwd(run);
     const agentId = typeof input.agentId === "string" ? input.agentId : "";
     const sessionId = typeof input.sessionId === "string" ? input.sessionId : undefined;
     const prompt = typeof input.prompt === "string" ? input.prompt : "";
@@ -757,6 +758,27 @@ export class StepExecutor {
     return this.host.dispatchAgent({ cwd, promptId, provider });
   }
 
+  private resolveWorkflowCwd(run: WorkflowRun): string {
+    for (let i = run.stepAttempts.length - 1; i >= 0; i--) {
+      const outputs = run.stepAttempts[i]?.declaredOutputs;
+      if (outputs && typeof outputs.worktreePath === "string" && outputs.worktreePath.trim()) {
+        return outputs.worktreePath.trim();
+      }
+    }
+    return run.workspaceRoot;
+  }
+
+  private resolveWorkflowBranch(run?: WorkflowRun): string | undefined {
+    if (!run) return undefined;
+    for (let i = run.stepAttempts.length - 1; i >= 0; i--) {
+      const outputs = run.stepAttempts[i]?.declaredOutputs;
+      if (outputs && typeof outputs.branch === "string" && outputs.branch.trim()) {
+        return outputs.branch.trim();
+      }
+    }
+    return undefined;
+  }
+
   private async executeVerify(
     input: Record<string, unknown>,
     cwd: string,
@@ -789,7 +811,8 @@ export class StepExecutor {
     this.assertDeliveryManifestApproved(run);
     if (!this.host.gitPush) throw new Error("Git push adapter host is unavailable");
     const remote = typeof input.remote === "string" ? input.remote : "origin";
-    const branch = typeof input.branch === "string" ? input.branch : "HEAD";
+    const branch =
+      typeof input.branch === "string" ? input.branch : this.resolveWorkflowBranch(run) || "HEAD";
     return this.host.gitPush({ cwd, remote, branch });
   }
 
@@ -799,7 +822,8 @@ export class StepExecutor {
     run?: WorkflowRun,
   ): Promise<Record<string, unknown>> {
     this.assertDeliveryManifestApproved(run);
-    const branch = typeof input.branch === "string" ? input.branch : "HEAD";
+    const branch =
+      typeof input.branch === "string" ? input.branch : this.resolveWorkflowBranch(run) || "HEAD";
     const existing = await this.host.findPullRequest?.({ cwd, branch });
     if (existing) return { url: existing.prUrl, prNumber: existing.prNumber };
     if (!this.host.createPullRequest) throw new Error("Create PR adapter host is unavailable");
