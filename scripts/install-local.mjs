@@ -846,6 +846,7 @@ function shouldBuildWebUi() {
       "--no-commit-id",
       "--name-only",
       "-r",
+      "-m",
       "HEAD",
       "--",
       "packages/app",
