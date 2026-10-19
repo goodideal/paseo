@@ -22,7 +22,7 @@ vi.mock("@/screens/workspace/workspace-header-menu", () => ({
   WorkspaceHeaderMenuMobile: () => null,
 }));
 
-vi.mock("@/screens/workspace/workspace-scripts-button", () => ({
+vi.mock("@/screens/workspace/scripts", () => ({
   WorkspaceScriptsButton: () => null,
 }));
 

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { View, Text } from "react-native";
 import { FolderGit2 } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -11,7 +11,10 @@ import {
   WorkspaceHeaderMenuDesktop,
   WorkspaceHeaderMenuMobile,
 } from "@/screens/workspace/workspace-header-menu";
-import { WorkspaceScriptsButton } from "@/screens/workspace/workspace-scripts-button";
+import {
+  WorkspaceScriptsButton,
+  type UseWorkspaceScriptsMenuPagesInput,
+} from "@/screens/workspace/scripts";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
 
@@ -112,6 +115,27 @@ export function WorkspaceHeaderTitleBar({
   onViewScriptTerminal,
   onOpenUrlInBrowserTab,
 }: WorkspaceHeaderTitleBarProps) {
+  const scriptsMenuInput = useMemo<UseWorkspaceScriptsMenuPagesInput>(
+    () => ({
+      serverId: normalizedServerId,
+      workspaceId: normalizedWorkspaceId,
+      scripts: workspaceScripts,
+      liveTerminalIds,
+      onScriptTerminalStarted,
+      onViewTerminal: onViewScriptTerminal,
+      onOpenUrlInBrowserTab,
+    }),
+    [
+      normalizedServerId,
+      normalizedWorkspaceId,
+      workspaceScripts,
+      liveTerminalIds,
+      onScriptTerminalStarted,
+      onViewScriptTerminal,
+      onOpenUrlInBrowserTab,
+    ],
+  );
+
   return (
     <View style={styles.headerTitleContainer}>
       {isLoading ? (
@@ -143,6 +167,7 @@ export function WorkspaceHeaderTitleBar({
         {isMobile ? (
           <WorkspaceHeaderMenuMobile
             normalizedServerId={normalizedServerId}
+            scripts={scriptsMenuInput}
             currentBranchName={currentBranchName}
             showWorkspaceSetup={showWorkspaceSetup}
             showWorkflowRuns={showWorkflowRuns}
@@ -180,7 +205,6 @@ export function WorkspaceHeaderTitleBar({
             onViewTerminal={onViewScriptTerminal}
             onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
             hideLabels
-            presentation="ghost"
           />
         ) : null}
       </View>
