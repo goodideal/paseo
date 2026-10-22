@@ -36,13 +36,19 @@ function getLocalCredential(): string | undefined {
   }
 }
 
+export function normalizeDaemonWsUrl(raw: string): string {
+  let address = raw.trim();
+  address = address.replace(/^0\.0\.0\.0(?=:|$)/, "127.0.0.1");
+  if (address.startsWith("ws://") || address.startsWith("wss://")) {
+    address = address.replace(/^ws:\/\/0\.0\.0\.0(?=:|$)/, "ws://127.0.0.1");
+    return address.endsWith("/ws") ? address : `${address}/ws`;
+  }
+  return `ws://${address.replace(/\/+$/, "")}/ws`;
+}
+
 function getDaemonWsUrl(): string {
   if (process.env.PASEO_LISTEN) {
-    const listen = process.env.PASEO_LISTEN;
-    if (listen.startsWith("ws://") || listen.startsWith("wss://")) {
-      return listen.endsWith("/ws") ? listen : `${listen}/ws`;
-    }
-    return `ws://${listen.replace(/\/+$/, "")}/ws`;
+    return normalizeDaemonWsUrl(process.env.PASEO_LISTEN);
   }
 
   try {
@@ -50,11 +56,7 @@ function getDaemonWsUrl(): string {
       listen?: unknown;
     };
     if (typeof lock.listen === "string" && lock.listen) {
-      const listen = lock.listen;
-      if (listen.startsWith("ws://") || listen.startsWith("wss://")) {
-        return listen.endsWith("/ws") ? listen : `${listen}/ws`;
-      }
-      return `ws://${listen.replace(/\/+$/, "")}/ws`;
+      return normalizeDaemonWsUrl(lock.listen);
     }
   } catch {
     // fallback to default port
@@ -99,17 +101,24 @@ export default function contribute(server: PluginServerContext) {
   }
 
   let poller: MultiProjectPoller | null = null;
+  let retryTimer: NodeJS.Timeout | null = null;
+  let isDisposed = false;
+  let isConnecting = false;
 
-  async function initBackgroundPoller(): Promise<void> {
+  async function tryStartBackgroundPoller(): Promise<void> {
+    if (isDisposed || poller || isConnecting) return;
+    isConnecting = true;
     try {
-      paseoClient = createPaseoClient({
-        url: getDaemonWsUrl(),
-        localCredential: () => getLocalCredential(),
-        reconnect: { enabled: true },
-      });
+      if (!paseoClient) {
+        paseoClient = createPaseoClient({
+          url: getDaemonWsUrl(),
+          localCredential: () => getLocalCredential(),
+          reconnect: { enabled: true },
+        });
+      }
       await paseoClient.connect();
 
-      if (!poller) {
+      if (!poller && !isDisposed) {
         poller = new MultiProjectPoller({
           settings: settingsManager,
           resolver,
@@ -125,13 +134,31 @@ export default function contribute(server: PluginServerContext) {
           getWorkspaces: () => (paseoClient ?? activePaseo)?.workspaces,
         });
         poller.start();
+        console.log("[gitea-workflow] Background poller started successfully");
+        if (retryTimer) {
+          clearInterval(retryTimer);
+          retryTimer = null;
+        }
       }
     } catch (err) {
-      console.warn("[gitea-workflow] Background client connect deferred/failed:", err);
+      console.warn(
+        "[gitea-workflow] Background client connect deferred/retrying:",
+        (err as Error)?.message ?? String(err),
+      );
+    } finally {
+      isConnecting = false;
     }
   }
 
-  void initBackgroundPoller();
+  void tryStartBackgroundPoller();
+
+  // Watchdog: continually retry connecting if daemon was restarting, credentials pending, or transiently unavailable
+  retryTimer = setInterval(() => {
+    if (isDisposed) return;
+    if (!poller) {
+      void tryStartBackgroundPoller();
+    }
+  }, 10_000);
 
   server.handle(listTasksRpc, async ({ projectId, workspaceId }, context) => {
     activePaseo = context.paseo;
@@ -264,6 +291,11 @@ export default function contribute(server: PluginServerContext) {
   );
 
   return () => {
+    isDisposed = true;
+    if (retryTimer) {
+      clearInterval(retryTimer);
+      retryTimer = null;
+    }
     clearInterval(cleanupTimer);
     settingsManager.dispose();
     poller?.stop();

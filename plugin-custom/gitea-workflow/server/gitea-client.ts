@@ -52,13 +52,33 @@ export class GiteaClient {
     return `${base}/api/v1/repos/${this.config.repoOwner}/${this.config.repoName}${endpoint}`;
   }
 
+  private async request(
+    endpoint: string,
+    init?: RequestInit,
+    timeoutMs = 15_000,
+  ): Promise<Response> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      controller.abort(new Error(`Gitea API request timed out after ${timeoutMs}ms: ${endpoint}`));
+    }, timeoutMs);
+    try {
+      return await fetch(this.url(endpoint), {
+        ...init,
+        headers: {
+          ...this.headers,
+          ...(init?.headers as Record<string, string> | undefined),
+        },
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async fetchReadyIssues(options?: FetchIssuesOptions): Promise<GiteaIssueDto[]> {
     const page = options?.page ?? 1;
     const limit = options?.limit ?? 50;
-    const res = await fetch(
-      this.url(`/issues?state=open&type=issues&page=${page}&limit=${limit}`),
-      { headers: this.headers },
-    );
+    const res = await this.request(`/issues?state=open&type=issues&page=${page}&limit=${limit}`);
     if (!res.ok) {
       throw new Error(`Failed to fetch issues: ${res.status} ${res.statusText}`);
     }
@@ -86,9 +106,7 @@ export class GiteaClient {
   }
 
   async getIssue(issueNumber: number): Promise<GiteaIssueDto> {
-    const res = await fetch(this.url(`/issues/${issueNumber}`), {
-      headers: this.headers,
-    });
+    const res = await this.request(`/issues/${issueNumber}`);
     if (!res.ok) {
       throw new Error(`Failed to fetch issue #${issueNumber}: ${res.status} ${res.statusText}`);
     }
@@ -96,9 +114,8 @@ export class GiteaClient {
   }
 
   async createComment(issueNumber: number, body: string): Promise<{ id: number } | void> {
-    const res = await fetch(this.url(`/issues/${issueNumber}/comments`), {
+    const res = await this.request(`/issues/${issueNumber}/comments`, {
       method: "POST",
-      headers: this.headers,
       body: JSON.stringify({ body }),
     });
     if (!res.ok) {
@@ -118,9 +135,7 @@ export class GiteaClient {
 
   async getRepoLabels(): Promise<Array<{ id: number; name: string }>> {
     try {
-      const res = await fetch(this.url("/labels?limit=100"), {
-        headers: this.headers,
-      });
+      const res = await this.request("/labels?limit=100");
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data)) {
@@ -139,9 +154,8 @@ export class GiteaClient {
       if (existing.some((l) => l.name.toLowerCase() === name.toLowerCase())) {
         return;
       }
-      await fetch(this.url("/labels"), {
+      await this.request("/labels", {
         method: "POST",
-        headers: this.headers,
         body: JSON.stringify({ name, color }),
       });
     } catch {
@@ -151,9 +165,7 @@ export class GiteaClient {
 
   async getIssueLabels(issueNumber: number): Promise<Array<{ id?: number; name: string }>> {
     try {
-      const res = await fetch(this.url(`/issues/${issueNumber}/labels`), {
-        headers: this.headers,
-      });
+      const res = await this.request(`/issues/${issueNumber}/labels`);
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data)) {
@@ -171,14 +183,12 @@ export class GiteaClient {
     for (const name of names) {
       const match = current.find((l) => l.name === name);
       if (match?.id) {
-        await fetch(this.url(`/issues/${issueNumber}/labels/${match.id}`), {
+        await this.request(`/issues/${issueNumber}/labels/${match.id}`, {
           method: "DELETE",
-          headers: this.headers,
         }).catch(() => {});
       } else {
-        await fetch(this.url(`/issues/${issueNumber}/labels/${encodeURIComponent(name)}`), {
+        await this.request(`/issues/${issueNumber}/labels/${encodeURIComponent(name)}`, {
           method: "DELETE",
-          headers: this.headers,
         }).catch(() => {});
       }
     }
@@ -191,9 +201,8 @@ export class GiteaClient {
     );
     if (toAdd.length === 0) return;
 
-    const res = await fetch(this.url(`/issues/${issueNumber}/labels`), {
+    const res = await this.request(`/issues/${issueNumber}/labels`, {
       method: "POST",
-      headers: this.headers,
       body: JSON.stringify({ labels: toAdd }),
     });
     if (!res.ok) {
@@ -207,9 +216,8 @@ export class GiteaClient {
 
     // 2. Remove listen label and status:backlog
     if (labelId) {
-      await fetch(this.url(`/issues/${issueNumber}/labels/${labelId}`), {
+      await this.request(`/issues/${issueNumber}/labels/${labelId}`, {
         method: "DELETE",
-        headers: this.headers,
       }).catch(() => {});
     }
     await this.removeLabelsByName(issueNumber, [
@@ -223,9 +231,8 @@ export class GiteaClient {
     await this.addLabelsByName(issueNumber, ["status:doing", this.inProgressLabel]);
 
     // 4. Post claim comment
-    const commentRes = await fetch(this.url(`/issues/${issueNumber}/comments`), {
+    const commentRes = await this.request(`/issues/${issueNumber}/comments`, {
       method: "POST",
-      headers: this.headers,
       body: JSON.stringify({
         body: "🤖 **Paseo Agent** has claimed this task. An isolated Git worktree workspace is being provisioned and development has started.",
       }),
@@ -246,9 +253,8 @@ export class GiteaClient {
 
     // 2. Remove status:doing and inProgressLabel
     if (options?.labelId) {
-      await fetch(this.url(`/issues/${issueNumber}/labels/${options.labelId}`), {
+      await this.request(`/issues/${issueNumber}/labels/${options.labelId}`, {
         method: "DELETE",
-        headers: this.headers,
       }).catch(() => {});
     }
     await this.removeLabelsByName(issueNumber, ["status:doing", this.inProgressLabel]);
@@ -258,9 +264,8 @@ export class GiteaClient {
 
     // 4. Post completion comment with PR URL if provided
     if (options?.prUrl) {
-      await fetch(this.url(`/issues/${issueNumber}/comments`), {
+      await this.request(`/issues/${issueNumber}/comments`, {
         method: "POST",
-        headers: this.headers,
         body: JSON.stringify({
           body: `🚀 **Paseo Agent** has completed implementation and opened Pull Request: ${options.prUrl}`,
         }),
@@ -274,9 +279,8 @@ export class GiteaClient {
     headBranch: string;
     baseBranch: string;
   }): Promise<{ url: string }> {
-    const res = await fetch(this.url("/pulls"), {
+    const res = await this.request("/pulls", {
       method: "POST",
-      headers: this.headers,
       body: JSON.stringify({
         title: params.title,
         body: params.body,
@@ -307,9 +311,7 @@ export class GiteaClient {
   async listIssueComments(
     issueNumber: number,
   ): Promise<Array<{ id: number; body: string; created_at: string }>> {
-    const res = await fetch(this.url(`/issues/${issueNumber}/comments`), {
-      headers: this.headers,
-    });
+    const res = await this.request(`/issues/${issueNumber}/comments`);
     if (!res.ok) {
       throw new Error(
         `Failed to list comments on issue #${issueNumber}: ${res.status} ${res.statusText}`,
