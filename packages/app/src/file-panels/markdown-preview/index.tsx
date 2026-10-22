@@ -1,4 +1,9 @@
 import { MarkdownRenderer } from "@/components/markdown/renderer";
+import { resolveMarkdownFileDirectory } from "@/components/markdown/image-source";
+import {
+  AssistantFileLinkResolverProvider,
+  useAssistantFileLinkEnvironment,
+} from "@/assistant-file-links";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useMemo } from "react";
 import { Text, View } from "react-native";
@@ -21,6 +26,8 @@ export function FileMarkdownPreview({
   serverId,
 }: FileMarkdownPreviewProps) {
   const document = useMemo(() => parseMarkdownPreviewDocument(source), [source]);
+  const environment = useAssistantFileLinkEnvironment();
+  const relativePathBase = resolveMarkdownFileDirectory({ markdownPath: filePath, workspaceRoot });
 
   return (
     <View style={styles.outerGutter}>
@@ -46,13 +53,18 @@ export function FileMarkdownPreview({
             ))}
           </View>
         ) : null}
-        <MarkdownRenderer
-          text={document.body}
-          filePath={filePath}
-          workspaceRoot={workspaceRoot}
-          client={client}
-          serverId={serverId}
-        />
+        <AssistantFileLinkResolverProvider
+          {...environment}
+          relativePathBase={relativePathBase ?? undefined}
+        >
+          <MarkdownRenderer
+            text={document.body}
+            filePath={filePath}
+            workspaceRoot={workspaceRoot}
+            client={client}
+            serverId={serverId}
+          />
+        </AssistantFileLinkResolverProvider>
       </View>
     </View>
   );

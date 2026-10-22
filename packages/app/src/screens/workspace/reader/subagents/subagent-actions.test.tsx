@@ -2,6 +2,21 @@
 /**
  * @vitest-environment jsdom
  */
+if (typeof window !== "undefined" && !window.matchMedia) {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    value: vi.fn().mockImplementation((query) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+}
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -55,6 +70,7 @@ describe("Subagent actions and 1+3 retry flow", () => {
   it("triggers cancelAgent when clicking interrupt button on running subagent", async () => {
     const runningRow: Parameters<typeof SubagentItemRow>[0]["row"] = {
       kind: "paseo",
+      address: { serverId: "srv-1", agentId: "child-run" },
       id: "child-run",
       provider: "claude",
       title: "执行测试",
@@ -80,6 +96,7 @@ describe("Subagent actions and 1+3 retry flow", () => {
   it("opens inline retry input bar when clicking retry on failed subagent and sends message", async () => {
     const errorRow: Parameters<typeof SubagentItemRow>[0]["row"] = {
       kind: "paseo",
+      address: { serverId: "srv-1", agentId: "child-err" },
       id: "child-err",
       provider: "codex",
       title: "代码编译",
@@ -118,6 +135,7 @@ describe("Subagent actions and 1+3 retry flow", () => {
   it("triggers archiveSubagent when clicking archive button on non-running subagent", async () => {
     const doneRow: Parameters<typeof SubagentItemRow>[0]["row"] = {
       kind: "paseo",
+      address: { serverId: "srv-1", agentId: "child-done" },
       id: "child-done",
       provider: "claude",
       title: "已完成的任务",
@@ -137,12 +155,13 @@ describe("Subagent actions and 1+3 retry flow", () => {
     await act(async () => {
       archiveBtn.click();
     });
-    expect(mockArchiveSubagent).toHaveBeenCalledWith("child-done");
+    expect(mockArchiveSubagent).toHaveBeenCalledWith({ serverId: "srv-1", agentId: "child-done" });
   });
 
   it("closes inline retry bar when clicking cancel", async () => {
     const errorRow: Parameters<typeof SubagentItemRow>[0]["row"] = {
       kind: "paseo",
+      address: { serverId: "srv-1", agentId: "child-err" },
       id: "child-err",
       provider: "codex",
       title: "代码编译",

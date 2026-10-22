@@ -59,7 +59,7 @@ function formatElapsed(createdAt: Date): string {
 
 export function SubagentItemRow({ row, serverId, onNavigateToAgent }: SubagentItemRowProps) {
   const client = useHostRuntimeClient(serverId ?? "");
-  const archiveSubagent = useArchiveSubagent({ serverId: serverId ?? "" });
+  const archiveSubagent = useArchiveSubagent();
   const [isRetrying, setIsRetrying] = useState<boolean>(false);
 
   const ProviderIcon = useProviderIcon(row.provider, serverId ?? "");
@@ -86,9 +86,11 @@ export function SubagentItemRow({ row, serverId, onNavigateToAgent }: SubagentIt
   const handleArchivePress = useCallback(
     (e: GestureResponderEvent) => {
       (e as unknown as { stopPropagation?: () => void })?.stopPropagation?.();
-      archiveSubagent(row.id);
+      const address =
+        row.kind === "paseo" ? row.address : { serverId: serverId ?? "", agentId: row.id };
+      archiveSubagent(address);
     },
-    [archiveSubagent, row.id],
+    [archiveSubagent, row, serverId],
   );
 
   const handleConfirmRetry = useCallback(
