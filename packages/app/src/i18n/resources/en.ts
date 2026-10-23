@@ -669,6 +669,9 @@ export const en = {
       hostDisconnected: "Host is not connected",
       updateHost: "Update the host to use the native terminal renderer.",
       unableToSubscribe: "Unable to subscribe to terminal",
+      fileUploaded: "File uploaded",
+      pasteFileFailed: "Failed to paste file: {{reason}}",
+      uploadingFile: "Uploading file…",
     },
     sheet: {
       openAsTab: "Open as tab",
@@ -1229,6 +1232,12 @@ export const en = {
       showBackground: "Show background",
       trigger: "Display preferences",
       heading: "Display",
+      sort: {
+        label: "Sort",
+        created: "Created",
+        lastPrompt: "Last prompt",
+        updateHost: "Update hosts to sort workspaces",
+      },
       grouping: {
         label: "Grouping",
         project: "Project",
@@ -2011,7 +2020,6 @@ export const en = {
         alwaysUseExtension: "Always use for .{{extension}}",
         alwaysUseFilename: "Always use for {{filename}}",
         option: "{{title}} — {{owner}}",
-        actions: "File actions",
         builtin: {
           owner: "Paseo",
           markdown: "Markdown",
@@ -2030,6 +2038,8 @@ export const en = {
       notFound: "File not found",
       failedToLoadPreview: "Failed to load file preview",
       editor: {
+        preview: "Preview",
+        source: "Source",
         fileSize: "File size {{size}}",
         lines: "{{count}} lines",
         editorStatus: "Editor status {{status}}",
@@ -2412,7 +2422,7 @@ export const en = {
       automaticHint: "Paseo picks a fast available model",
       preferredHint: "Choose the model Paseo uses",
       model: "Model",
-      fallbackHint: "If it is unavailable, Paseo falls back to another available model",
+      modelHint: "Only this model is used. If it fails, Paseo does not try another model",
       docs: "Docs",
       saveError: "Unable to update metadata generation",
     },
@@ -2487,11 +2497,6 @@ export const en = {
     },
     diagnostics: {
       title: "Diagnostics",
-      legacyTerminalRenderer: {
-        label: "Use legacy terminal renderer",
-        description: "Use the previous WebView terminal after reopening a terminal",
-        accessibilityLabel: "Use legacy terminal renderer",
-      },
       testAudio: "Test audio",
       playTest: "Play test",
       playing: "Playing...",

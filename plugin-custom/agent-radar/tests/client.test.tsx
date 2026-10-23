@@ -194,6 +194,9 @@ describe("RadarPanelHost Component", () => {
       <RadarPanelHost
         agentId="agent-test-1"
         workspaceId="wks-1"
+        params={{ agentId: "agent-test-1" }}
+        revision={0}
+        tab={{ setModified: () => {}, state: undefined, setState: () => {} } as never}
         layout={{ platform: "web", compact: false }}
         host={{ id: "host", label: "Host" }}
         theme={null!}

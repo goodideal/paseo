@@ -167,6 +167,7 @@ export function WorkspaceHeaderTitleBar({
         {isMobile ? (
           <WorkspaceHeaderMenuMobile
             normalizedServerId={normalizedServerId}
+            normalizedWorkspaceId={normalizedWorkspaceId}
             scripts={scriptsMenuInput}
             currentBranchName={currentBranchName}
             showWorkspaceSetup={showWorkspaceSetup}

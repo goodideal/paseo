@@ -7,6 +7,7 @@ export {
   PluginComposerPills,
   PluginHeaderButtons,
   useHasPluginComposerPills,
+  usePluginWorkspaceMenu,
 } from "./buttons/view";
 export { PluginComposerAccessories } from "./composer-accessories/view";
 export { PluginTurnActions } from "./turn-actions/view";
