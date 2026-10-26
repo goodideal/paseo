@@ -14,6 +14,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { computeMissingDependencies } from "./dependency-closure.mjs";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
 
@@ -987,6 +989,35 @@ function copySubpackageToTarget(target, pkg) {
   cpSync(path.join(pkgSrc, "package.json"), path.join(pkgTarget, "package.json"));
 }
 
+// 增量覆盖只同步 @getpaseo/* 包产物；上游升级新增的第三方运行时依赖（如 0.13.0 为 relay
+// 新增的 @noble/*）不会出现在全局运行时里，需从工作区 node_modules 补齐缺失闭包，
+// 否则全局 CLI 抛 ERR_MODULE_NOT_FOUND。
+function syncMissingRuntimeDependencies(target, subpackages) {
+  const targetNodeModules = path.dirname(target.modulesDir);
+  const workspaceNodeModules = path.join(repoRoot, "node_modules");
+  const roots = [target.cliDir, ...subpackages.map((pkg) => path.join(target.modulesDir, pkg))];
+  const { toCopy, unavailable } = computeMissingDependencies({
+    roots,
+    targetNodeModules,
+    workspaceNodeModules,
+  });
+  if (toCopy.length === 0 && unavailable.length === 0) {
+    console.log("✓ 全局运行时第三方依赖闭包完整");
+    return;
+  }
+  for (const name of toCopy) {
+    const source = path.join(workspaceNodeModules, name);
+    const dest = path.join(targetNodeModules, name);
+    mkdirSync(path.dirname(dest), { recursive: true });
+    rmSync(dest, { recursive: true, force: true });
+    cpSync(source, dest, { recursive: true });
+    console.log(`  + 补齐第三方依赖: ${name}`);
+  }
+  for (const name of unavailable) {
+    console.warn(`  ⚠️ 依赖缺失且工作区无副本，请检查: ${name}`);
+  }
+}
+
 // Local Install Step
 if (!buildOnly) {
   console.log("\n=== [Install] Installing to Local Global Environment ===");
@@ -1011,6 +1042,8 @@ if (!buildOnly) {
       for (const pkg of subpackages) {
         copySubpackageToTarget(target, pkg);
       }
+
+      syncMissingRuntimeDependencies(target, subpackages);
     }
   }
 } else {
