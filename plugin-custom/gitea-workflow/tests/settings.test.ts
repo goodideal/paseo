@@ -42,8 +42,9 @@ describe("SettingsManager", () => {
         maxConcurrentRuns: 5,
         maxAutomaticRepairCycles: 2,
         automationProfile: "claude-code",
+        defaultBaseBranch: "main",
         workflowPolicy: "full_superpowers",
-        projects: { "proj-1": { enabled: true, readyLabel: "agent-ready" } },
+        projects: { "proj-1": { enabled: true, readyLabel: "agent-ready", baseBranch: "develop" } },
         inProgressLabel: "agent-in-progress",
         reviewedLabel: "agent-reviewed",
         evidenceRetentionDays: 90,
@@ -55,6 +56,8 @@ describe("SettingsManager", () => {
     expect(manager.current.pollIntervalSeconds).toBe(30);
     expect(manager.isProjectAuthorized("proj-1")).toBe(true);
     expect(manager.getReadyLabel("proj-1")).toBe("agent-ready");
+    expect(manager.getBaseBranch("proj-1")).toBe("develop");
+    expect(manager.getBaseBranch("proj-unconfigured")).toBe("main");
   });
 
   it("supports host and project-level agent provider and model overrides", async () => {

@@ -29,7 +29,7 @@ export function createGiteaStepAdapters(
     createClaimIssueAdapter(clientPool, indexStore),
     createUpdateStatusAdapter(clientPool, indexStore),
     createPostSummaryAdapter(clientPool, indexStore),
-    createResolveDeliveryAdapter(indexStore),
+    createResolveDeliveryAdapter(indexStore, settingsManager),
     createDualApprovalGateAdapter(clientPool, indexStore),
   ];
   if (settingsManager && indexStore) {

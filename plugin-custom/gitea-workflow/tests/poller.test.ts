@@ -8,6 +8,7 @@ describe("MultiProjectPoller", () => {
       isProjectAuthorized: vi.fn().mockImplementation((id: string) => id === "proj-auth"),
       getReadyLabel: vi.fn().mockReturnValue("agent-ready"),
       getWorkflowPolicy: vi.fn().mockReturnValue("full_superpowers"),
+      getBaseBranch: vi.fn().mockReturnValue("develop"),
     };
     const mockResolver = {
       resolveProject: vi.fn().mockResolvedValue({
@@ -62,6 +63,7 @@ describe("MultiProjectPoller", () => {
           issueNumber: 101,
           token: "tok",
           title: "🐞 #101 [Bug] Fix bug",
+          baseBranch: "develop",
         }),
       }),
     );

@@ -170,6 +170,7 @@ export type GiteaWorkflowPolicy = z.infer<typeof GiteaWorkflowPolicySchema>;
 export const GiteaProjectSettingsSchema = z.object({
   enabled: z.boolean().default(false),
   readyLabel: z.string().default("agent-ready"),
+  baseBranch: z.string().trim().min(1).max(256).optional(),
   workflowPolicyOverride: GiteaWorkflowPolicySchema.optional(),
   agentProviderOverride: z.string().optional(),
   agentModelOverride: z.string().optional(),
@@ -189,6 +190,7 @@ export const GiteaHostSettingsSchema = z.object({
   agentProvider: z.string().default("claude"),
   agentModel: z.string().default(""),
   agentChangeMode: z.string().default("auto"),
+  defaultBaseBranch: z.string().trim().min(1).max(256).optional(),
   workflowPolicy: GiteaWorkflowPolicySchema.default("full_superpowers"),
   projects: z.record(z.string(), GiteaProjectSettingsSchema).default({}),
   inProgressLabel: z.string().default("agent-in-progress"),

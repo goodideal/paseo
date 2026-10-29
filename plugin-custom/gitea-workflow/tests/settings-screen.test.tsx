@@ -394,9 +394,58 @@ describe("HostSettingsScreen", () => {
       expect(screen.getByText("Agent Auto (全自动模式)")).toBeDefined();
       expect(screen.getByText("Agent Plan (规划审查模式)")).toBeDefined();
 
+      // Verify Base Branch input exists
+      expect(screen.getByText("默认基准分支 (Base Branch)")).toBeDefined();
+
       // Verify "启动标签" or "agent-ready" input is NOT rendered
       expect(screen.queryByText("启动标签")).toBeNull();
       expect(screen.queryByDisplayValue("agent-ready")).toBeNull();
+    });
+
+    it("renders and updates baseBranch in ProjectDetailSettings", () => {
+      const mockSave = vi.fn().mockResolvedValue(true);
+      const mockSettings = {
+        values: {
+          projects: {
+            "proj-1": { enabled: true, baseBranch: "main" },
+          },
+        },
+        revision: "rev-1",
+        saving: false,
+        save: mockSave,
+      };
+
+      render(
+        <ProjectDetailSettings
+          projectId="proj-1"
+          settings={mockSettings}
+          theme={
+            {
+              colors: {
+                foreground: "#000",
+                foregroundMuted: "#888",
+                statusSuccess: "green",
+                statusDanger: "red",
+              },
+            } as any
+          }
+          onBack={vi.fn()}
+        />,
+      );
+
+      const baseBranchInput = screen.getByLabelText("默认基准分支 (Base Branch)");
+      fireEvent.change(baseBranchInput, { target: { value: "develop" } });
+
+      expect(mockSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projects: expect.objectContaining({
+            "proj-1": expect.objectContaining({
+              baseBranch: "develop",
+            }),
+          }),
+        }),
+        "rev-1",
+      );
     });
 
     it("renders change mode override selector in ProjectDetailSettings and allows choosing full-access", () => {

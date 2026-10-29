@@ -266,5 +266,30 @@ describe("Gitea Dedicated Step Adapters", () => {
       expect((result.manifest as any).issueReference).toBe("#88");
       expect((result as any).pullRequestBody).toContain("Resolves #88");
     });
+
+    it("uses baseBranch from project settings when targetBranch is omitted", async () => {
+      const mockSettings = {
+        getBaseBranch: vi.fn().mockImplementation((projectId: string) => {
+          if (projectId === "proj-custom") return "develop";
+          return undefined;
+        }),
+      };
+      const adapter = createResolveDeliveryAdapter(undefined, mockSettings as any, {
+        getCommitSha: async () => "abcdefabcdefabcdefabcdefabcdefabcdefabcd",
+      });
+
+      const result = await adapter.execute(
+        {
+          sourceBranch: "agent/issue-99",
+          cwd: "/workspace/repo",
+        },
+        {
+          paseo: {} as any,
+          run: { projectId: "proj-custom", workspaceId: "w1", runId: "r-99" },
+        } as any,
+      );
+
+      expect((result.manifest as any).targetBranch).toBe("develop");
+    });
   });
 });

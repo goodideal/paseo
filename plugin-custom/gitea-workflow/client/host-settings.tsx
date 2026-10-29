@@ -236,6 +236,21 @@ export function HostSettingsScreen({
             disabled={settings.saving}
             onValueChange={changePolicy}
           />
+          <SettingsInput
+            label="全局默认基准分支 (Base Branch)"
+            hint="未配置项目级分支时回落使用，如 main、develop。留空则自动探测远端 HEAD"
+            initialValue={values.defaultBaseBranch || ""}
+            disabled={settings.saving}
+            onChangeText={(val: string) => {
+              void settings.save(
+                {
+                  ...values,
+                  defaultBaseBranch: val.trim() || undefined,
+                },
+                settings.revision,
+              );
+            }}
+          />
         </SettingsCard>
       </SettingsSection>
 

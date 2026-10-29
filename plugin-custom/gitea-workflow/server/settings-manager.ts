@@ -37,6 +37,17 @@ export class SettingsManager {
     return this._current.projects[projectId]?.readyLabel || "agent-ready";
   }
 
+  getBaseBranch(projectId?: string): string | undefined {
+    if (projectId && this._current.projects[projectId]?.baseBranch) {
+      const candidate = this._current.projects[projectId].baseBranch?.trim();
+      if (candidate) return candidate;
+    }
+    if (this._current.defaultBaseBranch?.trim()) {
+      return this._current.defaultBaseBranch.trim();
+    }
+    return undefined;
+  }
+
   getWorkflowPolicy(projectId: string): GiteaWorkflowPolicy {
     return (
       this._current.projects[projectId]?.workflowPolicyOverride || this._current.workflowPolicy

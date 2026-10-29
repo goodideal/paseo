@@ -23,6 +23,7 @@ const WorktreeCreateInputSchema = z
   .object({
     sourceWorkspaceId: z.string().trim().min(1).max(256).optional(),
     branch: z.string().trim().min(1).max(256).optional(),
+    baseBranch: z.string().trim().min(1).max(256).optional(),
     title: z.string().trim().min(1).max(256).optional(),
   })
   .strict();

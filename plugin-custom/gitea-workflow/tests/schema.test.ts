@@ -100,9 +100,25 @@ describe("Gitea Workflow Schemas and RPCs", () => {
     expect(settings.pollIntervalSeconds).toBe(60);
     expect(settings.maxConcurrentRuns).toBe(3);
     expect(settings.evidenceRetentionDays).toBe(90);
+    expect(settings.defaultBaseBranch).toBeUndefined();
     expect(settings.projects).toEqual({});
     expect(settings.agentAutoPrompt).toBeUndefined();
     expect(settings.agentPlanPrompt).toBeUndefined();
+  });
+
+  it("validates baseBranch in host and project schemas", () => {
+    const settings = GiteaHostSettingsSchema.parse({
+      defaultBaseBranch: "main",
+      projects: {
+        "proj-1": {
+          enabled: true,
+          baseBranch: "develop",
+        },
+      },
+    });
+
+    expect(settings.defaultBaseBranch).toBe("main");
+    expect(settings.projects["proj-1"].baseBranch).toBe("develop");
   });
 
   it("validates custom prompts in host and project schemas", () => {

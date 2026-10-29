@@ -1455,14 +1455,22 @@ export async function createPaseoDaemon(
     return artifact;
   };
   const workflowExecutor = new StepExecutor(workflowRegistry, workflowProfiles, {
-    createWorktree: async ({ workspaceRoot, branch, title }) => {
-      const result = await createPaseoWorktreeForTools({
-        cwd: workspaceRoot,
-        branchName: branch,
-        worktreeSlug: branch,
-        ...(title ? { title } : {}),
-        firstAgentContext: { attachments: [] },
-      });
+    createWorktree: async ({ workspaceRoot, branch, baseBranch, title }) => {
+      const result = await createPaseoWorktreeForTools(
+        {
+          cwd: workspaceRoot,
+          branchName: branch,
+          refName: baseBranch,
+          worktreeSlug: branch,
+          ...(title ? { title } : {}),
+          firstAgentContext: { attachments: [] },
+        },
+        baseBranch
+          ? {
+              resolveDefaultBranch: async () => baseBranch,
+            }
+          : undefined,
+      );
       return {
         worktreePath: result.worktree.worktreePath,
         branch: result.worktree.branchName,

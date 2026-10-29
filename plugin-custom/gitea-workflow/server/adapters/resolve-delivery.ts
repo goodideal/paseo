@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { PluginWorkflowStepAdapterRegistration } from "@getpaseo/plugin/server";
 import type { IssueRunIndexStore } from "../store.js";
+import type { SettingsManager } from "../settings-manager.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -13,17 +14,26 @@ export interface ResolveDeliveryOptions {
 
 export function createResolveDeliveryAdapter(
   indexStoreOrOptions?: IssueRunIndexStore | ResolveDeliveryOptions,
+  settingsManagerOrOptions?: SettingsManager | ResolveDeliveryOptions,
   options?: ResolveDeliveryOptions,
 ): PluginWorkflowStepAdapterRegistration {
   const indexStore =
     indexStoreOrOptions && typeof (indexStoreOrOptions as any).getEntryByRunId === "function"
       ? (indexStoreOrOptions as IssueRunIndexStore)
       : undefined;
+  const settingsManager =
+    settingsManagerOrOptions &&
+    typeof (settingsManagerOrOptions as any).getBaseBranch === "function"
+      ? (settingsManagerOrOptions as SettingsManager)
+      : undefined;
   const opts =
     options ??
-    (indexStoreOrOptions && typeof (indexStoreOrOptions as any).getEntryByRunId !== "function"
-      ? (indexStoreOrOptions as ResolveDeliveryOptions)
-      : {});
+    (settingsManagerOrOptions &&
+    typeof (settingsManagerOrOptions as any).getBaseBranch !== "function"
+      ? (settingsManagerOrOptions as ResolveDeliveryOptions)
+      : indexStoreOrOptions && typeof (indexStoreOrOptions as any).getEntryByRunId !== "function"
+        ? (indexStoreOrOptions as ResolveDeliveryOptions)
+        : {});
   return {
     type: "gitea.resolve_delivery",
     version: "1.0.0",
@@ -60,12 +70,22 @@ export function createResolveDeliveryAdapter(
       };
 
       let issueNumber = 0;
-      if (context && (context as any).run?.runId && indexStore) {
-        const entry = await indexStore.getEntryByRunId((context as any).run.runId);
-        if (entry) {
-          issueNumber = entry.issueNumber;
+      let projectIdFromRun: string | undefined;
+      if (context && (context as any).run?.runId) {
+        projectIdFromRun = (context as any).run.projectId;
+        if (indexStore) {
+          const entry = await indexStore.getEntryByRunId((context as any).run.runId);
+          if (entry) {
+            issueNumber = entry.issueNumber;
+            if (!projectIdFromRun) {
+              projectIdFromRun = entry.projectId;
+            }
+          }
         }
       }
+
+      const configuredBase = settingsManager?.getBaseBranch(projectIdFromRun);
+      const targetBranch = input.targetBranch || configuredBase || "main";
 
       const cwd = input.cwd || process.cwd();
       let commitSha: string;
@@ -103,7 +123,7 @@ export function createResolveDeliveryAdapter(
 
       const manifest = {
         sourceBranch,
-        targetBranch: input.targetBranch || "main",
+        targetBranch,
         commitSha,
         pullRequestTitle,
         pullRequestBodyDigest: bodyDigest,

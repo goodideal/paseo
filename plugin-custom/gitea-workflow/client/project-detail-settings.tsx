@@ -64,6 +64,22 @@ export function ProjectDetailSettings({
             disabled={settings.saving || diagnostic?.connectionStatus !== "connected"}
             onValueChange={toggleEnabled}
           />
+          <SettingsInput
+            label="默认基准分支 (Base Branch)"
+            hint="切出任务工作区的源分支以及 PR 交付的目标分支，如 develop、main。留空则继承全局或探测远端"
+            initialValue={projectSettings.baseBranch || ""}
+            disabled={settings.saving}
+            onChangeText={(val: string) => {
+              const updated = {
+                ...values.projects,
+                [projectId]: {
+                  ...projectSettings,
+                  baseBranch: val.trim() || undefined,
+                },
+              };
+              void settings.save({ ...values, projects: updated }, settings.revision);
+            }}
+          />
           <SettingsSelect
             label="执行引擎覆盖 (可选)"
             hint="留空继承全局配置"

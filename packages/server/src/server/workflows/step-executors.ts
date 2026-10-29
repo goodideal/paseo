@@ -57,6 +57,7 @@ export interface StepExecutorHost {
     workspaceId: string;
     workspaceRoot: string;
     branch: string;
+    baseBranch?: string;
     title?: string;
   }): Promise<{ worktreePath: string; branch?: string; workspaceId?: string }>;
   checkWorktreeExists?(params: {
@@ -169,6 +170,20 @@ function resolveWorktreeBranch(input: Record<string, unknown>, run: WorkflowRun)
     if (candidate) return candidate;
   }
   return `workflow-${run.id}`;
+}
+
+function resolveWorktreeBaseBranch(
+  input: Record<string, unknown>,
+  run: WorkflowRun,
+): string | undefined {
+  if (typeof input.baseBranch === "string" && input.baseBranch.trim()) {
+    return input.baseBranch.trim();
+  }
+  if (run.runInput && typeof (run.runInput as Record<string, unknown>).baseBranch === "string") {
+    const candidate = ((run.runInput as Record<string, unknown>).baseBranch as string).trim();
+    if (candidate) return candidate;
+  }
+  return undefined;
 }
 
 function resolveWorktreeTitle(
@@ -726,6 +741,7 @@ export class StepExecutor {
     run: WorkflowRun,
   ): Promise<Record<string, unknown>> {
     const branch = resolveWorktreeBranch(input, run);
+    const baseBranch = resolveWorktreeBaseBranch(input, run);
     const title = resolveWorktreeTitle(input, run);
 
     const existing = await this.host.checkWorktreeExists?.({
@@ -739,6 +755,7 @@ export class StepExecutor {
       workspaceId: run.workspaceId,
       workspaceRoot: run.workspaceRoot,
       branch,
+      ...(baseBranch ? { baseBranch } : {}),
       ...(title ? { title } : {}),
     });
     return {
@@ -828,7 +845,12 @@ export class StepExecutor {
     if (existing) return { url: existing.prUrl, prNumber: existing.prNumber };
     if (!this.host.createPullRequest) throw new Error("Create PR adapter host is unavailable");
     const title = typeof input.title === "string" ? input.title : "Automated workflow change";
-    const baseBranch = typeof input.baseBranch === "string" ? input.baseBranch : "main";
+    const baseBranch =
+      typeof input.baseBranch === "string"
+        ? input.baseBranch
+        : (run?.deliveryApprovalManifest?.targetBranch as string | undefined) ||
+          resolveWorktreeBaseBranch(input, run!) ||
+          "main";
     const created = await this.host.createPullRequest({ cwd, title, baseBranch, branch });
     return { url: created.prUrl, prNumber: created.prNumber };
   }

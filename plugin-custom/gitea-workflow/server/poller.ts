@@ -174,6 +174,7 @@ export class MultiProjectPoller {
 
         const readyLabel = this.options.settings.getReadyLabel(project.projectId);
         const policy = this.options.settings.getWorkflowPolicy(project.projectId);
+        const baseBranch = this.options.settings.getBaseBranch?.(project.projectId);
 
         const client = this.options.clientPool.getClient({
           giteaUrl: resolved.baseUrl,
@@ -412,6 +413,7 @@ export class MultiProjectPoller {
               issueBody: issue.body,
               title: semanticTitle,
               branch: deriveBranchSlug(issue.number, issue.title),
+              baseBranch,
               listenLabel: readyLabel,
               policy,
               mode,
