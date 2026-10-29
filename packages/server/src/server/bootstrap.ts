@@ -168,7 +168,6 @@ import { createWorkflowPresetRegistry } from "./workflows/workflow-preset-regist
 import { WorkflowService } from "./workflows/workflow-service.js";
 import { StepExecutor } from "./workflows/step-executors.js";
 import { createDefaultVerificationProfileRegistry } from "./workflows/verification-profiles.js";
-import { sendPromptToAgent } from "./agent/agent-prompt.js";
 import {
   extractWorkflowAgentHandoff,
   isWorkflowAgentHandoff,

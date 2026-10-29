@@ -658,7 +658,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
 
   return (
     <View style={assistantTurnFooterStylesheet.wrapper}>
-      {turnId && agentId ? (
+      {turnId && agentId && getContent ? (
         <PluginTurnActions
           turnId={turnId}
           agentId={agentId}
@@ -674,7 +674,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
             containerStyle={assistantTurnFooterStylesheet.copyButton}
           />
         ) : null}
-        {agentId && turnId ? (
+        {agentId && turnId && getContent ? (
           <PluginTurnActions
             turnId={turnId}
             agentId={agentId}

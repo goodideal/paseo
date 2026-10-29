@@ -3774,7 +3774,6 @@ class ClaudeAgentSession implements AgentSession {
       extraArgs,
       settings: { ...cliSettings, ...providerOptions.settings, ...updates },
     };
-    };
   }
 
   private resolveFastModeSetting(): boolean | null {

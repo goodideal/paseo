@@ -748,19 +748,16 @@ export class PluginRuntime {
       };
       const effectiveTimeout =
         timeoutMs ?? (message.type === "tool.call" ? TOOL_CALL_TIMEOUT_MS : REQUEST_TIMEOUT_MS);
-      const timeout = setTimeout(
-        () => {
-          loaded.pending.delete(requestId);
-          signal?.removeEventListener("abort", cancel);
-          if (message.type === "tool.call")
-            void send(child, { type: "tool.cancel", requestId }).catch(() => {});
-          if (message.type === "hook") {
-            void send(child, { type: "hook.cancel", requestId }).catch(() => {});
-          }
-          reject(new Error(`Plugin RPC timed out: ${pluginId}.${message.type}`));
-        },
-        effectiveTimeout,
-      );
+      const timeout = setTimeout(() => {
+        loaded.pending.delete(requestId);
+        signal?.removeEventListener("abort", cancel);
+        if (message.type === "tool.call")
+          void send(child, { type: "tool.cancel", requestId }).catch(() => {});
+        if (message.type === "hook") {
+          void send(child, { type: "hook.cancel", requestId }).catch(() => {});
+        }
+        reject(new Error(`Plugin RPC timed out: ${pluginId}.${message.type}`));
+      }, effectiveTimeout);
       signal?.addEventListener("abort", cancel, { once: true });
       loaded.pending.set(requestId, {
         resolve: (value) => {

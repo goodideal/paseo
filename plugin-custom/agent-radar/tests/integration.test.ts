@@ -34,6 +34,7 @@ describe("Subagent Watchdog Integration Test", () => {
       },
       registerProvider: vi.fn(),
       registerUsageSource: vi.fn(),
+      addHook: vi.fn().mockReturnValue(() => {}),
     };
 
     // Initialize plugin
@@ -250,6 +251,7 @@ describe("Subagent Watchdog Integration Test", () => {
       handle: vi.fn(),
       registerProvider: vi.fn(),
       registerUsageSource: vi.fn(),
+      addHook: vi.fn().mockReturnValue(() => {}),
     };
 
     const cleanup = contribute(fakeServer);
@@ -352,6 +354,7 @@ describe("Subagent Watchdog Integration Test", () => {
       handle: vi.fn(),
       registerProvider: vi.fn(),
       registerUsageSource: vi.fn(),
+      addHook: vi.fn().mockReturnValue(() => {}),
     };
 
     const cleanup = contribute(fakeServer);
@@ -488,6 +491,7 @@ describe("Subagent Watchdog Integration Test", () => {
       },
       registerProvider: vi.fn(),
       registerUsageSource: vi.fn(),
+      addHook: vi.fn().mockReturnValue(() => {}),
     };
 
     const cleanup = contribute(fakeServer);
@@ -592,6 +596,7 @@ describe("Subagent Watchdog Integration Test", () => {
       handle: vi.fn(),
       registerProvider: vi.fn(),
       registerUsageSource: vi.fn(),
+      addHook: vi.fn().mockReturnValue(() => {}),
     };
 
     const cleanup = contribute(fakeServer);
@@ -662,6 +667,7 @@ describe("Subagent Watchdog Integration Test", () => {
       },
       registerProvider: vi.fn(),
       registerUsageSource: vi.fn(),
+      addHook: vi.fn().mockReturnValue(() => {}),
     };
 
     const cleanup = contribute(fakeServer);

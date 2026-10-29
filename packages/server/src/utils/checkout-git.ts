@@ -1,6 +1,5 @@
 import { MAX_RELAY_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/websocket-message-limit";
 import { resolve, dirname, basename, extname } from "path";
-import { existsSync, realpathSync } from "fs";
 import {
   open as openFile,
   readFile,
