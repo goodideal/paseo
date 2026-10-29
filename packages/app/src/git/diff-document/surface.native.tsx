@@ -41,6 +41,7 @@ import {
 } from "./horizontal-offsets";
 import {
   buildDiffDocumentModel,
+  captureScrollAnchor,
   resolveRelayoutScrollTop,
   retainReusableModels,
   shouldApplyRelayoutScroll,
@@ -142,6 +143,9 @@ export function DiffSurface(props: DiffSurfaceProps) {
         tooLarge: t("workspace.git.diff.tooLarge"),
       },
       materializationWindow: diffMaterializationWindow(fileWindowTop, viewport.height),
+      materializationAnchor: previousModelRef.current
+        ? captureScrollAnchor(previousModelRef.current, scrollTop.get())
+        : null,
       reuseFrom,
     });
     reusableModelRef.current = {
@@ -152,6 +156,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
   }, [
     measurement,
     fileWindowTop,
+    scrollTop,
     props.collapsedFilePaths,
     props.displayPreferences.layout,
     props.displayPreferences.wrapLines,
