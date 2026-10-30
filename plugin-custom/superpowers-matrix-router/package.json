@@ -1,0 +1,19 @@
+{
+  "name": "@paseo-plugin/superpowers-matrix-router",
+  "version": "0.1.0",
+  "private": true,
+  "files": [
+    "paseo-plugin.json",
+    "index.client.tsx",
+    "index.server.ts",
+    "client/",
+    "server/",
+    "shared/"
+  ],
+  "type": "module",
+  "devDependencies": {
+    "@getpaseo/plugin": "*",
+    "typescript": "^5.0.0",
+    "zod": "^3.23.8"
+  }
+}

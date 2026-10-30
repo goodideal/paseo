@@ -1,0 +1,8 @@
+{
+  "id": "superpowers-matrix-router",
+  "name": "Superpowers Matrix Router",
+  "description": "Automatically routes agent creation to Superpowers model matrix (plan / review / flash) based on prompt & title intent",
+  "requirements": {
+    "paseo": ">=0.8.0"
+  }
+}
