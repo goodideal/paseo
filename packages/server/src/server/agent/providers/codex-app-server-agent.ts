@@ -46,6 +46,7 @@ import type { Logger } from "pino";
 import type { ChildProcess, ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { Dirent } from "node:fs";
+import { parse as parseToml } from "smol-toml";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -906,6 +907,59 @@ function toCodexMcpConfig(config: McpServerConfig): CodexMcpServerConfig {
       const _exhaustive = config as { type: never };
       throw new Error(`Unsupported MCP config type: ${String(_exhaustive.type)}`);
     }
+  }
+}
+
+function parseHostMcpServerEntry(serverConfig: unknown): CodexMcpServerConfig | null {
+  if (!isRecord(serverConfig)) {
+    return null;
+  }
+  const config: CodexMcpServerConfig = {};
+  if (typeof serverConfig.url === "string") {
+    config.url = serverConfig.url;
+  }
+  if (isRecord(serverConfig.http_headers)) {
+    config.http_headers = serverConfig.http_headers as Record<string, string>;
+  }
+  if (typeof serverConfig.command === "string") {
+    config.command = serverConfig.command;
+  }
+  if (Array.isArray(serverConfig.args)) {
+    config.args = serverConfig.args.filter((arg): arg is string => typeof arg === "string");
+  }
+  if (isRecord(serverConfig.env)) {
+    config.env = serverConfig.env as Record<string, string>;
+  }
+  if (typeof serverConfig.tool_timeout_sec === "number") {
+    config.tool_timeout_sec = serverConfig.tool_timeout_sec;
+  }
+  return config;
+}
+
+export async function readCodexHostMcpServers(
+  codexHome: string,
+  logger?: Logger,
+): Promise<Record<string, CodexMcpServerConfig>> {
+  const configPath = path.join(codexHome, "config.toml");
+  try {
+    const content = await fs.readFile(configPath, "utf-8");
+    const parsed = parseToml(content);
+    if (!isRecord(parsed) || !isRecord(parsed.mcp_servers)) {
+      return {};
+    }
+    const result: Record<string, CodexMcpServerConfig> = {};
+    for (const [name, serverConfig] of Object.entries(parsed.mcp_servers)) {
+      const config = parseHostMcpServerEntry(serverConfig);
+      if (config) {
+        result[name] = config;
+      }
+    }
+    return result;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      logger?.warn({ err: error, configPath }, "provider.codex.read_host_mcp_servers_failed");
+    }
+    return {};
   }
 }
 
@@ -4197,7 +4251,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (developerInstructions) {
       params.developerInstructions = developerInstructions;
     }
-    const codexConfig = this.buildCodexInnerConfig();
+    const codexConfig = await this.buildCodexInnerConfig();
     if (codexConfig) {
       params.config = codexConfig;
     }
@@ -4350,7 +4404,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (developerInstructions) {
       params.developerInstructions = developerInstructions;
     }
-    const codexConfig = this.buildCodexInnerConfig();
+    const codexConfig = await this.buildCodexInnerConfig();
     if (codexConfig) {
       params.config = codexConfig;
     }
@@ -5089,7 +5143,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       cwd: this.config.cwd ?? null,
       model: this.config.model ?? null,
       serviceTier: this.serviceTier,
-      config: this.buildCodexInnerConfig(),
+      config: await this.buildCodexInnerConfig(),
       userMessageTurns: this.codexUserMessageTurns(),
       threadRollbackAvailable: this.threadRollbackAvailable,
       setThreadId: async (threadId) => {
@@ -5450,7 +5504,7 @@ export class CodexAppServerAgentSession implements AgentSession {
 
     const model = await this.applyDefaultModelAndThinking();
 
-    const { params, approvalPolicy, sandbox } = this.buildThreadStartRequest(model);
+    const { params, approvalPolicy, sandbox } = await this.buildThreadStartRequest(model);
     const rawResponse = await this.client.request("thread/start", params);
     this.rememberResolvedSandboxPolicy(rawResponse);
     const response = toObjectRecord(rawResponse);
@@ -5474,15 +5528,15 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.currentThreadId = threadId;
   }
 
-  private buildThreadStartRequest(model: string): {
+  private async buildThreadStartRequest(model: string): Promise<{
     params: Record<string, unknown>;
     approvalPolicy?: string;
     sandbox?: string;
-  } {
+  }> {
     const preset = MODE_PRESETS[this.currentMode] ?? MODE_PRESETS[DEFAULT_CODEX_MODE_ID];
     const approvalPolicy = this.hasWorkflowModeOverride ? preset.approvalPolicy : undefined;
     const sandbox = this.hasWorkflowModeOverride ? preset.sandbox : undefined;
-    const innerConfig = this.buildCodexInnerConfig();
+    const innerConfig = await this.buildCodexInnerConfig();
     const developerInstructions = composeSystemPromptParts(
       this.config.systemPrompt,
       this.config.daemonAppendSystemPrompt,
@@ -5504,18 +5558,22 @@ export class CodexAppServerAgentSession implements AgentSession {
     return { params, approvalPolicy, sandbox };
   }
 
-  private buildCodexInnerConfig(): Record<string, unknown> | null {
+  private async buildCodexInnerConfig(): Promise<Record<string, unknown> | null> {
     const innerConfig: Record<string, unknown> = {};
     Object.assign(innerConfig, this.providerOptions);
     if (this.deps.customCodexConfig) {
       Object.assign(innerConfig, this.deps.customCodexConfig);
     }
-    if (this.config.mcpServers) {
-      const mcpServers: Record<string, CodexMcpServerConfig> = {};
-      for (const [name, serverConfig] of Object.entries(this.config.mcpServers)) {
-        mcpServers[name] = toCodexMcpConfig(serverConfig);
+    const hostMcpServers = await readCodexHostMcpServers(this.codexHome, this.logger);
+    if (this.config.mcpServers || Object.keys(hostMcpServers).length > 0) {
+      const mcpServers: Record<string, CodexMcpServerConfig> = { ...hostMcpServers };
+      if (this.config.mcpServers) {
+        for (const [name, serverConfig] of Object.entries(this.config.mcpServers)) {
+          mcpServers[name] = toCodexMcpConfig(serverConfig);
+        }
       }
-      innerConfig.mcp_servers = mcpServers;
+      const existingMcpServers = isRecord(innerConfig.mcp_servers) ? innerConfig.mcp_servers : {};
+      innerConfig.mcp_servers = { ...existingMcpServers, ...mcpServers };
     }
     const configured = applyCodexToolPolicy(innerConfig, this.config.toolPolicy);
     return Object.keys(configured).length > 0 ? configured : null;

@@ -138,6 +138,7 @@
     "rotating-file-stream": "^3.2.9",
     "semver": "^7.8.5",
     "sherpa-onnx-node": "1.12.28",
+    "smol-toml": "^1.6.0",
     "strip-ansi": "^7.1.2",
     "tree-kill": "^1.2.2",
     "typescript": "^5.9.3",

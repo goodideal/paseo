@@ -30,6 +30,7 @@ import {
   mapCodexPlanUpdateToTodo,
   mapCodexPlanToToolCall,
   normalizeCodexOutputSchema,
+  readCodexHostMcpServers,
   readCodexThread,
   toAgentUsage,
 } from "./codex-app-server-agent.js";
@@ -7781,4 +7782,87 @@ test("publishes a materialized image before dispatching the following turn compl
   } finally {
     await session.close();
   }
+});
+
+describe("Codex host MCP servers merging", () => {
+  test("reads and parses static mcp_servers from host config.toml", async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), "codex-test-"));
+    try {
+      const configToml = `
+[mcp_servers.lazy_tool]
+command = "/usr/local/bin/lazy-tool"
+args = ["--config", "/etc/lazy.yaml", "serve"]
+tool_timeout_sec = 60
+
+[mcp_servers.remote_http]
+url = "https://example.com/mcp"
+http_headers = { Authorization = "Bearer token123" }
+`;
+      writeFileSync(path.join(tempDir, "config.toml"), configToml);
+      const servers = await readCodexHostMcpServers(tempDir);
+      expect(servers).toEqual({
+        lazy_tool: {
+          command: "/usr/local/bin/lazy-tool",
+          args: ["--config", "/etc/lazy.yaml", "serve"],
+          tool_timeout_sec: 60,
+        },
+        remote_http: {
+          url: "https://example.com/mcp",
+          http_headers: {
+            Authorization: "Bearer token123",
+          },
+        },
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("returns empty object if config.toml does not exist", async () => {
+    const servers = await readCodexHostMcpServers("/nonexistent-path-12345");
+    expect(servers).toEqual({});
+  });
+
+  test("merges host config.toml MCP servers with dynamic Paseo MCP servers", async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), "codex-test-"));
+    try {
+      const configToml = `
+[mcp_servers.lazy_tool]
+command = "/usr/local/bin/lazy-tool"
+args = ["--config", "/etc/lazy.yaml", "serve"]
+`;
+      writeFileSync(path.join(tempDir, "config.toml"), configToml);
+      const session = new CodexAppServerAgentSession(
+        createConfig({
+          mcpServers: {
+            paseo: { type: "http", url: "http://127.0.0.1:27067/mcp" },
+          },
+        }),
+        null,
+        createTestLogger(),
+        () => {
+          throw new Error("Test session cannot spawn Codex app-server");
+        },
+        { codexHome: tempDir },
+        false,
+        false,
+        false,
+      ) as unknown as { buildCodexInnerConfig(): Promise<Record<string, unknown> | null> };
+
+      const innerConfig = await session.buildCodexInnerConfig();
+      expect(innerConfig).toMatchObject({
+        mcp_servers: {
+          lazy_tool: {
+            command: "/usr/local/bin/lazy-tool",
+            args: ["--config", "/etc/lazy.yaml", "serve"],
+          },
+          paseo: {
+            url: "http://127.0.0.1:27067/mcp",
+          },
+        },
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
