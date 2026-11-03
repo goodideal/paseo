@@ -3,12 +3,14 @@ import { useHostFeature } from "@/runtime/host-features";
 import {
   AssistantFileLinkResolverProvider,
   createInlinePathOpener,
+  type AssistantFileLinkResolverProviderProps,
   type InlinePathTarget,
 } from "@/assistant-file-links";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { revealWorkspaceTab } from "@/workspace-tabs/navigation";
 import type { LayoutChangeEvent } from "react-native";
 import { ExplorerSidebarDock } from "@/screens/workspace/explorer-sidebar";
+import { ForgeShorthandProvider } from "@/git/forge-shorthand";
 import { ExplorerFrame } from "./explorer-sidebar/frame";
 import { WorkspaceTabDragScope } from "@/components/workspace-tab-drag-scope";
 import {
@@ -126,7 +128,6 @@ import {
   useWorkspaceSetupStore,
 } from "@/stores/workspace-setup-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
-import { useWorkspaceTerminalSessionRetention } from "@/terminal/hooks/use-workspace-terminal-session-retention";
 import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
@@ -818,13 +819,6 @@ function shouldShowWorkspaceScreenHeader(input: {
   return !input.isFocusModeEnabled || input.isMobile;
 }
 
-function buildWorkspaceTerminalScopeKey(serverId: string, workspaceId: string): string | null {
-  if (!serverId || !workspaceId) {
-    return null;
-  }
-  return `${serverId}:${workspaceId}`;
-}
-
 /**
  * A pane the user acted inside owns the tab: it opens there, and an existing tab
  * moves there. No pane means the open has no opinion beyond the focused pane.
@@ -1003,14 +997,6 @@ function WorkspaceScreenContent({
   const isWorktree = getIsWorktree(workspaceDescriptor);
   const { handleRetryHost, handleManageHost, handleDismissMissingWorkspace } =
     useWorkspaceRouteActions(normalizedServerId);
-
-  const workspaceTerminalScopeKey = useMemo(
-    () => buildWorkspaceTerminalScopeKey(normalizedServerId, normalizedWorkspaceId),
-    [normalizedServerId, normalizedWorkspaceId],
-  );
-  useWorkspaceTerminalSessionRetention({
-    scopeKey: workspaceTerminalScopeKey,
-  });
 
   const client = useHostRuntimeClient(normalizedServerId);
   const isConnected = useHostRuntimeIsConnected(normalizedServerId);
@@ -3798,7 +3784,8 @@ function WorkspaceScreenContent({
       workspaceKey={persistenceKey}
       sheetPaneHost={sheetPaneHost}
     >
-      <AssistantFileLinkResolverProvider
+      <WorkspaceMarkdownLinks
+        workspace={workspaceDescriptor}
         client={client}
         serverId={normalizedServerId}
         workspaceRoot={workspaceDirectory ?? undefined}
@@ -3806,8 +3793,23 @@ function WorkspaceScreenContent({
         toast={toast}
       >
         {renderedWorkspaceScreen}
-      </AssistantFileLinkResolverProvider>
+      </WorkspaceMarkdownLinks>
     </WorkspaceContentProviders>
+  );
+}
+
+/** File links and forge references for every Markdown surface in the workspace. */
+function WorkspaceMarkdownLinks({
+  workspace,
+  children,
+  ...fileLinks
+}: AssistantFileLinkResolverProviderProps & { workspace: WorkspaceDescriptor | null | undefined }) {
+  return (
+    <AssistantFileLinkResolverProvider {...fileLinks}>
+      <ForgeShorthandProvider forge={workspace?.forge} remoteUrl={workspace?.gitRuntime?.remoteUrl}>
+        {children}
+      </ForgeShorthandProvider>
+    </AssistantFileLinkResolverProvider>
   );
 }
 
