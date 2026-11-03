@@ -1074,6 +1074,19 @@ function copySubpackageToTarget(target, pkg) {
   rmSync(path.join(pkgTarget, "dist"), { recursive: true, force: true });
   cpSync(path.join(pkgSrc, "dist"), path.join(pkgTarget, "dist"), { recursive: true });
   cpSync(path.join(pkgSrc, "package.json"), path.join(pkgTarget, "package.json"));
+
+  const pkgNodeModules = path.join(pkgSrc, "node_modules");
+  if (existsSync(pkgNodeModules)) {
+    const targetPkgNodeModules = path.join(pkgTarget, "node_modules");
+    mkdirSync(targetPkgNodeModules, { recursive: true });
+    for (const item of readdirSync(pkgNodeModules)) {
+      if (item === ".bin" || item === ".vite" || item === ".vite-temp") continue;
+      const srcItem = path.join(pkgNodeModules, item);
+      const destItem = path.join(targetPkgNodeModules, item);
+      rmSync(destItem, { recursive: true, force: true });
+      cpSync(srcItem, destItem, { recursive: true });
+    }
+  }
 }
 
 // 增量覆盖只同步 @getpaseo/* 包产物；上游升级新增的第三方运行时依赖（如 0.13.0 为 relay
