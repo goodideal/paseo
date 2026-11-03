@@ -6045,3 +6045,28 @@ test("a failing direct source observes fire-and-forget file replies without unha
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("dispatches terminal_input exactly once to the terminal session", async () => {
+  const send = vi.fn();
+  const terminal = {
+    id: "term-1",
+    send,
+  };
+  const terminalManager = {
+    getTerminal: vi.fn(() => terminal),
+    listTerminalsForCwd: vi.fn(() => []),
+  };
+  const session = createSessionForTest({
+    terminalManager: terminalManager as unknown as SessionOptions["terminalManager"],
+  });
+  const source = {};
+  await session.handleMessage(
+    {
+      type: "terminal_input",
+      terminalId: "term-1",
+      message: { type: "input", data: "a" },
+    },
+    source,
+  );
+  expect(send).toHaveBeenCalledTimes(1);
+});

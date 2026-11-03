@@ -2490,8 +2490,6 @@ export class Session {
       this.dispatchOrchestrationSkillsMessage(msg) ??
       this.dispatchPluginDirectoryMessage(msg) ??
       this.dispatchPluginMessage(msg) ??
-      this.dispatchTerminalMessage(msg) ??
-      this.dispatchScheduleOrWorkflowMessage(msg) ??
       this.dispatchHostServiceMessage(msg) ??
       this.dispatchMiscMessage(msg);
     if (promise) await promise;
@@ -2522,7 +2520,7 @@ export class Session {
   private dispatchHostServiceMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     return (
       this.dispatchTerminalMessage(msg) ??
-      this.dispatchScheduleMessage(msg) ??
+      this.dispatchScheduleOrWorkflowMessage(msg) ??
       this.speechModelsSession.dispatch(msg)
     );
   }
