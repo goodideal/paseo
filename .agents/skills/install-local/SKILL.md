@@ -11,12 +11,12 @@ user-invocable: true
 本项目技能整合了 **本地工程编译安装** 与 **官方上游更新维护 (Paseo Maintenance)** 两大核心能力，为 Paseo 深度定制开发提供全流程闭环：
 
 1. **自动化编译与本地部署 (Auto Build & Local Deploy)**：自动化按 Monorepo 依赖拓扑编译 Paseo 服务端组件、按需打包内置 Web UI（智能跳过无变更 UI 打包）、Electron 桌面端主进程，并将产物增量同步到本地全局运行时（如 Volta 或全局 npm），提供守护进程运行态漂移比对与重启预警。
-2. **官方更新无缝整合 (Upstream Integration)**：自动追踪官方上游仓库 (`getpaseo/paseo`)，对比版本差异与最新提交，提供一键拉取合并（或变基）、自动维护 `-custom` 自定义版本标识、秒级处理多包版本冲突、刷新第三方依赖及自动化编译安装的一站式流水线。
+2. **官方更新无缝整合与上游版本显式输出 (Upstream Integration & Version Visibility)**：自动追踪官方上游仓库 (`getpaseo/paseo`)，显式提取并输出官方 upstream 最新版本（源码主干版本、Git Tag、npm 发布标签及提交动态），深度对比本地基线演进差距；提供一键拉取合并（或变基）、自动维护 `-custom` 自定义版本标识、秒级处理多包版本冲突、刷新第三方依赖及自动化编译安装的一站式流水线。
 3. **定制特性与质量门禁守护 (Custom Features & Quality Gates)**：深度沉淀五大定制特性（纯黑终端、中英双语 STT、中文字体与重测、`-custom` 全链路兼容、插件化 Usage Source 与 Workflow 引擎整合）的架构要点、编码规范（如 oxlint 圈复杂度、i18n 多语言类型约束与 Monorepo Workspace 依赖构建链）以及核心单测回归验证。
 
 ---
 
-## Critical Safety Redlines (绝对安全红线)
+## Critical Safety & Version Redlines (绝对安全与版本规范红线)
 
 > [!CAUTION]
 > **严禁 Agent 自动终止或重启 6767 端口上的主守护进程！**
@@ -26,6 +26,14 @@ user-invocable: true
 > ```bash
 > paseo restart
 > ```
+
+### 官方上游版本显式输出铁律 (Upstream Version Visibility Contract)
+
+在执行状态巡检、版本对比或本地编译安装汇报时，**必须显式输出 Paseo 官方 upstream 的版本信息**：
+
+1. **官方上游版本 (Upstream Version)**：输出 `upstream/main:package.json` 中的最新主干版本（如 `0.15.0`）及官方 npm 最新发布（latest/beta）；
+2. **上游最新提交与 Tag**：输出上游最新提交 SHA、提交说明以及最新 Git Tag（如 `v0.13.0`）；
+3. **本地基线与差距对比 (Baseline Gap)**：对比本地定制版本（如 `v0.14.0 [mod-291750]`）与官方上游版本的演进差距（领先/落后提交数、基线版本跨度），杜绝静默升级或版本黑盒。
 
 ---
 
@@ -207,7 +215,8 @@ git remote set-url origin https://github.com/goodideal/paseo.git
 | **同步官方更新时使用 rebase**    | `npm run install:local -- --sync-upstream --rebase`   | 采用变基方式保持线性的自定义提交历史                                                                 |
 | **自动暂存工作区并同步上游**     | `npm run install:local -- --sync-upstream --stash`    | 若有未提交修改，自动 stash、同步上游后自动 pop 恢复                                                  |
 | **执行质量门禁与核心单测回归**   | `npm run install:local -- --verify`                   | 门禁前置 (Fail-Fast)，批量秒测 Custom Plugins，运行 `typecheck:server` 及 5 大定制单测回归           |
-| **查看运行状态与上游同步差距**   | `npm run install:local -- --status`                   | 显示当前 Git 分支/提交、官方落后/领先差距、全局安装位置及守护进程状态                                |
+| **查看运行状态与上游版本对比**   | `npm run install:local -- --status`                   | 显示当前 Git 分支/提交、官方 upstream 最新版本与基线对比、落后/领先差距、全局安装位置及守护进程状态  |
+| **仅查看官方上游版本与发布信息** | `npm run install:local -- --upstream-version`         | 显示官方 upstream 最新源码版本、Git Tag、npm release (latest/beta) 及提交同步差距                    |
 | **仅检查官方是否有新版本**       | `npm run install:local -- --check-upstream`           | 获取并对比官方 upstream/main 最新提交与版本号，输出更新简述，不修改代码                              |
 | **快速构建后端与 CLI (跳过 UI)** | `npm run install:local -- --skip-ui`                  | 修改后端/CLI 逻辑时极速编译，跳过耗时的 Web UI 打包                                                  |
 | **强制重新全量打包 Web UI**      | `npm run install:local -- --force-ui`                 | 默认在 packages/app 无修改且产物就绪时自动跳过，加此参数强制重新打包 Metro Web UI                    |

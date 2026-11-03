@@ -82,7 +82,8 @@ Options:
   --changelog, --summary 显示官方更新简述 (分类展示最新提交核心变更)
   --check-plugins     检测本地自定义插件 (Custom Plugins) 清单规范及单元/契约测试兼容性
   --plugins           --check-plugins 的别名
-  --status            显示当前本地分支、上游同步状态、全局安装位置与守护进程状态
+  --upstream-version, --upstream 显示官方上游 (upstream) 最新版本、提交与 npm 标签
+  --status            显示当前本地分支、官方 upstream 版本对比、全局安装位置与守护进程状态
   --check-upstream    检查官方 (upstream) 最新更新与版本差异，不执行合并或构建
   --sync-upstream     一键同步官方更新 (fetch + merge/rebase + 保持 -custom 后缀 + 构建安装)
   --sync              --sync-upstream 的别名
@@ -100,6 +101,7 @@ Options:
 Examples:
   npm run install:local                     # 一键全量编译并部署到本机
   npm run install:local -- --skip-ui        # 快速更新 CLI 和后端，跳过 Web UI 打包
+  npm run install:local -- --upstream-version # 查看官方 upstream 最新版本与发布信息
   npm run install:local -- --status         # 查看当前代码与上游、全局运行环境状态
   npm run install:local -- --check-upstream # 仅检查官方是否有新版本发布
   npm run install:local -- --sync-upstream  # 拉取官方最新更新并重新编译安装到本机
@@ -114,6 +116,7 @@ if (args.has("-h") || args.has("--help")) {
   process.exit(0);
 }
 
+const showUpstreamOnly = args.has("--upstream-version") || args.has("--upstream");
 const isStatusOnly = args.has("--status");
 const isCheckUpstreamOnly = args.has("--check-upstream");
 const showChangelog = args.has("--changelog") || args.has("--summary");
@@ -135,6 +138,71 @@ function ensureUpstreamRemote() {
     console.log("ℹ️ Configuring upstream remote -> https://github.com/getpaseo/paseo.git");
     run("git", ["remote", "add", "upstream", "https://github.com/getpaseo/paseo.git"]);
   }
+}
+
+function getUpstreamVersionInfo(options = { fetchNpm: false }) {
+  ensureUpstreamRemote();
+  let upstreamGitVersion = "unknown";
+  try {
+    const upstreamPkgStr = runCapture("git", ["show", "upstream/main:package.json"]);
+    if (upstreamPkgStr) {
+      upstreamGitVersion = JSON.parse(upstreamPkgStr).version;
+    }
+  } catch {
+    // ignore
+  }
+
+  let latestTag = null;
+  try {
+    const tag = runCapture("git", ["describe", "--tags", "--abbrev=0", "upstream/main"]);
+    if (tag) {
+      latestTag = tag.trim();
+    }
+  } catch {
+    // ignore
+  }
+
+  const upstreamCommit =
+    runCapture("git", ["log", "-1", "upstream/main", "--format=%h (%s, %cr)"]) || null;
+
+  let behindCount = 0;
+  let aheadCount = 0;
+  const aheadBehind = runCapture("git", [
+    "rev-list",
+    "--left-right",
+    "--count",
+    "upstream/main...HEAD",
+  ]);
+  if (aheadBehind) {
+    const parts = aheadBehind.split(/\s+/).map((n) => parseInt(n, 10));
+    behindCount = parts[0] || 0;
+    aheadCount = parts[1] || 0;
+  }
+
+  let npmVersions = null;
+  if (options.fetchNpm) {
+    try {
+      const npmInfoStr = execFileSync("npm", ["info", "@getpaseo/cli", "dist-tags", "--json"], {
+        encoding: "utf8",
+        timeout: 3000,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      if (npmInfoStr) {
+        npmVersions = JSON.parse(npmInfoStr);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return {
+    version: upstreamGitVersion,
+    latestTag,
+    commit: upstreamCommit,
+    behindCount,
+    aheadCount,
+    npmVersions,
+  };
 }
 
 function ensureBuiltinPluginsTsconfig() {
@@ -291,22 +359,28 @@ function showStatus() {
   console.log(`📌 当前 Git 提交:   ${currentCommit}`);
 
   ensureUpstreamRemote();
-  const aheadBehind = runCapture("git", [
-    "rev-list",
-    "--left-right",
-    "--count",
-    "upstream/main...HEAD",
-  ]);
-  if (aheadBehind) {
-    const [behind, ahead] = aheadBehind.split(/\s+/).map((n) => parseInt(n, 10));
-    console.log(`📌 上游同步情况:   领先 upstream/main ${ahead} 个提交, 落后 ${behind} 个提交`);
+  const upstream = getUpstreamVersionInfo();
+  console.log(
+    `📌 官方上游版本:   ${upstream.version} (upstream/main${upstream.commit ? `: ${upstream.commit.split(" ")[0]}` : ""})`,
+  );
+  if (upstream.latestTag) {
+    console.log(`📌 上游最新 Tag:   ${upstream.latestTag}`);
   }
 
   // 2. Version
   const localPkg = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
+  const localDisplay = formatModDisplayVersion(localPkg.version);
+  console.log(`📌 本地仓库版本:   ${localDisplay} (${localPkg.version})`);
   console.log(
-    `📌 本地仓库版本:   ${formatModDisplayVersion(localPkg.version)} (${localPkg.version})`,
+    `📌 上游同步情况:   领先 upstream/main ${upstream.aheadCount} 个提交, 落后 ${upstream.behindCount} 个提交`,
   );
+
+  const baseLocalVersion = localPkg.version.replace(/-custom(?:\.[\w-]+)?$/, "").replace(/^v/i, "");
+  if (upstream.version !== "unknown" && baseLocalVersion !== upstream.version) {
+    console.log(
+      `⚠️  版本基线提示:   本地基于 v${baseLocalVersion}，官方上游已演进至 ${upstream.version}！`,
+    );
+  }
 
   // 3. Global Install targets
   const targets = getGlobalInstallTargets();
@@ -363,43 +437,28 @@ function checkUpstream() {
     console.warn("⚠️ 获取上游更新失败，可能需要提升权限或检查网络连接。");
   }
 
-  const upstreamCommit = runCapture("git", ["log", "-1", "upstream/main", "--format=%h (%s, %cr)"]);
-  console.log(`🌐 官方 upstream/main 最新提交: ${upstreamCommit}`);
-
-  const aheadBehind = runCapture("git", [
-    "rev-list",
-    "--left-right",
-    "--count",
-    "upstream/main...HEAD",
-  ]);
-  let behindCount = 0;
-  let aheadCount = 0;
-  if (aheadBehind) {
-    const parts = aheadBehind.split(/\s+/).map((n) => parseInt(n, 10));
-    behindCount = parts[0] || 0;
-    aheadCount = parts[1] || 0;
-  }
-
-  let upstreamVersion = "unknown";
-  try {
-    const upstreamPkgStr = runCapture("git", ["show", "upstream/main:package.json"]);
-    if (upstreamPkgStr) {
-      upstreamVersion = JSON.parse(upstreamPkgStr).version;
-    }
-  } catch {
-    // ignore
+  const upstream = getUpstreamVersionInfo({ fetchNpm: true });
+  console.log(`🌐 官方 upstream/main 最新提交: ${upstream.commit || "unknown"}`);
+  if (upstream.latestTag) {
+    console.log(`🏷️  官方 upstream 最新 Tag: ${upstream.latestTag}`);
   }
 
   const localPkg = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
+  const localDisplay = formatModDisplayVersion(localPkg.version);
 
   console.log("\n-------------------------------------------------------");
+  console.log(`📊 官方版本对比: 官方上游 ${upstream.version}  vs  本地定制 ${localDisplay}`);
+  if (upstream.npmVersions) {
+    console.log(
+      `📦 官方 npm 发布: latest: ${upstream.npmVersions.latest || "unknown"}, beta: ${upstream.npmVersions.beta || "unknown"}`,
+    );
+  }
   console.log(
-    `📊 官方版本对比: 官方版本 ${upstreamVersion}  vs  本地版本 ${formatModDisplayVersion(localPkg.version)}`,
+    `📊 提交差距: 本地领先 ${upstream.aheadCount} 个提交, 落后官方 ${upstream.behindCount} 个提交`,
   );
-  console.log(`📊 提交差距: 本地领先 ${aheadCount} 个提交, 落后官方 ${behindCount} 个提交`);
   console.log("-------------------------------------------------------");
 
-  if (behindCount > 0) {
+  if (upstream.behindCount > 0) {
     generateUpdatesSummary("HEAD..upstream/main");
     console.log("👉 若要同步合并官方更新，请执行：");
     console.log("   npm run install:local -- --sync-upstream");
@@ -883,6 +942,34 @@ function verifyQuality() {
 // Main execution flow
 // -------------------------------------------------------------
 
+if (showUpstreamOnly) {
+  const upstream = getUpstreamVersionInfo({ fetchNpm: true });
+  console.log("=======================================================");
+  console.log("🌐 Paseo 官方上游版本报告 (Official Upstream Version)");
+  console.log("=======================================================");
+  console.log(`📌 官方上游源码版本: ${upstream.version} (upstream/main)`);
+  if (upstream.latestTag) {
+    console.log(`📌 官方最新 Git Tag: ${upstream.latestTag}`);
+  }
+  if (upstream.commit) {
+    console.log(`📌 官方主干最新提交: ${upstream.commit}`);
+  }
+  if (upstream.npmVersions) {
+    console.log(
+      `📦 官方 npm 发布版本: latest: ${upstream.npmVersions.latest || "unknown"}, beta: ${upstream.npmVersions.beta || "unknown"}`,
+    );
+  }
+  const localPkg = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
+  console.log(
+    `📌 本地当前仓库版本: ${formatModDisplayVersion(localPkg.version)} (${localPkg.version})`,
+  );
+  console.log(
+    `📌 提交同步差距:     本地领先 ${upstream.aheadCount} 个提交, 落后官方 ${upstream.behindCount} 个提交`,
+  );
+  console.log("=======================================================\n");
+  process.exit(0);
+}
+
 if (isStatusOnly) {
   showStatus();
   process.exit(0);
@@ -1053,6 +1140,14 @@ if (!buildOnly) {
 console.log("\n=======================================================");
 console.log("✅ Paseo 本地编译与安装全部就绪！");
 console.log("=======================================================");
+const localPkgAfter = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
+const upstreamAfter = getUpstreamVersionInfo();
+console.log(
+  `📌 当前安装版本:   ${formatModDisplayVersion(localPkgAfter.version)} (${localPkgAfter.version})`,
+);
+console.log(
+  `📌 官方上游版本:   ${upstreamAfter.version} (upstream/main${upstreamAfter.commit ? `: ${upstreamAfter.commit.split(" ")[0]}` : ""}, 落后 ${upstreamAfter.behindCount} 个提交)`,
+);
 console.log("⚠️  重要提示 (Critical Safety Notice):");
 console.log("   切勿让 AI Agent 自动 kill 或重启 6767 端口的守护进程！");
 const driftAfterInstall = checkDaemonDrift();
