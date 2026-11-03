@@ -32,7 +32,12 @@ import {
   useAppSettings,
   type AppSettings,
 } from "@/hooks/use-settings";
-import { DEFAULT_MONO_FONT_STACK, DEFAULT_UI_FONT_STACK, ICON_SIZE, type Theme } from "@/styles/theme";
+import {
+  DEFAULT_MONO_FONT_STACK,
+  DEFAULT_UI_FONT_STACK,
+  ICON_SIZE,
+  type Theme,
+} from "@/styles/theme";
 import { isNative } from "@/constants/platform";
 import { settingsStyles } from "@/styles/settings";
 import { AppearancePreview } from "./appearance-preview";

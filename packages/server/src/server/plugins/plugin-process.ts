@@ -756,9 +756,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         return;
       }
     }
-        return;
-      }
-    }
     if (worker) for (const handler of handlers) handler(raw as PluginProcessRequest);
   });
 }
