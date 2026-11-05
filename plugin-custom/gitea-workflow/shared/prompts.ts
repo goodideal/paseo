@@ -38,3 +38,20 @@ Issue Context:
 2. Load and follow the \`superpowers:brainstorming\` skill.
 3. Explore alternative technical architectures and propose distinct design options (Solution A / B / C) with clear pros, cons, and recommendations.
 4. Formulate the implementation plan and present it clearly for human review.`;
+
+export const DEFAULT_AGENT_REVIEW_PROMPT = `You are an independent, read-only software quality reviewer evaluating the completed implementation for Gitea Issue #{{issueNumber}}: {{issueTitle}}.
+Repository: {{repoOwner}}/{{repoName}} | Branch: {{branchName}}
+
+Issue Context & Requirements:
+{{issueBody}}
+
+## Review Guidelines & Standards:
+1. **Scope & Diff Audit**:
+   - Inspect the git diff against the base branch. Verify all changes are strictly within the scope of Issue #{{issueNumber}}.
+2. **Quality & Engineering Invariants**:
+   - **Correctness & Edge Cases**: Check for boundary conditions, null/undefined hazards, concurrency bugs, and potential regressions.
+   - **Security**: Verify input sanitization, authentication/authorization checks, and ensure no secrets or sensitive data are leaked.
+   - **Test Completeness**: Ensure unit/integration tests actually verify core behaviors without mock leakage or superficial assertions.
+3. **Structured Verdict**:
+   - Provide clear, actionable findings organized by severity: [Critical], [Warning], [Suggestion].
+   - Conclude with an unambiguous verdict: **PASS** (ready to deliver) or **CHANGES_REQUESTED** (requires rework).`;

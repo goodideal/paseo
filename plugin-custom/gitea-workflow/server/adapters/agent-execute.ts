@@ -4,7 +4,11 @@ import type { SettingsManager } from "../settings-manager.js";
 import type { IssueRunIndexStore } from "../store.js";
 import { formatWorkflowWorkspaceTitle, cleanIssueTitle } from "../workspace-title.js";
 import { interpolatePrompt, type PromptInterpolationContext } from "../prompt-interpolator.js";
-import { DEFAULT_AGENT_AUTO_PROMPT, DEFAULT_AGENT_PLAN_PROMPT } from "../../shared/prompts.js";
+import {
+  DEFAULT_AGENT_AUTO_PROMPT,
+  DEFAULT_AGENT_PLAN_PROMPT,
+  DEFAULT_AGENT_REVIEW_PROMPT,
+} from "../../shared/prompts.js";
 
 const PHASE_META: Record<string, { icon: string; label: string }> = {
   brainstorm: { icon: "💡", label: "方案设计" },
@@ -36,10 +40,11 @@ export function normalizeAgentChangeMode(provider: string, rawMode?: string): st
   }
 
   if (p.includes("opencode")) {
-    if (m === "full-access" || m === "bypassPermissions") {
-      return "auto";
+    if (m === "full-access" || m === "bypassPermissions" || m === "auto") {
+      return "build";
     }
-    return m || "auto";
+    const validOpenCodeModes = ["build", "plan"];
+    return validOpenCodeModes.includes(m) ? m : "build";
   }
 
   return m || "auto";
@@ -256,6 +261,15 @@ ${effectiveIssueBody || "(No description provided)"}
 3. **Commit & Finalize**:
    - Commit your changes with clear conventional commit syntax.
    - Keep the workspace clean and ready for automatic Pull Request generation.`;
+        } else if (phase === "review") {
+          const rawTemplate =
+            typeof settingsManager?.getAgentReviewPrompt === "function"
+              ? settingsManager.getAgentReviewPrompt(resolvedProjectId)
+              : DEFAULT_AGENT_REVIEW_PROMPT;
+          prompt = interpolatePrompt(
+            rawTemplate || DEFAULT_AGENT_REVIEW_PROMPT,
+            interpolationContext,
+          );
         } else {
           prompt = `You are addressing Gitea Issue #${effectiveIssueNum}: ${effectiveIssueTitle} (Phase: ${phase}).
 Repository: ${repoOwner}/${repoName} | Branch: ${branchName}

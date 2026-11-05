@@ -198,4 +198,62 @@ describe("SettingsManager", () => {
       "## Workflow Instructions (agent-plan Mode):",
     );
   });
+
+  it("resolves review prompts with cascading precedence and fallback", async () => {
+    const mockPluginSettings = {
+      read: vi.fn().mockResolvedValue({
+        status: "ready",
+        values: {
+          enabled: true,
+          agentReviewPrompt: "Host Review Prompt {{issueNumber}}",
+          projects: {
+            "proj-inherited": { enabled: true },
+            "proj-overridden": {
+              enabled: true,
+              agentReviewPromptOverride: "Project Review Prompt {{issueTitle}}",
+            },
+            "proj-whitespace": {
+              enabled: true,
+              agentReviewPromptOverride: "   ",
+            },
+          },
+        },
+        revision: "rev-1",
+      }),
+      subscribe: vi.fn().mockReturnValue(() => {}),
+    };
+
+    const manager = new SettingsManager(mockPluginSettings as any);
+    await manager.initialize();
+
+    // 1. Project override takes precedence
+    expect(manager.getAgentReviewPrompt("proj-overridden")).toBe(
+      "Project Review Prompt {{issueTitle}}",
+    );
+
+    // 2. Inherits host configuration when project override is absent or empty
+    expect(manager.getAgentReviewPrompt("proj-inherited")).toBe(
+      "Host Review Prompt {{issueNumber}}",
+    );
+    expect(manager.getAgentReviewPrompt("proj-whitespace")).toBe(
+      "Host Review Prompt {{issueNumber}}",
+    );
+
+    // 3. Falls back to built-in default when host setting is empty
+    const emptyHostSettings = {
+      read: vi.fn().mockResolvedValue({
+        status: "ready",
+        values: {
+          enabled: true,
+          projects: {},
+        },
+        revision: "rev-1",
+      }),
+      subscribe: vi.fn().mockReturnValue(() => {}),
+    };
+    const emptyManager = new SettingsManager(emptyHostSettings as any);
+    await emptyManager.initialize();
+
+    expect(emptyManager.getAgentReviewPrompt()).toContain("Review Guidelines & Standards:");
+  });
 });

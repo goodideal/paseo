@@ -19,6 +19,12 @@ export function getAgentChangeModeOptions(provider?: string, isOverride = false)
       { label: "跳过权限确认 (Bypass Permissions)", value: "bypassPermissions" },
       { label: "计划模式 (Plan Mode)", value: "plan" },
     );
+  } else if (p.includes("opencode")) {
+    options.push(
+      { label: "构建与执行模式 (Build)", value: "build" },
+      { label: "完全访问 (Full Access - 自动映射为 Build)", value: "full-access" },
+      { label: "计划模式 (Plan Mode)", value: "plan" },
+    );
   } else {
     options.push(
       { label: "默认模式 (Default)", value: "auto" },
@@ -49,6 +55,7 @@ import { PromptEditorField } from "./prompt-editor-field.js";
 import {
   DEFAULT_AGENT_AUTO_PROMPT,
   DEFAULT_AGENT_PLAN_PROMPT,
+  DEFAULT_AGENT_REVIEW_PROMPT,
   PROMPT_PLACEHOLDERS,
 } from "../shared/prompts.js";
 
@@ -365,6 +372,27 @@ export function HostSettingsScreen({
             onChangeText={(agentPlanPrompt) => {
               void settings.save(
                 { ...values, agentPlanPrompt: agentPlanPrompt || undefined },
+                settings.revision,
+              );
+            }}
+          />
+          <PromptEditorField
+            label="Agent Review 独立审查提示词模板"
+            hint="代码审查阶段（independent-review）的系统 Prompt 模板，留空使用内置默认。支持变量插值。"
+            value={values.agentReviewPrompt ?? ""}
+            actionLabel="恢复内置 Review 模板"
+            disabled={settings.saving}
+            theme={theme}
+            placeholder="留空使用内置默认模板..."
+            onAction={() => {
+              void settings.save(
+                { ...values, agentReviewPrompt: DEFAULT_AGENT_REVIEW_PROMPT },
+                settings.revision,
+              );
+            }}
+            onChangeText={(agentReviewPrompt) => {
+              void settings.save(
+                { ...values, agentReviewPrompt: agentReviewPrompt || undefined },
                 settings.revision,
               );
             }}

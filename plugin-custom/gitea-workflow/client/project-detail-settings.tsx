@@ -16,6 +16,7 @@ import { PromptEditorField } from "./prompt-editor-field.js";
 import {
   DEFAULT_AGENT_AUTO_PROMPT,
   DEFAULT_AGENT_PLAN_PROMPT,
+  DEFAULT_AGENT_REVIEW_PROMPT,
   PROMPT_PLACEHOLDERS,
 } from "../shared/prompts.js";
 
@@ -216,6 +217,35 @@ export function ProjectDetailSettings({
                 [projectId]: {
                   ...projectSettings,
                   agentPlanPromptOverride: val || undefined,
+                },
+              };
+              void settings.save({ ...values, projects: updated }, settings.revision);
+            }}
+          />
+          <PromptEditorField
+            label="Agent Review 提示词覆盖 (可选)"
+            hint="留空继承全局配置。若需完全重置为继承全局，可点击下方清除覆盖"
+            value={projectSettings.agentReviewPromptOverride ?? ""}
+            actionLabel="填充默认 Review 模板"
+            disabled={settings.saving}
+            theme={theme}
+            placeholder="留空继承全局配置..."
+            onAction={() => {
+              const updated = {
+                ...values.projects,
+                [projectId]: {
+                  ...projectSettings,
+                  agentReviewPromptOverride: DEFAULT_AGENT_REVIEW_PROMPT,
+                },
+              };
+              void settings.save({ ...values, projects: updated }, settings.revision);
+            }}
+            onChangeText={(val: string) => {
+              const updated = {
+                ...values.projects,
+                [projectId]: {
+                  ...projectSettings,
+                  agentReviewPromptOverride: val || undefined,
                 },
               };
               void settings.save({ ...values, projects: updated }, settings.revision);

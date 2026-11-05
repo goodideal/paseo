@@ -4,7 +4,11 @@ import {
   type GiteaHostSettings,
   type GiteaWorkflowPolicy,
 } from "../shared/types.js";
-import { DEFAULT_AGENT_AUTO_PROMPT, DEFAULT_AGENT_PLAN_PROMPT } from "../shared/prompts.js";
+import {
+  DEFAULT_AGENT_AUTO_PROMPT,
+  DEFAULT_AGENT_PLAN_PROMPT,
+  DEFAULT_AGENT_REVIEW_PROMPT,
+} from "../shared/prompts.js";
 
 export class SettingsManager {
   private _current: GiteaHostSettings = GiteaHostSettingsSchema.parse({});
@@ -105,6 +109,22 @@ export class SettingsManager {
       return this._current.agentPlanPrompt.trim();
     }
     return DEFAULT_AGENT_PLAN_PROMPT;
+  }
+
+  getAgentReviewPrompt(projectId?: string): string {
+    const override = projectId
+      ? this._current.projects[projectId]?.agentReviewPromptOverride
+      : undefined;
+    if (typeof override === "string" && override.trim().length > 0) {
+      return override.trim();
+    }
+    if (
+      typeof this._current.agentReviewPrompt === "string" &&
+      this._current.agentReviewPrompt.trim().length > 0
+    ) {
+      return this._current.agentReviewPrompt.trim();
+    }
+    return DEFAULT_AGENT_REVIEW_PROMPT;
   }
 
   dispose(): void {

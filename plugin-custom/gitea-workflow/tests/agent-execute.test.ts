@@ -517,10 +517,74 @@ describe("Agent Execute Adapter", () => {
     });
 
     it("safely passes through or falls back for other providers", () => {
-      expect(normalizeAgentChangeMode("opencode", "full-access")).toBe("auto");
-      expect(normalizeAgentChangeMode("opencode", "bypassPermissions")).toBe("auto");
+      expect(normalizeAgentChangeMode("opencode", "full-access")).toBe("build");
+      expect(normalizeAgentChangeMode("opencode", "bypassPermissions")).toBe("build");
+      expect(normalizeAgentChangeMode("opencode", "auto")).toBe("build");
       expect(normalizeAgentChangeMode("opencode", "build")).toBe("build");
+      expect(normalizeAgentChangeMode("opencode", "plan")).toBe("plan");
+      expect(normalizeAgentChangeMode("opencode", undefined)).toBe("build");
+      expect(normalizeAgentChangeMode("opencode", "invalid-mode")).toBe("build");
       expect(normalizeAgentChangeMode("antigravity", "full-access")).toBe("full-access");
+    });
+
+    it("passes normalized build mode when agentProvider is opencode and settings has full-access", async () => {
+      const mockSettings = {
+        getAgentProvider: vi.fn().mockReturnValue("opencode"),
+        getAgentModel: vi.fn().mockReturnValue("flash"),
+        getAgentChangeMode: vi.fn().mockReturnValue("full-access"),
+      };
+      const mockIndexStore = {
+        getEntryByRunId: vi.fn().mockResolvedValue({
+          issueNumber: 498,
+          issueTitle: "E11000 duplicate key error",
+        }),
+      };
+      const mockAgentHandle = {
+        id: "agent-opencode-build",
+        run: vi.fn().mockResolvedValue({ status: "idle", lastMessage: "Done" }),
+        send: vi.fn().mockResolvedValue(undefined),
+      };
+      const mockPaseo = {
+        workspaces: {
+          list: vi.fn().mockResolvedValue({
+            entries: [
+              {
+                id: "ws-wt-498",
+                workspaceDirectory: "/tmp/worktrees/issue-498",
+                workspaceKind: "worktree",
+                name: "issue-498",
+              },
+            ],
+          }),
+          ref: vi.fn().mockReturnValue({ current: vi.fn().mockReturnValue({ id: "ws-wt-498" }) }),
+        },
+        agents: {
+          create: vi.fn().mockResolvedValue(mockAgentHandle),
+        },
+      };
+
+      const adapter = createAgentExecuteAdapter(mockSettings as any, mockIndexStore as any);
+      const context = {
+        run: {
+          runId: "run_opencode_test",
+          projectId: "prj_eb7b4f8b08f7ac68",
+          workspaceRoot: "/tmp/worktrees/issue-498",
+        },
+        stepOutputs: {},
+        paseo: mockPaseo,
+      };
+
+      const res = await adapter.execute({ phase: "auto_design" }, context as any);
+
+      expect(res.status).toBe("succeeded");
+      expect(mockPaseo.agents.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: {
+            provider: "opencode/flash",
+            modeId: "build",
+          },
+        }),
+      );
     });
 
     it("passes normalized bypassPermissions when agentProvider is claude and settings has full-access", async () => {
@@ -657,5 +721,69 @@ describe("Agent Execute Adapter", () => {
     ).rejects.toThrow('Agent run failed with status "timeout"');
 
     expect(mockAgentHandle.detach).toHaveBeenCalled();
+  });
+
+  it("interpolates custom review prompt when phase is review", async () => {
+    const mockSettings = {
+      getAgentProvider: vi.fn().mockReturnValue("claude"),
+      getAgentModel: vi.fn().mockReturnValue("flash"),
+      getAgentChangeMode: vi.fn().mockReturnValue("auto"),
+      getAgentReviewPrompt: vi
+        .fn()
+        .mockReturnValue(
+          "Reviewing #{{issueNumber}} in {{repoOwner}}/{{repoName}}: {{issueTitle}}",
+        ),
+    };
+    const mockIndexStore = {
+      getEntryByRunId: vi.fn().mockResolvedValue({
+        issueNumber: 499,
+        issueTitle: "Memory leak in watcher",
+        repoOwner: "aimeeting",
+        repoName: "core-vue",
+      }),
+    };
+    const mockAgentHandle = {
+      id: "agent-review-test",
+      run: vi.fn().mockResolvedValue({ status: "idle", lastMessage: "PASS" }),
+      send: vi.fn().mockResolvedValue(undefined),
+    };
+    const mockPaseo = {
+      workspaces: {
+        list: vi.fn().mockResolvedValue({
+          entries: [
+            {
+              id: "ws-review-499",
+              workspaceDirectory: "/tmp/worktrees/issue-499",
+              workspaceKind: "worktree",
+              name: "issue-499",
+            },
+          ],
+        }),
+        ref: vi.fn().mockReturnValue({ current: vi.fn().mockReturnValue({ id: "ws-review-499" }) }),
+      },
+      agents: {
+        create: vi.fn().mockResolvedValue(mockAgentHandle),
+      },
+    };
+
+    const adapter = createAgentExecuteAdapter(mockSettings as any, mockIndexStore as any);
+    const context = {
+      run: {
+        runId: "run_review_test",
+        projectId: "prj_eb7b4f8b08f7ac68",
+        workspaceRoot: "/tmp/worktrees/issue-499",
+      },
+      stepOutputs: {},
+      paseo: mockPaseo,
+    };
+
+    const res = await adapter.execute({ phase: "review" }, context as any);
+
+    expect(res.status).toBe("succeeded");
+    expect(mockSettings.getAgentReviewPrompt).toHaveBeenCalledWith("prj_eb7b4f8b08f7ac68");
+    expect(mockAgentHandle.run).toHaveBeenCalledWith(
+      "Reviewing #499 in aimeeting/core-vue: Memory leak in watcher",
+      expect.any(Object),
+    );
   });
 });
