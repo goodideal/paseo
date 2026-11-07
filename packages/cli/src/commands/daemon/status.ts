@@ -52,27 +52,44 @@ export async function runStatusCommand(options: CommandOptions, _command: Comman
   };
 }
 
+async function tryConnectDaemon(
+  target: DaemonTarget,
+  instance: Awaited<ReturnType<typeof readDaemonInstance>>,
+  timeoutMs: number,
+) {
+  try {
+    const client = await connectToDaemon({
+      target,
+      instance: instance ?? undefined,
+      timeout: timeoutMs,
+    });
+    return { client, connectedDaemon: "unreachable", note: undefined };
+  } catch (error) {
+    const failure = buildDaemonConnectionCommandError({ target, error });
+    if (target.kind === "endpoint") throw failure;
+    let connectedDaemon = "unreachable";
+    if (failure.code === "AUTH_REQUIRED") {
+      connectedDaemon = "auth_required";
+    } else if (failure.code === "AUTH_FAILED") {
+      connectedDaemon = "auth_failed";
+    }
+    return { client: undefined, connectedDaemon, note: failure.message };
+  }
+}
+
 async function probeDaemonStatus(
   target: DaemonTarget,
   instance: Awaited<ReturnType<typeof readDaemonInstance>>,
   local: Record<string, unknown>,
   timeoutMs = 5_000,
 ) {
-  let connectedDaemon = "unreachable";
-  let note: string | undefined;
+  const connection = await tryConnectDaemon(target, instance, timeoutMs);
+  if (!connection.client)
+    return { connectedDaemon: connection.connectedDaemon, note: connection.note };
+  const client = connection.client;
+  let connectedDaemon = connection.connectedDaemon;
+  let note: string | undefined = connection.note;
   let live: Record<string, unknown> = {};
-  let client: Awaited<ReturnType<typeof connectToDaemon>> | undefined;
-  try {
-    client = await connectToDaemon({ target, instance: instance ?? undefined, timeout: timeoutMs });
-  } catch (error) {
-    const failure = buildDaemonConnectionCommandError({ target, error });
-    if (target.kind === "endpoint") throw failure;
-    connectedDaemon = "unreachable";
-    if (failure.code === "AUTH_REQUIRED") connectedDaemon = "auth_required";
-    if (failure.code === "AUTH_FAILED") connectedDaemon = "auth_failed";
-    note = failure.message;
-  }
-  if (!client) return { connectedDaemon, note };
   try {
     let requestError: unknown;
     const status = await client.getDaemonStatus({ timeout: timeoutMs }).catch((error: unknown) => {

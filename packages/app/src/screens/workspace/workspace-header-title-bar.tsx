@@ -14,6 +14,7 @@ import {
 import {
   WorkspaceScriptsButton,
   type UseWorkspaceScriptsMenuPagesInput,
+  type WorkspaceScriptActions,
 } from "@/screens/workspace/scripts";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
@@ -53,6 +54,17 @@ function WorkspaceHeaderProjectRow({
   );
 }
 
+const NOOP_SCRIPT_ACTIONS: WorkspaceScriptActions = {
+  start: () => {},
+  stop: () => {},
+  restart: () => {},
+  copyUrl: () => {},
+  selectRoute: () => {},
+  resolveLinks: () => ({ selected: null, targets: [] }),
+  isStartPending: false,
+  isStopPending: false,
+};
+
 export interface WorkspaceHeaderTitleBarProps {
   isLoading: boolean;
   title: string;
@@ -63,6 +75,7 @@ export interface WorkspaceHeaderTitleBarProps {
   normalizedServerId: string;
   normalizedWorkspaceId: string;
   workspaceScripts: WorkspaceDescriptor["scripts"];
+  scriptActions?: WorkspaceScriptActions;
   liveTerminalIds: string[];
   showWorkspaceSetup: boolean;
   showWorkflowRuns?: boolean;
@@ -96,6 +109,7 @@ export function WorkspaceHeaderTitleBar({
   normalizedServerId,
   normalizedWorkspaceId,
   workspaceScripts,
+  scriptActions,
   liveTerminalIds,
   showWorkspaceSetup,
   showWorkflowRuns = false,
@@ -111,26 +125,23 @@ export function WorkspaceHeaderTitleBar({
   onCopyBranchName,
   onOpenSetupTab,
   onOpenWorkflowRuns,
-  onScriptTerminalStarted,
+  onScriptTerminalStarted: _onScriptTerminalStarted,
   onViewScriptTerminal,
   onOpenUrlInBrowserTab,
 }: WorkspaceHeaderTitleBarProps) {
+  const activeScriptActions = scriptActions ?? NOOP_SCRIPT_ACTIONS;
   const scriptsMenuInput = useMemo<UseWorkspaceScriptsMenuPagesInput>(
     () => ({
-      serverId: normalizedServerId,
-      workspaceId: normalizedWorkspaceId,
+      actions: activeScriptActions,
       scripts: workspaceScripts,
       liveTerminalIds,
-      onScriptTerminalStarted,
       onViewTerminal: onViewScriptTerminal,
       onOpenUrlInBrowserTab,
     }),
     [
-      normalizedServerId,
-      normalizedWorkspaceId,
+      activeScriptActions,
       workspaceScripts,
       liveTerminalIds,
-      onScriptTerminalStarted,
       onViewScriptTerminal,
       onOpenUrlInBrowserTab,
     ],
@@ -198,11 +209,9 @@ export function WorkspaceHeaderTitleBar({
         )}
         {isMobile && workspaceScripts.length > 0 ? (
           <WorkspaceScriptsButton
-            serverId={normalizedServerId}
-            workspaceId={normalizedWorkspaceId}
+            actions={activeScriptActions}
             scripts={workspaceScripts}
             liveTerminalIds={liveTerminalIds}
-            onScriptTerminalStarted={onScriptTerminalStarted}
             onViewTerminal={onViewScriptTerminal}
             onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
             hideLabels

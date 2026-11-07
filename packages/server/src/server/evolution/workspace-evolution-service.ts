@@ -20,7 +20,8 @@ export interface WorkspaceRecordLike {
 export interface WorkspaceEvolutionServiceDeps {
   cacheRoot: string;
   agentStorage: {
-    list(): Promise<StoredAgentLike[]>;
+    list?(): Promise<StoredAgentLike[]>;
+    listAll?(): Promise<StoredAgentLike[]>;
     get(agentId: string): Promise<StoredAgentLike | null>;
   };
   workspaceRegistry: {
@@ -28,6 +29,67 @@ export interface WorkspaceEvolutionServiceDeps {
   };
   logger?: Logger;
   onEvolutionUpdated?: (workspaceId: string, digest: WorkspaceEvolutionDigest) => void;
+}
+
+function resolveEvolutionStatus(milestones: AgentMilestoneRecord[]): {
+  overallStatus: OverallEvolutionStatus;
+  currentStage: string;
+} {
+  if (milestones.length === 0) {
+    return { overallStatus: "completed", currentStage: "已就绪" };
+  }
+
+  const hasRunning = milestones.some((m) => m.status === "running");
+  const current = milestones[0];
+
+  if (hasRunning) {
+    return {
+      overallStatus: "in_progress",
+      currentStage: `正在推进: ${current.intentPrompt}`,
+    };
+  }
+
+  const lower = current.intentPrompt.toLowerCase();
+  if (
+    lower.includes("review") ||
+    current.intentPrompt.includes("审查") ||
+    current.intentPrompt.includes("审计")
+  ) {
+    return {
+      overallStatus: "ready_for_review",
+      currentStage: "代码质量评审完成，待合流",
+    };
+  }
+
+  return {
+    overallStatus: "completed",
+    currentStage: `已完成阶段: ${current.intentPrompt}`,
+  };
+}
+
+async function loadOrSummarizeMilestone(
+  agent: StoredAgentLike,
+  milestoneFile: string,
+  logger?: Logger,
+): Promise<AgentMilestoneRecord> {
+  const isCompleted = agent.archivedAt != null || agent.lastStatus === "idle";
+
+  if (isCompleted) {
+    try {
+      const raw = await fs.readFile(milestoneFile, "utf8");
+      return JSON.parse(raw) as AgentMilestoneRecord;
+    } catch {
+      // not in cache yet
+    }
+  }
+
+  const milestone = summarizeAgentMilestone(agent);
+  if (isCompleted) {
+    await writeJsonFileAtomic(milestoneFile, milestone).catch((err) => {
+      logger?.warn?.({ err, agentId: agent.id }, "Failed to cache agent milestone");
+    });
+  }
+  return milestone;
 }
 
 export class WorkspaceEvolutionService {
@@ -97,7 +159,10 @@ export class WorkspaceEvolutionService {
     const workspaceTitle = workspace?.title || workspace?.displayName || workspaceId;
     const branch = workspace?.branch || "main";
 
-    const allAgents = await this.agentStorage.list();
+    const listFn =
+      this.agentStorage.listAll?.bind(this.agentStorage) ??
+      this.agentStorage.list?.bind(this.agentStorage);
+    const allAgents = listFn ? await listFn() : [];
     const workspaceAgents = allAgents.filter((a) => {
       const isMatchWorkspace =
         a.workspaceId === workspaceId || (workspace?.cwd && a.cwd === workspace.cwd);
@@ -115,53 +180,11 @@ export class WorkspaceEvolutionService {
 
     for (const agent of workspaceAgents) {
       const milestoneFile = this.agentMilestonePath(workspaceId, agent.id);
-      let milestone: AgentMilestoneRecord | null = null;
-
-      const isCompleted = agent.archivedAt != null || agent.lastStatus === "idle";
-
-      if (isCompleted) {
-        try {
-          const raw = await fs.readFile(milestoneFile, "utf8");
-          milestone = JSON.parse(raw) as AgentMilestoneRecord;
-        } catch {
-          // not in cache yet
-        }
-      }
-
-      if (!milestone) {
-        milestone = summarizeAgentMilestone(agent);
-        if (isCompleted) {
-          await writeJsonFileAtomic(milestoneFile, milestone).catch((err) => {
-            this.logger?.warn?.({ err, agentId: agent.id }, "Failed to cache agent milestone");
-          });
-        }
-      }
-
+      const milestone = await loadOrSummarizeMilestone(agent, milestoneFile, this.logger);
       milestones.push(milestone);
     }
 
-    let overallStatus: OverallEvolutionStatus = "completed";
-    let currentStage = "已就绪";
-
-    if (milestones.length > 0) {
-      const hasRunning = milestones.some((m) => m.status === "running");
-      const current = milestones[0];
-
-      if (hasRunning) {
-        overallStatus = "in_progress";
-        currentStage = `正在推进: ${current.intentPrompt}`;
-      } else if (
-        current.intentPrompt.toLowerCase().includes("review") ||
-        current.intentPrompt.includes("审查") ||
-        current.intentPrompt.includes("审计")
-      ) {
-        overallStatus = "ready_for_review";
-        currentStage = "代码质量评审完成，待合流";
-      } else {
-        overallStatus = "completed";
-        currentStage = `已完成阶段: ${current.intentPrompt}`;
-      }
-    }
+    const { overallStatus, currentStage } = resolveEvolutionStatus(milestones);
 
     const executiveSummary =
       milestones.length === 0

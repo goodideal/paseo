@@ -52,10 +52,28 @@ const patchedPackages = [
     nodeModulesPath: "node_modules/react-native-reanimated",
     patchPrefix: "react-native-reanimated+",
   },
+  // The native chat timeline. The patch's header lists its hunks and the upstream issue.
+  ...(existsSync("packages/app/node_modules/@legendapp/list")
+    ? [
+        {
+          nodeModulesPath: "packages/app/node_modules/@legendapp/list",
+          patchPrefix: "@legendapp+list+",
+          cwd: "packages/app",
+        },
+      ]
+    : [
+        {
+          nodeModulesPath: "node_modules/@legendapp/list",
+          patchPrefix: "@legendapp+list+",
+        },
+      ]),
   {
     nodeModulesPath: "node_modules/react-native-draggable-flatlist",
     patchPrefix: "react-native-draggable-flatlist+",
   },
+  // Web pointer capture: capture only pointers the handler still tracks after pointer-down, so a
+  // touch-only pan that fails the mouse leaves browser text selection alone. Keep until upstream
+  // stops capturing pointers a handler has rejected.
   {
     nodeModulesPath: "node_modules/react-native-gesture-handler",
     patchPrefix: "react-native-gesture-handler+",

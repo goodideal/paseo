@@ -8,3 +8,8 @@ export {
   type UseWorkspaceScriptsMenuPagesInput,
   type WorkspaceScriptsMenuPages,
 } from "./workspace-scripts-menu-pages";
+
+export {
+  useWorkspaceScriptActions,
+  type WorkspaceScriptActions,
+} from "./use-workspace-script-actions";

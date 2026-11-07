@@ -108,6 +108,9 @@
                 "openSync",
                 "readSync"
               ],
+              "server/workflows/workflow-store.ts": ["existsSync", "readdirSync", "readFileSync"],
+              "server/workflows/definition-compiler.ts": ["existsSync", "readFileSync"],
+              "server/session/workflow/workflow-session.ts": ["existsSync", "readFileSync"],
               // TODO: diagnostics probes provider-owned auth/session storage; convert alongside provider discovery and readiness.
               "server/agent/providers/omp/agent.ts": ["existsSync"],
               // TODO: synchronous provider configuration discovery; move discovery into async launch preparation.
