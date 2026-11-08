@@ -190,7 +190,9 @@ const CodexCollabAgentToolCallItemSchema = z
     prompt: z.string().optional(),
     tool: z.string().optional(),
     receiverThreadIds: z.array(z.string()).optional(),
+    receiver_thread_ids: z.array(z.string()).optional(),
     agentsStates: z.record(z.string(), z.unknown()).optional(),
+    agents_states: z.record(z.string(), z.unknown()).optional(),
   })
   .passthrough();
 
@@ -540,22 +542,36 @@ function hasRenderableEditDetail(detail: ToolCallTimelineItem["detail"]): boolea
 }
 
 function readStatus(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return value;
+  }
   if (!isRecord(value)) {
     return undefined;
   }
-  return typeof value.status === "string" ? value.status : undefined;
+  if (typeof value.status === "string") {
+    return value.status;
+  }
+  const keys = Object.keys(value);
+  if (keys.length === 1 && typeof keys[0] === "string") {
+    return keys[0];
+  }
+  return undefined;
 }
 
 function normalizeCollabAgentChildStatus(status: string): ToolCallTimelineItem["status"] {
-  const normalized = status.trim().toLowerCase();
+  const normalized = status.trim().toLowerCase().replace(/_/g, "");
   switch (normalized) {
     case "error":
     case "errored":
       return "running";
     case "shutdown":
+    case "closed":
       return "canceled";
     case "notfound":
       return "failed";
+    case "completed":
+    case "done":
+      return "completed";
     default:
       return normalizeToolCallStatus(status, null, null);
   }
@@ -573,7 +589,8 @@ function resolveCollabAgentStatus(
     return "failed";
   }
 
-  const childStatuses = Object.values(item.agentsStates ?? {})
+  const states = item.agentsStates ?? item.agents_states ?? {};
+  const childStatuses = Object.values(states)
     .map(readStatus)
     .filter((status): status is string => typeof status === "string" && status.trim().length > 0)
     .map(normalizeCollabAgentChildStatus);

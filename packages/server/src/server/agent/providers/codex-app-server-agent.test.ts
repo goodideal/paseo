@@ -3987,6 +3987,160 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("settles running sub-agent and its launch card when close_agent completes", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "collabAgentToolCall",
+        id: "call-spawn-1",
+        tool: "spawn_agent",
+        status: "completed",
+        prompt: "Run investigation.",
+        receiver_thread_ids: ["child-thread-close-test"],
+        agents_states: {
+          "child-thread-close-test": "running",
+        },
+      },
+    });
+
+    const initialProviderEvents = events.flatMap((event) =>
+      event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
+    );
+    expect(initialProviderEvents.at(-1)).toMatchObject({
+      type: "upsert",
+      id: "child-thread-close-test",
+      status: "running",
+    });
+
+    await asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "collabAgentToolCall",
+        id: "call-close-1",
+        tool: "close_agent",
+        status: "completed",
+        receiver_thread_ids: ["child-thread-close-test"],
+        agents_states: {
+          "child-thread-close-test": { completed: "DONE" },
+        },
+      },
+    });
+
+    const finalProviderEvents = events.flatMap((event) =>
+      event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
+    );
+    expect(finalProviderEvents.at(-1)).toMatchObject({
+      type: "upsert",
+      id: "child-thread-close-test",
+      status: "completed",
+    });
+
+    const timelineEvents = events.filter((event) => event.type === "timeline");
+    const launchCards = timelineEvents.filter(
+      (event) => event.item.type === "tool_call" && event.item.callId === "call-spawn-1",
+    );
+    expect(launchCards.at(-1)?.item).toMatchObject({
+      type: "tool_call",
+      callId: "call-spawn-1",
+      status: "completed",
+    });
+
+    const closeCards = timelineEvents.filter(
+      (event) => event.item.type === "tool_call" && event.item.callId === "call-close-1",
+    );
+    expect(closeCards.length).toBe(0);
+  });
+
+  test("replays historical spawn_agent closed by close_agent as completed", async () => {
+    const session = createSession();
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        if (method !== "thread/read") return {};
+        const p = params as { threadId?: string };
+        if (p.threadId === "test-thread") {
+          return {
+            thread: {
+              turns: [
+                {
+                  items: [
+                    {
+                      type: "collabAgentToolCall",
+                      id: "call-hist-spawn",
+                      tool: "spawn_agent",
+                      status: "completed",
+                      prompt: "Inspect cluster.",
+                      receiver_thread_ids: ["child-thread-hist"],
+                      agents_states: {
+                        "child-thread-hist": "running",
+                      },
+                    },
+                    {
+                      type: "collabAgentToolCall",
+                      id: "call-hist-close",
+                      tool: "close_agent",
+                      status: "completed",
+                      receiver_thread_ids: ["child-thread-hist"],
+                      agents_states: {
+                        "child-thread-hist": "running",
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          };
+        }
+        if (p.threadId === "child-thread-hist") {
+          return {
+            thread: {
+              turns: [
+                {
+                  items: [
+                    {
+                      type: "agentMessage",
+                      id: "msg-child-done",
+                      text: "Cluster OK",
+                    },
+                  ],
+                },
+              ],
+            },
+          };
+        }
+        return { thread: { turns: [] } };
+      }),
+    };
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+
+    const timelineEvents = history.filter((event) => event.type === "timeline");
+    const launchCard = timelineEvents.find(
+      (event) => event.item.type === "tool_call" && event.item.callId === "call-hist-spawn",
+    );
+    expect(launchCard?.item).toMatchObject({
+      type: "tool_call",
+      callId: "call-hist-spawn",
+      status: "completed",
+    });
+
+    const upserts = history.flatMap((event) =>
+      event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
+    );
+    expect(upserts).toContainEqual(
+      expect.objectContaining({
+        id: "child-thread-hist",
+        status: "completed",
+      }),
+    );
+  });
+
   test("keeps a settled child completed until Codex starts another child turn", async () => {
     const appServer = createFakeCodexAppServer();
     const session = new CodexAppServerAgentSession(

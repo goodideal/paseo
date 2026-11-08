@@ -2006,6 +2006,43 @@ function updateHistoricalSubAgentActivity(
   };
 }
 
+function getCollabReceiverThreadIds(record: { [key: string]: unknown }): string[] {
+  const ids = record.receiverThreadIds ?? record.receiver_thread_ids;
+  if (!Array.isArray(ids)) {
+    return [];
+  }
+  return ids.filter((id): id is string => typeof id === "string" && id.length > 0);
+}
+
+function getCollabAgentThreadId(record: { [key: string]: unknown }): string | null {
+  const id = record.agentThreadId ?? record.agent_thread_id;
+  if (typeof id === "string" && id.length > 0) {
+    return id;
+  }
+  return null;
+}
+
+function isCollabCloseRecord(record: { [key: string]: unknown }): boolean {
+  return record.tool === "close_agent" || record.tool === "closeAgent";
+}
+
+function settleHistoricalClosedSubAgent(
+  timeline: PersistedTimelineEntry[],
+  index: number | undefined,
+): void {
+  if (index === undefined) return;
+  const existing = timeline[index];
+  if (existing?.item.type !== "tool_call") return;
+  timeline[index] = {
+    ...existing,
+    item: {
+      ...existing.item,
+      status: "completed",
+      error: null,
+    },
+  };
+}
+
 function readCodexHistoricalSubAgentThreadIds(item: unknown): string[] {
   const activity = readCodexSubAgentActivity(item);
   if (activity) {
@@ -2017,14 +2054,25 @@ function readCodexHistoricalSubAgentThreadIds(item: unknown): string[] {
   );
   if (
     normalizedType !== "collabAgentToolCall" ||
-    record?.tool !== "spawnAgent" ||
-    !Array.isArray(record.receiverThreadIds)
+    (record?.tool !== "spawnAgent" && record?.tool !== "spawn_agent")
   ) {
     return [];
   }
-  return record.receiverThreadIds.filter(
-    (threadId): threadId is string => typeof threadId === "string" && threadId.length > 0,
+  return getCollabReceiverThreadIds(record);
+}
+
+function readCodexClosedSubAgentThreadIds(item: unknown): string[] {
+  const record = toObjectRecord(item);
+  if (!record) {
+    return [];
+  }
+  const normalizedType = normalizeCodexThreadItemType(
+    typeof record.type === "string" ? record.type : undefined,
   );
+  if (normalizedType !== "collabAgentToolCall" || !isCollabCloseRecord(record)) {
+    return [];
+  }
+  return getCollabReceiverThreadIds(record);
 }
 
 function codexImageOutputFromResult(result: unknown): ProviderImageOutput | null {
@@ -2204,6 +2252,13 @@ async function projectCodexThreadHistory(
   const { timeline, subAgentTimelineIndexByThreadId } = projection;
   for await (const row of readCodexThreadHistory(params.client, params.threadId)) {
     const { item } = row;
+    const closedChildThreadIds = readCodexClosedSubAgentThreadIds(item);
+    if (closedChildThreadIds.length > 0) {
+      for (const closedId of closedChildThreadIds) {
+        settleHistoricalClosedSubAgent(timeline, subAgentTimelineIndexByThreadId.get(closedId));
+      }
+      continue;
+    }
     const historicalSubAgentActivity = readCodexSubAgentActivity(item);
     if (historicalSubAgentActivity) {
       const existingIndex = subAgentTimelineIndexByThreadId.get(
@@ -6001,6 +6056,42 @@ export class CodexAppServerAgentSession implements AgentSession {
     return this.subAgentCallIdByChildThreadId.get(threadId) ?? null;
   }
 
+  private getOrCreateSubAgentCallState(
+    callId: string,
+    timelineItem: ToolCallTimelineItem,
+    parentCallId: string | null,
+    parentSubagentId: string | null,
+  ): CodexSubAgentCallState {
+    const existing = this.subAgentCallsByCallId.get(callId);
+    if (existing) {
+      existing.toolCall = timelineItem;
+      existing.parentCallId ??= parentCallId;
+      existing.parentSubagentId ??= parentSubagentId;
+      return existing;
+    }
+    const state: CodexSubAgentCallState = {
+      callId,
+      toolCall: timelineItem,
+      parentCallId,
+      parentSubagentId,
+      activityItemIds: new Set<string>(),
+      pendingCommandOutputDeltas: new Map<string, string[]>(),
+      pendingFileChangeOutputDeltas: new Map<string, string[]>(),
+      childThreadIds: new Set<string>(),
+    };
+    this.subAgentCallsByCallId.set(callId, state);
+    return state;
+  }
+
+  private closeCollabChildThreads(childThreadIds: readonly string[]): void {
+    for (const receiverThreadId of childThreadIds) {
+      const owningCallId = this.subAgentCallIdByChildThreadId.get(receiverThreadId);
+      if (owningCallId) {
+        this.emitSubAgentActivityUpdate(owningCallId, "completed");
+      }
+    }
+  }
+
   private registerSubAgentToolCall(params: {
     timelineItem: ToolCallTimelineItem;
     rawItem: { [key: string]: unknown };
@@ -6012,39 +6103,30 @@ export class CodexAppServerAgentSession implements AgentSession {
       return [];
     }
 
-    const existing = this.subAgentCallsByCallId.get(timelineItem.callId);
-    const state: CodexSubAgentCallState =
-      existing ??
-      ({
-        callId: timelineItem.callId,
-        toolCall: timelineItem,
-        parentCallId,
-        parentSubagentId,
-        activityItemIds: new Set<string>(),
-        pendingCommandOutputDeltas: new Map<string, string[]>(),
-        pendingFileChangeOutputDeltas: new Map<string, string[]>(),
-        childThreadIds: new Set<string>(),
-      } satisfies CodexSubAgentCallState);
-
-    state.toolCall = timelineItem;
-    state.parentCallId ??= parentCallId;
-    state.parentSubagentId ??= parentSubagentId;
+    const state = this.getOrCreateSubAgentCallState(
+      timelineItem.callId,
+      timelineItem,
+      parentCallId,
+      parentSubagentId,
+    );
     const activity = readCodexSubAgentActivity(rawItem);
     if (activity?.id) {
       state.activityItemIds.add(activity.id);
     }
-    this.subAgentCallsByCallId.set(timelineItem.callId, state);
 
-    const receiverThreadIds = Array.isArray(rawItem.receiverThreadIds)
-      ? rawItem.receiverThreadIds.filter((value): value is string => typeof value === "string")
-      : [];
-    const agentThreadId =
-      typeof rawItem.agentThreadId === "string" && rawItem.agentThreadId.length > 0
-        ? rawItem.agentThreadId
-        : null;
+    const receiverThreadIds = getCollabReceiverThreadIds(rawItem);
+    const agentThreadId = getCollabAgentThreadId(rawItem);
     const childThreadIds = Array.from(
       new Set(agentThreadId ? [...receiverThreadIds, agentThreadId] : receiverThreadIds),
     ).filter((threadId) => threadId !== this.currentThreadId);
+
+    if (isCollabCloseRecord(rawItem)) {
+      if (timelineItem.status === "completed") {
+        this.closeCollabChildThreads(childThreadIds);
+      }
+      return childThreadIds;
+    }
+
     for (const receiverThreadId of childThreadIds) {
       const owningCallId = this.subAgentCallIdByChildThreadId.get(receiverThreadId);
       if (owningCallId && owningCallId !== timelineItem.callId) {
@@ -6912,6 +6994,40 @@ export class CodexAppServerAgentSession implements AgentSession {
     return !this.closed && this.activeForegroundTurnId === turnId;
   }
 
+  private completeRootTimelineItem(
+    timelineItem: AgentTimelineItem,
+    itemId: string | undefined,
+    imageItems: readonly AgentTimelineItem[],
+  ): void {
+    this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+    if (timelineItem.type === "assistant_message") {
+      this.pendingAssistantMessageBoundary = true;
+    }
+    for (const imageItem of imageItems) {
+      this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: imageItem });
+      this.pendingAssistantMessageBoundary = true;
+    }
+    if (itemId) {
+      this.emittedItemCompletedIds.add(itemId);
+      this.emittedItemStartedIds.delete(itemId);
+      this.pendingCommandOutputDeltas.delete(itemId);
+      this.pendingFileChangeOutputDeltas.delete(itemId);
+    }
+  }
+
+  private startRootTimelineItem(
+    timelineItem: ToolCallTimelineItem,
+    itemId: string | undefined,
+    rawItem: { [key: string]: unknown },
+  ): void {
+    this.warnOnIncompleteEditToolCall(timelineItem, "item_started", rawItem);
+    this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+    if (itemId) {
+      this.emittedItemStartedIds.add(itemId);
+      this.pendingCommandOutputDeltas.delete(itemId);
+      this.pendingFileChangeOutputDeltas.delete(itemId);
+    }
+  }
   private async handleItemCompletedNotification(
     parsed: Extract<ParsedCodexNotification, { kind: "item_completed" }>,
   ): Promise<void> {
@@ -6954,6 +7070,10 @@ export class CodexAppServerAgentSession implements AgentSession {
             parentSubagentId: resolveCodexParentSubagentId(childSubAgentCallId, parsed.threadId),
           })
         : [];
+    if (timelineItem.type === "tool_call" && isCollabCloseRecord(parsed.item)) {
+      await this.replayPendingSubAgentNotifications(registeredChildThreadIds);
+      return;
+    }
     if (childSubAgentCallId) {
       this.emitCompletedProviderSubagentItem(parsed, timelineItem);
       this.handleSubAgentChildItemCompleted(childSubAgentCallId, parsed.item.id, timelineItem);
@@ -6982,28 +7102,13 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (timelineItem.type === "tool_call") {
       if (timelineItem.detail.type === "plan") {
         this.rememberPlanResult(timelineItem);
-        // Codex can surface plans both as turn/plan updates and as completed
-        // thread items. In plan mode, approval owns the visible plan card.
         if (this.planModeEnabled) {
           return;
         }
       }
       this.warnOnIncompleteEditToolCall(timelineItem, "item_completed", parsed.item);
     }
-    this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
-    if (timelineItem.type === "assistant_message") {
-      this.pendingAssistantMessageBoundary = true;
-    }
-    for (const imageItem of imageItems) {
-      this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: imageItem });
-      this.pendingAssistantMessageBoundary = true;
-    }
-    if (itemId) {
-      this.emittedItemCompletedIds.add(itemId);
-      this.emittedItemStartedIds.delete(itemId);
-      this.pendingCommandOutputDeltas.delete(itemId);
-      this.pendingFileChangeOutputDeltas.delete(itemId);
-    }
+    this.completeRootTimelineItem(timelineItem, itemId, imageItems);
     await this.replayPendingSubAgentNotifications(registeredChildThreadIds);
   }
 
@@ -7076,6 +7181,16 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
   }
 
+  private shouldSkipStartedCommandExecution(
+    normalizedItemType: string | undefined,
+    item: { [key: string]: unknown },
+    callId: string | null | undefined,
+  ): boolean {
+    if (normalizedItemType !== "commandExecution") return false;
+    this.rememberTerminalProcessForItem(item);
+    return Boolean(callId && this.emittedExecCommandStartedCallIds.has(callId));
+  }
+
   private async handleItemStartedNotification(
     parsed: Extract<ParsedCodexNotification, { kind: "item_started" }>,
   ): Promise<void> {
@@ -7126,6 +7241,10 @@ export class CodexAppServerAgentSession implements AgentSession {
       parentCallId: childSubAgentCallId,
       parentSubagentId: resolveCodexParentSubagentId(childSubAgentCallId, parsed.threadId),
     });
+    if (timelineItem.type === "tool_call" && isCollabCloseRecord(parsed.item)) {
+      await this.replayPendingSubAgentNotifications(registeredChildThreadIds);
+      return;
+    }
     if (childSubAgentCallId) {
       this.emitStartedProviderSubagentItem(parsed.threadId, timelineItem);
       this.emitSubAgentActivityUpdate(childSubAgentCallId, "running");
@@ -7136,23 +7255,19 @@ export class CodexAppServerAgentSession implements AgentSession {
       typeof parsed.item.type === "string" ? parsed.item.type : undefined,
     );
     const itemId = parsed.item.id;
-    if (normalizedItemType === "commandExecution") {
-      this.rememberTerminalProcessForItem(parsed.item);
-      const callId = timelineItem.callId || itemId;
-      if (callId && this.emittedExecCommandStartedCallIds.has(callId)) {
-        return;
-      }
+    if (
+      this.shouldSkipStartedCommandExecution(
+        normalizedItemType,
+        parsed.item,
+        timelineItem.callId || itemId,
+      )
+    ) {
+      return;
     }
     if (itemId && this.emittedItemStartedIds.has(itemId)) {
       return;
     }
-    this.warnOnIncompleteEditToolCall(timelineItem, "item_started", parsed.item);
-    this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
-    if (itemId) {
-      this.emittedItemStartedIds.add(itemId);
-      this.pendingCommandOutputDeltas.delete(itemId);
-      this.pendingFileChangeOutputDeltas.delete(itemId);
-    }
+    this.startRootTimelineItem(timelineItem, itemId, parsed.item);
     await this.replayPendingSubAgentNotifications(registeredChildThreadIds);
   }
 

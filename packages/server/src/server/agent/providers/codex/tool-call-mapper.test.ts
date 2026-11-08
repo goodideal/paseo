@@ -419,6 +419,52 @@ describe("codex tool-call mapper", () => {
     });
   });
 
+  it.each([
+    ["pending_init", "running"],
+    ["running", "running"],
+    ["shutdown", "canceled"],
+    ["not_found", "failed"],
+  ] as const)(
+    "maps string child state %s to %s with snake_case keys",
+    (childStatus, expectedStatus) => {
+      const item = mapCodexToolCallFromThreadItem({
+        type: "collabAgentToolCall",
+        id: `call-sub-agent-snake-${childStatus}`,
+        tool: "spawn_agent",
+        status: "completed",
+        receiver_thread_ids: ["child-thread-1"],
+        agents_states: {
+          "child-thread-1": childStatus,
+        },
+      });
+
+      expect(item).toMatchObject({
+        type: "tool_call",
+        callId: `call-sub-agent-snake-${childStatus}`,
+        status: expectedStatus,
+      });
+    },
+  );
+
+  it("maps rust serde enum object { completed: 'DONE' } to completed", () => {
+    const item = mapCodexToolCallFromThreadItem({
+      type: "collabAgentToolCall",
+      id: "call-sub-agent-serde-completed",
+      tool: "close_agent",
+      status: "completed",
+      receiver_thread_ids: ["child-thread-1"],
+      agents_states: {
+        "child-thread-1": { completed: "DONE" },
+      },
+    });
+
+    expect(item).toMatchObject({
+      type: "tool_call",
+      callId: "call-sub-agent-serde-completed",
+      status: "completed",
+    });
+  });
+
   it("maps mcp read_file completion with detail", () => {
     const item = expectMapped(
       mapCodexToolCallFromThreadItem(
