@@ -143,10 +143,10 @@ export const QuickPromptsPopover = memo(function QuickPromptsPopover({
       StyleSheet.create({
         container: {
           width: layout.compact ? "100%" : 360,
-          maxHeight: layout.compact ? 400 : 440,
-          backgroundColor: theme.colors.surface0,
-          borderRadius: 12,
-          padding: 12,
+          maxHeight: layout.compact ? undefined : 520,
+          backgroundColor: layout.compact ? "transparent" : theme.colors.surface0,
+          borderRadius: layout.compact ? 0 : 12,
+          padding: layout.compact ? 2 : 12,
           gap: 10,
         },
         header: {
@@ -168,52 +168,88 @@ export const QuickPromptsPopover = memo(function QuickPromptsPopover({
           gap: 8,
         },
         headerButton: {
-          paddingVertical: 4,
-          paddingHorizontal: 8,
+          paddingVertical: 5,
+          paddingHorizontal: 9,
           borderRadius: 6,
           backgroundColor: theme.colors.surface2,
         },
         headerButtonText: {
           fontSize: 12,
-          color: theme.colors.foregroundMuted,
+          fontWeight: "500",
+          color: theme.colors.foreground,
+        },
+        searchRow: {
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 8,
         },
         searchBox: {
+          flex: 1,
           backgroundColor: theme.colors.surface1,
           borderRadius: 8,
-          paddingHorizontal: 10,
-          paddingVertical: 6,
-          fontSize: 13,
+          paddingHorizontal: 12,
+          paddingVertical: 8,
+          fontSize: 14,
           color: theme.colors.foreground,
           borderWidth: StyleSheet.hairlineWidth,
           borderColor: theme.colors.border,
+          minHeight: 40,
         },
         filterRow: {
           flexDirection: "row",
           gap: 6,
         },
         filterTab: {
-          paddingHorizontal: 8,
-          paddingVertical: 4,
-          borderRadius: 6,
+          paddingHorizontal: 10,
+          paddingVertical: 6,
+          borderRadius: 8,
           backgroundColor: theme.colors.surface1,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: theme.colors.border,
         },
         filterTabActive: {
           backgroundColor: theme.colors.accent,
+          borderColor: theme.colors.accent,
         },
         filterTabText: {
-          fontSize: 11,
+          fontSize: 12,
           color: theme.colors.foregroundMuted,
         },
         filterTabTextActive: {
           color: theme.colors.accentForeground,
-          fontWeight: "500",
+          fontWeight: "600",
         },
-        scrollList: {
-          flex: 1,
-        },
-        listContent: {
+        chipsSection: {
+          flexDirection: "row",
+          flexWrap: "wrap",
           gap: 6,
           paddingVertical: 2,
+        },
+        chipButton: {
+          flexDirection: "row",
+          alignItems: "center",
+          paddingHorizontal: 12,
+          paddingVertical: 7,
+          borderRadius: 16,
+          backgroundColor: theme.colors.surface2,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+        },
+        chipButtonAi: {
+          borderColor: theme.colors.accent,
+          backgroundColor: theme.colors.surface1,
+        },
+        chipButtonText: {
+          fontSize: 13,
+          fontWeight: "600",
+          color: theme.colors.foreground,
+        },
+        desktopScrollList: {
+          maxHeight: 280,
+        },
+        listContent: {
+          gap: 8,
+          paddingVertical: 4,
         },
         emptyContainer: {
           padding: 24,
@@ -225,11 +261,12 @@ export const QuickPromptsPopover = memo(function QuickPromptsPopover({
           color: theme.colors.foregroundMuted,
         },
         itemCard: {
-          padding: 10,
-          borderRadius: 8,
+          padding: 12,
+          borderRadius: 10,
           backgroundColor: theme.colors.surface1,
-          borderWidth: StyleSheet.hairlineWidth,
+          borderWidth: 1,
           borderColor: theme.colors.border,
+          minHeight: 48,
           gap: 4,
         },
         itemCardAi: {
@@ -241,7 +278,7 @@ export const QuickPromptsPopover = memo(function QuickPromptsPopover({
           justifyContent: "space-between",
         },
         itemLabel: {
-          fontSize: 13,
+          fontSize: 14,
           fontWeight: "600",
           color: theme.colors.foreground,
           flex: 1,
@@ -250,7 +287,7 @@ export const QuickPromptsPopover = memo(function QuickPromptsPopover({
           fontSize: 11,
           color: theme.colors.foregroundMuted,
           backgroundColor: theme.colors.surface2,
-          paddingHorizontal: 5,
+          paddingHorizontal: 6,
           paddingVertical: 2,
           borderRadius: 4,
         },
@@ -260,7 +297,7 @@ export const QuickPromptsPopover = memo(function QuickPromptsPopover({
           lineHeight: 16,
         },
         footer: {
-          paddingTop: 4,
+          paddingTop: 6,
           borderTopWidth: StyleSheet.hairlineWidth,
           borderTopColor: theme.colors.border,
           flexDirection: "row",
@@ -275,42 +312,64 @@ export const QuickPromptsPopover = memo(function QuickPromptsPopover({
     [theme, layout.compact],
   );
 
+  const ListContainer = layout.compact ? View : ScrollView;
+  const listContainerProps = layout.compact
+    ? { style: styles.listContent }
+    : { style: styles.desktopScrollList, contentContainerStyle: styles.listContent };
+
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>✨ Quick Prompts</Text>
-        <View style={styles.headerActions}>
-          {onOpenSettings ? (
+      {!layout.compact ? (
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>✨ Quick Prompts</Text>
+          <View style={styles.headerActions}>
+            {onOpenSettings ? (
+              <Pressable
+                style={styles.headerButton}
+                accessibilityRole="button"
+                accessibilityLabel="Manage Prompts"
+                onPress={() => {
+                  onOpenSettings();
+                  close();
+                }}
+              >
+                <Text style={styles.headerButtonText}>⚙️ 管理</Text>
+              </Pressable>
+            ) : null}
             <Pressable
               style={styles.headerButton}
               accessibilityRole="button"
-              accessibilityLabel="Manage Prompts"
-              onPress={() => {
-                onOpenSettings();
-                close();
-              }}
+              accessibilityLabel="Close"
+              onPress={close}
             >
-              <Text style={styles.headerButtonText}>⚙️ 管理</Text>
+              <Text style={styles.headerButtonText}>✕</Text>
             </Pressable>
-          ) : null}
+          </View>
+        </View>
+      ) : null}
+
+      <View style={styles.searchRow}>
+        <TextInput
+          style={styles.searchBox}
+          placeholder="搜索快捷指令..."
+          placeholderTextColor={theme.colors.foregroundMuted}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+        />
+        {layout.compact && onOpenSettings ? (
           <Pressable
             style={styles.headerButton}
             accessibilityRole="button"
-            accessibilityLabel="Close"
-            onPress={close}
+            accessibilityLabel="Manage Prompts"
+            onPress={() => {
+              onOpenSettings();
+              close();
+            }}
           >
-            <Text style={styles.headerButtonText}>✕</Text>
+            <Text style={styles.headerButtonText}>⚙️ 管理</Text>
           </Pressable>
-        </View>
+        ) : null}
       </View>
-
-      <TextInput
-        style={styles.searchBox}
-        placeholder="搜索快捷指令..."
-        placeholderTextColor={theme.colors.foregroundMuted}
-        value={searchQuery}
-        onChangeText={setSearchQuery}
-      />
 
       <View style={styles.filterRow}>
         <Pressable
@@ -349,7 +408,32 @@ export const QuickPromptsPopover = memo(function QuickPromptsPopover({
         </Pressable>
       </View>
 
-      <ScrollView style={styles.scrollList} contentContainerStyle={styles.listContent}>
+      {/* Quick Action Chips: One-tap button pills */}
+      {filteredItems.length > 0 && !searchQuery ? (
+        <View style={styles.chipsSection}>
+          {filteredItems.map((item) => (
+            <Pressable
+              key={`chip-${item.id}`}
+              testID={`quick-prompt-chip-${item.id}`}
+              style={[styles.chipButton, item.triggerType === "ephemeral" && styles.chipButtonAi]}
+              accessibilityRole="button"
+              accessibilityLabel={item.label}
+              onPress={() => handleSelectPrompt(item)}
+            >
+              <Text style={styles.chipButtonText}>
+                {item.triggerType === "ephemeral"
+                  ? "✨ "
+                  : item.triggerType === "rule"
+                    ? "⚡ "
+                    : ""}
+                {item.label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+
+      <ListContainer {...(listContainerProps as any)}>
         {isLoading ? (
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyText}>正在加载提示词…</Text>
@@ -389,7 +473,7 @@ export const QuickPromptsPopover = memo(function QuickPromptsPopover({
             </Pressable>
           ))
         )}
-      </ScrollView>
+      </ListContainer>
 
       <View style={styles.footer}>
         <Text style={styles.footerText}>点击即发 · 或在输入框输入 /快捷键</Text>
