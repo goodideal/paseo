@@ -82,7 +82,6 @@ import Animated, {
 } from "react-native-reanimated";
 import Svg, { Defs, Rect, Stop, LinearGradient as SvgLinearGradient } from "react-native-svg";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { PluginTurnActions } from "@/plugins";
 import { capAssistantMessageForRender, getUtf8ByteLength } from "./assistant-message-render-limit";
 import { getTurnDurationLabel } from "./assistant-turn-footer-label";
 import { getCompactionMarkerLabel } from "./message-compaction-label";
@@ -554,15 +553,9 @@ interface AssistantTurnFooterProps {
   completedAt?: Date;
   durationMs?: number | null;
   onFork?: (target: AssistantForkTarget) => Promise<void> | void;
-  agentId?: string;
-  turnId?: string;
-  serverId?: string;
 }
 
 const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
-  wrapper: {
-    width: "100%",
-  },
   container: {
     flexDirection: "row",
     alignItems: "center",
@@ -604,9 +597,6 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   completedAt,
   durationMs,
   onFork,
-  agentId,
-  turnId,
-  serverId,
 }: AssistantTurnFooterProps) {
   const { t } = useTranslation();
   const [hovered, setHovered] = useState(false);
@@ -658,56 +648,34 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   const canFork = Boolean(onFork);
 
   return (
-    <View style={assistantTurnFooterStylesheet.wrapper}>
-      {turnId && agentId && getContent ? (
-        <PluginTurnActions
-          turnId={turnId}
-          agentId={agentId}
-          serverId={serverId}
-          type="card"
+    <View style={assistantTurnFooterStylesheet.container}>
+      {getContent ? (
+        <TurnCopyButton
           getContent={getContent}
+          containerStyle={assistantTurnFooterStylesheet.copyButton}
         />
       ) : null}
-      <View style={assistantTurnFooterStylesheet.container}>
-        {getContent ? (
-          <TurnCopyButton
-            getContent={getContent}
-            containerStyle={assistantTurnFooterStylesheet.copyButton}
-          />
-        ) : null}
-        {agentId && turnId && getContent ? (
-          <PluginTurnActions
-            turnId={turnId}
-            agentId={agentId}
-            serverId={serverId}
-            type="button"
-            getContent={getContent}
-          />
-        ) : null}
-        {canFork ? <AssistantForkMenu onFork={handleFork} /> : null}
-        {primaryLabel ? (
-          <Pressable
-            onPress={handlePress}
-            onHoverIn={handleHoverIn}
-            onHoverOut={handleHoverOut}
-            accessibilityRole={canSwap ? "button" : undefined}
-            accessibilityLabel={
-              canSwap ? `${durationLabel}, ended ${timestampLabel}` : primaryLabel
-            }
-          >
-            <View style={assistantTurnFooterStylesheet.labelWrapper}>
-              {/* Sizer reserves space for whichever label is longer so the
+      {canFork ? <AssistantForkMenu onFork={handleFork} /> : null}
+      {primaryLabel ? (
+        <Pressable
+          onPress={handlePress}
+          onHoverIn={handleHoverIn}
+          onHoverOut={handleHoverOut}
+          accessibilityRole={canSwap ? "button" : undefined}
+          accessibilityLabel={canSwap ? `${durationLabel}, ended ${timestampLabel}` : primaryLabel}
+        >
+          <View style={assistantTurnFooterStylesheet.labelWrapper}>
+            {/* Sizer reserves space for whichever label is longer so the
                 container width is stable across hover transitions. */}
-              <Text style={assistantTurnFooterStylesheet.labelSizer} aria-hidden>
-                {primaryLabel.length >= timestampLabel.length ? primaryLabel : timestampLabel}
-              </Text>
-              <Text style={assistantTurnFooterStylesheet.labelOverlay}>
-                {showTimestamp ? timestampLabel : primaryLabel}
-              </Text>
-            </View>
-          </Pressable>
-        ) : null}
-      </View>
+            <Text style={assistantTurnFooterStylesheet.labelSizer} aria-hidden>
+              {primaryLabel.length >= timestampLabel.length ? primaryLabel : timestampLabel}
+            </Text>
+            <Text style={assistantTurnFooterStylesheet.labelOverlay}>
+              {showTimestamp ? timestampLabel : primaryLabel}
+            </Text>
+          </View>
+        </Pressable>
+      ) : null}
     </View>
   );
 });

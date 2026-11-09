@@ -43,7 +43,6 @@ function plugin(input: {
       },
     ],
     timelineRenderers: [],
-    turnActions: [],
   };
 }
 

@@ -3,7 +3,8 @@ import React from "react";
 import contribute from "../index.client.js";
 import type {
   PluginClientContext,
-  PluginTurnActionContribution,
+  PluginComposerPillContribution,
+  PluginButtonRegistration,
   PluginSettingsScreenContribution,
 } from "@getpaseo/plugin/client";
 import { useAudioBriefStore } from "../client/audio-brief-store.js";
@@ -15,10 +16,23 @@ describe("Audio Brief Client", () => {
     useAudioBriefStore.getState().stopBrief();
   });
 
-  it("registers settings screen, button, and card turn actions with cleanups", () => {
-    const actions: PluginTurnActionContribution[] = [];
+  it("registers settings screen, command center item, and composer pill with cleanups", () => {
+    const pills: PluginComposerPillContribution[] = [];
     const screens: PluginSettingsScreenContribution[] = [];
     const client: Partial<PluginClientContext> = {
+      paseo: {
+        agents: {
+          list: vi.fn().mockResolvedValue({
+            subscription: {
+              subscribe: vi.fn(({ snapshot }) => {
+                snapshot({
+                  entries: [{ agent: { id: "agent-1", workspaceId: "ws-1" } }],
+                });
+              }),
+            },
+          }),
+        },
+      } as any,
       addSettingsScreen: vi.fn((screen: PluginSettingsScreenContribution) => {
         screens.push(screen);
         return () => {
@@ -26,26 +40,39 @@ describe("Audio Brief Client", () => {
           if (idx !== -1) screens.splice(idx, 1);
         };
       }),
-      addTurnAction: vi.fn((action: PluginTurnActionContribution) => {
-        actions.push(action);
-        return () => {
-          const idx = actions.indexOf(action);
-          if (idx !== -1) actions.splice(idx, 1);
-        };
-      }),
+      addComposerPill: vi.fn(
+        (contribution: PluginComposerPillContribution): PluginButtonRegistration => {
+          pills.push(contribution);
+          return {
+            update: vi.fn(),
+            remove: vi.fn(() => {
+              const idx = pills.indexOf(contribution);
+              if (idx !== -1) pills.splice(idx, 1);
+            }),
+          };
+        },
+      ),
     };
 
     const cleanup = contribute(client as PluginClientContext);
-    expect(client.addSettingsScreen).toHaveBeenCalledTimes(1);
-    expect(screens[0]?.id).toBe("audio-brief-settings");
-    expect(screens[0]?.icon).toBe("Volume2");
-    expect(client.addTurnAction).toHaveBeenCalledTimes(2);
-    expect(actions.find((a) => a.type === "button")?.id).toBe("audio-brief-button");
-    expect(actions.find((a) => a.type === "card")?.id).toBe("audio-brief-card");
 
-    cleanup();
-    expect(screens).toHaveLength(0);
-    expect(actions).toHaveLength(0);
+    return new Promise<void>((resolve) => {
+      setTimeout(() => {
+        expect(client.addSettingsScreen).toHaveBeenCalledTimes(1);
+        expect(screens[0]?.id).toBe("audio-brief-settings");
+        expect(screens[0]?.icon).toBe("Volume2");
+
+        expect(client.addComposerPill).toHaveBeenCalled();
+        expect(pills.length).toBeGreaterThan(0);
+        expect(pills[0].id).toBe("audio-brief");
+        expect(pills[0].button.behavior.kind).toBe("popover");
+
+        cleanup();
+        expect(screens).toHaveLength(0);
+        expect(pills).toHaveLength(0);
+        resolve();
+      }, 15);
+    });
   });
 
   it("handles audio brief store state transitions", async () => {

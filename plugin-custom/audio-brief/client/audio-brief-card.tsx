@@ -1,9 +1,16 @@
 import React, { memo, useCallback, useState } from "react";
 import { View, Text, Pressable } from "react-native";
-import type { PluginTurnActionProps } from "@getpaseo/plugin/client";
 import { useAudioBriefStore } from "./audio-brief-store.js";
 
-export const AudioBriefCard = memo(function AudioBriefCard({ turnId }: PluginTurnActionProps) {
+export interface AudioBriefCardProps {
+  turnId?: string | null;
+  onClose?: () => void;
+}
+
+export const AudioBriefCard = memo(function AudioBriefCard({
+  turnId,
+  onClose,
+}: AudioBriefCardProps) {
   const currentTurnId = useAudioBriefStore((s) => s.currentTurnId);
   const briefText = useAudioBriefStore((s) => s.briefText);
   const audioBase64 = useAudioBriefStore((s) => s.audioBase64);
@@ -23,7 +30,8 @@ export const AudioBriefCard = memo(function AudioBriefCard({ turnId }: PluginTur
   const handleClose = useCallback(() => {
     stopBrief();
     setClosed(true);
-  }, [stopBrief]);
+    onClose?.();
+  }, [stopBrief, onClose]);
 
   const handleTogglePlayback = useCallback(() => {
     if (status === "playing") {

@@ -46,7 +46,6 @@ function installation(invoked: string[]): InstalledPlugin {
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
-    turnActions: [],
   };
 }
 

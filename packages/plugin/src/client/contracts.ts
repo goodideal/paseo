@@ -171,18 +171,6 @@ export interface PluginClientOpenPanelOptions extends PluginOpenPanelOptions {
   agentId?: string | null;
 }
 
-export interface PluginTurnActionProps extends PluginNavigableHostProps {
-  turnId: string;
-  agentId: string;
-}
-
-export interface PluginTurnActionContribution {
-  id: string;
-  type: "button" | "card";
-  order?: number;
-  Component: ComponentType<PluginTurnActionProps>;
-}
-
 // COMPAT(pluginSidebarAliases): added in v0.11.0, remove after 2027-03-29
 interface PluginClientContextAliases {
   /** @deprecated Use `addScreen`. */
@@ -214,7 +202,6 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   addAttachmentSource(contribution: PluginAttachmentSourceContribution<PluginText>): PluginCleanup;
   addTheme(contribution: PluginThemeContribution<PluginText>): PluginCleanup;
   addFilePanel(contribution: PluginFilePanelContribution<PluginText>): PluginCleanup;
-  addTurnAction(contribution: PluginTurnActionContribution): PluginCleanup;
   addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(
     contribution: PluginTimelineTransformerContribution<ItemType>,
   ): PluginCleanup;

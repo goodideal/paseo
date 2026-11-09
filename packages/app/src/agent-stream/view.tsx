@@ -171,8 +171,6 @@ function renderStreamItemWithTurnFooter(input: {
   strategy: TurnContentStrategy;
   supportsTimelineCursor: boolean;
   onForkAssistantTurn?: AssistantTurnForkHandler;
-  agentId?: string;
-  serverId?: string;
 }): ReactNode {
   if (!input.content) {
     return null;
@@ -187,8 +185,6 @@ function renderStreamItemWithTurnFooter(input: {
       startIndex={footerHost.startIndex}
       supportsTimelineCursor={input.supportsTimelineCursor}
       onForkAssistantTurn={input.onForkAssistantTurn}
-      agentId={input.agentId}
-      serverId={input.serverId}
     />
   ) : null;
   const content = (
@@ -994,17 +990,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           strategy: streamRenderStrategy,
           supportsTimelineCursor: supportsAgentForkContextCursor,
           onForkAssistantTurn: readOnly ? undefined : handleForkAssistantTurn,
-          agentId,
-          serverId: resolvedServerId,
         });
       },
       [
-        agentId,
         getTurnIndent,
         handleForkAssistantTurn,
         readOnly,
         renderStreamItemContent,
-        resolvedServerId,
         streamRenderStrategy,
         supportsAgentForkContextCursor,
       ],
@@ -1034,24 +1026,19 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             supportsTimelineCursor={supportsAgentForkContextCursor}
             onForkAssistantTurn={readOnly ? undefined : handleForkAssistantTurn}
             onForkInFlightTurn={readOnly ? undefined : handleForkInFlightTurn}
-            agentId={agentId}
-            serverId={resolvedServerId}
           />
         ) : null,
       [
-        agentId,
         handleForkAssistantTurn,
         handleForkInFlightTurn,
         readOnly,
         isTurnActive,
         baseRenderModel.turnTiming.runningStartedAt,
         bottomTurnFooterHost,
-        resolvedServerId,
         streamRenderStrategy,
         supportsAgentForkContextCursor,
       ],
     );
-
     const renderModel = useMemo<AgentStreamRenderModel>(() => {
       return {
         ...baseRenderModel,

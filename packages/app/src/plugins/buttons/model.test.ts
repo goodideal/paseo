@@ -33,7 +33,6 @@ function installation(): InstalledPlugin {
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
-    turnActions: [],
   };
 }
 

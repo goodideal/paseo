@@ -76,13 +76,11 @@ describe("evaluatePluginClientBundle", () => {
         plugin.addSurface("memo-surface", Component);
         plugin.addWorkspacePanel({ id: "memo-panel", title: "Panel", icon: "Blocks", context: "workspace", Component: () => null });
         plugin.addTimelineRenderer({ kind: "memo-timeline", version: 1, schema, Component });
-        plugin.addTurnAction({ id: "memo-action", type: "button", Component });
       `),
     );
     expect(plugin.surfaces.map((s) => s.id)).toEqual(["memo-surface"]);
     expect(plugin.workspacePanels.map((p) => p.id)).toEqual(["memo-panel"]);
     expect(plugin.timelineRenderers.map((r) => r.kind)).toEqual(["memo-timeline"]);
-    expect(plugin.turnActions.map((t) => t.id)).toEqual(["memo-action"]);
   });
 
   it("returns idempotent removers for every client registration", () => {
@@ -879,24 +877,6 @@ it("binds imported getters to each originating installation across delayed callb
   ]);
   await first.cleanup();
   await second.cleanup();
-});
-
-it("registers and cleans up composer accessories and turn actions", async () => {
-  const source = bundle(`
-    plugin.addTurnAction({
-      id: "audio-brief",
-      type: "button",
-      order: 2,
-      Component: () => null,
-    });
-  `);
-  const evaluated = runPluginClientBundle("test-plugin", source, runtime);
-  expect(evaluated.turnActions).toHaveLength(1);
-  expect(evaluated.turnActions[0].id).toBe("audio-brief");
-  expect(evaluated.turnActions[0].type).toBe("button");
-
-  await evaluated.cleanup();
-  expect(evaluated.turnActions).toHaveLength(0);
 });
 
 describe("file panels", () => {

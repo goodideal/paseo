@@ -24,7 +24,6 @@ import {
   type PluginSurfaceProps,
   type PluginTimelineRendererContribution,
   type PluginTimelineTransformerContribution,
-  type PluginTurnActionContribution,
   type PluginButtonRegistration,
 } from "@getpaseo/plugin/client";
 import type {
@@ -142,7 +141,6 @@ export function runPluginClientBundle(
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
-    turnActions: [],
   };
   const surfaceIds = new Set<string>();
   const settingsScreenIds = new Set<string>();
@@ -158,7 +156,6 @@ export function runPluginClientBundle(
   const themeIds = new Set<string>();
   const timelineTransformerIds = new Set<string>();
   const timelineRendererIds = new Set<string>();
-  const turnActionIds = new Set<string>();
   const removals = new Set<PluginCleanup>();
   let setupComplete = false;
   let stopped = false;
@@ -506,24 +503,6 @@ export function runPluginClientBundle(
         timelineRendererIds.delete(rendererId),
       );
     },
-    addTurnAction(contribution: PluginTurnActionContribution) {
-      const normalizedId = requireId(contribution.id, "turn action id");
-      if (turnActionIds.has(normalizedId)) {
-        throw new Error(`Duplicate turn action id: ${normalizedId}`);
-      }
-      if (!isComponent(contribution.Component)) {
-        throw new Error(`Turn action ${normalizedId} is not a component`);
-      }
-      if (contribution.type !== "button" && contribution.type !== "card") {
-        throw new Error(
-          `Turn action ${normalizedId} has invalid type: ${String(contribution.type)}`,
-        );
-      }
-      turnActionIds.add(normalizedId);
-      return register(collector.turnActions, { ...contribution, id: normalizedId }, () =>
-        turnActionIds.delete(normalizedId),
-      );
-    },
     addComposerPill(contribution) {
       if (stopped) throw new Error("Plugin has stopped");
       return trackButton(runtime.addComposerPill(contribution));
@@ -619,6 +598,5 @@ export function runPluginClientBundle(
     themes: collector.themes,
     timelineTransformers: collector.timelineTransformers,
     timelineRenderers: collector.timelineRenderers,
-    turnActions: collector.turnActions,
   };
 }

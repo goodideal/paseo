@@ -11,7 +11,7 @@
 | **`visual-crawler-auto-fix`** |       ✅ **完全可用**       |       ✅ **完全可用**        | `addWorkspacePanel`                                                                           | 基于官方标准 API，工作区面板操作两端完全一致。                                                                                                                                   |
 | **`web-inspector`**           |       ✅ **完全可用**       |       ✅ **完全可用**        | `addWorkspacePanel`<br>`addSlashCommand`<br>`addAttachmentSource`<br>`addSettingsScreen`      | 基于官方标准 API，诊断面板、附件源和认证设置页两端完全一致。                                                                                                                     |
 | **`quick-prompts`**           |       ✅ **完全可用**       |       ✅ **完全可用**        | `addComposerPill`<br>`addSettingsScreen`<br>`addCommandCenterItem`<br>`addSlashCommand`       | 纯官方原生扩展：通过输入框胶囊轨道（Composer Track）上的 `✨ Quick Prompts` Pill 呼出快捷提示词面板，支持实时搜索、AI推荐、规则匹配与一键发送，100% 兼容官方标准环境。           |
-| **`audio-brief`**             |  ⚪ **静默降级**（不可见）  |       ✅ **完全可用**        | `addTurnAction` _(Custom)_                                                                    | 依赖 Custom 客户端特有的 `Turn Action` 插槽。标准版客户端带有运行时类型守卫，不报错但 UI 上不展示语音播放按钮与卡片。                                                            |
+| **`audio-brief`**             |       ✅ **完全可用**       |       ✅ **完全可用**        | `addComposerPill`<br>`addSettingsScreen`<br>`addCommandCenterItem`                            | 纯官方原生扩展：通过输入框胶囊轨道上的 `🔊 Audio Brief` 按钮呼出语音摘要面板，支持一键播报最新助手轮次与自定义发音配置，100% 兼容官方标准环境。                                  |
 
 ---
 
@@ -49,8 +49,7 @@
 
 ### 6. `audio-brief` (智能回合语音摘要)
 
-- **标准版**：代码中包含 `if (typeof client.addTurnAction === "function")` 检查，旧客户端跳过注册，保持静默，不会导致插件报错。
-- **Custom 版**：Assistant 消息气泡底栏展示语音播报按钮（`TurnAudioBriefButton`）及摘要展开卡片（`AudioBriefCard`）。
+- **能力定位**：通过官方原生的 `client.addComposerPill` 在输入框轨道注册 `🔊 Audio Brief` 快捷胶囊，点击唤出语音播报面板，一键总结并朗读最近一轮 Assistant 回复，支持配置 TTS 服务商、Prompt 摘要长度及发音人。
 
 ---
 
@@ -59,4 +58,4 @@
 1. **组件传递函数化包装 (Component Wrapping)**：
    插件导出给 Paseo 扩展槽的组件（`Component`）应统一使用标准函数包裹（如 `(props) => <MyComponent {...props} />`），避免旧版本客户端因类型仅允许 `function` 而将 `React.memo` / `React.forwardRef` 误判为非组件。
 2. **渐进增强守卫 (Progressive Enhancement)**：
-   若使用非官方基线扩展槽（如 `addComposerAccessory`、`addTurnAction`），必须添加 `typeof client.<method> === "function"` 判断，确保插件在标准版客户端上优雅降级而不崩溃。
+   若使用非官方扩展槽，必须添加 `typeof client.<method> === "function"` 判断，确保插件在标准版客户端上优雅降级而不崩溃。
