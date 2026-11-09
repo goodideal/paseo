@@ -123,7 +123,6 @@ function plugin(onAgentSelect: AgentCommandItem["onSelect"]): InstalledPlugin {
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
-    composerAccessories: [],
     turnActions: [],
   };
 }

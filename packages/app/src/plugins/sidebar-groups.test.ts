@@ -44,7 +44,6 @@ function installed(
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
-    composerAccessories: [],
     turnActions: [],
   };
 }

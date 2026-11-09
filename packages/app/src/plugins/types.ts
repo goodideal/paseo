@@ -12,7 +12,6 @@ import type {
   PluginCommandCenterItemContribution as SDKPluginCommandCenterItemContribution,
   PluginClientSlashCommandContribution as SDKPluginClientSlashCommandContribution,
   PluginComposerPillContribution as SDKPluginComposerPillContribution,
-  PluginComposerAccessoryContribution,
   PluginTurnActionContribution,
   PluginSidebarContribution as SDKPluginSidebarContribution,
   PluginSidebarItemContribution as SDKPluginSidebarItemContribution,
@@ -62,7 +61,6 @@ export interface EvaluatedPlugin {
   themes: PluginThemeContribution[];
   timelineTransformers: PluginTimelineTransformerContribution[];
   timelineRenderers: PluginTimelineRendererContribution[];
-  composerAccessories: PluginComposerAccessoryContribution[];
   turnActions: PluginTurnActionContribution[];
 }
 

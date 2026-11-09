@@ -111,7 +111,6 @@ import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { AutocompletePopover } from "@/components/ui/autocomplete-popover";
 import type { AutocompleteOption } from "@/components/ui/autocomplete";
 import { useAgentAutocomplete } from "@/hooks/use-agent-autocomplete";
-import { PluginComposerAccessories } from "@/plugins";
 import { usePluginClientSlashCommands } from "@/plugins/client-slash-commands";
 import {
   executePluginClientSlashCommand,
@@ -2429,26 +2428,6 @@ function ComposerContentImpl({
     ? t("composer.github.searching")
     : t("composer.github.noResults");
 
-  const composerApi = useMemo(
-    () => ({
-      insertText: (text: string) => {
-        const current = textSource.getSnapshot();
-        const nextText = current.trim().length > 0 ? `${current}\n${text}` : text;
-        replaceUserInput(nextText, { start: nextText.length, end: nextText.length });
-        messageInputRef.current?.focus();
-      },
-      submitText: (text: string) => {
-        handleSubmit({
-          text,
-          attachments: [],
-          cwd,
-        });
-      },
-      isSubmitDisabled,
-    }),
-    [cwd, handleSubmit, isSubmitDisabled, replaceUserInput, textSource],
-  );
-
   return (
     <>
       <ComposerKeyboardRegistration
@@ -2472,13 +2451,6 @@ function ComposerContentImpl({
           <View style={inputAreaContentStyle}>
             {isFullscreen ? null : queueList}
             {!isFullscreen && sendErrorNode}
-
-            <PluginComposerAccessories
-              workspaceId={workspaceId}
-              agentId={agentId}
-              serverId={serverId}
-              composerApi={composerApi}
-            />
 
             <ComposerAutocompleteBinding
               text={textSource}

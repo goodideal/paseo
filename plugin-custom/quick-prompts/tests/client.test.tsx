@@ -3,20 +3,39 @@ import React from "react";
 import contribute from "../index.client.js";
 import type {
   PluginClientContext,
-  PluginComposerAccessoryContribution,
+  PluginComposerPillContribution,
+  PluginButtonRegistration,
   PluginSettingsScreenContribution,
   PluginCommandCenterItemContribution,
   PluginClientSlashCommandContribution,
 } from "@getpaseo/plugin/client";
 
 describe("Quick Prompts Client Entrypoint", () => {
-  it("registers composer accessory, settings screen, command center item, and slash commands", () => {
-    const accessories: PluginComposerAccessoryContribution[] = [];
+  it("registers composer pill, settings screen, command center item, and slash commands", () => {
+    const pills: PluginComposerPillContribution[] = [];
     const settingsScreens: PluginSettingsScreenContribution[] = [];
     const commandCenterItems: PluginCommandCenterItemContribution[] = [];
     const slashCommands: PluginClientSlashCommandContribution[] = [];
 
+    let subscriberCallback: ((msg: any) => void) | null = null;
+    let snapshotCallback: ((snapshot: any) => void) | null = null;
+
     const client: Partial<PluginClientContext> = {
+      paseo: {
+        agents: {
+          list: vi.fn().mockResolvedValue({
+            subscription: {
+              subscribe: vi.fn(({ snapshot, update }) => {
+                snapshotCallback = snapshot;
+                subscriberCallback = update;
+                snapshot({
+                  entries: [{ agent: { id: "agent-1", workspaceId: "ws-1" } }],
+                });
+              }),
+            },
+          }),
+        },
+      } as any,
       rpc: vi.fn().mockResolvedValue({
         items: [
           { shortcut: "continue", content: "c", enabled: true },
@@ -26,13 +45,18 @@ describe("Quick Prompts Client Entrypoint", () => {
           { shortcut: "yes", content: "y", enabled: true },
         ],
       }),
-      addComposerAccessory: vi.fn((contribution: PluginComposerAccessoryContribution) => {
-        accessories.push(contribution);
-        return () => {
-          const idx = accessories.indexOf(contribution);
-          if (idx !== -1) accessories.splice(idx, 1);
-        };
-      }),
+      addComposerPill: vi.fn(
+        (contribution: PluginComposerPillContribution): PluginButtonRegistration => {
+          pills.push(contribution);
+          return {
+            update: vi.fn(),
+            remove: vi.fn(() => {
+              const idx = pills.indexOf(contribution);
+              if (idx !== -1) pills.splice(idx, 1);
+            }),
+          };
+        },
+      ),
       addSettingsScreen: vi.fn((contribution: PluginSettingsScreenContribution) => {
         settingsScreens.push(contribution);
         return () => {
@@ -60,9 +84,10 @@ describe("Quick Prompts Client Entrypoint", () => {
 
     return new Promise<void>((resolve) => {
       setTimeout(() => {
-        expect(client.addComposerAccessory).toHaveBeenCalledTimes(1);
-        expect(accessories).toHaveLength(1);
-        expect(accessories[0].id).toBe("quick-prompts");
+        expect(client.addComposerPill).toHaveBeenCalled();
+        expect(pills.length).toBeGreaterThan(0);
+        expect(pills[0].id).toBe("quick-prompts");
+        expect(pills[0].button.behavior.kind).toBe("popover");
 
         expect(client.addSettingsScreen).toHaveBeenCalledTimes(1);
         expect(settingsScreens).toHaveLength(1);
@@ -82,12 +107,12 @@ describe("Quick Prompts Client Entrypoint", () => {
         expect(commandNames).toContain("yes");
 
         cleanup();
-        expect(accessories).toHaveLength(0);
+        expect(pills).toHaveLength(0);
         expect(settingsScreens).toHaveLength(0);
         expect(commandCenterItems).toHaveLength(0);
         expect(slashCommands).toHaveLength(0);
         resolve();
-      }, 10);
+      }, 15);
     });
   });
 });

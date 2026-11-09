@@ -171,17 +171,6 @@ export interface PluginClientOpenPanelOptions extends PluginOpenPanelOptions {
   agentId?: string | null;
 }
 
-export interface PluginComposerAccessoryProps extends PluginNavigableHostProps {
-  workspaceId: string;
-  agentId?: string | null;
-}
-
-export interface PluginComposerAccessoryContribution {
-  id: string;
-  order?: number;
-  Component: ComponentType<PluginComposerAccessoryProps>;
-}
-
 export interface PluginTurnActionProps extends PluginNavigableHostProps {
   turnId: string;
   agentId: string;
@@ -225,7 +214,6 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   addAttachmentSource(contribution: PluginAttachmentSourceContribution<PluginText>): PluginCleanup;
   addTheme(contribution: PluginThemeContribution<PluginText>): PluginCleanup;
   addFilePanel(contribution: PluginFilePanelContribution<PluginText>): PluginCleanup;
-  addComposerAccessory(contribution: PluginComposerAccessoryContribution): PluginCleanup;
   addTurnAction(contribution: PluginTurnActionContribution): PluginCleanup;
   addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(
     contribution: PluginTimelineTransformerContribution<ItemType>,

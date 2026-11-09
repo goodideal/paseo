@@ -132,7 +132,6 @@ export class PluginRegistry {
           themes: [],
           timelineTransformers: [],
           timelineRenderers: [],
-          composerAccessories: [],
           turnActions: [],
         };
         const unsubscribeTranslations = installation.i18n.subscribe(() => this.publish());

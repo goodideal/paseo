@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { executeQuickPrompt } from "../client/prompt-executor.js";
-import type { ComposerApi } from "@getpaseo/plugin/client";
 import type { PaseoApi } from "@getpaseo/client";
 import type { QuickPromptItem } from "../shared/contracts.js";
 
@@ -17,107 +16,102 @@ function item(overrides: Partial<QuickPromptItem> = {}): QuickPromptItem {
   };
 }
 
-function makeComposer(): ComposerApi & {
-  submitText: ReturnType<typeof vi.fn>;
-  insertText: ReturnType<typeof vi.fn>;
-} {
-  const submitText = vi.fn();
-  const insertText = vi.fn();
-  return { submitText, insertText };
-}
-
-function makePaseo(setModelImpl: () => Promise<void>): PaseoApi & { agents: any } {
+function makePaseo(
+  setModelImpl: () => Promise<void> = async () => {},
+  sendImpl: (text: string) => Promise<void> = async () => {},
+) {
   const setModel = vi.fn(setModelImpl);
+  const send = vi.fn(sendImpl);
+  const ref = vi.fn(() => ({ setModel, send }));
   return {
-    agents: {
-      ref: vi.fn(() => ({ setModel })),
-    },
-  } as any;
+    agents: { ref },
+    setModel,
+    send,
+    ref,
+  };
 }
 
 describe("executeQuickPrompt", () => {
-  it("submits directly when no target model", async () => {
-    const composer = makeComposer();
-    const paseo = makePaseo(async () => {});
+  it("submits directly through paseo.agents.ref(agentId).send when no target model", async () => {
+    const paseo = makePaseo();
     const result = await executeQuickPrompt({
       item: item(),
       agentId: "agent-1",
-      paseo,
-      composerApi: composer,
+      paseo: paseo as unknown as PaseoApi,
     });
     expect(result).toBe(true);
-    expect(composer.submitText).toHaveBeenCalledWith("Do the thing");
+    expect(paseo.ref).toHaveBeenCalledWith("agent-1");
+    expect(paseo.send).toHaveBeenCalledWith("Do the thing");
   });
 
-  it("switches model before submitting when target model is set", async () => {
-    const composer = makeComposer();
-    const setModel = vi.fn(async () => {});
-    const ref = vi.fn(() => ({ setModel }));
-    const paseo = { agents: { ref } } as any;
+  it("switches model before sending when target model is set", async () => {
+    const paseo = makePaseo();
     const result = await executeQuickPrompt({
       item: item({ targetModelId: "claude-3-7-sonnet" }),
       agentId: "agent-1",
-      paseo,
-      composerApi: composer,
+      paseo: paseo as unknown as PaseoApi,
       availableModelIds: ["claude-3-7-sonnet", "gpt-5.4"],
     });
     expect(result).toBe(true);
-    expect(ref).toHaveBeenCalledWith("agent-1");
-    expect(setModel).toHaveBeenCalledWith("claude-3-7-sonnet");
-    expect(composer.submitText).toHaveBeenCalledWith("Do the thing");
+    expect(paseo.ref).toHaveBeenCalledWith("agent-1");
+    expect(paseo.setModel).toHaveBeenCalledWith("claude-3-7-sonnet");
+    expect(paseo.send).toHaveBeenCalledWith("Do the thing");
   });
 
   it("blocks submission when target model is not available", async () => {
-    const composer = makeComposer();
+    const paseo = makePaseo();
     const onToastError = vi.fn();
-    const setModel = vi.fn(async () => {});
-    const paseo = { agents: { ref: vi.fn(() => ({ setModel })) } } as any;
     const result = await executeQuickPrompt({
       item: item({ targetModelId: "claude-3-7-sonnet" }),
       agentId: "agent-1",
-      paseo,
-      composerApi: composer,
+      paseo: paseo as unknown as PaseoApi,
       availableModelIds: ["gpt-5.4"],
       onToastError,
     });
     expect(result).toBe(false);
-    expect(setModel).not.toHaveBeenCalled();
-    expect(composer.submitText).not.toHaveBeenCalled();
+    expect(paseo.setModel).not.toHaveBeenCalled();
+    expect(paseo.send).not.toHaveBeenCalled();
     expect(onToastError).toHaveBeenCalledTimes(1);
   });
 
   it("blocks submission and toasts when setModel fails", async () => {
-    const composer = makeComposer();
     const onToastError = vi.fn();
-    const setModel = vi.fn(async () => {
+    const paseo = makePaseo(async () => {
       throw new Error("boom");
     });
-    const paseo = { agents: { ref: vi.fn(() => ({ setModel })) } } as any;
     const result = await executeQuickPrompt({
       item: item({ targetModelId: "claude-3-7-sonnet" }),
       agentId: "agent-1",
-      paseo,
-      composerApi: composer,
+      paseo: paseo as unknown as PaseoApi,
       availableModelIds: ["claude-3-7-sonnet"],
       onToastError,
     });
     expect(result).toBe(false);
-    expect(composer.submitText).not.toHaveBeenCalled();
+    expect(paseo.send).not.toHaveBeenCalled();
     expect(onToastError).toHaveBeenCalledTimes(1);
   });
 
-  it("blocks when no agent id or paseo available", async () => {
-    const composer = makeComposer();
+  it("blocks when no agent id or paseo available and no onSendText", async () => {
     const onToastError = vi.fn();
     const result = await executeQuickPrompt({
       item: item({ targetModelId: "claude-3-7-sonnet" }),
       agentId: null,
       paseo: null,
-      composerApi: composer,
       onToastError,
     });
     expect(result).toBe(false);
-    expect(composer.submitText).not.toHaveBeenCalled();
     expect(onToastError).toHaveBeenCalledTimes(1);
+  });
+
+  it("supports onSendText callback if provided", async () => {
+    const onSendText = vi.fn();
+    const result = await executeQuickPrompt({
+      item: item(),
+      agentId: null,
+      paseo: null,
+      onSendText,
+    });
+    expect(result).toBe(true);
+    expect(onSendText).toHaveBeenCalledWith("Do the thing");
   });
 });

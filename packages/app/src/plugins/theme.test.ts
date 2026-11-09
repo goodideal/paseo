@@ -71,7 +71,6 @@ function installed(serverId: string, themes: PluginThemeContribution[]): Install
     themes,
     timelineTransformers: [],
     timelineRenderers: [],
-    composerAccessories: [],
     turnActions: [],
   };
 }

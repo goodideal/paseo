@@ -39,13 +39,10 @@ export type {
   PluginAgentCommandContext,
   PluginCommandCenterItemContribution,
   PluginClientSlashCommandContribution,
-  PluginComposerAccessoryProps,
-  PluginComposerAccessoryContribution,
   PluginTurnActionProps,
   PluginTurnActionContribution,
   SettingsState,
 } from "./contracts.js";
-export { useComposerApi, ComposerApiProvider, type ComposerApi } from "./composer-context.js";
 export { useTurnState, TurnStateProvider, type TurnState } from "./turn-context.js";
 export type {
   PluginButton,

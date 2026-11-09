@@ -63,7 +63,6 @@ function installation(
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
-    composerAccessories: [],
     turnActions: [],
   };
 }

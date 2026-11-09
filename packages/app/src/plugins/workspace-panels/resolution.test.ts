@@ -40,7 +40,6 @@ function installed(): InstalledPlugin {
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
-    composerAccessories: [],
     turnActions: [],
   };
 }

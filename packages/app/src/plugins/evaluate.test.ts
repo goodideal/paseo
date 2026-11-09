@@ -74,16 +74,14 @@ describe("evaluatePluginClientBundle", () => {
         const Component = React.memo(function Comp() { return null; });
         const schema = { safeParse: (data) => ({ success: true, data }) };
         plugin.addSurface("memo-surface", Component);
-        plugin.addWorkspacePanel({ id: "memo-panel", title: "Panel", icon: "Blocks", context: "workspace", Component });
+        plugin.addWorkspacePanel({ id: "memo-panel", title: "Panel", icon: "Blocks", context: "workspace", Component: () => null });
         plugin.addTimelineRenderer({ kind: "memo-timeline", version: 1, schema, Component });
-        plugin.addComposerAccessory({ id: "memo-accessory", order: 0, Component });
         plugin.addTurnAction({ id: "memo-action", type: "button", Component });
       `),
     );
     expect(plugin.surfaces.map((s) => s.id)).toEqual(["memo-surface"]);
     expect(plugin.workspacePanels.map((p) => p.id)).toEqual(["memo-panel"]);
     expect(plugin.timelineRenderers.map((r) => r.kind)).toEqual(["memo-timeline"]);
-    expect(plugin.composerAccessories.map((a) => a.id)).toEqual(["memo-accessory"]);
     expect(plugin.turnActions.map((t) => t.id)).toEqual(["memo-action"]);
   });
 
@@ -885,11 +883,6 @@ it("binds imported getters to each originating installation across delayed callb
 
 it("registers and cleans up composer accessories and turn actions", async () => {
   const source = bundle(`
-    plugin.addComposerAccessory({
-      id: "quick-prompts",
-      order: 1,
-      Component: () => null,
-    });
     plugin.addTurnAction({
       id: "audio-brief",
       type: "button",
@@ -898,16 +891,11 @@ it("registers and cleans up composer accessories and turn actions", async () => 
     });
   `);
   const evaluated = runPluginClientBundle("test-plugin", source, runtime);
-  expect(evaluated.composerAccessories).toHaveLength(1);
-  expect(evaluated.composerAccessories[0].id).toBe("quick-prompts");
-  expect(evaluated.composerAccessories[0].order).toBe(1);
-
   expect(evaluated.turnActions).toHaveLength(1);
   expect(evaluated.turnActions[0].id).toBe("audio-brief");
   expect(evaluated.turnActions[0].type).toBe("button");
 
   await evaluated.cleanup();
-  expect(evaluated.composerAccessories).toHaveLength(0);
   expect(evaluated.turnActions).toHaveLength(0);
 });
 

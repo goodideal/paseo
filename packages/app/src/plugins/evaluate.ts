@@ -24,7 +24,6 @@ import {
   type PluginSurfaceProps,
   type PluginTimelineRendererContribution,
   type PluginTimelineTransformerContribution,
-  type PluginComposerAccessoryContribution,
   type PluginTurnActionContribution,
   type PluginButtonRegistration,
 } from "@getpaseo/plugin/client";
@@ -143,7 +142,6 @@ export function runPluginClientBundle(
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
-    composerAccessories: [],
     turnActions: [],
   };
   const surfaceIds = new Set<string>();
@@ -160,7 +158,6 @@ export function runPluginClientBundle(
   const themeIds = new Set<string>();
   const timelineTransformerIds = new Set<string>();
   const timelineRendererIds = new Set<string>();
-  const composerAccessoryIds = new Set<string>();
   const turnActionIds = new Set<string>();
   const removals = new Set<PluginCleanup>();
   let setupComplete = false;
@@ -509,19 +506,6 @@ export function runPluginClientBundle(
         timelineRendererIds.delete(rendererId),
       );
     },
-    addComposerAccessory(contribution: PluginComposerAccessoryContribution) {
-      const normalizedId = requireId(contribution.id, "composer accessory id");
-      if (composerAccessoryIds.has(normalizedId)) {
-        throw new Error(`Duplicate composer accessory id: ${normalizedId}`);
-      }
-      if (!isComponent(contribution.Component)) {
-        throw new Error(`Composer accessory ${normalizedId} is not a component`);
-      }
-      composerAccessoryIds.add(normalizedId);
-      return register(collector.composerAccessories, { ...contribution, id: normalizedId }, () =>
-        composerAccessoryIds.delete(normalizedId),
-      );
-    },
     addTurnAction(contribution: PluginTurnActionContribution) {
       const normalizedId = requireId(contribution.id, "turn action id");
       if (turnActionIds.has(normalizedId)) {
@@ -635,7 +619,6 @@ export function runPluginClientBundle(
     themes: collector.themes,
     timelineTransformers: collector.timelineTransformers,
     timelineRenderers: collector.timelineRenderers,
-    composerAccessories: collector.composerAccessories,
     turnActions: collector.turnActions,
   };
 }
