@@ -1,5 +1,5 @@
 import React, { memo, useCallback, useMemo, useState, useEffect } from "react";
-import { View, Text, TextInput, Pressable, ScrollView, StyleSheet } from "react-native";
+import { View, Text, TextInput, Pressable, StyleSheet } from "react-native";
 import type { PluginButtonContentProps } from "@getpaseo/plugin/client";
 import { useAgent, useWorkspace, usePaseo, useSettings } from "@getpaseo/plugin/client";
 import { useToast } from "@getpaseo/plugin/client/react-native";
@@ -143,11 +143,10 @@ export const QuickPromptsPopover = memo(function QuickPromptsPopover({
       StyleSheet.create({
         container: {
           width: layout.compact ? "100%" : 360,
-          maxHeight: layout.compact ? undefined : 520,
           backgroundColor: layout.compact ? "transparent" : theme.colors.surface0,
           borderRadius: layout.compact ? 0 : 12,
           padding: layout.compact ? 2 : 12,
-          gap: 10,
+          gap: 12,
         },
         header: {
           flexDirection: "row",
@@ -222,15 +221,16 @@ export const QuickPromptsPopover = memo(function QuickPromptsPopover({
         chipsSection: {
           flexDirection: "row",
           flexWrap: "wrap",
-          gap: 6,
-          paddingVertical: 2,
+          gap: 8,
+          paddingVertical: 4,
+          minHeight: 44,
         },
         chipButton: {
           flexDirection: "row",
           alignItems: "center",
-          paddingHorizontal: 12,
-          paddingVertical: 7,
-          borderRadius: 16,
+          paddingHorizontal: 14,
+          paddingVertical: 8,
+          borderRadius: 20,
           backgroundColor: theme.colors.surface2,
           borderWidth: 1,
           borderColor: theme.colors.border,
@@ -244,57 +244,15 @@ export const QuickPromptsPopover = memo(function QuickPromptsPopover({
           fontWeight: "600",
           color: theme.colors.foreground,
         },
-        desktopScrollList: {
-          maxHeight: 280,
-        },
-        listContent: {
-          gap: 8,
-          paddingVertical: 4,
-        },
         emptyContainer: {
           padding: 24,
           alignItems: "center",
           justifyContent: "center",
+          width: "100%",
         },
         emptyText: {
           fontSize: 13,
           color: theme.colors.foregroundMuted,
-        },
-        itemCard: {
-          padding: 12,
-          borderRadius: 10,
-          backgroundColor: theme.colors.surface1,
-          borderWidth: 1,
-          borderColor: theme.colors.border,
-          minHeight: 48,
-          gap: 4,
-        },
-        itemCardAi: {
-          borderColor: theme.colors.accent,
-        },
-        itemTopRow: {
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "space-between",
-        },
-        itemLabel: {
-          fontSize: 14,
-          fontWeight: "600",
-          color: theme.colors.foreground,
-          flex: 1,
-        },
-        itemBadge: {
-          fontSize: 11,
-          color: theme.colors.foregroundMuted,
-          backgroundColor: theme.colors.surface2,
-          paddingHorizontal: 6,
-          paddingVertical: 2,
-          borderRadius: 4,
-        },
-        itemContent: {
-          fontSize: 12,
-          color: theme.colors.foregroundMuted,
-          lineHeight: 16,
         },
         footer: {
           paddingTop: 6,
@@ -311,11 +269,6 @@ export const QuickPromptsPopover = memo(function QuickPromptsPopover({
       }),
     [theme, layout.compact],
   );
-
-  const ListContainer = layout.compact ? View : ScrollView;
-  const listContainerProps = layout.compact
-    ? { style: styles.listContent }
-    : { style: styles.desktopScrollList, contentContainerStyle: styles.listContent };
 
   return (
     <View style={styles.container}>
@@ -408,14 +361,26 @@ export const QuickPromptsPopover = memo(function QuickPromptsPopover({
         </Pressable>
       </View>
 
-      {/* Quick Action Chips: One-tap button pills */}
-      {filteredItems.length > 0 && !searchQuery ? (
-        <View style={styles.chipsSection}>
-          {filteredItems.map((item) => (
+      {/* Quick Action Buttons Only: clean, concise, no duplicate card list */}
+      <View style={styles.chipsSection}>
+        {isLoading ? (
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyText}>正在加载提示词…</Text>
+          </View>
+        ) : filteredItems.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyText}>无匹配的快捷指令</Text>
+          </View>
+        ) : (
+          filteredItems.map((item) => (
             <Pressable
-              key={`chip-${item.id}`}
+              key={`btn-${item.id}`}
               testID={`quick-prompt-chip-${item.id}`}
-              style={[styles.chipButton, item.triggerType === "ephemeral" && styles.chipButtonAi]}
+              style={({ pressed }) => [
+                styles.chipButton,
+                item.triggerType === "ephemeral" && styles.chipButtonAi,
+                pressed && { opacity: 0.75 },
+              ]}
               accessibilityRole="button"
               accessibilityLabel={item.label}
               onPress={() => handleSelectPrompt(item)}
@@ -429,54 +394,12 @@ export const QuickPromptsPopover = memo(function QuickPromptsPopover({
                 {item.label}
               </Text>
             </Pressable>
-          ))}
-        </View>
-      ) : null}
-
-      <ListContainer {...(listContainerProps as any)}>
-        {isLoading ? (
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>正在加载提示词…</Text>
-          </View>
-        ) : filteredItems.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>无匹配的快捷指令</Text>
-          </View>
-        ) : (
-          filteredItems.map((item) => (
-            <Pressable
-              key={item.id}
-              testID={`quick-prompt-item-${item.id}`}
-              style={[styles.itemCard, item.triggerType === "ephemeral" && styles.itemCardAi]}
-              accessibilityRole="button"
-              accessibilityLabel={item.label}
-              onPress={() => handleSelectPrompt(item)}
-            >
-              <View style={styles.itemTopRow}>
-                <Text style={styles.itemLabel} numberOfLines={1}>
-                  {item.triggerType === "ephemeral"
-                    ? "✨ "
-                    : item.triggerType === "rule"
-                      ? "⚡ "
-                      : ""}
-                  {item.label}
-                </Text>
-                {item.shortcut ? (
-                  <Text style={styles.itemBadge}>/{item.shortcut}</Text>
-                ) : item.targetModelId ? (
-                  <Text style={styles.itemBadge}>{item.targetModelId}</Text>
-                ) : null}
-              </View>
-              <Text style={styles.itemContent} numberOfLines={2}>
-                {item.content}
-              </Text>
-            </Pressable>
           ))
         )}
-      </ListContainer>
+      </View>
 
       <View style={styles.footer}>
-        <Text style={styles.footerText}>点击即发 · 或在输入框输入 /快捷键</Text>
+        <Text style={styles.footerText}>点击一键发送 · 或在输入框输入 /快捷键</Text>
       </View>
     </View>
   );
