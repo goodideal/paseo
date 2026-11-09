@@ -22,7 +22,7 @@ export default function contribute(client: PluginClientContext) {
       agentId,
       button: {
         title: "Quick Prompts",
-        label: "Quick Prompts",
+        label: "",
         icon: "Sparkles",
         behavior: {
           kind: "popover",

@@ -247,14 +247,14 @@ function ButtonControl({ view }: { view: ButtonView }) {
   const composer = entry.placement === "composer";
   const disabled = button.disabled || entry.pending;
   const expanded = button.behavior.kind !== "action";
+  let label = button.label;
+  if (composer) label = button.label === "" ? undefined : (button.label ?? button.title);
+  else if (props.layout.compact) label = undefined;
   // A chevron marks a button that opens something. Composer pills keep their label on compact and
   // open their surface above, so theirs points up and shows at every width; compact headers drop
-  // the label and the chevron with it.
-  const chevron = expanded && (composer || !props.layout.compact);
+  // the label and the chevron with it. Icon-only buttons omit the chevron.
+  const chevron = expanded && Boolean(label) && (composer || !props.layout.compact);
   const Chevron = composer ? ChevronUp : ChevronDown;
-  let label = button.label;
-  if (composer) label = button.label ?? button.title;
-  else if (props.layout.compact) label = undefined;
   const press = useCallback(() => pressButton(view, []), [view]);
   const setOpen = useCallback(
     (open: boolean) => pluginButtonStore.setOpen(entry.key, open),
@@ -266,11 +266,12 @@ function ButtonControl({ view }: { view: ButtonView }) {
         ? [
             composerPillStyles.body,
             styles.button,
+            !label && styles.iconOnlyPill,
             (hovered || pressed || entry.open) && styles.active,
             disabled && styles.disabled,
           ]
         : headerButtonStyle(props.layout.compact, { hovered, pressed, open: entry.open }, disabled),
-    [composer, disabled, entry.open, props.layout.compact],
+    [composer, disabled, entry.open, label, props.layout.compact],
   );
   const contents = (
     <>
@@ -668,6 +669,7 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.borderAccent,
   },
   button: { flexShrink: 1, minWidth: 0, maxWidth: 160 },
+  iconOnlyPill: { paddingHorizontal: theme.spacing[2], minWidth: 32, justifyContent: "center" },
   active: { backgroundColor: theme.colors.surface2 },
   disabled: { opacity: theme.opacity[50] },
   tooltipLabel: { fontSize: theme.fontSize.sm, color: theme.colors.foreground },

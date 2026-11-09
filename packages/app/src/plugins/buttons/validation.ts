@@ -104,6 +104,15 @@ export type ResolvedPluginButton = Omit<PluginButton, "title" | "label" | "behav
   behavior: ResolvedPluginButtonBehavior;
 };
 
+function resolveButtonLabel(
+  label: PluginText | undefined,
+  resolve: (text: PluginText) => string,
+): string | undefined {
+  if (label === undefined) return undefined;
+  if (label === "" || label === null) return "";
+  return requireText(label, "label", resolve);
+}
+
 export function validateButton(
   button: PluginButton,
   validation: ButtonValidation,
@@ -113,7 +122,7 @@ export function validateButton(
     ...button,
     icon: validation.parseIcon(button.icon),
     title: requireText(button.title, "title", resolve),
-    label: button.label === undefined ? undefined : requireText(button.label, "label", resolve),
+    label: resolveButtonLabel(button.label, resolve),
     visible: optionalBoolean(button.visible, true),
     disabled: optionalBoolean(button.disabled, false),
     behavior: validateBehavior(button.behavior, validation, resolve),
