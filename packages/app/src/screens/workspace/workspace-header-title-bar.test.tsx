@@ -32,7 +32,10 @@ vi.mock("@/components/headers/menu-header", () => ({
 
 import { WorkspaceHeaderTitleBar } from "./workspace-header-title-bar";
 
-function renderTitleBar(isWorktree: boolean, root: Root) {
+function renderTitleBar(
+  root: Root,
+  props?: Partial<React.ComponentProps<typeof WorkspaceHeaderTitleBar>>,
+) {
   const noop = vi.fn();
   return root.render(
     <WorkspaceHeaderTitleBar
@@ -40,7 +43,6 @@ function renderTitleBar(isWorktree: boolean, root: Root) {
       title="feat/worktree-branch"
       subtitle="Main Project"
       isSubtitleDistinct={true}
-      isWorktree={isWorktree}
       currentBranchName="feat/worktree-branch"
       normalizedServerId="host"
       normalizedWorkspaceId="ws-1"
@@ -52,8 +54,6 @@ function renderTitleBar(isWorktree: boolean, root: Root) {
       createTerminalDisabled={false}
       importAgentDisabled={false}
       copyPathDisabled={false}
-      onCreateDraftTab={noop}
-      onCreateTerminal={noop}
       onCreateTerminalWithProfile={noop}
       onCreateBrowser={noop}
       onOpenImportSheet={noop}
@@ -63,11 +63,12 @@ function renderTitleBar(isWorktree: boolean, root: Root) {
       onScriptTerminalStarted={noop}
       onViewScriptTerminal={noop}
       onOpenUrlInBrowserTab={noop}
+      {...props}
     />,
   );
 }
 
-describe("WorkspaceHeaderTitleBar worktree indicator", () => {
+describe("WorkspaceHeaderTitleBar", () => {
   let root: Root | null = null;
   let container: HTMLElement | null = null;
 
@@ -88,24 +89,34 @@ describe("WorkspaceHeaderTitleBar worktree indicator", () => {
     container = null;
   });
 
-  it("renders worktree indicator when isWorktree is true", async () => {
+  it("renders title and subtitle correctly", async () => {
     await act(async () => {
-      renderTitleBar(true, root!);
+      renderTitleBar(root!);
     });
 
-    const indicator = container?.querySelector(
-      '[data-testid="workspace-header-worktree-indicator"]',
-    );
     const title = container?.querySelector('[data-testid="workspace-header-title"]');
-    expect(indicator).not.toBeNull();
-    expect(indicator?.getAttribute("aria-label")).toBe("Worktree");
+    const subtitle = container?.querySelector('[data-testid="workspace-header-subtitle"]');
     expect(title).not.toBeNull();
-    expect(indicator?.compareDocumentPosition(title!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(title?.textContent).toBe("feat/worktree-branch");
+    expect(subtitle).not.toBeNull();
+    expect(subtitle?.textContent).toBe("Main Project");
   });
 
-  it("does not render worktree indicator when isWorktree is false", async () => {
+  it("does not render subtitle when isSubtitleDistinct is false", async () => {
     await act(async () => {
-      renderTitleBar(false, root!);
+      renderTitleBar(root!, { isSubtitleDistinct: false });
+    });
+
+    const title = container?.querySelector('[data-testid="workspace-header-title"]');
+    const subtitle = container?.querySelector('[data-testid="workspace-header-subtitle"]');
+    expect(title).not.toBeNull();
+    expect(title?.textContent).toBe("feat/worktree-branch");
+    expect(subtitle).toBeNull();
+  });
+
+  it("does not render worktree indicator", async () => {
+    await act(async () => {
+      renderTitleBar(root!);
     });
 
     const indicator = container?.querySelector(

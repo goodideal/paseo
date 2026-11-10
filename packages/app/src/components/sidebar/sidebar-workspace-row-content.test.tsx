@@ -70,7 +70,7 @@ function makeWorkspace(
   };
 }
 
-describe("SidebarWorkspaceRowContent worktree indicator", () => {
+describe("SidebarWorkspaceRowContent", () => {
   let root: Root | null = null;
   let container: HTMLElement | null = null;
 
@@ -91,7 +91,24 @@ describe("SidebarWorkspaceRowContent worktree indicator", () => {
     container = null;
   });
 
-  it("renders worktree indicator when workspaceKind is worktree", async () => {
+  it("renders workspace title correctly", async () => {
+    await act(async () => {
+      root?.render(
+        <SidebarWorkspaceRowContent
+          workspace={makeWorkspace("worktree")}
+          backdrop="surfaceSidebar"
+          isHovered={false}
+          isLoading={false}
+        />,
+      );
+    });
+
+    const title = container?.querySelector('[data-testid="sidebar-workspace-title-host:ws-1"]');
+    expect(title).not.toBeNull();
+    expect(title?.textContent).toBe("feat/my-worktree");
+  });
+
+  it("does not render worktree indicator", async () => {
     await act(async () => {
       root?.render(
         <SidebarWorkspaceRowContent
@@ -106,12 +123,10 @@ describe("SidebarWorkspaceRowContent worktree indicator", () => {
     const indicator = container?.querySelector(
       '[data-testid="sidebar-workspace-worktree-indicator"]',
     );
-    expect(indicator).not.toBeNull();
-    expect(indicator?.getAttribute("aria-label")).toBe("Worktree");
-    expect(indicator?.nextElementSibling?.textContent).toBe("feat/my-worktree");
+    expect(indicator).toBeNull();
   });
 
-  it("does not render worktree indicator when workspaceKind is local_checkout", async () => {
+  it("renders status indicator for workspace", async () => {
     await act(async () => {
       root?.render(
         <SidebarWorkspaceRowContent
@@ -123,27 +138,9 @@ describe("SidebarWorkspaceRowContent worktree indicator", () => {
       );
     });
 
-    const indicator = container?.querySelector(
-      '[data-testid="sidebar-workspace-worktree-indicator"]',
+    const statusIndicator = container?.querySelector(
+      '[data-testid="workspace-status-indicator-done"]',
     );
-    expect(indicator).toBeNull();
-  });
-
-  it("does not render worktree indicator when workspaceKind is directory", async () => {
-    await act(async () => {
-      root?.render(
-        <SidebarWorkspaceRowContent
-          workspace={makeWorkspace("directory")}
-          backdrop="surfaceSidebar"
-          isHovered={false}
-          isLoading={false}
-        />,
-      );
-    });
-
-    const indicator = container?.querySelector(
-      '[data-testid="sidebar-workspace-worktree-indicator"]',
-    );
-    expect(indicator).toBeNull();
+    expect(statusIndicator).not.toBeNull();
   });
 });

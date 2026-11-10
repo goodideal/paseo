@@ -1,8 +1,6 @@
 import React, { useMemo } from "react";
 import { View, Text } from "react-native";
-import { FolderGit2 } from "lucide-react-native";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import type { Theme } from "@/styles/theme";
+import { StyleSheet } from "react-native-unistyles";
 import { ScreenTitle } from "@/components/headers/screen-title";
 import { HostBadge } from "@/hosts/host-badge";
 import { useHostBadges } from "@/hosts/use-host-badges";
@@ -18,9 +16,6 @@ import {
 } from "@/screens/workspace/scripts";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
-
-const ThemedFolderGit2 = withUnistyles(FolderGit2);
-const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 function WorkspaceHeaderProjectRow({
   subtitle,
@@ -70,7 +65,6 @@ export interface WorkspaceHeaderTitleBarProps {
   title: string;
   subtitle: string;
   isSubtitleDistinct: boolean;
-  isWorktree?: boolean;
   currentBranchName: string | null;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
@@ -104,7 +98,6 @@ export function WorkspaceHeaderTitleBar({
   title,
   subtitle,
   isSubtitleDistinct,
-  isWorktree = false,
   currentBranchName,
   normalizedServerId,
   normalizedWorkspaceId,
@@ -155,18 +148,7 @@ export function WorkspaceHeaderTitleBar({
         </View>
       ) : (
         <View style={styles.headerTitleTextGroup}>
-          <View style={styles.headerTitleRow}>
-            {isWorktree ? (
-              <View
-                style={styles.headerWorktreeBadge}
-                testID="workspace-header-worktree-indicator"
-                accessibilityLabel="Worktree"
-              >
-                <ThemedFolderGit2 size={14} uniProps={mutedColorMapping} />
-              </View>
-            ) : null}
-            <ScreenTitle testID="workspace-header-title">{title}</ScreenTitle>
-          </View>
+          <ScreenTitle testID="workspace-header-title">{title}</ScreenTitle>
           <WorkspaceHeaderProjectRow
             subtitle={subtitle}
             isSubtitleDistinct={isSubtitleDistinct}
@@ -256,18 +238,6 @@ const styles = StyleSheet.create((theme) => ({
       xs: 0,
       md: theme.spacing[2],
     },
-  },
-  headerTitleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1.5],
-    minWidth: 0,
-    flexShrink: 1,
-  },
-  headerWorktreeBadge: {
-    flexShrink: 0,
-    alignItems: "center",
-    justifyContent: "center",
   },
   headerProjectRow: {
     flexDirection: "row",

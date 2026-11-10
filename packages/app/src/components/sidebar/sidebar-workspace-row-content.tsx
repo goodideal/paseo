@@ -36,15 +36,12 @@ import {
 } from "@/components/sidebar/sidebar-workspace-menu";
 import { useWorkspaceLabelDefinitions } from "@/workspace-labels";
 
-const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-const foregroundMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const needsInputColorMapping = (theme: Theme) => ({
   color: theme.colors.surface0,
   fill: getStatusDotColor({ theme, bucket: "needs_input" }) ?? undefined,
 });
 
 const ThemedCircleAlert = withUnistyles(CircleAlert);
-const ThemedFolderGit2 = withUnistyles(FolderGit2);
 
 export function SidebarWorkspaceRowFrame({
   workspace,
@@ -163,27 +160,13 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
         )}
         <View style={styles.workspaceContentColumn}>
           <View style={styles.workspaceTitleRow}>
-            <View style={styles.workspaceTitleGroup}>
-              {workspace.workspaceKind === "worktree" ? (
-                <View
-                  style={styles.worktreeIconWrapper}
-                  testID="sidebar-workspace-worktree-indicator"
-                  accessibilityLabel="Worktree"
-                >
-                  <ThemedFolderGit2
-                    size={12}
-                    uniProps={isHovered ? foregroundMapping : foregroundMutedColorMapping}
-                  />
-                </View>
-              ) : null}
-              <Text
-                style={workspaceBranchTextStyle}
-                numberOfLines={1}
-                testID={`sidebar-workspace-title-${workspace.workspaceKey}`}
-              >
-                {workspaceLabel}
-              </Text>
-            </View>
+            <Text
+              style={workspaceBranchTextStyle}
+              numberOfLines={1}
+              testID={`sidebar-workspace-title-${workspace.workspaceKey}`}
+            >
+              {workspaceLabel}
+            </Text>
             <View style={sidebarWorkspaceRowStyles.rowRight}>{children}</View>
           </View>
           <WorkspaceMetaRow
@@ -530,19 +513,6 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "space-between",
     gap: theme.spacing[2],
   },
-  workspaceTitleGroup: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    flex: 1,
-    minWidth: 0,
-    minHeight: 20,
-  },
-  worktreeIconWrapper: {
-    flexShrink: 0,
-    alignItems: "center",
-    justifyContent: "center",
-  },
   shortcutBadgeOverlay: {
     position: "absolute",
     top: 1,
@@ -587,7 +557,7 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: "400",
     lineHeight: TITLE_LINE_HEIGHT,
     opacity: 0.76,
-    flexShrink: 1,
+    flex: 1,
     minWidth: 0,
   },
   workspaceBranchTextCreating: {

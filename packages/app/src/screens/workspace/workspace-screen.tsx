@@ -237,10 +237,6 @@ const EMPTY_WORKSPACE_SCRIPTS: WorkspaceDescriptor["scripts"] = [];
 const EMPTY_PINNED_AGENT_IDS = new Set<string>();
 const EMPTY_SET = new Set<string>();
 
-function getIsWorktree(workspaceDescriptor: WorkspaceDescriptor | null | undefined): boolean {
-  return workspaceDescriptor?.workspaceKind === "worktree";
-}
-
 function getWorkspaceSetupStatus(workspace: WorkspaceDescriptor | null | undefined) {
   return workspace?.setupStatus ?? null;
 }
@@ -1008,7 +1004,6 @@ function WorkspaceScreenContent({
     );
   }, [isRouteFocused, normalizedServerId, normalizedWorkspaceId]);
   const workspaceScripts = getWorkspaceScripts(workspaceDescriptor);
-  const isWorktree = getIsWorktree(workspaceDescriptor);
   const { handleRetryHost, handleManageHost, handleDismissMissingWorkspace } =
     useWorkspaceRouteActions(normalizedServerId);
 
@@ -3303,7 +3298,6 @@ function WorkspaceScreenContent({
                 title={workspaceHeaderTitle}
                 subtitle={workspaceHeaderSubtitle}
                 isSubtitleDistinct={isWorkspaceHeaderSubtitleDistinct}
-                isWorktree={isWorktree}
                 currentBranchName={currentBranchName}
                 normalizedServerId={normalizedServerId}
                 normalizedWorkspaceId={normalizedWorkspaceId}
@@ -3355,7 +3349,6 @@ function WorkspaceScreenContent({
       headerRight,
       isWorkspaceHeaderLoading,
       isWorkspaceHeaderSubtitleDistinct,
-      isWorktree,
       liveTerminalIds,
       normalizedServerId,
       normalizedWorkspaceId,
