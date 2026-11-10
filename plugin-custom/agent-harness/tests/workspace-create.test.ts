@@ -22,7 +22,7 @@ function setupServer() {
   return { workspaceHook, agentHook };
 }
 
-describe("superpowers-matrix-router workspace.create.before", () => {
+describe("agent-harness workspace.create.before", () => {
   it("routes model when prompt comes via firstAgentContext", async () => {
     const { workspaceHook } = setupServer();
     const request = {
@@ -69,7 +69,7 @@ describe("superpowers-matrix-router workspace.create.before", () => {
   });
 });
 
-describe("superpowers-matrix-router agent.create.before fallback", () => {
+describe("agent-harness agent.create.before fallback", () => {
   it("still routes plan intent when agent is created directly with title", async () => {
     const { agentHook } = setupServer();
     const request = {
