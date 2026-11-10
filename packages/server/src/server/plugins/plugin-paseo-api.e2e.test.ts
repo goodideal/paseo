@@ -114,6 +114,9 @@ const append = defineRpc({
 });
 
 export default function contribute(server: PluginServerContext) {
+  if (!server.paseo || typeof server.paseo.workspaces?.setLabel !== "function") {
+    throw new Error("server.paseo is missing or invalid on PluginServerContext");
+  }
   server.handle(create, async ({ path }, { paseo }) => {
     const workspace = await paseo.workspaces.create({
       source: { kind: "directory", path },

@@ -1917,7 +1917,7 @@ test("createPaseoClient passes localCredential to daemon client hello auth", asy
     reconnect: { enabled: false },
   });
 
-  void client.connect();
+  void client.connect().catch(() => {});
   const ws = FakeWebSocket.instances.at(-1)!;
   ws.open();
   const hello = parseSentFrame(ws.sent.at(-1));
@@ -2280,4 +2280,42 @@ test("background stop rejects when the host does not advertise the operation", a
       .backgroundWork.stop({ ...SHELL_ITEM, canStop: true, stopToken: "generation" }),
   ).rejects.toThrow("Update the host");
   await client.close();
+});
+
+function createMockDriver() {
+  const daemonClient = new DaemonClient({
+    url: "ws://daemon.test",
+    clientId: "test-client",
+    webSocketFactory: (url) => new FakeWebSocket(url),
+    reconnect: { enabled: false },
+  });
+  vi.spyOn(daemonClient, "setWorkspaceLabel").mockResolvedValue({
+    requestId: "req_label",
+    workspaceId: "wks_123",
+    labels: [{ name: "feature", color: "sky" }],
+  });
+  return daemonClient;
+}
+
+test("workspace actions expose setLabel delegating to daemon client", async () => {
+  const driver = createMockDriver();
+  const api = createPaseoApi(driver);
+  expect(typeof api.workspaces.setLabel).toBe("function");
+  const handle = api.workspaces.ref("wks_123");
+  expect(typeof handle.setLabel).toBe("function");
+
+  const label = { name: "feature", color: "sky" as const };
+  await api.workspaces.setLabel("wks_123", label);
+  expect(driver.setWorkspaceLabel).toHaveBeenCalledWith({
+    workspaceId: "wks_123",
+    label,
+    assigned: true,
+  });
+
+  await handle.setLabel(label, false);
+  expect(driver.setWorkspaceLabel).toHaveBeenCalledWith({
+    workspaceId: "wks_123",
+    label,
+    assigned: false,
+  });
 });

@@ -53,6 +53,8 @@ export type {
   PaseoWorkspaceTerminalActions,
 } from "./terminals/index.js";
 import type { PluginTimelineItem } from "@getpaseo/protocol/agent-types";
+import type { WorkspaceLabelDefinition } from "@getpaseo/protocol/workspace-labels";
+export type { WorkspaceLabelDefinition } from "@getpaseo/protocol/workspace-labels";
 import type {
   AgentBackgroundWorkItem,
   FetchAgentsEntry,
@@ -64,7 +66,9 @@ import type {
   FetchAgentTimelineProjection,
   SendMessageOptions,
   WaitForFinishResult,
+  WorkspaceLabelAssignmentPayload,
 } from "./daemon-client.js";
+export type { WorkspaceLabelAssignmentPayload } from "./daemon-client.js";
 
 /**
  * Coding turns routinely run for minutes, so the handle waits far longer than
@@ -195,6 +199,10 @@ export interface PaseoWorkspaceHandle {
     baseRef: string;
     requestId?: string;
   }): Promise<{ baseRef: string | null }>;
+  setLabel(
+    label: WorkspaceLabelDefinition,
+    assigned?: boolean,
+  ): Promise<WorkspaceLabelAssignmentPayload>;
   archive(requestId?: string): Promise<PaseoWorkspaceArchiveResult>;
   /**
    * Subscribes to already-emitted daemon workspace_update events for this id.
@@ -224,6 +232,11 @@ export interface PaseoWorkspaceActions {
     requestId?: string,
   ): Promise<PaseoWorkspaceHandle>;
   create(options: PaseoWorkspaceCreateOptions): Promise<PaseoWorkspaceHandle>;
+  setLabel(
+    workspaceId: string,
+    label: WorkspaceLabelDefinition,
+    assigned?: boolean,
+  ): Promise<WorkspaceLabelAssignmentPayload>;
   archive(
     workspace: string | PaseoWorkspaceHandle,
     requestId?: string,
@@ -822,6 +835,8 @@ export function createPaseoApi(
         }
         return createWorkspaceHandle(result.workspace);
       },
+      setLabel: (workspaceId, label, assigned = true) =>
+        daemonClient.setWorkspaceLabel({ workspaceId, label, assigned }),
       archive: (workspace, requestId) =>
         daemonClient.archiveWorkspace(resolveWorkspaceId(workspace), requestId),
       subscribe: listenWorkspaces,
@@ -937,6 +952,8 @@ function createWorkspaceHandleFactory(
       setTitle: (title, requestId) => daemonClient.setWorkspaceTitle(id, title, requestId),
       setBaseBranch: (options) =>
         daemonClient.setWorkspaceBaseBranch({ ...options, workspaceId: id }),
+      setLabel: (label, assigned = true) =>
+        daemonClient.setWorkspaceLabel({ workspaceId: id, label, assigned }),
       archive: async (requestId) => {
         const result = await daemonClient.archiveWorkspace(id, requestId);
         if (current) {

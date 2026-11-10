@@ -16,6 +16,7 @@ describe("Subagent Watchdog Integration Test", () => {
     const rpcHandlers = new Map<any, Function>();
 
     const fakeServer: PluginServerContext = {
+      paseo: {} as any,
       on(name: any, handler: any) {
         if (!listeners[name]) listeners[name] = [];
         listeners[name]!.push(handler);
@@ -227,6 +228,7 @@ describe("Subagent Watchdog Integration Test", () => {
     let settingsSubscriber: ((state: any) => void) | null = null;
 
     const fakeServer: PluginServerContext = {
+      paseo: {} as any,
       on(name: any, handler: any) {
         if (!listeners[name]) listeners[name] = [];
         listeners[name]!.push(handler);
@@ -333,6 +335,7 @@ describe("Subagent Watchdog Integration Test", () => {
     const listeners: Record<string, Function[]> = {};
 
     const fakeServer: PluginServerContext = {
+      paseo: {} as any,
       on(name: any, handler: any) {
         if (!listeners[name]) listeners[name] = [];
         listeners[name]!.push(handler);
@@ -466,6 +469,7 @@ describe("Subagent Watchdog Integration Test", () => {
     const rpcHandlers = new Map<any, Function>();
 
     const fakeServer: PluginServerContext = {
+      paseo: {} as any,
       on(name: any, handler: any) {
         if (!listeners[name]) listeners[name] = [];
         listeners[name]!.push(handler);
@@ -577,6 +581,7 @@ describe("Subagent Watchdog Integration Test", () => {
     const listeners: Record<string, Function[]> = {};
 
     const fakeServer: PluginServerContext = {
+      paseo: {} as any,
       on(name: any, handler: any) {
         if (!listeners[name]) listeners[name] = [];
         listeners[name]!.push(handler);
@@ -646,6 +651,7 @@ describe("Subagent Watchdog Integration Test", () => {
     const rpcHandlers = new Map<any, Function>();
 
     const fakeServer: PluginServerContext = {
+      paseo: {} as any,
       on(name: any, handler: any) {
         if (!listeners[name]) listeners[name] = [];
         listeners[name]!.push(handler);
