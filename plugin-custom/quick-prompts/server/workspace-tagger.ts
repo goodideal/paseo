@@ -58,9 +58,14 @@ export async function syncAllWorkspaces(
   let tagged = 0;
   let skipped = 0;
   for (const ws of list) {
-    const wasTagged = await tagWorkspace(ws.id, ws.workspaceKind, ws.labels ?? [], workspaces);
-    if (wasTagged) tagged++;
-    else skipped++;
+    try {
+      const wasTagged = await tagWorkspace(ws.id, ws.workspaceKind, ws.labels ?? [], workspaces);
+      if (wasTagged) tagged++;
+      else skipped++;
+    } catch (error) {
+      console.warn(`[workspace-tagger] Failed to tag workspace ${ws.id}:`, error);
+      skipped++;
+    }
   }
   return { tagged, skipped };
 }

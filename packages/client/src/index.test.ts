@@ -2291,8 +2291,8 @@ function createMockDriver() {
   });
   vi.spyOn(daemonClient, "setWorkspaceLabel").mockResolvedValue({
     requestId: "req_label",
-    workspaceId: "wks_123",
-    labels: [{ name: "feature", color: "sky" }],
+    label: { name: "feature", color: "sky" },
+    workspaceLabels: ["feature"],
   });
   return daemonClient;
 }

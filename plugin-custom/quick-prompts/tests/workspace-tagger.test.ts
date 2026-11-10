@@ -242,5 +242,36 @@ describe("workspace-tagger", () => {
       expect(result).toEqual({ tagged: 0, skipped: 0 });
       expect(setLabel).not.toHaveBeenCalled();
     });
+
+    it("continues tagging remaining workspaces if one workspace throws", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const setLabel = vi
+          .fn()
+          .mockRejectedValueOnce(new Error("Workspace concurrently deleted"))
+          .mockResolvedValue({});
+
+        const workspaces = {
+          list: vi.fn().mockResolvedValue([
+            { id: "ws-fail", workspaceKind: "worktree", labels: [] },
+            { id: "ws-ok", workspaceKind: "local_checkout", labels: [] },
+          ]),
+          setLabel,
+        } as unknown as Pick<PaseoWorkspaceActions, "list" | "setLabel">;
+
+        const result = await syncAllWorkspaces(workspaces);
+
+        expect(result).toEqual({ tagged: 1, skipped: 1 });
+        expect(setLabel).toHaveBeenCalledTimes(2);
+        expect(setLabel).toHaveBeenNthCalledWith(1, "ws-fail", WORKTREE_LABEL, true);
+        expect(setLabel).toHaveBeenNthCalledWith(2, "ws-ok", LOCAL_LABEL, true);
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining("Failed to tag workspace ws-fail"),
+          expect.any(Error),
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
   });
 });
