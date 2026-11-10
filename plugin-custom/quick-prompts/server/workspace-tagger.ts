@@ -27,12 +27,16 @@ export async function tagWorkspace(
 
   const targetKey = workspaceLabelKey(resolved.target.name);
   const oppositeKey = workspaceLabelKey(resolved.opposite.name);
-  const hasTarget = currentLabels.some(
-    (l) => l && workspaceLabelKey(typeof l === "string" ? l : l.name) === targetKey,
-  );
-  const hasOpposite = currentLabels.some(
-    (l) => l && workspaceLabelKey(typeof l === "string" ? l : l.name) === oppositeKey,
-  );
+  const hasTarget = currentLabels.some((l) => {
+    if (!l) return false;
+    const name = typeof l === "string" ? l : (l as { name?: string })?.name;
+    return typeof name === "string" && workspaceLabelKey(name) === targetKey;
+  });
+  const hasOpposite = currentLabels.some((l) => {
+    if (!l) return false;
+    const name = typeof l === "string" ? l : (l as { name?: string })?.name;
+    return typeof name === "string" && workspaceLabelKey(name) === oppositeKey;
+  });
 
   let modified = false;
   if (hasOpposite) {

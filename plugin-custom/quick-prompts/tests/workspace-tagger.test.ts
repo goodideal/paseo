@@ -176,6 +176,18 @@ describe("workspace-tagger", () => {
       expect(setLabel).toHaveBeenCalledTimes(1);
       expect(setLabel).toHaveBeenCalledWith("ws-1", WORKTREE_LABEL, true);
     });
+
+    it("defensively ignores null, undefined, or malformed label objects", async () => {
+      const setLabel = vi.fn().mockResolvedValue({});
+      const workspaces: Pick<PaseoWorkspaceActions, "setLabel"> = { setLabel };
+
+      const malformedLabels = [null, undefined, {}, { name: undefined }] as any;
+      const modified = await tagWorkspace("ws-1", "worktree", malformedLabels, workspaces);
+
+      expect(modified).toBe(true);
+      expect(setLabel).toHaveBeenCalledTimes(1);
+      expect(setLabel).toHaveBeenCalledWith("ws-1", WORKTREE_LABEL, true);
+    });
   });
 
   describe("syncAllWorkspaces", () => {
