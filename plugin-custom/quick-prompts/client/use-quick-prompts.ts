@@ -11,21 +11,45 @@ import {
 } from "../shared/contracts.js";
 import { resolveEffectiveQuickPrompts } from "./quick-prompt-resolver.js";
 
+// Module-level in-memory cache to guarantee 0ms instant mount
+let cachedGlobalItems: QuickPromptItem[] | null = null;
+const cachedProjectConfigs = new Map<
+  string,
+  { items: QuickPromptItem[]; disabledGlobalIds: string[]; order?: string[] }
+>();
+
+export function setCachedGlobalItems(items: QuickPromptItem[]) {
+  cachedGlobalItems = items;
+}
+
+export function setCachedProjectConfig(
+  projectId: string,
+  config: { items: QuickPromptItem[]; disabledGlobalIds: string[]; order?: string[] },
+) {
+  cachedProjectConfigs.set(projectId, config);
+}
+
 export function useGlobalQuickPrompts() {
   const getGlobalRpc = useRpc(quickPromptsGlobalGetRpc);
   const setGlobalRpc = useRpc(quickPromptsGlobalSetRpc);
 
-  const [items, setItems] = useState<QuickPromptItem[]>([...DEFAULT_QUICK_PROMPT_ITEMS]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [items, setItems] = useState<QuickPromptItem[]>(
+    () => cachedGlobalItems ?? [...DEFAULT_QUICK_PROMPT_ITEMS],
+  );
+  const [isLoading, setIsLoading] = useState(!cachedGlobalItems);
 
   const fetchGlobal = useCallback(async () => {
     try {
-      setIsLoading(true);
+      if (!cachedGlobalItems) {
+        setIsLoading(true);
+      }
       const res = await getGlobalRpc({});
+      cachedGlobalItems = res.items;
       setItems(res.items);
     } catch (err) {
-      console.warn("[QuickPromptsPlugin] Failed to fetch global prompts, using defaults:", err);
-      setItems([...DEFAULT_QUICK_PROMPT_ITEMS]);
+      if (!cachedGlobalItems) {
+        setItems([...DEFAULT_QUICK_PROMPT_ITEMS]);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -37,14 +61,21 @@ export function useGlobalQuickPrompts() {
 
   const setGlobalItems = useCallback(
     async (newItems: QuickPromptItem[]) => {
+      cachedGlobalItems = newItems;
+      setItems(newItems);
       const res = await setGlobalRpc({ items: newItems });
+      cachedGlobalItems = res.items;
       setItems(res.items);
     },
     [setGlobalRpc],
   );
 
   const resetToDefaults = useCallback(async () => {
-    const res = await setGlobalRpc({ items: [...DEFAULT_QUICK_PROMPT_ITEMS] });
+    const defaults = [...DEFAULT_QUICK_PROMPT_ITEMS];
+    cachedGlobalItems = defaults;
+    setItems(defaults);
+    const res = await setGlobalRpc({ items: defaults });
+    cachedGlobalItems = res.items;
     setItems(res.items);
   }, [setGlobalRpc]);
 
@@ -61,10 +92,13 @@ export function useProjectQuickPrompts(projectId?: string | null) {
   const getProjectRpc = useRpc(quickPromptsProjectGetRpc);
   const setProjectRpc = useRpc(quickPromptsProjectSetRpc);
 
-  const [items, setItems] = useState<QuickPromptItem[]>([]);
-  const [disabledGlobalIds, setDisabledGlobalIds] = useState<string[]>([]);
-  const [order, setOrder] = useState<string[] | undefined>(undefined);
-  const [isLoading, setIsLoading] = useState(false);
+  const cached = projectId ? cachedProjectConfigs.get(projectId) : null;
+  const [items, setItems] = useState<QuickPromptItem[]>(() => cached?.items ?? []);
+  const [disabledGlobalIds, setDisabledGlobalIds] = useState<string[]>(
+    () => cached?.disabledGlobalIds ?? [],
+  );
+  const [order, setOrder] = useState<string[] | undefined>(() => cached?.order);
+  const [isLoading, setIsLoading] = useState(Boolean(projectId && !cached));
 
   const fetchProject = useCallback(async () => {
     if (!projectId) {
@@ -74,16 +108,21 @@ export function useProjectQuickPrompts(projectId?: string | null) {
       return;
     }
     try {
-      setIsLoading(true);
+      if (!cachedProjectConfigs.has(projectId)) {
+        setIsLoading(true);
+      }
       const res = await getProjectRpc({ projectId });
+      const config = {
+        items: res.items,
+        disabledGlobalIds: res.disabledGlobalIds,
+        order: res.order,
+      };
+      cachedProjectConfigs.set(projectId, config);
       setItems(res.items);
       setDisabledGlobalIds(res.disabledGlobalIds);
       setOrder(res.order);
-    } catch (err) {
-      console.warn("[QuickPromptsPlugin] Failed to fetch project prompts:", err);
-      setItems([]);
-      setDisabledGlobalIds([]);
-      setOrder(undefined);
+    } catch {
+      // Ignored
     } finally {
       setIsLoading(false);
     }
@@ -106,6 +145,12 @@ export function useProjectQuickPrompts(projectId?: string | null) {
         disabledGlobalIds: input.disabledGlobalIds,
         order: input.order,
       });
+      const config = {
+        items: res.items,
+        disabledGlobalIds: res.disabledGlobalIds,
+        order: res.order,
+      };
+      cachedProjectConfigs.set(projectId, config);
       setItems(res.items);
       setDisabledGlobalIds(res.disabledGlobalIds);
       setOrder(res.order);

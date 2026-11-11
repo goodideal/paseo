@@ -15,11 +15,24 @@ export const QuickPromptRuleConditionSchema = z.object({
 });
 export type QuickPromptRuleCondition = z.infer<typeof QuickPromptRuleConditionSchema>;
 
+export const QUICK_PROMPT_COLORS = [
+  "neutral",
+  "sky",
+  "emerald",
+  "amber",
+  "rose",
+  "violet",
+  "indigo",
+] as const;
+export type QuickPromptColor = (typeof QUICK_PROMPT_COLORS)[number];
+
 export const QuickPromptItemSchema = z.object({
   id: z.string(),
   label: z.string(),
   content: z.string(),
   shortcut: z.string().optional(),
+  icon: z.string().optional(),
+  color: z.enum(QUICK_PROMPT_COLORS).optional(),
   triggerType: QuickPromptTriggerTypeSchema,
   ruleCondition: QuickPromptRuleConditionSchema.optional(),
   enabled: z.boolean(),
@@ -52,6 +65,8 @@ export const DEFAULT_QUICK_PROMPT_ITEMS: readonly QuickPromptItem[] = [
     label: "Continue",
     content: "Please continue to the next step.",
     shortcut: "continue",
+    icon: "Rocket",
+    color: "sky",
     triggerType: "fixed",
     enabled: true,
     builtIn: true,
@@ -64,6 +79,8 @@ export const DEFAULT_QUICK_PROMPT_ITEMS: readonly QuickPromptItem[] = [
     content:
       "Please review my recent code changes for potential edge cases, type safety, and performance issues.",
     shortcut: "review",
+    icon: "Eye",
+    color: "violet",
     triggerType: "fixed",
     enabled: true,
     builtIn: true,
@@ -76,6 +93,8 @@ export const DEFAULT_QUICK_PROMPT_ITEMS: readonly QuickPromptItem[] = [
     content:
       "Please analyze the error message above, identify the root cause, fix the issues, and re-run verification.",
     shortcut: "fix",
+    icon: "Bug",
+    color: "amber",
     triggerType: "rule",
     ruleCondition: {
       keywords: ["error", "exception", "failed", "failure", "报错", "失败"],
@@ -90,6 +109,8 @@ export const DEFAULT_QUICK_PROMPT_ITEMS: readonly QuickPromptItem[] = [
     label: "Run Tests",
     content: "Please run the relevant unit tests and ensure they all pass.",
     shortcut: "test",
+    icon: "FlaskConical",
+    color: "emerald",
     triggerType: "rule",
     ruleCondition: {
       keywords: ["test", "vitest", "jest", "spec", "测试"],
@@ -104,6 +125,8 @@ export const DEFAULT_QUICK_PROMPT_ITEMS: readonly QuickPromptItem[] = [
     label: "Proceed",
     content: "Confirmed, please proceed with the proposed plan.",
     shortcut: "yes",
+    icon: "CheckCircle2",
+    color: "emerald",
     triggerType: "rule",
     ruleCondition: {
       keywords: ["(y/n)", "proceed?", "approve", "confirm", "确认", "是否继续", "请选择"],

@@ -1,12 +1,14 @@
 import React, { memo, useCallback, useMemo, useState } from "react";
 import { Pressable, Text, View, StyleSheet, Switch } from "react-native";
-import { Modal, ScrollView, TextInput, useToast } from "@getpaseo/plugin/client/react-native";
+import { Icon, Modal, ScrollView, TextInput, useToast } from "@getpaseo/plugin/client/react-native";
 import type { PluginTheme } from "@getpaseo/plugin";
 import {
   type QuickPromptItem,
   type QuickPromptTriggerType,
+  type QuickPromptColor,
   DEFAULT_QUICK_PROMPT_ITEMS,
 } from "../shared/contracts.js";
+import { PROMPT_COLOR_PALETTE, COMMON_PROMPT_ICONS } from "./color-palette.js";
 
 export interface QuickPromptsModalProps {
   visible: boolean;
@@ -48,6 +50,8 @@ interface PromptFormState {
   label: string;
   content: string;
   shortcut: string;
+  icon: string;
+  color: QuickPromptColor;
   triggerType: QuickPromptTriggerType;
   keywords: string;
   regex: string;
@@ -59,6 +63,8 @@ const EMPTY_FORM: PromptFormState = {
   label: "",
   content: "",
   shortcut: "",
+  icon: "",
+  color: "neutral",
   triggerType: "fixed",
   keywords: "",
   regex: "",
@@ -117,6 +123,8 @@ export const QuickPromptsModal = memo(function QuickPromptsModal({
       label: item.label,
       content: item.content,
       shortcut: item.shortcut ?? "",
+      icon: item.icon ?? "",
+      color: item.color ?? "neutral",
       triggerType: item.triggerType,
       keywords: (item.ruleCondition?.keywords ?? []).join(", "),
       regex: item.ruleCondition?.regex ?? "",
@@ -141,10 +149,7 @@ export const QuickPromptsModal = memo(function QuickPromptsModal({
       const updated = globalItems.map((item) =>
         item.id === id ? { ...item, enabled: !item.enabled } : item,
       );
-      console.log("INSIDE DELETE: calling onSaveGlobalItems");
-      console.log("CALLING onSaveGlobalItems");
       await onSaveGlobalItems(updated);
-      console.log("FINISHED CALLING onSaveGlobalItems");
     },
     [globalItems, onSaveGlobalItems],
   );
@@ -264,6 +269,8 @@ export const QuickPromptsModal = memo(function QuickPromptsModal({
       label: form.label.trim(),
       content: form.content.trim(),
       shortcut: form.shortcut.trim() || undefined,
+      icon: form.icon.trim() || undefined,
+      color: form.color,
       triggerType: form.triggerType,
       ruleCondition:
         form.triggerType === "rule"
@@ -310,6 +317,12 @@ export const QuickPromptsModal = memo(function QuickPromptsModal({
     projectItems,
     viewMode,
   ]);
+
+  const previewColorConfig =
+    form.color && PROMPT_COLOR_PALETTE[form.color]
+      ? PROMPT_COLOR_PALETTE[form.color]
+      : PROMPT_COLOR_PALETTE.neutral;
+  const previewTextColor = previewColorConfig.text;
 
   return (
     <Modal
@@ -453,82 +466,9 @@ export const QuickPromptsModal = memo(function QuickPromptsModal({
 
             {/* List items */}
             {activeTab === "global" ? (
-              globalItems.map((item, idx) => (
-                <View
-                  key={item.id}
-                  style={[
-                    styles.itemRow,
-                    { backgroundColor: colors.surface1, borderColor: colors.border },
-                  ]}
-                >
-                  <View style={styles.itemMain}>
-                    <View style={styles.itemHeaderLine}>
-                      <Switch
-                        value={item.enabled}
-                        onValueChange={() => handleToggleGlobalItem(item.id)}
-                      />
-                      <Text style={[styles.itemLabel, { color: colors.foreground }]}>
-                        {item.label}
-                      </Text>
-                      {item.shortcut && (
-                        <Text style={[styles.shortcutBadge, { color: colors.foregroundMuted }]}>
-                          /{item.shortcut}
-                        </Text>
-                      )}
-                    </View>
-                    <Text
-                      style={[styles.itemContent, { color: colors.foregroundMuted }]}
-                      numberOfLines={2}
-                    >
-                      {item.content}
-                    </Text>
-                  </View>
-                  <View style={styles.itemButtons}>
-                    <Pressable
-                      disabled={idx === 0}
-                      onPress={() => handleMoveGlobal(item.id, "up")}
-                      style={styles.iconBtn}
-                    >
-                      <Text style={{ color: idx === 0 ? colors.border : colors.foreground }}>
-                        ↑
-                      </Text>
-                    </Pressable>
-                    <Pressable
-                      disabled={idx === globalItems.length - 1}
-                      onPress={() => handleMoveGlobal(item.id, "down")}
-                      style={styles.iconBtn}
-                    >
-                      <Text
-                        style={{
-                          color: idx === globalItems.length - 1 ? colors.border : colors.foreground,
-                        }}
-                      >
-                        ↓
-                      </Text>
-                    </Pressable>
-                    <Pressable onPress={() => handleOpenEdit(item)} style={styles.iconBtn}>
-                      <Text style={{ color: colors.accent }}>✏️</Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() =>
-                        setConfirmAction({
-                          type: "delete",
-                          id: item.id,
-                          label: item.label,
-                          scope: "global",
-                        })
-                      }
-                      style={styles.iconBtn}
-                    >
-                      <Text style={{ color: colors.statusDanger }}>🗑️</Text>
-                    </Pressable>
-                  </View>
-                </View>
-              ))
-            ) : (
-              // Project Items + Inherited Globals
-              <>
-                {projectItems.map((item) => (
+              globalItems.map((item, idx) => {
+                const itemColorCfg = item.color ? PROMPT_COLOR_PALETTE[item.color] : null;
+                return (
                   <View
                     key={item.id}
                     style={[
@@ -540,11 +480,38 @@ export const QuickPromptsModal = memo(function QuickPromptsModal({
                       <View style={styles.itemHeaderLine}>
                         <Switch
                           value={item.enabled}
-                          onValueChange={() => handleToggleProjectItem(item.id, false)}
+                          onValueChange={() => handleToggleGlobalItem(item.id)}
                         />
+                        {item.icon && (
+                          <Icon
+                            name={item.icon}
+                            size={14}
+                            color={itemColorCfg ? itemColorCfg.text : colors.foreground}
+                          />
+                        )}
                         <Text style={[styles.itemLabel, { color: colors.foreground }]}>
                           {item.label}
                         </Text>
+                        {itemColorCfg && itemColorCfg.dotColor !== "#9ca3af" && (
+                          <View
+                            style={[
+                              styles.badgePill,
+                              {
+                                backgroundColor: itemColorCfg.tint,
+                                borderColor: itemColorCfg.border,
+                              },
+                            ]}
+                          >
+                            <Text style={[styles.badgePillText, { color: itemColorCfg.text }]}>
+                              {itemColorCfg.label}
+                            </Text>
+                          </View>
+                        )}
+                        {item.shortcut && (
+                          <Text style={[styles.shortcutBadge, { color: colors.foregroundMuted }]}>
+                            /{item.shortcut}
+                          </Text>
+                        )}
                       </View>
                       <Text
                         style={[styles.itemContent, { color: colors.foregroundMuted }]}
@@ -554,6 +521,29 @@ export const QuickPromptsModal = memo(function QuickPromptsModal({
                       </Text>
                     </View>
                     <View style={styles.itemButtons}>
+                      <Pressable
+                        disabled={idx === 0}
+                        onPress={() => handleMoveGlobal(item.id, "up")}
+                        style={styles.iconBtn}
+                      >
+                        <Text style={{ color: idx === 0 ? colors.border : colors.foreground }}>
+                          ↑
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        disabled={idx === globalItems.length - 1}
+                        onPress={() => handleMoveGlobal(item.id, "down")}
+                        style={styles.iconBtn}
+                      >
+                        <Text
+                          style={{
+                            color:
+                              idx === globalItems.length - 1 ? colors.border : colors.foreground,
+                          }}
+                        >
+                          ↓
+                        </Text>
+                      </Pressable>
                       <Pressable onPress={() => handleOpenEdit(item)} style={styles.iconBtn}>
                         <Text style={{ color: colors.accent }}>✏️</Text>
                       </Pressable>
@@ -563,7 +553,7 @@ export const QuickPromptsModal = memo(function QuickPromptsModal({
                             type: "delete",
                             id: item.id,
                             label: item.label,
-                            scope: "project",
+                            scope: "global",
                           })
                         }
                         style={styles.iconBtn}
@@ -572,11 +562,86 @@ export const QuickPromptsModal = memo(function QuickPromptsModal({
                       </Pressable>
                     </View>
                   </View>
-                ))}
+                );
+              })
+            ) : (
+              // Project Items + Inherited Globals
+              <>
+                {projectItems.map((item) => {
+                  const itemColorCfg = item.color ? PROMPT_COLOR_PALETTE[item.color] : null;
+                  return (
+                    <View
+                      key={item.id}
+                      style={[
+                        styles.itemRow,
+                        { backgroundColor: colors.surface1, borderColor: colors.border },
+                      ]}
+                    >
+                      <View style={styles.itemMain}>
+                        <View style={styles.itemHeaderLine}>
+                          <Switch
+                            value={item.enabled}
+                            onValueChange={() => handleToggleProjectItem(item.id, false)}
+                          />
+                          {item.icon && (
+                            <Icon
+                              name={item.icon}
+                              size={14}
+                              color={itemColorCfg ? itemColorCfg.text : colors.foreground}
+                            />
+                          )}
+                          <Text style={[styles.itemLabel, { color: colors.foreground }]}>
+                            {item.label}
+                          </Text>
+                          {itemColorCfg && itemColorCfg.dotColor !== "#9ca3af" && (
+                            <View
+                              style={[
+                                styles.badgePill,
+                                {
+                                  backgroundColor: itemColorCfg.tint,
+                                  borderColor: itemColorCfg.border,
+                                },
+                              ]}
+                            >
+                              <Text style={[styles.badgePillText, { color: itemColorCfg.text }]}>
+                                {itemColorCfg.label}
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                        <Text
+                          style={[styles.itemContent, { color: colors.foregroundMuted }]}
+                          numberOfLines={2}
+                        >
+                          {item.content}
+                        </Text>
+                      </View>
+                      <View style={styles.itemButtons}>
+                        <Pressable onPress={() => handleOpenEdit(item)} style={styles.iconBtn}>
+                          <Text style={{ color: colors.accent }}>✏️</Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() =>
+                            setConfirmAction({
+                              type: "delete",
+                              id: item.id,
+                              label: item.label,
+                              scope: "project",
+                            })
+                          }
+                          style={styles.iconBtn}
+                        >
+                          <Text style={{ color: colors.statusDanger }}>🗑️</Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  );
+                })}
 
                 {/* Inherited globals list */}
                 {globalItems.map((item) => {
                   const isDisabledInProject = disabledGlobalIds.includes(item.id);
+                  const itemColorCfg = item.color ? PROMPT_COLOR_PALETTE[item.color] : null;
                   return (
                     <View
                       key={`global-${item.id}`}
@@ -595,6 +660,13 @@ export const QuickPromptsModal = memo(function QuickPromptsModal({
                             value={!isDisabledInProject}
                             onValueChange={() => handleToggleProjectItem(item.id, true)}
                           />
+                          {item.icon && (
+                            <Icon
+                              name={item.icon}
+                              size={14}
+                              color={itemColorCfg ? itemColorCfg.text : colors.foreground}
+                            />
+                          )}
                           <Text style={[styles.itemLabel, { color: colors.foreground }]}>
                             {item.label} (全局继承)
                           </Text>
@@ -670,7 +742,159 @@ export const QuickPromptsModal = memo(function QuickPromptsModal({
               placeholder="e.g. fix / continue (optional)"
             />
 
-            <Text style={[styles.fieldLabel, { color: colors.foreground }]}>
+            {/* Color Palette Selector */}
+            <Text style={[styles.fieldLabel, { color: colors.foreground, marginTop: 12 }]}>
+              按钮色彩 / Color (高亮醒目定制)
+            </Text>
+            <View style={styles.colorPaletteRow}>
+              {(Object.keys(PROMPT_COLOR_PALETTE) as QuickPromptColor[]).map((cKey) => {
+                const isSelected = form.color === cKey;
+                const cfg = PROMPT_COLOR_PALETTE[cKey];
+                return (
+                  <Pressable
+                    key={cKey}
+                    testID={`color-option-${cKey}`}
+                    accessibilityRole="button"
+                    accessibilityLabel={cfg.label}
+                    onPress={() => setForm((prev) => ({ ...prev, color: cKey }))}
+                    style={[
+                      styles.colorDotButton,
+                      {
+                        backgroundColor: cfg.tint !== "transparent" ? cfg.tint : colors.surface2,
+                        borderColor: isSelected ? cfg.border : colors.border,
+                        borderWidth: isSelected ? 2 : 1,
+                      },
+                    ]}
+                  >
+                    <View style={[styles.colorDot, { backgroundColor: cfg.dotColor }]} />
+                    <Text
+                      style={[
+                        styles.colorDotLabel,
+                        { color: isSelected ? colors.foreground : colors.foregroundMuted },
+                      ]}
+                    >
+                      {cfg.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {/* Icon Picker */}
+            <Text style={[styles.fieldLabel, { color: colors.foreground, marginTop: 12 }]}>
+              按钮图标 / Icon
+            </Text>
+            <View style={styles.iconSelectionGrid}>
+              <Pressable
+                testID="icon-quick-chip-none"
+                accessibilityRole="button"
+                accessibilityLabel="无图标"
+                onPress={() => setForm((prev) => ({ ...prev, icon: "" }))}
+                style={[
+                  styles.iconQuickChip,
+                  !form.icon && { borderColor: colors.accent, backgroundColor: colors.surface2 },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.iconQuickChipText,
+                    { color: !form.icon ? colors.accent : colors.foregroundMuted },
+                  ]}
+                >
+                  无
+                </Text>
+              </Pressable>
+              {COMMON_PROMPT_ICONS.map((ic) => {
+                const isSelected = form.icon === ic.name;
+                return (
+                  <Pressable
+                    key={ic.name}
+                    testID={`icon-quick-chip-${ic.name}`}
+                    accessibilityRole="button"
+                    accessibilityLabel={ic.label}
+                    onPress={() => setForm((prev) => ({ ...prev, icon: ic.name }))}
+                    style={[
+                      styles.iconQuickChip,
+                      isSelected && {
+                        borderColor: colors.accent,
+                        backgroundColor: colors.surface2,
+                      },
+                    ]}
+                  >
+                    <Icon
+                      name={ic.name}
+                      size={13}
+                      color={isSelected ? colors.accent : colors.foreground}
+                    />
+                    <Text
+                      style={[
+                        styles.iconQuickChipText,
+                        { color: isSelected ? colors.accent : colors.foreground },
+                      ]}
+                    >
+                      {ic.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <TextInput
+              style={[
+                styles.textInput,
+                {
+                  backgroundColor: colors.surface1,
+                  borderColor: colors.border,
+                  color: colors.foreground,
+                  marginTop: 6,
+                },
+              ]}
+              value={form.icon}
+              onChangeText={(text) => setForm((prev) => ({ ...prev, icon: text.trim() }))}
+              placeholder="或输入任意 Lucide 图标名 (例如: Flame, Cpu, Shield...)"
+            />
+
+            {/* Live Preview Card */}
+            <Text style={[styles.fieldLabel, { color: colors.foreground, marginTop: 14 }]}>
+              实时效果预览 / Live Preview
+            </Text>
+            <View
+              style={[
+                styles.previewContainer,
+                { backgroundColor: colors.surface1, borderColor: colors.border },
+              ]}
+            >
+              <View
+                style={[
+                  styles.previewCard,
+                  previewColorConfig && previewColorConfig.tint !== "transparent"
+                    ? {
+                        backgroundColor: previewColorConfig.tint,
+                        borderColor: previewColorConfig.border,
+                      }
+                    : {
+                        backgroundColor: colors.surface2,
+                        borderColor: colors.border,
+                      },
+                ]}
+              >
+                <View style={styles.previewLabelRow}>
+                  {form.icon ? <Icon name={form.icon} size={13} color={previewTextColor} /> : null}
+                  <Text
+                    style={[styles.previewCardText, { color: previewTextColor }]}
+                    numberOfLines={1}
+                  >
+                    {form.label.trim() || "按钮名称"}
+                  </Text>
+                </View>
+                {form.shortcut ? (
+                  <Text style={[styles.previewShortcutTag, { color: previewTextColor }]}>
+                    /{form.shortcut.trim()}
+                  </Text>
+                ) : null}
+              </View>
+            </View>
+
+            <Text style={[styles.fieldLabel, { color: colors.foreground, marginTop: 12 }]}>
               执行模型 / Model (可选)
             </Text>
             {availableModels.length > 0 ? (
@@ -822,6 +1046,16 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
   },
+  badgePill: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+    borderWidth: 1,
+  },
+  badgePillText: {
+    fontSize: 10,
+    fontWeight: "600",
+  },
   shortcutBadge: {
     fontSize: 12,
   },
@@ -838,7 +1072,7 @@ const styles = StyleSheet.create({
     padding: 6,
   },
   formSection: {
-    gap: 10,
+    gap: 8,
   },
   fieldLabel: {
     fontSize: 13,
@@ -854,8 +1088,81 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   textArea: {
-    minHeight: 80,
+    minHeight: 70,
     textAlignVertical: "top",
+  },
+  colorPaletteRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  colorDotButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  colorDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  colorDotLabel: {
+    fontSize: 12,
+    fontWeight: "500",
+  },
+  iconSelectionGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 5,
+  },
+  iconQuickChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#404040",
+  },
+  iconQuickChipText: {
+    fontSize: 11,
+    fontWeight: "500",
+  },
+  previewContainer: {
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  previewCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    width: 160,
+    height: 32,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  previewLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    flexShrink: 1,
+  },
+  previewCardText: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  previewShortcutTag: {
+    fontSize: 10,
+    fontWeight: "500",
+    opacity: 0.8,
   },
   errorText: {
     fontSize: 12,

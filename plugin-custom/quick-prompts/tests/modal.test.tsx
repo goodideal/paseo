@@ -22,6 +22,7 @@ vi.mock("@getpaseo/plugin/client/react-native", () => ({
   TextInput: ({ onChangeText, ...props }: any) => (
     <input onChange={(e: any) => onChangeText?.(e.target.value)} {...props} />
   ),
+  Icon: ({ name }: { name: string }) => <span data-testid={`mock-icon-${name}`}>{name}</span>,
   useToast: () => ({
     show: mockToastShow,
     error: mockToastError,
@@ -72,40 +73,29 @@ describe("QuickPromptsModal Confirmation & Feedback", () => {
       />,
     );
 
-    // Initial state: reset button is visible, confirm card is not visible
     const resetBtn = screen.getByText(/重置默认/);
     expect(resetBtn).toBeDefined();
     expect(screen.queryByText(/确认恢复默认提示词/)).toBeNull();
 
-    // 1. Click reset button
     fireEvent.click(resetBtn);
-
-    // Confirmation card is now visible, but reset has NOT been called yet
     expect(screen.getByText(/确认恢复默认提示词/)).toBeDefined();
     expect(onResetGlobalDefaults).not.toHaveBeenCalled();
 
-    // 2. Click Cancel
     const cancelBtn = screen.getByText(/取消 \/ Cancel/);
     fireEvent.click(cancelBtn);
-
-    // Confirmation card is dismissed, reset was still NOT called
     expect(screen.queryByText(/确认恢复默认提示词/)).toBeNull();
     expect(onResetGlobalDefaults).not.toHaveBeenCalled();
 
-    // 3. Click Reset again to open confirmation
     fireEvent.click(resetBtn);
     expect(screen.getByText(/确认恢复默认提示词/)).toBeDefined();
 
-    // 4. Click Confirm Reset button
     const confirmResetBtn = screen.getByText(/确认重置 \/ Yes, Reset/);
     fireEvent.click(confirmResetBtn);
 
-    // Verify onResetGlobalDefaults was called
     await waitFor(() => {
       expect(onResetGlobalDefaults).toHaveBeenCalledTimes(1);
     });
 
-    // Verify success toast was displayed
     expect(mockToastShow).toHaveBeenCalledWith(
       expect.stringContaining("已成功恢复默认快捷提示词"),
       { variant: "success" },
@@ -127,23 +117,17 @@ describe("QuickPromptsModal Confirmation & Feedback", () => {
     );
 
     const deleteButtons = screen.getAllByText("🗑️");
-    // expect(deleteButtons.length).toBe(2);
-
-    // Click delete on the first item ("Custom Continue")
     fireEvent.click(deleteButtons[0]);
 
-    // Verify delete confirmation card is displayed
     expect(screen.getByText(/确认删除提示词/)).toBeDefined();
     expect(screen.getAllByText(/Custom Continue/).length).toBeGreaterThanOrEqual(2);
     expect(onSaveGlobalItems).not.toHaveBeenCalled();
 
-    // Click cancel
     const cancelBtn = screen.getByText(/取消 \/ Cancel/);
     fireEvent.click(cancelBtn);
     expect(screen.queryByText(/确认删除提示词/)).toBeNull();
     expect(onSaveGlobalItems).not.toHaveBeenCalled();
 
-    // Click delete again and confirm
     const freshDeleteButtons = screen.getAllByText("🗑️");
     fireEvent.click(freshDeleteButtons[0]);
     const confirmDeleteBtn = screen.getByText(/确认删除 \/ Delete/);
@@ -153,25 +137,19 @@ describe("QuickPromptsModal Confirmation & Feedback", () => {
       expect(onSaveGlobalItems).toHaveBeenCalledTimes(1);
     });
 
-    // Check that the remaining items exclude item-1
     const savedItems = onSaveGlobalItems.mock.calls[0][0];
     expect(savedItems.map((i: any) => i.id)).toEqual(["item-2"]);
 
-    // Verify info toast was displayed
     expect(mockToastShow).toHaveBeenCalledWith(expect.stringContaining("已删除提示词"), {
       variant: "info",
     });
   });
 });
 
-describe("QuickPromptsModal target model configuration", () => {
-  it("saves targetModelId when a model option is selected", async () => {
+describe("QuickPromptsModal icon and color customization", () => {
+  it("saves custom icon and color when creating a prompt", async () => {
     const onSaveGlobalItems = vi.fn().mockResolvedValue(undefined);
     const onResetGlobalDefaults = vi.fn().mockResolvedValue(undefined);
-    const availableModels = [
-      { id: "claude-3-7-sonnet", label: "Claude 3.7 Sonnet" },
-      { id: "gpt-5.4", label: "GPT-5.4" },
-    ];
 
     render(
       <QuickPromptsModal
@@ -180,7 +158,6 @@ describe("QuickPromptsModal target model configuration", () => {
         globalItems={[]}
         onSaveGlobalItems={onSaveGlobalItems}
         onResetGlobalDefaults={onResetGlobalDefaults}
-        availableModels={availableModels}
       />,
     );
 
@@ -189,12 +166,17 @@ describe("QuickPromptsModal target model configuration", () => {
 
     // Fill label + content
     const labelInput = screen.getByPlaceholderText(/e.g. Continue/);
-    fireEvent.change(labelInput, { target: { value: "Opus Prompt" } });
+    fireEvent.change(labelInput, { target: { value: "Deploy Action" } });
     const contentInput = screen.getByPlaceholderText(/Enter full prompt content/);
-    fireEvent.change(contentInput, { target: { value: "Use opus to do this" } });
+    fireEvent.change(contentInput, { target: { value: "Deploy to production" } });
 
-    // Select model option
-    fireEvent.click(screen.getByText("Claude 3.7 Sonnet"));
+    // Select color (e.g. emerald 翠绿)
+    const emeraldOption = screen.getByTestId("color-option-emerald");
+    fireEvent.click(emeraldOption);
+
+    // Select icon (e.g. Rocket 火箭)
+    const rocketChip = screen.getByTestId("icon-quick-chip-Rocket");
+    fireEvent.click(rocketChip);
 
     // Save
     fireEvent.click(screen.getByText(/保存 \/ Save/));
@@ -203,22 +185,25 @@ describe("QuickPromptsModal target model configuration", () => {
       expect(onSaveGlobalItems).toHaveBeenCalledTimes(1);
     });
     const savedItems = onSaveGlobalItems.mock.calls[0][0];
-    expect(savedItems[0].targetModelId).toBe("claude-3-7-sonnet");
+    expect(savedItems[0].label).toBe("Deploy Action");
+    expect(savedItems[0].color).toBe("emerald");
+    expect(savedItems[0].icon).toBe("Rocket");
   });
 
-  it("clears targetModelId when using current model on edit", async () => {
+  it("updates icon and color on edit", async () => {
     const onSaveGlobalItems = vi.fn().mockResolvedValue(undefined);
     const onResetGlobalDefaults = vi.fn().mockResolvedValue(undefined);
-    const existing = [
+    const existing: QuickPromptItem[] = [
       {
-        id: "item-with-model",
-        label: "Model Prompt",
-        content: "Do it",
-        triggerType: "fixed" as const,
+        id: "item-edit-color",
+        label: "Build",
+        content: "Run build",
+        color: "sky",
+        icon: "Terminal",
+        triggerType: "fixed",
         enabled: true,
         createdAt: 1,
         order: 0,
-        targetModelId: "claude-3-7-sonnet",
       },
     ];
 
@@ -229,20 +214,19 @@ describe("QuickPromptsModal target model configuration", () => {
         globalItems={existing}
         onSaveGlobalItems={onSaveGlobalItems}
         onResetGlobalDefaults={onResetGlobalDefaults}
-        availableModels={[{ id: "claude-3-7-sonnet", label: "Claude 3.7 Sonnet" }]}
       />,
     );
 
-    // Edit via delete-free edit path: open edit by clicking edit button (✏️) if present
-    fireEvent.click(screen.getByText(/Model Prompt/));
-    // In list mode clicking the row label does not open edit; find edit button by label
-    const editButtons = screen.getAllByText("✏️");
-    if (editButtons.length > 0) {
-      fireEvent.click(editButtons[0]);
-    }
+    const editBtn = screen.getByText("✏️");
+    fireEvent.click(editBtn);
 
-    // Clear model by choosing "使用当前模型"
-    fireEvent.click(screen.getByText(/使用当前模型/));
+    // Change color to amber
+    const amberOption = screen.getByTestId("color-option-amber");
+    fireEvent.click(amberOption);
+
+    // Change icon to Bug
+    const bugChip = screen.getByTestId("icon-quick-chip-Bug");
+    fireEvent.click(bugChip);
 
     // Save
     fireEvent.click(screen.getByText(/保存 \/ Save/));
@@ -251,6 +235,7 @@ describe("QuickPromptsModal target model configuration", () => {
       expect(onSaveGlobalItems).toHaveBeenCalledTimes(1);
     });
     const savedItems = onSaveGlobalItems.mock.calls[0][0];
-    expect(savedItems[0].targetModelId).toBeUndefined();
+    expect(savedItems[0].color).toBe("amber");
+    expect(savedItems[0].icon).toBe("Bug");
   });
 });

@@ -1,11 +1,12 @@
 import React, { memo, useCallback, useMemo, useState, useEffect } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet } from "react-native";
+import { View, Text, Pressable, StyleSheet } from "react-native";
 import type { PluginButtonContentProps } from "@getpaseo/plugin/client";
 import { useAgent, useWorkspace, usePaseo, useSettings } from "@getpaseo/plugin/client";
-import { useToast } from "@getpaseo/plugin/client/react-native";
+import { Icon, useToast } from "@getpaseo/plugin/client/react-native";
 import { useEffectiveQuickPrompts } from "./use-quick-prompts.js";
 import { resolveActiveAgentProfileIds } from "./quick-prompt-resolver.js";
 import { executeQuickPrompt } from "./prompt-executor.js";
+import { PROMPT_COLOR_PALETTE } from "./color-palette.js";
 import {
   quickPromptsSettings,
   type QuickPromptItem,
@@ -51,32 +52,33 @@ export const QuickPromptsPopover = memo(function QuickPromptsPopover({
 
   const [lastAssistantText, setLastAssistantText] = useState<string | null>(null);
 
+  // Background passive timeline observation without blocking UI mount
   useEffect(() => {
     if (!agentId || !paseo?.agents) return;
     let active = true;
 
-    async function loadLastAssistantMessage() {
-      try {
-        const ref = paseo.agents.ref(agentId);
-        const page = await ref.timeline.refetch({ direction: "tail", limit: 20 });
-        if (!active || !page?.entries) return;
-
-        for (let i = page.entries.length - 1; i >= 0; i--) {
-          const entry = page.entries[i];
-          if (entry?.item && entry.item.type === "assistant_message") {
-            const text = entry.item.text?.trim();
-            if (text) {
-              setLastAssistantText(text);
-              return;
+    try {
+      const ref = paseo.agents.ref(agentId);
+      ref.timeline
+        .refetch({ direction: "tail", limit: 10 })
+        .then((page) => {
+          if (!active || !page?.entries) return;
+          for (let i = page.entries.length - 1; i >= 0; i--) {
+            const entry = page.entries[i];
+            if (entry?.item && entry.item.type === "assistant_message") {
+              const text = entry.item.text?.trim();
+              if (text) {
+                setLastAssistantText(text);
+                return;
+              }
             }
           }
-        }
-      } catch {
-        // Ignored
-      }
+        })
+        .catch(() => {});
+    } catch {
+      // Ignored
     }
 
-    void loadLastAssistantMessage();
     return () => {
       active = false;
     };
@@ -98,308 +100,243 @@ export const QuickPromptsPopover = memo(function QuickPromptsPopover({
     disableEphemeral: !aiSuggestions,
   });
 
-  const [searchQuery, setSearchQuery] = useState("");
-  const [filterType, setFilterType] = useState<"all" | "ai" | "rule" | "general">("all");
-
   const handleSelectPrompt = useCallback(
     async (item: QuickPromptItem) => {
-      const ok = await executeQuickPrompt({
+      close();
+      await executeQuickPrompt({
         item,
         agentId,
         paseo,
         onToastError: (msg) => toast.show(msg),
       });
-      if (ok) {
-        close();
-      }
     },
     [agentId, close, paseo, toast],
   );
-
-  const filteredItems = useMemo(() => {
-    let result = effectiveItems;
-    if (filterType === "ai") {
-      result = result.filter((i) => i.triggerType === "ephemeral");
-    } else if (filterType === "rule") {
-      result = result.filter((i) => i.triggerType === "rule");
-    } else if (filterType === "general") {
-      result = result.filter((i) => i.triggerType === "fixed");
-    }
-
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase().trim();
-      result = result.filter(
-        (i) =>
-          i.label.toLowerCase().includes(q) ||
-          i.content.toLowerCase().includes(q) ||
-          Boolean(i.shortcut && i.shortcut.toLowerCase().includes(q)),
-      );
-    }
-    return result;
-  }, [effectiveItems, filterType, searchQuery]);
 
   const styles = useMemo(
     () =>
       StyleSheet.create({
         container: {
-          width: layout.compact ? "100%" : 360,
-          backgroundColor: layout.compact ? "transparent" : theme.colors.surface0,
-          borderRadius: layout.compact ? 0 : 12,
-          padding: layout.compact ? 2 : 12,
-          gap: 12,
+          width: layout.compact ? "100%" : 280,
+          backgroundColor: layout.compact ? "transparent" : (theme.colors.surface0 ?? "#111"),
+          padding: 8,
+          gap: 6,
         },
         header: {
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "space-between",
-          paddingBottom: 4,
-          borderBottomWidth: StyleSheet.hairlineWidth,
-          borderBottomColor: theme.colors.border,
+          paddingHorizontal: 2,
+          paddingBottom: 2,
         },
         headerTitle: {
-          fontSize: 15,
-          fontWeight: "600",
-          color: theme.colors.foreground,
+          fontSize: 10,
+          fontWeight: "700",
+          letterSpacing: 0.6,
+          color: theme.colors.foregroundMuted,
+          textTransform: "uppercase",
         },
-        headerActions: {
+        settingsTrigger: {
+          width: 20,
+          height: 20,
+          borderRadius: 4,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: "transparent",
+        },
+        settingsTriggerText: {
+          fontSize: 11,
+          color: theme.colors.foregroundMuted,
+        },
+        grid: {
+          flexDirection: "row",
+          flexWrap: "wrap",
+          gap: 5,
+        },
+        card: {
           flexDirection: "row",
           alignItems: "center",
-          gap: 8,
-        },
-        headerButton: {
-          paddingVertical: 5,
-          paddingHorizontal: 9,
+          justifyContent: "space-between",
+          width: "48.9%",
+          height: 30,
+          paddingHorizontal: 8,
           borderRadius: 6,
-          backgroundColor: theme.colors.surface2,
+          backgroundColor: theme.colors.surface1,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
         },
-        headerButtonText: {
+        cardFullWidth: {
+          width: "100%",
+        },
+        cardDynamic: {
+          borderColor: theme.colors.accent,
+        },
+        labelRow: {
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 5,
+          flexShrink: 1,
+          minWidth: 0,
+        },
+        badgeDot: {
+          width: 4,
+          height: 4,
+          borderRadius: 2,
+          backgroundColor: theme.colors.accent,
+        },
+        cardText: {
           fontSize: 12,
           fontWeight: "500",
           color: theme.colors.foreground,
         },
-        searchRow: {
-          flexDirection: "row",
+        cardTextDynamic: {
+          color: theme.colors.foreground,
+        },
+        shortcutTag: {
+          fontSize: 10,
+          fontWeight: "500",
+          color: theme.colors.foregroundMuted,
+          opacity: 0.75,
+          marginLeft: 4,
+        },
+        emptyContainer: {
+          paddingVertical: 14,
+          paddingHorizontal: 16,
           alignItems: "center",
+          justifyContent: "center",
           gap: 8,
         },
-        searchBox: {
-          flex: 1,
-          backgroundColor: theme.colors.surface1,
-          borderRadius: 8,
-          paddingHorizontal: 12,
-          paddingVertical: 8,
-          fontSize: 14,
-          color: theme.colors.foreground,
-          borderWidth: StyleSheet.hairlineWidth,
-          borderColor: theme.colors.border,
-          minHeight: 40,
-        },
-        filterRow: {
-          flexDirection: "row",
-          gap: 6,
-        },
-        filterTab: {
-          paddingHorizontal: 10,
-          paddingVertical: 6,
-          borderRadius: 8,
-          backgroundColor: theme.colors.surface1,
-          borderWidth: StyleSheet.hairlineWidth,
-          borderColor: theme.colors.border,
-        },
-        filterTabActive: {
-          backgroundColor: theme.colors.accent,
-          borderColor: theme.colors.accent,
-        },
-        filterTabText: {
+        emptyText: {
           fontSize: 12,
           color: theme.colors.foregroundMuted,
         },
-        filterTabTextActive: {
-          color: theme.colors.accentForeground,
-          fontWeight: "600",
-        },
-        chipsSection: {
-          flexDirection: "row",
-          flexWrap: "wrap",
-          gap: 8,
-          paddingVertical: 4,
-          minHeight: 44,
-        },
-        chipButton: {
+        emptyConfigButton: {
           flexDirection: "row",
           alignItems: "center",
-          paddingHorizontal: 14,
-          paddingVertical: 8,
-          borderRadius: 20,
+          height: 28,
+          paddingHorizontal: 12,
+          borderRadius: 6,
           backgroundColor: theme.colors.surface2,
           borderWidth: 1,
           borderColor: theme.colors.border,
         },
-        chipButtonAi: {
-          borderColor: theme.colors.accent,
-          backgroundColor: theme.colors.surface1,
-        },
-        chipButtonText: {
-          fontSize: 13,
-          fontWeight: "600",
+        emptyConfigText: {
+          fontSize: 12,
+          fontWeight: "500",
           color: theme.colors.foreground,
-        },
-        emptyContainer: {
-          padding: 24,
-          alignItems: "center",
-          justifyContent: "center",
-          width: "100%",
-        },
-        emptyText: {
-          fontSize: 13,
-          color: theme.colors.foregroundMuted,
-        },
-        footer: {
-          paddingTop: 6,
-          borderTopWidth: StyleSheet.hairlineWidth,
-          borderTopColor: theme.colors.border,
-          flexDirection: "row",
-          justifyContent: "space-between",
-          alignItems: "center",
-        },
-        footerText: {
-          fontSize: 11,
-          color: theme.colors.foregroundMuted,
         },
       }),
     [theme, layout.compact],
   );
 
+  if (effectiveItems.length === 0 && !isLoading) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.emptyContainer}>
+          <Text style={styles.emptyText}>暂无快捷指令</Text>
+          {onOpenSettings ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="配置快捷指令"
+              onPress={() => {
+                onOpenSettings();
+                close();
+              }}
+              style={styles.emptyConfigButton}
+            >
+              <Text style={styles.emptyConfigText}>⚙ 配置快捷指令</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+    );
+  }
+
+  const isOdd = effectiveItems.length % 2 === 1;
+
   return (
     <View style={styles.container}>
-      {!layout.compact ? (
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>✨ Quick Prompts</Text>
-          <View style={styles.headerActions}>
-            {onOpenSettings ? (
-              <Pressable
-                style={styles.headerButton}
-                accessibilityRole="button"
-                accessibilityLabel="Manage Prompts"
-                onPress={() => {
-                  onOpenSettings();
-                  close();
-                }}
-              >
-                <Text style={styles.headerButtonText}>⚙️ 管理</Text>
-              </Pressable>
-            ) : null}
-            <Pressable
-              style={styles.headerButton}
-              accessibilityRole="button"
-              accessibilityLabel="Close"
-              onPress={close}
-            >
-              <Text style={styles.headerButtonText}>✕</Text>
-            </Pressable>
-          </View>
-        </View>
-      ) : null}
-
-      <View style={styles.searchRow}>
-        <TextInput
-          style={styles.searchBox}
-          placeholder="搜索快捷指令..."
-          placeholderTextColor={theme.colors.foregroundMuted}
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-        />
-        {layout.compact && onOpenSettings ? (
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Quick Actions</Text>
+        {onOpenSettings ? (
           <Pressable
-            style={styles.headerButton}
+            testID="quick-prompts-settings-trigger"
+            style={({ pressed }) => [
+              styles.settingsTrigger,
+              pressed && { opacity: 0.6, backgroundColor: theme.colors.surface2 },
+            ]}
             accessibilityRole="button"
-            accessibilityLabel="Manage Prompts"
+            accessibilityLabel="管理快捷指令"
             onPress={() => {
               onOpenSettings();
               close();
             }}
           >
-            <Text style={styles.headerButtonText}>⚙️ 管理</Text>
+            <Text style={styles.settingsTriggerText}>⚙</Text>
           </Pressable>
         ) : null}
       </View>
 
-      <View style={styles.filterRow}>
-        <Pressable
-          style={[styles.filterTab, filterType === "all" && styles.filterTabActive]}
-          onPress={() => setFilterType("all")}
-        >
-          <Text style={[styles.filterTabText, filterType === "all" && styles.filterTabTextActive]}>
-            全部
-          </Text>
-        </Pressable>
-        <Pressable
-          style={[styles.filterTab, filterType === "ai" && styles.filterTabActive]}
-          onPress={() => setFilterType("ai")}
-        >
-          <Text style={[styles.filterTabText, filterType === "ai" && styles.filterTabTextActive]}>
-            AI推荐
-          </Text>
-        </Pressable>
-        <Pressable
-          style={[styles.filterTab, filterType === "rule" && styles.filterTabActive]}
-          onPress={() => setFilterType("rule")}
-        >
-          <Text style={[styles.filterTabText, filterType === "rule" && styles.filterTabTextActive]}>
-            规则推荐
-          </Text>
-        </Pressable>
-        <Pressable
-          style={[styles.filterTab, filterType === "general" && styles.filterTabActive]}
-          onPress={() => setFilterType("general")}
-        >
-          <Text
-            style={[styles.filterTabText, filterType === "general" && styles.filterTabTextActive]}
-          >
-            常用指令
-          </Text>
-        </Pressable>
-      </View>
+      <View style={styles.grid}>
+        {effectiveItems.map((item, index) => {
+          const isLastOdd = isOdd && index === effectiveItems.length - 1;
+          const isDynamic = item.triggerType === "ephemeral" || item.triggerType === "rule";
+          const colorConfig =
+            item.color && PROMPT_COLOR_PALETTE[item.color]
+              ? PROMPT_COLOR_PALETTE[item.color]
+              : null;
+          const hasCustomTint = colorConfig && colorConfig.tint !== "transparent";
+          const textColor = colorConfig ? colorConfig.text : theme.colors.foreground;
 
-      {/* Quick Action Buttons Only: clean, concise, no duplicate card list */}
-      <View style={styles.chipsSection}>
-        {isLoading ? (
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>正在加载提示词…</Text>
-          </View>
-        ) : filteredItems.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>无匹配的快捷指令</Text>
-          </View>
-        ) : (
-          filteredItems.map((item) => (
+          return (
             <Pressable
               key={`btn-${item.id}`}
               testID={`quick-prompt-chip-${item.id}`}
               style={({ pressed }) => [
-                styles.chipButton,
-                item.triggerType === "ephemeral" && styles.chipButtonAi,
-                pressed && { opacity: 0.75 },
+                styles.card,
+                isLastOdd && styles.cardFullWidth,
+                isDynamic && styles.cardDynamic,
+                hasCustomTint && {
+                  backgroundColor: colorConfig.tint,
+                  borderColor: colorConfig.border,
+                },
+                pressed && { opacity: 0.7, transform: [{ scale: 0.98 }] },
               ]}
               accessibilityRole="button"
               accessibilityLabel={item.label}
               onPress={() => handleSelectPrompt(item)}
             >
-              <Text style={styles.chipButtonText}>
-                {item.triggerType === "ephemeral"
-                  ? "✨ "
-                  : item.triggerType === "rule"
-                    ? "⚡ "
-                    : ""}
-                {item.label}
-              </Text>
-            </Pressable>
-          ))
-        )}
-      </View>
+              <View style={styles.labelRow}>
+                {item.icon ? (
+                  <Icon name={item.icon} size={12} color={textColor} />
+                ) : isDynamic ? (
+                  <View style={styles.badgeDot} />
+                ) : null}
+                <Text
+                  style={[
+                    styles.cardText,
+                    colorConfig ? { color: textColor } : isDynamic && styles.cardTextDynamic,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {item.label}
+                </Text>
+              </View>
 
-      <View style={styles.footer}>
-        <Text style={styles.footerText}>点击一键发送 · 或在输入框输入 /快捷键</Text>
+              {item.shortcut ? (
+                <Text
+                  style={[
+                    styles.shortcutTag,
+                    colorConfig ? { color: textColor, opacity: 0.8 } : undefined,
+                  ]}
+                  numberOfLines={1}
+                >
+                  /{`${item.shortcut}`}
+                </Text>
+              ) : null}
+            </Pressable>
+          );
+        })}
       </View>
     </View>
   );
