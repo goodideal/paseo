@@ -7,7 +7,6 @@ import {
   quickPromptsSettings,
 } from "./shared/contracts.js";
 import { QuickPromptsStore } from "./server/quick-prompts-store.js";
-import { tagWorkspace, syncAllWorkspaces } from "./server/workspace-tagger.js";
 
 export default function contribute(server: PluginServerContext) {
   server.registerSettings(quickPromptsSettings);
@@ -48,30 +47,5 @@ export default function contribute(server: PluginServerContext) {
     };
   });
 
-  if (server.paseo?.workspaces) {
-    void syncAllWorkspaces(server.paseo.workspaces).catch((error) => {
-      console.error("[QuickPrompts] Startup workspace tagger sync failed:", error);
-    });
-  }
-
-  const removeHook = server.addHook("workspace.create.after", async ({ workspace }, context) => {
-    try {
-      const handle = context.paseo.workspaces.ref(workspace.id);
-      const snapshot = await handle.refresh();
-      if (snapshot?.workspaceKind) {
-        await tagWorkspace(
-          workspace.id,
-          snapshot.workspaceKind,
-          snapshot.labels ?? [],
-          context.paseo.workspaces,
-        );
-      }
-    } catch (error) {
-      console.error(`[QuickPrompts] Failed to auto-tag created workspace ${workspace.id}:`, error);
-    }
-  });
-
-  return () => {
-    removeHook?.();
-  };
+  return () => {};
 }

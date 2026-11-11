@@ -379,7 +379,6 @@ export function createPluginWorker(options: {
         )
       : null;
     const contributedCleanup = contribute({
-      paseo,
       handle,
       registerProvider,
       registerUsageSource,

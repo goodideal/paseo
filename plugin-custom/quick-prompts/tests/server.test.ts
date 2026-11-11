@@ -1,12 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { PluginServerContext } from "@getpaseo/plugin";
 import { QuickPromptsStore } from "../server/quick-prompts-store.js";
 import { DEFAULT_QUICK_PROMPT_ITEMS, type QuickPromptItem } from "../shared/contracts.js";
-import contribute from "../index.server.js";
-import { WORKTREE_LABEL, LOCAL_LABEL } from "../server/workspace-tagger.js";
 
 describe("QuickPromptsStore (Plugin)", () => {
   let tempHome: string;
@@ -142,136 +139,5 @@ describe("QuickPromptsStore (Plugin)", () => {
     expect(projectData.disabledGlobalIds).toEqual(["builtin-fix"]);
 
     rmSync(legacyHome, { recursive: true, force: true });
-  });
-});
-
-describe("contribute - workspace tagger", () => {
-  function createMockServer() {
-    const registeredHooks = new Map<string, (payload: any, context: any) => Promise<void>>();
-    const removeHook = vi.fn();
-    const listMock = vi.fn().mockResolvedValue({
-      entries: [
-        { id: "ws-startup-wt", workspaceKind: "worktree", labels: [] },
-        { id: "ws-startup-loc", workspaceKind: "local_checkout", labels: [] },
-      ],
-    });
-    const setLabelMock = vi.fn().mockResolvedValue({});
-    const refreshMock = vi.fn();
-    const refMock = vi.fn().mockReturnValue({ refresh: refreshMock });
-
-    const mockPaseo = {
-      workspaces: {
-        list: listMock,
-        setLabel: setLabelMock,
-        ref: refMock,
-      },
-    };
-
-    const server = {
-      registerSettings: vi.fn(),
-      handle: vi.fn(),
-      addHook: vi.fn((name: string, handler: (payload: any, context: any) => Promise<void>) => {
-        registeredHooks.set(name, handler);
-        return removeHook;
-      }),
-      paseo: mockPaseo,
-    };
-
-    return {
-      server: server as unknown as PluginServerContext,
-      registeredHooks,
-      removeHook,
-      listMock,
-      setLabelMock,
-      refreshMock,
-      refMock,
-      mockPaseo,
-    };
-  }
-
-  it("calls syncAllWorkspaces on startup using server.paseo", async () => {
-    const mock = createMockServer();
-    contribute(mock.server);
-
-    // Give startup async promise time to complete all iterations
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
-    expect(mock.listMock).toHaveBeenCalled();
-    expect(mock.setLabelMock).toHaveBeenCalledWith("ws-startup-wt", WORKTREE_LABEL, true);
-    expect(mock.setLabelMock).toHaveBeenCalledWith("ws-startup-loc", LOCAL_LABEL, true);
-  });
-
-  it("registers workspace.create.after hook to auto-tag newly created workspaces", async () => {
-    const mock = createMockServer();
-    contribute(mock.server);
-
-    expect(mock.server.addHook).toHaveBeenCalledWith(
-      "workspace.create.after",
-      expect.any(Function),
-    );
-
-    const hookHandler = mock.registeredHooks.get("workspace.create.after");
-    expect(hookHandler).toBeDefined();
-
-    mock.refreshMock.mockResolvedValue({
-      workspaceKind: "worktree",
-      labels: [],
-    });
-
-    await hookHandler!(
-      {
-        workspace: {
-          id: "ws-new-1",
-          projectId: "p1",
-          cwd: "/tmp/ws",
-          name: "new",
-          archivedAt: null,
-        },
-      },
-      { paseo: mock.mockPaseo, signal: new AbortController().signal },
-    );
-
-    expect(mock.refMock).toHaveBeenCalledWith("ws-new-1");
-    expect(mock.refreshMock).toHaveBeenCalled();
-    expect(mock.setLabelMock).toHaveBeenCalledWith("ws-new-1", WORKTREE_LABEL, true);
-  });
-
-  it("cleans up the workspace.create.after hook when contribution cleanup is called", () => {
-    const mock = createMockServer();
-    const cleanup = contribute(mock.server);
-
-    expect(mock.removeHook).not.toHaveBeenCalled();
-    cleanup();
-    expect(mock.removeHook).toHaveBeenCalledTimes(1);
-  });
-
-  it("gracefully catches errors in workspace.create.after hook without throwing", async () => {
-    const mock = createMockServer();
-    contribute(mock.server);
-
-    const hookHandler = mock.registeredHooks.get("workspace.create.after");
-    expect(hookHandler).toBeDefined();
-
-    mock.refreshMock.mockRejectedValue(new Error("Workspace not found"));
-
-    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-    await expect(
-      hookHandler!(
-        {
-          workspace: {
-            id: "ws-missing",
-            projectId: "p1",
-            cwd: "/tmp/missing",
-            name: "missing",
-            archivedAt: null,
-          },
-        },
-        { paseo: mock.mockPaseo, signal: new AbortController().signal },
-      ),
-    ).resolves.toBeUndefined();
-
-    expect(consoleErrorSpy).toHaveBeenCalled();
-    consoleErrorSpy.mockRestore();
   });
 });
