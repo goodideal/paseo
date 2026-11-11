@@ -41,7 +41,11 @@ import type { StepExecutor } from "./workflows/step-executors.js";
 import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
 import type { ScheduleService } from "./schedule/service.js";
 import type { CheckoutDiffManager, CheckoutDiffMetrics } from "./checkout-diff-manager.js";
-import type { DaemonConfigStore, MutableDaemonConfig } from "./daemon-config-store.js";
+import {
+  toWireDaemonConfig,
+  type DaemonConfigStore,
+  type MutableDaemonConfig,
+} from "./daemon-config-store.js";
 import {
   type ServerInfoStatusPayload,
   type ScriptStatusUpdateMessage,
@@ -454,6 +458,7 @@ function bufferFromWsData(data: Buffer | ArrayBuffer | Buffer[] | string): Buffe
 
 export interface WebSocketLike {
   maxFrameBytes?: number;
+  supportsConcurrentWrites?: boolean;
   readyState: number;
   bufferedAmount?: number;
   send: (
@@ -1239,7 +1244,7 @@ export class VoiceAssistantWebSocketServer {
 
     await Promise.all(cleanupPromises);
     this.providerSnapshotManager.destroy();
-    this.checkoutDiffManager.dispose();
+    await this.checkoutDiffManager.dispose();
     await this.workspaceGitService.dispose();
     this.pendingConnections.clear();
     this.sessions.clear();
@@ -1319,6 +1324,7 @@ export class VoiceAssistantWebSocketServer {
     if (!transport) {
       transport = new ChunkedTransport({
         frameBytes: ws.maxFrameBytes ?? 32 * 1024 * 1024,
+        supportsConcurrentWrites: ws.supportsConcurrentWrites,
         onFailure: (err) =>
           this.closePhysicalSocket({
             ws,
@@ -2040,6 +2046,9 @@ export class VoiceAssistantWebSocketServer {
         usageSetting: true,
         usageSources: true,
         ownedSubscriptions: true,
+        providerOptionControls: true,
+        entityMetadata: true,
+        diffSubscription: true,
         binaryChunkingV1: true,
         agentRequestReceipts: true,
         workspaceRequestReceipts: true,
@@ -2057,6 +2066,7 @@ export class VoiceAssistantWebSocketServer {
         directorySync: true,
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
         ...(this.workspaceLabelService ? { workspaceLabels: true } : {}),
+        terminalCollection: true,
         // COMPAT(workspaceSetupRun): added in v0.7.3, remove gate after 2027-09-02.
         workspaceSetupRun: true,
         workspaceSetupObservation: true,
@@ -2197,6 +2207,8 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(providerRemoval): added in v0.1.105, drop the gate when floor >= v0.1.105.
         providerRemoval: true,
         hopliteProvider: this.providerSnapshotManager.supportsConfigRequiredProvider("hoplite"),
+        // COMPAT(fxProvider): added after v0.15.3, remove after 2027-05-09 once host floor includes the bundled adapter.
+        fxProvider: this.providerSnapshotManager.supportsConfigRequiredProvider("fx"),
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
         importSessionWorkspaceTarget: true,
         // COMPAT(importSessionSearch): added in v0.7.3, remove gate after 2027-03-02.
@@ -2206,6 +2218,8 @@ export class VoiceAssistantWebSocketServer {
         forgeProviders: true,
         // COMPAT(selectiveAgentTimeline): added in v0.1.106, remove after 2027-01-12.
         selectiveAgentTimeline: true,
+        // COMPAT(timelineFreshnessCheck): added after v0.15.3, remove after 2027-05-09.
+        timelineFreshnessCheck: true,
         explicitEventSubscriptions: true,
         // COMPAT(canonicalSubmittedPrompts): added in v0.2.6, remove gate after 2027-01-30.
         canonicalSubmittedPrompts: true,
@@ -2247,7 +2261,7 @@ export class VoiceAssistantWebSocketServer {
       type: "status",
       payload: {
         status: "daemon_config_changed",
-        config,
+        config: toWireDaemonConfig(config),
       },
     });
   }

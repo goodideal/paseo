@@ -1,3 +1,4 @@
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { PluginHookAgent } from "@getpaseo/plugin/server";
 import { UsageScopeSchema, type UsageScope } from "@getpaseo/plugin/server/usage";
 import type {
@@ -190,6 +191,7 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
             provider: z.string(),
             cwd: z.string(),
             title: z.string().nullable(),
+            metadata: z.record(z.string(), z.custom<JsonValue>()),
           })
           .strict(),
         name: z.string(),

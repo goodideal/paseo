@@ -1,3 +1,12 @@
+import { DiffSession } from "./diff/index.js";
+import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
+import type { AgentMessageDelivery } from "./agent/agent-messages/index.js";
+import { WorkspaceEvolutionService } from "./evolution/workspace-evolution-service.js";
+import { WorkflowSession } from "./session/workflow/workflow-session.js";
+import type { WorkflowPresetRegistry } from "./workflows/workflow-preset-registry.js";
+import type { WorkflowService } from "./workflows/workflow-service.js";
+import type { StepExecutor } from "./workflows/step-executors.js";
+
 function createWorkflowSession(
   options: SessionOptions,
   host: { emit: (msg: SessionOutboundMessage) => void },
@@ -20,14 +29,6 @@ function createWorkflowSession(
     logger,
   });
 }
-
-import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
-import type { AgentMessageDelivery } from "./agent/agent-messages/index.js";
-import { WorkspaceEvolutionService } from "./evolution/workspace-evolution-service.js";
-import { WorkflowSession } from "./session/workflow/workflow-session.js";
-import type { WorkflowPresetRegistry } from "./workflows/workflow-preset-registry.js";
-import type { WorkflowService } from "./workflows/workflow-service.js";
-import type { StepExecutor } from "./workflows/step-executors.js";
 import { AgentDirectory, type BackgroundVisibility } from "./agent/directory.js";
 import { ConnectedHostSession } from "./connected-hosts/index.js";
 import type { ConnectedHosts } from "./connected-hosts/index.js";
@@ -120,11 +121,12 @@ import {
   createWorkspaceScriptsService,
   type WorkspaceScriptsService,
 } from "./session/workspace-scripts/workspace-scripts-service.js";
-import type { DaemonConfigStore } from "./daemon-config-store.js";
+import { toWireDaemonConfig, type DaemonConfigStore } from "./daemon-config-store.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
 import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
+import { applyRecordPatch } from "./record-patch.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
 import {
@@ -887,6 +889,7 @@ export class Session {
   private readonly workspaceDirectory: WorkspaceDirectory;
   private readonly voiceSessions: VoiceSessions;
   private readonly checkoutSession: CheckoutSession;
+  private readonly diffSession: DiffSession;
   private readonly scheduleSession: ScheduleSession;
   private readonly evolutionService: WorkspaceEvolutionService;
   private readonly workflowSession: WorkflowSession | null;
@@ -1053,6 +1056,7 @@ export class Session {
         await this.workspaceProvisioning.ensureWorkspaceRecordUnarchived(workspace);
       },
     });
+    this.diffSession = new DiffSession(checkoutDiffManager.streams, this.sessionLogger);
     this.checkoutSession = new CheckoutSession({
       host: {
         emit: (msg) => this.emit(msg),
@@ -1142,7 +1146,7 @@ export class Session {
         supportsProviderSnapshotReferences: () =>
           this.supports(CLIENT_CAPS.providerSnapshotReferences),
         listProviderAvailability: () => this.agentManager.listProviderAvailability(),
-        listDraftFeatures: (config) => this.agentManager.listDraftFeatures(config),
+        listDraftControls: (config) => this.agentManager.listDraftControls(config),
       },
       providerSnapshotManager,
       logger: this.sessionLogger,
@@ -1172,8 +1176,7 @@ export class Session {
         setMode: async (agentId, modeId) =>
           (await setAgentModeCommand({ agentManager }, { agentId, modeId })).notice,
         setModel: (agentId, modelId) => agentManager.setAgentModel(agentId, modelId),
-        setFeature: (agentId, featureId, value) =>
-          agentManager.setAgentFeature(agentId, featureId, value),
+        setOptions: (agentId, patch) => agentManager.setAgentOptions(agentId, patch),
         setThinking: (agentId, thinkingOptionId) =>
           agentManager.setAgentThinkingOption(agentId, thinkingOptionId),
       },
@@ -1242,6 +1245,12 @@ export class Session {
       isPathWithinRoot: (rootPath, candidatePath) => this.isPathWithinRoot(rootPath, candidatePath),
       sessionLogger: this.sessionLogger,
       listTerminalWorkspaceRefs: () => this.listActiveWorkspaceRefs(),
+      isScriptTerminal: (terminal) =>
+        this.scriptRuntimeStore
+          ?.listForWorkspace(terminal.workspaceId)
+          .some((script) => script.terminalId === terminal.id) ?? false,
+      subscribeTerminalMetadata: (listener) =>
+        this.scriptRuntimeStore?.subscribe(listener) ?? (() => {}),
       getClientBufferedAmount: (source) => this.getTransportBufferedAmount(source),
     });
     this.agentDirectory = new AgentDirectory({
@@ -1452,6 +1461,65 @@ export class Session {
       .catch((err) => this.sessionLogger.error({ err }, "Failed to release source subscriptions"));
     this.clientSources.delete(source);
     this.refreshObservationProducers();
+  }
+
+  private compareTimelineCursors(
+    agentIds: string[],
+    cursors: Record<string, AgentTimelineCursor>,
+  ): Record<string, "current" | "behind"> {
+    const timelines: Record<string, "current" | "behind"> = {};
+    for (const agentId of agentIds) {
+      const cursor = cursors[agentId];
+      if (!cursor) continue;
+      const head = this.agentManager.getLoadedTimelineHead(agentId);
+      timelines[agentId] =
+        head?.epoch === cursor.epoch && head.seq === cursor.seq ? "current" : "behind";
+    }
+    return timelines;
+  }
+
+  private async answerTimelineFreshness(
+    agentIds: string[],
+    cursors: Record<string, AgentTimelineCursor>,
+  ): Promise<{
+    timelines: Record<string, "current" | "behind">;
+    agents: Record<string, AgentSnapshotPayload>;
+  }> {
+    const snapshots = await Promise.all(
+      agentIds.flatMap((agentId) => {
+        const agent = cursors[agentId] ? this.agentManager.getAgent(agentId) : null;
+        return agent ? [this.buildAgentPayload(agent)] : [];
+      }),
+    );
+    // Compared after the await, so a row appended while reading the snapshots answers behind.
+    const timelines = this.compareTimelineCursors(agentIds, cursors);
+    const agents: Record<string, AgentSnapshotPayload> = {};
+    for (const snapshot of snapshots) {
+      if (timelines[snapshot.id] === "current") agents[snapshot.id] = snapshot;
+    }
+    return { timelines, agents };
+  }
+
+  private async handleAgentTimelineSubscription(
+    msg: Extract<SessionInboundMessage, { type: "agent.timeline.set_subscription.request" }>,
+    source?: object,
+  ): Promise<void> {
+    const agentIds = [...new Set(msg.agentIds)].sort();
+    // Attach before comparing: a row appended after the comparison reaches this owner live.
+    const owner = this.subscribeAgentTimelines(agentIds);
+    const freshness = msg.cursors ? await this.answerTimelineFreshness(agentIds, msg.cursors) : {};
+    this.emitForSource(
+      {
+        type: "agent.timeline.set_subscription.response",
+        payload: {
+          agentIds,
+          requestId: msg.requestId,
+          subscriptionId: owner.responseId,
+          ...freshness,
+        },
+      },
+      source,
+    );
   }
 
   private subscribeAgentTimelines(agentIds: string[]): OwnedSubscription {
@@ -2293,7 +2361,9 @@ export class Session {
     record: StoredAgentRecord,
     registeredProviderIds = new Set(this.providerSnapshotManager.listRegisteredProviderIds()),
   ): AgentSnapshotPayload {
-    return buildStoredAgentPayload(record, registeredProviderIds);
+    return buildStoredAgentPayload(record, registeredProviderIds, (provider, own) =>
+      this.agentManager.effectiveOptionsFor(provider, own),
+    );
   }
 
   private isProviderVisibleToClient(provider: string): boolean {
@@ -2646,8 +2716,20 @@ export class Session {
       this.dispatchWorkspaceStateMessage(msg) ??
       this.dispatchWorkspaceLabelMessage(msg) ??
       this.dispatchWorkspaceSetupMessage(msg) ??
+      this.dispatchMetadataMessage(msg) ??
       this.dispatchWorkspaceAndProjectMessage(msg)
     );
+  }
+
+  private dispatchMetadataMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "agent.metadata.update.request":
+        return this.handleAgentMetadataUpdateRequest(msg);
+      case "workspace.metadata.update.request":
+        return this.handleWorkspaceMetadataUpdateRequest(msg);
+      default:
+        return undefined;
+    }
   }
 
   private dispatchOrchestrationSkillsMessage(
@@ -3086,18 +3168,8 @@ export class Session {
           throw error;
         });
       }
-      case "agent.timeline.set_subscription.request": {
-        const agentIds = [...new Set(msg.agentIds)].sort();
-        const owner = this.subscribeAgentTimelines(agentIds);
-        this.emitForSource(
-          {
-            type: "agent.timeline.set_subscription.response",
-            payload: { agentIds, requestId: msg.requestId, subscriptionId: owner.responseId },
-          },
-          source,
-        );
-        return undefined;
-      }
+      case "agent.timeline.set_subscription.request":
+        return this.handleAgentTimelineSubscription(msg, source);
       case "agent.fork_context.request":
         return this.handleAgentForkContextRequest(msg);
       default:
@@ -3194,7 +3266,10 @@ export class Session {
       case "get_daemon_config_request":
         this.emit({
           type: "get_daemon_config_response",
-          payload: { requestId: msg.requestId, config: this.daemonConfigStore.get() },
+          payload: {
+            requestId: msg.requestId,
+            config: toWireDaemonConfig(this.daemonConfigStore.get()),
+          },
         });
         return undefined;
       case "daemon.get_status.request":
@@ -3218,7 +3293,7 @@ export class Session {
             type: "set_daemon_config_response",
             payload: {
               requestId: msg.requestId,
-              config,
+              config: toWireDaemonConfig(config),
             },
           });
         });
@@ -3234,6 +3309,10 @@ export class Session {
   // eslint-disable-next-line complexity
   private dispatchCheckoutMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
+      case "diff.subscribe.request":
+        return this.diffSession.subscribe(msg, this.delivery, (reply) => this.emit(reply));
+      case "diff.unsubscribe.request":
+        return this.delivery.release(msg.subscriptionId);
       case "checkout_status_request":
         return this.checkoutSession.handleStatusRequest(msg);
       case "checkout.commits.list.request":
@@ -3435,6 +3514,8 @@ export class Session {
         return this.providerCatalogSession.handleListProviderModesRequest(msg);
       case "list_provider_features_request":
         return this.providerCatalogSession.handleListProviderFeaturesRequest(msg);
+      case "provider.controls.list.request":
+        return this.providerCatalogSession.handleProviderControlsListRequest(msg);
       case "list_available_providers_request":
         return this.providerCatalogSession.handleListAvailableProvidersRequest(msg);
       case "get_providers_snapshot_request":
@@ -3549,7 +3630,9 @@ export class Session {
       await this.workspaceFilesSession.handleFileTransferFrame(binaryFrame.frame, source);
       return;
     }
-    this.terminalController.handleBinaryFrame(binaryFrame.frame, source);
+    if (binaryFrame.kind === "terminal") {
+      this.terminalController.handleBinaryFrame(binaryFrame.frame, source);
+    }
   }
 
   private async handleRestartServerRequest(
@@ -4242,6 +4325,78 @@ export class Session {
     }
   }
 
+  private async handleAgentMetadataUpdateRequest(
+    request: Extract<SessionInboundMessage, { type: "agent.metadata.update.request" }>,
+  ): Promise<void> {
+    const { agentId, patch, requestId } = request;
+    this.sessionLogger.info({ agentId, requestId }, "session: agent.metadata.update.request");
+    try {
+      const metadata = await this.agentManager.setMetadata(agentId, patch);
+      this.emit({
+        type: "agent.metadata.update.response",
+        payload: { requestId, agentId, accepted: true, metadata, error: null },
+      });
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, agentId, requestId },
+        "session: agent.metadata.update.request error",
+      );
+      this.emit({
+        type: "agent.metadata.update.response",
+        payload: {
+          requestId,
+          agentId,
+          accepted: false,
+          metadata: null,
+          error: getErrorMessageOr(error, "Failed to update agent metadata"),
+        },
+      });
+    }
+  }
+
+  private async handleWorkspaceMetadataUpdateRequest(
+    request: Extract<SessionInboundMessage, { type: "workspace.metadata.update.request" }>,
+  ): Promise<void> {
+    const { workspaceId, patch, requestId } = request;
+    this.sessionLogger.info(
+      { workspaceId, requestId },
+      "session: workspace.metadata.update.request",
+    );
+    const reject = (error: string) =>
+      this.emit({
+        type: "workspace.metadata.update.response",
+        payload: { requestId, workspaceId, accepted: false, metadata: null, error },
+      });
+    try {
+      const updatedAt = new Date().toISOString();
+      const updated = await this.workspaceRegistry.update(workspaceId, (existing) => ({
+        ...existing,
+        metadata: applyRecordPatch(existing.metadata, patch),
+        updatedAt,
+      }));
+      if (!updated) {
+        reject("Workspace not found");
+        return;
+      }
+      this.emit({
+        type: "workspace.metadata.update.response",
+        payload: {
+          requestId,
+          workspaceId,
+          accepted: true,
+          metadata: updated.metadata,
+          error: null,
+        },
+      });
+      await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId]);
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, workspaceId, requestId },
+        "session: workspace.metadata.update.request error",
+      );
+      reject(getErrorMessageOr(error, "Failed to update workspace metadata"));
+    }
+  }
   private async handleWorkspaceBaseBranchSetRequest(
     msg: WorkspaceBaseBranchSetRequest,
   ): Promise<void> {
@@ -4837,6 +4992,7 @@ export class Session {
           images,
           attachments,
           labels: resolvedIntent.intent.labels,
+          metadata: msg.metadata,
           env,
           provisionalTitle,
           firstAgentContext,
@@ -6051,6 +6207,7 @@ export class Session {
       title: workspace.title,
       pinnedAt: workspace.pinnedAt,
       ...(workspace.labels && workspace.labels.length > 0 ? { labels: workspace.labels } : {}),
+      metadata: workspace.metadata,
       background: workspace.background,
       parentWorkspaceId: workspace.parentWorkspaceId,
       archivingAt: null,
@@ -6151,6 +6308,7 @@ export class Session {
       ...(result.workspace.labels && result.workspace.labels.length > 0
         ? { labels: result.workspace.labels }
         : {}),
+      metadata: result.workspace.metadata,
       archivingAt: null,
       status: "done",
       statusEnteredAt: result.workspace.createdAt,
@@ -7277,6 +7435,7 @@ export class Session {
       {
         expectsInitialAgent: Boolean(request.firstAgentContext),
         workspaceId,
+        metadata: request.metadata,
         ...(await this.workspaceBackgroundIntent(request.background, request.callerAgentId)),
       },
     );
@@ -7340,6 +7499,7 @@ export class Session {
         githubPrNumber: source.githubPrNumber,
         firstAgentContext: request.firstAgentContext,
         title: request.title,
+        metadata: request.metadata,
         ...(await this.workspaceBackgroundIntent(request.background, request.callerAgentId)),
       },
       source.baseBranch
@@ -8165,24 +8325,7 @@ export class Session {
           ) {
             continue;
           }
-          const nextRecord: StoredAgentRecord = {
-            ...record,
-            updatedAt: new Date().toISOString(),
-            requiresAttention: false,
-            attentionReason: null,
-            attentionTimestamp: null,
-          };
-          await this.agentStorage.upsert(nextRecord);
-          const agent = this.buildStoredAgentPayload(nextRecord);
-          const project = await this.buildProjectPlacementForWorkspace(workspace);
-          this.emit({
-            type: "agent_update",
-            payload: {
-              kind: "upsert",
-              agent,
-              project,
-            },
-          });
+          await this.agentManager.clearAgentAttention(agentId);
           clearedAgentIds.push(agentId);
         }
 

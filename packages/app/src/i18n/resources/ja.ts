@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
+  pluginCombobox: {
+    searching: "検索中…",
+    empty: "結果がありません",
+    failed: "検索に失敗しました: {{message}}",
+  },
   paneFind: {
     connectionFailure:
       "このチャットを検索できませんでした。ホストへの接続を確認して再試行してください。",
@@ -1243,6 +1248,8 @@ export const ja: TranslationResources = {
     title: "新着情報",
     installed: "インストール済み",
     showMore: "もっと見る",
+    showAllChanges: "すべての変更を表示",
+    hideAllChanges: "すべての変更を非表示",
     openWebsite: "変更履歴をすべて表示",
     error: {
       title: "変更履歴を読み込めません",
@@ -1250,6 +1257,14 @@ export const ja: TranslationResources = {
     },
   },
   sidebar: {
+    view: {
+      failed: "サイドバーのビューを読み込めませんでした。",
+      useDefault: "デフォルトのビューを使用",
+      readFailed: "サイドバーのビュー設定を読み込めませんでした。",
+      agentUnavailable: "このエージェントは利用できなくなりました",
+      terminalUnavailable: "このターミナルは利用できなくなりました",
+      projectUnavailable: "このプロジェクトは利用できなくなりました",
+    },
     statusGroupAccessibility: "{{label}} グループ",
     statusBucket: {
       needsInput: "入力待ち",
@@ -2677,6 +2692,13 @@ export const ja: TranslationResources = {
         description: "プロンプト間を移動するためのアウトラインを表示します",
       },
       sidebar: {
+        view: {
+          title: "サイドバーのビュー",
+          label: "ビュー",
+          default: "デフォルトのビュー",
+          unavailable:
+            "選択したビューは利用できないか無効です。デフォルトのビューを表示しています。",
+        },
         header: {
           title: "ヘッダー",
           description: "サイドバー上部に表示する項目とその順序を選択します",

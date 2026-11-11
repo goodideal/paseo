@@ -2,6 +2,11 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
+  pluginCombobox: {
+    searching: "Recherche…",
+    empty: "Aucun résultat",
+    failed: "Échec de la recherche : {{message}}",
+  },
   paneFind: {
     connectionFailure:
       "Impossible de rechercher dans cette conversation. Vérifiez la connexion à l’hôte et réessayez.",
@@ -1259,6 +1264,8 @@ export const fr: TranslationResources = {
     title: "Nouveautés",
     installed: "Installée",
     showMore: "Afficher plus",
+    showAllChanges: "Afficher toutes les modifications",
+    hideAllChanges: "Masquer toutes les modifications",
     openWebsite: "Journal des modifications complet",
     error: {
       title: "Impossible de charger le journal des modifications",
@@ -1266,6 +1273,14 @@ export const fr: TranslationResources = {
     },
   },
   sidebar: {
+    view: {
+      failed: "Impossible de charger la vue de la barre latérale.",
+      useDefault: "Utiliser la vue par défaut",
+      readFailed: "Impossible de charger votre préférence de vue de la barre latérale.",
+      agentUnavailable: "Cet agent n’est plus disponible",
+      terminalUnavailable: "Ce terminal n’est plus disponible",
+      projectUnavailable: "Ce projet n’est plus disponible",
+    },
     statusGroupAccessibility: "Groupe {{label}}",
     statusBucket: {
       needsInput: "Attend une réponse",
@@ -2710,6 +2725,13 @@ export const fr: TranslationResources = {
         description: "Afficher un plan pour naviguer entre les prompts",
       },
       sidebar: {
+        view: {
+          title: "Vue de la barre latérale",
+          label: "Vue",
+          default: "Vue par défaut",
+          unavailable:
+            "La vue sélectionnée est indisponible ou désactivée. La vue par défaut est affichée.",
+        },
         header: {
           title: "En-tête",
           description:
