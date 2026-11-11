@@ -50,20 +50,25 @@ function rankModels<T>(items: T[], query: string, fields: (item: T) => string[])
 }
 
 function DiscoveredModelRow({ model }: { model: AgentModelDefinition }) {
+  const hasDistinctDescription =
+    Boolean(model.description) &&
+    model.description !== model.id &&
+    model.description !== model.label;
+
   return (
     <View style={sheetStyles.modelRow}>
-      <Text style={sheetStyles.modelTitle} numberOfLines={1}>
+      <Text style={[sheetStyles.modelTitle, sheetStyles.customModelText]} numberOfLines={1}>
         {model.label}
       </Text>
       <Text
-        style={sheetStyles.monoHint}
+        style={[sheetStyles.monoHint, sheetStyles.customModelText]}
         numberOfLines={1}
         selectable
         dataSet={CODE_SURFACE_DATASET}
       >
         {model.id}
       </Text>
-      {model.description ? (
+      {hasDistinctDescription ? (
         <Text style={sheetStyles.descriptionInline} numberOfLines={1}>
           {model.description}
         </Text>

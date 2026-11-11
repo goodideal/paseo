@@ -4000,6 +4000,38 @@ describe("transformPiModels", () => {
       },
     ]);
   });
+
+  test("preserves model names containing slashes when stripping provider prefix", () => {
+    expect(
+      transformPiModels([
+        {
+          provider: "pi",
+          id: "headroom/lite",
+          label: "headroom/lite (Compact / Fallback)",
+          metadata: { provider: "headroom", modelId: "lite" },
+        },
+        {
+          provider: "pi",
+          id: "headroom/claude-sonnet",
+          label: "headroom/claude-sonnet (Claude 3.7 Sonnet)",
+        },
+      ]),
+    ).toEqual([
+      {
+        provider: "pi",
+        id: "headroom/lite",
+        label: "lite (Compact / Fallback)",
+        description: "headroom/lite (Compact / Fallback)",
+        metadata: { provider: "headroom", modelId: "lite" },
+      },
+      {
+        provider: "pi",
+        id: "headroom/claude-sonnet",
+        label: "claude-sonnet (Claude 3.7 Sonnet)",
+        description: "headroom/claude-sonnet (Claude 3.7 Sonnet)",
+      },
+    ]);
+  });
 });
 
 test("pi runtime safety protects queued replies and runtime-owned activity", async () => {

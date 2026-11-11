@@ -323,14 +323,35 @@ function normalizePiModelLabel(label: string): string {
   return normalizedLabel.slice(vendorSeparatorIndex + 2).trim();
 }
 
+function stripProviderPathPrefix(label: string, providerHint?: string): string {
+  let remaining = label;
+  if (providerHint && remaining.startsWith(`${providerHint}/`)) {
+    remaining = remaining.slice(providerHint.length + 1);
+  }
+
+  while (true) {
+    const slashIdx = remaining.indexOf("/");
+    if (slashIdx === -1) break;
+    const prefix = remaining.slice(0, slashIdx);
+    if (/^[a-zA-Z0-9_.-]+$/.test(prefix)) {
+      remaining = remaining.slice(slashIdx + 1);
+    } else {
+      break;
+    }
+  }
+
+  return remaining;
+}
+
 export function transformPiModels(models: AgentModelDefinition[]): AgentModelDefinition[] {
   return models.map((model) => {
     if (!model.label.includes("/")) {
       return model;
     }
 
-    const segments = model.label.split("/").filter((segment) => segment.length > 0);
-    const rawLabel = segments.at(-1);
+    const providerHint =
+      typeof model.metadata?.provider === "string" ? model.metadata.provider : undefined;
+    const rawLabel = stripProviderPathPrefix(model.label, providerHint);
     if (!rawLabel) {
       return model;
     }
@@ -1172,6 +1193,9 @@ function mapPiModel(model: PiModel, provider: AgentProvider): AgentModelDefiniti
       provider: model.provider,
       modelId: model.id,
     },
+    ...(typeof model.contextWindow === "number"
+      ? { contextWindowMaxTokens: model.contextWindow }
+      : {}),
     thinkingOptions,
     defaultThinkingOptionId,
   };
