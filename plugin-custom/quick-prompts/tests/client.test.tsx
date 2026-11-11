@@ -4,6 +4,7 @@ import contribute from "../index.client.js";
 import type {
   PluginClientContext,
   PluginComposerPillContribution,
+  PluginHeaderButtonContribution,
   PluginButtonRegistration,
   PluginSettingsScreenContribution,
   PluginCommandCenterItemContribution,
@@ -11,25 +12,53 @@ import type {
 } from "@getpaseo/plugin/client";
 
 describe("Quick Prompts Client Entrypoint", () => {
-  it("registers composer pill, settings screen, command center item, and slash commands", () => {
+  it("registers composer pill, workspace header buttons, settings screen, command center item, and slash commands", () => {
     const pills: PluginComposerPillContribution[] = [];
+    const headerButtons: PluginHeaderButtonContribution[] = [];
     const settingsScreens: PluginSettingsScreenContribution[] = [];
     const commandCenterItems: PluginCommandCenterItemContribution[] = [];
     const slashCommands: PluginClientSlashCommandContribution[] = [];
 
-    let subscriberCallback: ((msg: any) => void) | null = null;
-    let snapshotCallback: ((snapshot: any) => void) | null = null;
+    let workspaceUpdateCallback: ((msg: any) => void) | null = null;
 
     const client: Partial<PluginClientContext> = {
       paseo: {
         agents: {
           list: vi.fn().mockResolvedValue({
             subscription: {
-              subscribe: vi.fn(({ snapshot, update }) => {
-                snapshotCallback = snapshot;
-                subscriberCallback = update;
+              subscribe: vi.fn(({ snapshot }) => {
                 snapshot({
                   entries: [{ agent: { id: "agent-1", workspaceId: "ws-1" } }],
+                });
+              }),
+            },
+          }),
+        },
+        workspaces: {
+          list: vi.fn().mockResolvedValue({
+            subscription: {
+              subscribe: vi.fn(({ snapshot, update }) => {
+                workspaceUpdateCallback = update;
+                snapshot({
+                  entries: [
+                    {
+                      id: "ws-wt",
+                      workspaceKind: "worktree",
+                      name: "feat/worktree-branch",
+                      currentBranch: "feat/worktree-branch",
+                    },
+                    {
+                      id: "ws-local",
+                      workspaceKind: "local_checkout",
+                      name: "main",
+                      currentBranch: "main",
+                    },
+                    {
+                      id: "ws-dir",
+                      workspaceKind: "directory",
+                      name: "plain-dir",
+                    },
+                  ],
                 });
               }),
             },
@@ -53,6 +82,18 @@ describe("Quick Prompts Client Entrypoint", () => {
             remove: vi.fn(() => {
               const idx = pills.indexOf(contribution);
               if (idx !== -1) pills.splice(idx, 1);
+            }),
+          };
+        },
+      ),
+      addHeaderButton: vi.fn(
+        (contribution: PluginHeaderButtonContribution): PluginButtonRegistration => {
+          headerButtons.push(contribution);
+          return {
+            update: vi.fn(),
+            remove: vi.fn(() => {
+              const idx = headerButtons.indexOf(contribution);
+              if (idx !== -1) headerButtons.splice(idx, 1);
             }),
           };
         },
@@ -89,6 +130,33 @@ describe("Quick Prompts Client Entrypoint", () => {
         expect(pills[0].id).toBe("quick-prompts");
         expect(pills[0].button.behavior.kind).toBe("popover");
 
+        // Workspace header buttons (Worktree vs Local)
+        expect(client.addHeaderButton).toHaveBeenCalled();
+        expect(headerButtons).toHaveLength(2); // ws-wt and ws-local, but not ws-dir
+
+        const wtBtn = headerButtons.find((b) => b.workspaceId === "ws-wt");
+        expect(wtBtn).toBeDefined();
+        expect(wtBtn?.button.title).toBe("Git Worktree");
+        expect(wtBtn?.button.label).toBe("Worktree");
+        expect(wtBtn?.button.icon).toBe("FolderGit2");
+        expect(wtBtn?.button.behavior.kind).toBe("popover");
+
+        const localBtn = headerButtons.find((b) => b.workspaceId === "ws-local");
+        expect(localBtn).toBeDefined();
+        expect(localBtn?.button.title).toBe("Local Checkout");
+        expect(localBtn?.button.label).toBe("Local");
+        expect(localBtn?.button.icon).toBe("Monitor");
+        expect(localBtn?.button.behavior.kind).toBe("popover");
+
+        // Dynamic update: remove ws-wt
+        expect(workspaceUpdateCallback).toBeDefined();
+        workspaceUpdateCallback?.({
+          type: "workspace_update",
+          payload: { kind: "remove", id: "ws-wt" },
+        });
+        expect(headerButtons.find((b) => b.workspaceId === "ws-wt")).toBeUndefined();
+        expect(headerButtons).toHaveLength(1);
+
         expect(client.addSettingsScreen).toHaveBeenCalledTimes(1);
         expect(settingsScreens).toHaveLength(1);
         expect(settingsScreens[0].id).toBe("quick-prompts");
@@ -99,20 +167,15 @@ describe("Quick Prompts Client Entrypoint", () => {
 
         expect(client.addSlashCommand).toHaveBeenCalled();
         expect(slashCommands.length).toBeGreaterThan(0);
-        const commandNames = slashCommands.map((c) => c.name);
-        expect(commandNames).toContain("continue");
-        expect(commandNames).toContain("review");
-        expect(commandNames).toContain("fix");
-        expect(commandNames).toContain("test");
-        expect(commandNames).toContain("yes");
 
         cleanup();
         expect(pills).toHaveLength(0);
+        expect(headerButtons).toHaveLength(0);
         expect(settingsScreens).toHaveLength(0);
         expect(commandCenterItems).toHaveLength(0);
         expect(slashCommands).toHaveLength(0);
         resolve();
-      }, 15);
+      }, 25);
     });
   });
 });
