@@ -32,7 +32,7 @@ export {
   type SubscriptionEvent,
   type SubscriptionInput,
 } from "./rpc.js";
-export type { PluginServerContext } from "./server/index.js";
+
 export type { PluginText, PluginMessage } from "./text.js";
 export {
   findSvgIconProblem,

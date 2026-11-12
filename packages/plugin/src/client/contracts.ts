@@ -193,7 +193,7 @@ export interface PluginFilePanelContribution<Text extends PluginText = string> {
 
 export interface PluginClientOpenPanelOptions extends PluginOpenPanelOptions {
   workspaceId: string;
-  agentId?: string | null;
+  agentId?: string;
 }
 
 // COMPAT(pluginSidebarAliases): added in v0.11.0, remove after 2027-03-29
