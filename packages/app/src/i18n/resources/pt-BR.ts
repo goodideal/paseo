@@ -198,64 +198,6 @@ export const ptBR: TranslationResources = {
       archiveAgent: "Arquivar o agente atual",
       freshDraft: "Arquivar este agente e iniciar um novo rascunho",
     },
-    quickPrompts: {
-      bar: {
-        accessibilityHint: "Toque para enviar, pressione e segure para editar no editor",
-        manageAccessibility: "Gerenciar frases rápidas e regras",
-      },
-      aiSuggestions: {
-        title: "Sugerir respostas rápidas com IA",
-        hint: "Quando não houver opções explícitas, use IA para sugerir as próximas ações.",
-      },
-      modal: {
-        title: "Frases rápidas e regras",
-        newPrompt: "Nova frase rápida",
-        tabProject: "Current Project",
-        tabGlobal: "Global Prompts",
-        projectScope: "Project",
-        globalScope: "Global",
-        globalNotice: "Changes to global prompts apply across all projects on this machine.",
-        projectNotice:
-          "Customize prompts for this project. Global prompts can be disabled here or edited in the Global tab.",
-        globalReadOnlyHint:
-          "Global prompt: toggle to enable/disable for this project, or switch to Global tab to edit.",
-        newProjectPrompt: "New Project Prompt",
-        newGlobalPrompt: "New Global Prompt",
-        editProjectPrompt: "Edit Project Prompt",
-        editGlobalPrompt: "Edit Global Prompt",
-        jumpToGlobal: "Edit in Global tab",
-        emptyProjectItems: "No project-specific prompts yet. Inheriting active global prompts.",
-
-        resetToDefaults: "Restaurar padrões",
-        fixedBadge: "Fixo",
-        ruleBadge: "Regra dinâmica",
-        moveUp: "Mover para cima",
-        moveDown: "Mover para baixo",
-        edit: "Editar",
-        delete: "Excluir",
-        form: {
-          createTitle: "Nova frase rápida",
-          editTitle: "Editar frase rápida",
-          label: "Rótulo",
-          labelPlaceholder: "ex.: Continuar, Corrigir erro",
-          content: "Conteúdo do prompt",
-          contentPlaceholder: "Prompt completo para enviar ou inserir...",
-          shortcut: "Atalho de comando de barra (opcional)",
-          shortcutPlaceholder: "ex.: continue (digite /continue para usar)",
-          triggerType: "Tipo de acionamento",
-          triggerFixed: "Fixo (sempre visível)",
-          triggerRule: "Regra dinâmica (condicional)",
-          keywords: "Palavras-chave na última resposta (separadas por vírgula)",
-          keywordsPlaceholder: "ex.: error, failed, exception",
-          regex: "Expressão regular na última resposta (opcional)",
-          regexPlaceholder: "ex.: (y/n)|proceed\\?",
-          errorLabelRequired: "O rótulo é obrigatório",
-          errorContentRequired: "O conteúdo do prompt é obrigatório",
-          save: "Salvar",
-          cancel: "Cancelar",
-        },
-      },
-    },
     github: {
       searching: "Buscando...",
       noResults: "Nenhum resultado encontrado.",
@@ -724,7 +666,6 @@ export const ptBR: TranslationResources = {
         browser: "Navegador",
         agent: "Agente",
         workspace: "Workspace",
-        workflowRuns: "Agent Radar",
       },
       switcher: {
         trigger: "Alternar abas ({{count}} abertas)",
@@ -2206,15 +2147,6 @@ export const ptBR: TranslationResources = {
       loadError: "Falha ao carregar diff",
       capabilityMissing: "Atualize o host para ver diffs de commits.",
     },
-    workflowRuns: {
-      label: "Agent Radar",
-      subtitle: "Execuções e sessões de fluxo de trabalho",
-      emptyDescription:
-        "Nenhum fluxo de trabalho ativo ou concluído encontrado neste espaço de trabalho.",
-      viewChat: "Ver chat",
-      viewSubagent: "Ver subagente",
-      sessionCancelled: "Sessão cancelada",
-    },
   },
   toolCallDetails: {
     error: "Erro",
@@ -2409,11 +2341,6 @@ export const ptBR: TranslationResources = {
       title: "Editor",
       vimKeybindings: "Atalhos do Vim",
       vimHint: "Aplica-se a arquivos-fonte na web e no desktop.",
-      quickPrompts: {
-        title: "Frases rápidas e comandos",
-        hint: "Personalizar chips fixos, regras dinâmicas e preenchimento com barra",
-        manage: "Gerenciar",
-      },
     },
     files: {
       title: "Arquivos",
@@ -2687,16 +2614,6 @@ export const ptBR: TranslationResources = {
           ghostty: "Ghostty",
           pureBlack: "Preto puro",
           auto: "Sistema",
-        },
-      },
-      terminalAppearance: {
-        title: "Aparência do terminal",
-        description: "Definir o esquema de cores para o terminal integrado",
-        accessibilityLabel: "Aparência do terminal: {{value}}",
-        options: {
-          "follow-theme": "Seguir tema do aplicativo",
-          pureBlack: "Preto puro",
-          dark: "Escuro",
         },
       },
       detailLevel: {

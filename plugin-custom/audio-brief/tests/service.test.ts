@@ -12,7 +12,7 @@ import {
 } from "../server/audio-brief-service.js";
 import contribute from "../index.server.js";
 import { audioBriefSynthesizeRpc } from "../shared/contracts.js";
-import type { PluginServerContext } from "@getpaseo/plugin";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
 
 describe("extractFallbackBrief", () => {
   it("returns fallback message for empty or whitespace-only text", () => {

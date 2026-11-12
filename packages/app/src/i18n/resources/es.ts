@@ -16,6 +16,7 @@ export const es: TranslationResources = {
     loading: "Cargando…",
     failed: "Error",
     retry: "Reintentar",
+
     title: "Buscar",
     placeholder: "Buscar en el panel",
     close: "Cerrar búsqueda",
@@ -197,64 +198,6 @@ export const es: TranslationResources = {
     clientCommands: {
       archiveAgent: "Archivar el agente actual",
       freshDraft: "Archive este agente y comience un nuevo borrador",
-    },
-    quickPrompts: {
-      bar: {
-        accessibilityHint: "Tocar para enviar, mantener presionado para editar",
-        manageAccessibility: "Administrar frases rápidas y reglas",
-      },
-      aiSuggestions: {
-        title: "Sugerir respuestas rápidas con IA",
-        hint: "Cuando no haya opciones explícitas, usa IA para sugerir las siguientes acciones.",
-      },
-      modal: {
-        title: "Frases rápidas y reglas",
-        newPrompt: "Nueva frase rápida",
-        tabProject: "Current Project",
-        tabGlobal: "Global Prompts",
-        projectScope: "Project",
-        globalScope: "Global",
-        globalNotice: "Changes to global prompts apply across all projects on this machine.",
-        projectNotice:
-          "Customize prompts for this project. Global prompts can be disabled here or edited in the Global tab.",
-        globalReadOnlyHint:
-          "Global prompt: toggle to enable/disable for this project, or switch to Global tab to edit.",
-        newProjectPrompt: "New Project Prompt",
-        newGlobalPrompt: "New Global Prompt",
-        editProjectPrompt: "Edit Project Prompt",
-        editGlobalPrompt: "Edit Global Prompt",
-        jumpToGlobal: "Edit in Global tab",
-        emptyProjectItems: "No project-specific prompts yet. Inheriting active global prompts.",
-
-        resetToDefaults: "Restablecer valores predeterminados",
-        fixedBadge: "Fijo",
-        ruleBadge: "Regla dinámica",
-        moveUp: "Mover hacia arriba",
-        moveDown: "Mover hacia abajo",
-        edit: "Editar",
-        delete: "Eliminar",
-        form: {
-          createTitle: "Nueva frase rápida",
-          editTitle: "Editar frase rápida",
-          label: "Etiqueta",
-          labelPlaceholder: "p. ej. Continuar, Reparar error",
-          content: "Contenido del prompt",
-          contentPlaceholder: "Prompt completo a enviar o insertar...",
-          shortcut: "Atajo de comando de barra (opcional)",
-          shortcutPlaceholder: "p. ej. continue (escriba /continue para usar)",
-          triggerType: "Tipo de activación",
-          triggerFixed: "Fijo (siempre visible)",
-          triggerRule: "Regla dinámica (condicional)",
-          keywords: "Palabras clave en última respuesta (separadas por comas)",
-          keywordsPlaceholder: "p. ej. error, failed, exception",
-          regex: "Expresión regular en última respuesta (opcional)",
-          regexPlaceholder: "p. ej. (y/n)|proceed\\?",
-          errorLabelRequired: "La etiqueta es obligatoria",
-          errorContentRequired: "El contenido del prompt es obligatorio",
-          save: "Guardar",
-          cancel: "Cancelar",
-        },
-      },
     },
     github: {
       searching: "Búsqueda...",
@@ -724,7 +667,6 @@ export const es: TranslationResources = {
         browser: "Navegador",
         agent: "Agent",
         workspace: "Workspace",
-        workflowRuns: "Agent Radar",
       },
       switcher: {
         trigger: "Cambiar pestañas ({{count}}abierto)",
@@ -2220,15 +2162,6 @@ export const es: TranslationResources = {
       loadError: "No se pudieron cargar las diferencias",
       capabilityMissing: "Actualiza el host para ver las diferencias de los commits.",
     },
-    workflowRuns: {
-      label: "Agent Radar",
-      subtitle: "Ejecuciones y sesiones de flujo de trabajo",
-      emptyDescription:
-        "No se encontraron flujos de trabajo activos o completados en este espacio de trabajo.",
-      viewChat: "Ver chat",
-      viewSubagent: "Ver subagente",
-      sessionCancelled: "Sesión cancelada",
-    },
   },
   toolCallDetails: {
     error: "Error",
@@ -2423,11 +2356,6 @@ export const es: TranslationResources = {
       title: "Editor",
       vimKeybindings: "Atajos de Vim",
       vimHint: "Se aplica a archivos fuente en web y escritorio.",
-      quickPrompts: {
-        title: "Frases rápidas y comandos",
-        hint: "Personalizar accesos directos fijos, reglas dinámicas y autocompletado con barra",
-        manage: "Administrar",
-      },
     },
     files: {
       title: "Archivos",
@@ -2704,17 +2632,6 @@ export const es: TranslationResources = {
           ghostty: "fantasmal",
           pureBlack: "Negro puro",
           auto: "Sistema",
-        },
-      },
-      terminalAppearance: {
-        title: "Apariencia de la terminal",
-        description: "Configurar el esquema de color para la terminal integrada",
-        accessibilityLabel: "Apariencia de la terminal: {{value}}",
-        options: {
-          "follow-theme": "Seguir tema de la app",
-
-          pureBlack: "Negro puro",
-          dark: "Oscuro",
         },
       },
       detailLevel: {

@@ -193,63 +193,6 @@ export const en = {
       archiveAgent: "Archive the current agent",
       freshDraft: "Archive this agent and start a fresh draft",
     },
-    quickPrompts: {
-      bar: {
-        accessibilityHint: "Click to send, long press to edit in composer",
-        manageAccessibility: "Manage quick prompts and rules",
-      },
-      aiSuggestions: {
-        title: "Suggest quick replies with AI",
-        hint: "When no explicit options exist, use AI to suggest next actions.",
-      },
-      modal: {
-        title: "Quick Prompts & Rules",
-        tabProject: "Current Project",
-        tabGlobal: "Global Prompts",
-        projectScope: "Project",
-        globalScope: "Global",
-        globalNotice: "Changes to global prompts apply across all projects on this machine.",
-        projectNotice:
-          "Customize prompts for this project. Global prompts can be disabled here or edited in the Global tab.",
-        globalReadOnlyHint:
-          "Global prompt: toggle to enable/disable for this project, or switch to Global tab to edit.",
-        newPrompt: "New Quick Prompt",
-        newProjectPrompt: "New Project Prompt",
-        newGlobalPrompt: "New Global Prompt",
-        editProjectPrompt: "Edit Project Prompt",
-        editGlobalPrompt: "Edit Global Prompt",
-        jumpToGlobal: "Edit in Global tab",
-        emptyProjectItems: "No project-specific prompts yet. Inheriting active global prompts.",
-        resetToDefaults: "Reset to Defaults",
-        fixedBadge: "Fixed",
-        ruleBadge: "Dynamic Rule",
-        moveUp: "Move up",
-        moveDown: "Move down",
-        edit: "Edit",
-        delete: "Delete",
-        form: {
-          createTitle: "New Quick Prompt",
-          editTitle: "Edit Quick Prompt",
-          label: "Display Label",
-          labelPlaceholder: "e.g. Continue, Fix Error",
-          content: "Prompt Content",
-          contentPlaceholder: "The full prompt to send or insert into the composer...",
-          shortcut: "Slash Command Shortcut (optional)",
-          shortcutPlaceholder: "e.g. continue (type /continue to invoke)",
-          triggerType: "Trigger Type",
-          triggerFixed: "Fixed (always visible)",
-          triggerRule: "Dynamic Rule (conditional)",
-          keywords: "Keywords matched in last assistant message (comma-separated)",
-          keywordsPlaceholder: "e.g. error, failed, exception",
-          regex: "Regular expression matched in last assistant message (optional)",
-          regexPlaceholder: "e.g. (y/n)|proceed\\?",
-          errorLabelRequired: "Label is required",
-          errorContentRequired: "Prompt content is required",
-          save: "Save",
-          cancel: "Cancel",
-        },
-      },
-    },
     github: {
       searching: "Searching...",
       noResults: "No results found.",
@@ -715,7 +658,6 @@ export const en = {
         browser: "Browser",
         agent: "Agent",
         workspace: "Workspace",
-        workflowRuns: "Agent Radar",
       },
       switcher: {
         trigger: "Switch tabs ({{count}} open)",
@@ -2197,14 +2139,6 @@ export const en = {
       loadError: "Failed to load diff",
       capabilityMissing: "Update the host to view commit diffs.",
     },
-    workflowRuns: {
-      label: "Agent Radar",
-      subtitle: "Agent runs and sessions",
-      emptyDescription: "No active or completed agent runs found in this workspace.",
-      viewChat: "View Chat",
-      viewSubagent: "View Sub-agent",
-      sessionCancelled: "Session cancelled",
-    },
   },
   toolCallDetails: {
     error: "Error",
@@ -2437,11 +2371,6 @@ export const en = {
       title: "Editor",
       vimKeybindings: "Vim keybindings",
       vimHint: "Applies to source files on web and desktop.",
-      quickPrompts: {
-        title: "Quick Prompts & Commands",
-        hint: "Customize fixed prompt chips, dynamic reply rules, and slash command autocompletions",
-        manage: "Manage",
-      },
     },
     files: {
       title: "Files",
@@ -3396,46 +3325,7 @@ type TranslationResourcesBase = {
           terminalAppearance?: RawTranslationResources["settings"]["appearance"]["terminalAppearance"];
         };
       }
-    : K extends "composer"
-      ? Omit<RawTranslationResources["composer"], "quickPrompts"> & {
-          quickPrompts: Omit<RawTranslationResources["composer"]["quickPrompts"], "modal"> & {
-            modal: Omit<
-              RawTranslationResources["composer"]["quickPrompts"]["modal"],
-              | "tabProject"
-              | "tabGlobal"
-              | "projectScope"
-              | "globalScope"
-              | "globalNotice"
-              | "projectNotice"
-              | "globalReadOnlyHint"
-              | "newProjectPrompt"
-              | "newGlobalPrompt"
-              | "editProjectPrompt"
-              | "editGlobalPrompt"
-              | "jumpToGlobal"
-              | "emptyProjectItems"
-              | "moveUp"
-              | "moveDown"
-            > & {
-              tabProject?: string;
-              tabGlobal?: string;
-              projectScope?: string;
-              globalScope?: string;
-              globalNotice?: string;
-              projectNotice?: string;
-              globalReadOnlyHint?: string;
-              newProjectPrompt?: string;
-              newGlobalPrompt?: string;
-              editProjectPrompt?: string;
-              editGlobalPrompt?: string;
-              jumpToGlobal?: string;
-              emptyProjectItems?: string;
-              moveUp?: string;
-              moveDown?: string;
-            };
-          };
-        }
-      : RawTranslationResources[K];
+    : RawTranslationResources[K];
 };
 
 // i18next plural categories differ by locale, so locale catalogs may add the

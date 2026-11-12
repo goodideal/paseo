@@ -127,6 +127,8 @@ export interface PluginHookRequests {
     env?: Record<string, string>;
     /** Stored on the new agent. Always present in the payload; return it changed to change it. */
     metadata?: Record<string, JsonValue>;
+    initialPrompt?: string;
+    labels?: Record<string, string>;
   };
   "agent.open.before": PluginSessionOpenRequest;
   "workspace.create.before": Omit<WorkspaceCreateRequest, "type" | "requestId">;

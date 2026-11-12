@@ -1,6 +1,0 @@
-port: 8317
-auth-dir: "/Users/jerry/projects/ai/paseo/data/.cli-proxy-api"
-remote-management:
-  secret-key: "antigravity-internal-mgmt"
-api-keys:
-  - "antigravity-proxy-internal"

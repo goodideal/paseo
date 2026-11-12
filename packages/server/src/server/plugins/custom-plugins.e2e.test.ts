@@ -55,6 +55,11 @@ describe("all custom plugins end-to-end daemon verification", () => {
       rpc: "web_inspector.attachment.search",
       input: { query: "not-http" },
     },
+    {
+      name: "workspace-reader",
+      rpc: "workspace_reader.digest.get.request",
+      input: { workspaceId: "wks-test" },
+    },
   ];
 
   it.each(customPluginCases)(

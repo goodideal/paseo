@@ -1,0 +1,6 @@
+{
+  "id": "workflow-runs",
+  "name": "Workflow Runs",
+  "description": "Declarative DAG workflow runs, interactive approvals, and session pipeline workbench",
+  "requirements": { "paseo": ">=0.13.0" }
+}

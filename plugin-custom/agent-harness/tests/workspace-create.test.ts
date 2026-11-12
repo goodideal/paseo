@@ -12,6 +12,7 @@ function setupServer() {
       }),
       subscribe: vi.fn().mockReturnValue(() => {}),
     }),
+    handle: vi.fn(),
     addHook: vi.fn().mockImplementation((name, handler) => {
       if (name === "workspace.create.before") workspaceHook = handler;
       if (name === "agent.create.before") agentHook = handler;

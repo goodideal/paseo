@@ -7889,6 +7889,38 @@ test("applies live autonomous events and preserves usage omitted from completion
     contextWindowMaxTokens: 200_000,
     contextWindowUsedTokens: 175,
   });
+
+  // Subsequent usage_updated with partial context-window counters merges rather than wiping inputTokens/cost
+  capturedSession!.pushEvent({
+    type: "turn_completed",
+    provider: "codex",
+    turnId: "autonomous-turn-cost",
+    usage: {
+      inputTokens: 500,
+      outputTokens: 120,
+      cachedInputTokens: 300,
+      totalCostUsd: 0.42,
+    },
+  });
+  capturedSession!.pushEvent({
+    type: "usage_updated",
+    provider: "codex",
+    usage: {
+      contextWindowMaxTokens: 1_000_000,
+      contextWindowUsedTokens: 920,
+    },
+    turnId: "autonomous-turn-2",
+  });
+  await vi.waitFor(() => {
+    expect(manager.getAgent(snapshot.id)?.lastUsage).toEqual({
+      inputTokens: 500,
+      outputTokens: 120,
+      cachedInputTokens: 300,
+      totalCostUsd: 0.42,
+      contextWindowMaxTokens: 1_000_000,
+      contextWindowUsedTokens: 920,
+    });
+  });
   expect(manager.getTimeline(snapshot.id)).toContainEqual({
     type: "assistant_message",
     text: "AUTONOMOUS_PUMP_MESSAGE",

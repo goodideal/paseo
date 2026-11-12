@@ -1,7 +1,6 @@
 import { DiffSession } from "./diff/index.js";
 import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import type { AgentMessageDelivery } from "./agent/agent-messages/index.js";
-import { WorkspaceEvolutionService } from "./evolution/workspace-evolution-service.js";
 import { WorkflowSession } from "./session/workflow/workflow-session.js";
 import type { WorkflowPresetRegistry } from "./workflows/workflow-preset-registry.js";
 import type { WorkflowService } from "./workflows/workflow-service.js";
@@ -891,7 +890,6 @@ export class Session {
   private readonly checkoutSession: CheckoutSession;
   private readonly diffSession: DiffSession;
   private readonly scheduleSession: ScheduleSession;
-  private readonly evolutionService: WorkspaceEvolutionService;
   private readonly workflowSession: WorkflowSession | null;
   private readonly providerCatalogSession: ProviderCatalogSession;
   private readonly usageSession: UsageSession;
@@ -1095,21 +1093,6 @@ export class Session {
       host: { emit: (msg) => this.emit(msg) },
       scheduleService,
       logger: this.sessionLogger,
-    });
-    this.evolutionService = new WorkspaceEvolutionService({
-      cacheRoot: resolve(this.paseoHome, "cache", "workspace-evolution"),
-      agentStorage: this.agentStorage,
-      workspaceRegistry: this.workspaceRegistry,
-      logger: this.sessionLogger,
-      onEvolutionUpdated: (workspaceId, digest) => {
-        this.emit({
-          type: "workspace.evolution.updated",
-          payload: {
-            workspaceId,
-            digest,
-          },
-        });
-      },
     });
     this.workflowSession = createWorkflowSession(
       options,
@@ -3418,8 +3401,6 @@ export class Session {
         return this.handleWorkspaceTitleSetRequest(msg.workspaceId, msg.title, msg.requestId);
       case "workspace.pin.set.request":
         return this.handleWorkspacePinSetRequest(msg.workspaceId, msg.pinned, msg.requestId);
-      case "workspace.evolution.get_digest.request":
-        return this.handleWorkspaceEvolutionGetDigestRequest(msg);
       case "workspace.base_branch.set.request":
         return this.handleWorkspaceBaseBranchSetRequest(msg);
       default:
@@ -3750,7 +3731,6 @@ export class Session {
     this.sessionLogger.info({ agentId }, `Archiving agent ${agentId}`);
 
     const { archivedAt } = await this.archiveAgentForClose(agentId);
-    void this.evolutionService.recordAgentCompletion(agentId);
 
     this.emit({
       type: "agent_archived",
@@ -4287,39 +4267,6 @@ export class Session {
           accepted: false,
           title: null,
           error: getErrorMessageOr(error, "Failed to set workspace title"),
-        },
-      });
-    }
-  }
-
-  private async handleWorkspaceEvolutionGetDigestRequest(
-    msg: Extract<SessionInboundMessage, { type: "workspace.evolution.get_digest.request" }>,
-  ): Promise<void> {
-    try {
-      const digest = await this.evolutionService.getDigest(msg.workspaceId, {
-        forceRefresh: msg.forceRefresh,
-      });
-      this.emit({
-        type: "workspace.evolution.get_digest.response",
-        payload: {
-          requestId: msg.requestId,
-          workspaceId: msg.workspaceId,
-          digest,
-          isAnalyzing: false,
-        },
-      });
-    } catch (error) {
-      this.sessionLogger.warn(
-        { error, workspaceId: msg.workspaceId },
-        "Failed to get workspace evolution digest",
-      );
-      this.emit({
-        type: "workspace.evolution.get_digest.response",
-        payload: {
-          requestId: msg.requestId,
-          workspaceId: msg.workspaceId,
-          digest: null,
-          error: error instanceof Error ? error.message : String(error),
         },
       });
     }

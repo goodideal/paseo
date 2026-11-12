@@ -199,64 +199,6 @@ export const ru: TranslationResources = {
       archiveAgent: "Архивировать текущего агента",
       freshDraft: "Архивировать этого агента и создать новый черновик",
     },
-    quickPrompts: {
-      bar: {
-        accessibilityHint: "Нажмите для отправки, удерживайте для вставки в редактор",
-        manageAccessibility: "Управление быстрыми подсказками и правилами",
-      },
-      aiSuggestions: {
-        title: "Предлагать быстрые ответы с помощью ИИ",
-        hint: "Когда нет явных вариантов, использовать ИИ для предложения следующих действий.",
-      },
-      modal: {
-        title: "Быстрые подсказки и правила",
-        newPrompt: "Новая подсказка",
-        tabProject: "Current Project",
-        tabGlobal: "Global Prompts",
-        projectScope: "Project",
-        globalScope: "Global",
-        globalNotice: "Changes to global prompts apply across all projects on this machine.",
-        projectNotice:
-          "Customize prompts for this project. Global prompts can be disabled here or edited in the Global tab.",
-        globalReadOnlyHint:
-          "Global prompt: toggle to enable/disable for this project, or switch to Global tab to edit.",
-        newProjectPrompt: "New Project Prompt",
-        newGlobalPrompt: "New Global Prompt",
-        editProjectPrompt: "Edit Project Prompt",
-        editGlobalPrompt: "Edit Global Prompt",
-        jumpToGlobal: "Edit in Global tab",
-        emptyProjectItems: "No project-specific prompts yet. Inheriting active global prompts.",
-
-        resetToDefaults: "Сбросить по умолчанию",
-        fixedBadge: "Закреплено",
-        ruleBadge: "Динамическое правило",
-        moveUp: "Переместить вверх",
-        moveDown: "Переместить вниз",
-        edit: "Редактировать",
-        delete: "Удалить",
-        form: {
-          createTitle: "Новая подсказка",
-          editTitle: "Редактирование подсказки",
-          label: "Название",
-          labelPlaceholder: "напр., Продолжить, Исправить ошибку",
-          content: "Текст подсказки",
-          contentPlaceholder: "Полный текст подсказки для отправки или вставки...",
-          shortcut: "Команда со слэшем (необязательно)",
-          shortcutPlaceholder: "напр., continue (введите /continue)",
-          triggerType: "Тип отображения",
-          triggerFixed: "Закреплено (всегда видно)",
-          triggerRule: "Динамическое правило (по условию)",
-          keywords: "Ключевые слова в последнем ответе (через запятую)",
-          keywordsPlaceholder: "напр., error, failed, exception",
-          regex: "Регулярное выражение для последнего ответа (необязательно)",
-          regexPlaceholder: "напр., (y/n)|proceed\\?",
-          errorLabelRequired: "Введите название",
-          errorContentRequired: "Введите текст подсказки",
-          save: "Сохранить",
-          cancel: "Отмена",
-        },
-      },
-    },
     github: {
       searching: "Идет поиск...",
       noResults: "Результаты не найдены.",
@@ -726,7 +668,6 @@ export const ru: TranslationResources = {
         browser: "Браузер",
         agent: "Агент",
         workspace: "Рабочее пространство",
-        workflowRuns: "Agent Radar",
       },
       switcher: {
         trigger: "Переключить вкладки (открыто: {{count}})",
@@ -2207,15 +2148,6 @@ export const ru: TranslationResources = {
       loadError: "Не удалось загрузить список изменений",
       capabilityMissing: "Обновите хост, чтобы просматривать изменения в коммитах.",
     },
-    workflowRuns: {
-      label: "Agent Radar",
-      subtitle: "Запуски рабочих процессов и сессии",
-      emptyDescription:
-        "В этом рабочем пространстве не найдено активных или завершенных рабочих процессов.",
-      viewChat: "Просмотреть чат",
-      viewSubagent: "Просмотреть подагента",
-      sessionCancelled: "Сессия отменена",
-    },
   },
   toolCallDetails: {
     error: "Ошибка",
@@ -2410,11 +2342,6 @@ export const ru: TranslationResources = {
       title: "Редактор",
       vimKeybindings: "Сочетания клавиш Vim",
       vimHint: "Применяется к исходным файлам в веб- и настольной версии.",
-      quickPrompts: {
-        title: "Быстрые подсказки и команды",
-        hint: "Настройка закрепленных фраз, правил автоответа и команд со слэшем",
-        manage: "Управление",
-      },
     },
     files: {
       title: "Файлы",
@@ -2693,16 +2620,6 @@ export const ru: TranslationResources = {
           ghostty: "Ghostty",
           pureBlack: "Абсолютно чёрная",
           auto: "Системная",
-        },
-      },
-      terminalAppearance: {
-        title: "Внешний вид терминала",
-        description: "Настройка цветовой схемы для встроенного терминала",
-        accessibilityLabel: "Внешний вид терминала: {{value}}",
-        options: {
-          "follow-theme": "Как в теме приложения",
-          pureBlack: "Глубокий черный",
-          dark: "Темный",
         },
       },
       detailLevel: {

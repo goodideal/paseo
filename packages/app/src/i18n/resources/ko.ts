@@ -15,6 +15,7 @@ export const ko: TranslationResources = {
     loading: "불러오는 중…",
     failed: "실패",
     retry: "다시 시도",
+
     title: "찾기",
     placeholder: "패널에서 찾기",
     close: "찾기 닫기",
@@ -195,64 +196,6 @@ export const ko: TranslationResources = {
     clientCommands: {
       archiveAgent: "현재 에이전트 보관",
       freshDraft: "이 에이전트를 보관하고 새 초안을 시작합니다",
-    },
-    quickPrompts: {
-      bar: {
-        accessibilityHint: "클릭하여 바로 전송, 길게 눌러 입력창에 채우기",
-        manageAccessibility: "빠른 프롬프트 및 규칙 관리",
-      },
-      aiSuggestions: {
-        title: "AI 빠른 답장 추천",
-        hint: "명시적인 선택지가 없을 때 AI를 사용하여 다음 작업을 추천합니다.",
-      },
-      modal: {
-        title: "빠른 프롬프트 및 규칙",
-        newPrompt: "새 빠른 프롬프트",
-        tabProject: "Current Project",
-        tabGlobal: "Global Prompts",
-        projectScope: "Project",
-        globalScope: "Global",
-        globalNotice: "Changes to global prompts apply across all projects on this machine.",
-        projectNotice:
-          "Customize prompts for this project. Global prompts can be disabled here or edited in the Global tab.",
-        globalReadOnlyHint:
-          "Global prompt: toggle to enable/disable for this project, or switch to Global tab to edit.",
-        newProjectPrompt: "New Project Prompt",
-        newGlobalPrompt: "New Global Prompt",
-        editProjectPrompt: "Edit Project Prompt",
-        editGlobalPrompt: "Edit Global Prompt",
-        jumpToGlobal: "Edit in Global tab",
-        emptyProjectItems: "No project-specific prompts yet. Inheriting active global prompts.",
-
-        resetToDefaults: "기본값으로 초기화",
-        fixedBadge: "고정",
-        ruleBadge: "동적 규칙",
-        moveUp: "위로 이동",
-        moveDown: "아래로 이동",
-        edit: "수정",
-        delete: "삭제",
-        form: {
-          createTitle: "새 빠른 프롬프트",
-          editTitle: "빠른 프롬프트 수정",
-          label: "표시 라벨",
-          labelPlaceholder: "예: 계속, 오류 수정",
-          content: "프롬프트 내용",
-          contentPlaceholder: "전송하거나 입력창에 채울 전체 프롬프트...",
-          shortcut: "슬래시 명령어 단축키 (선택 사항)",
-          shortcutPlaceholder: "예: continue (/continue 로 호출)",
-          triggerType: "표시 방식",
-          triggerFixed: "고정 (항상 칩 바에 표시)",
-          triggerRule: "동적 규칙 (조건부 표시)",
-          keywords: "이전 응답 일치 키워드 (쉼표로 구분)",
-          keywordsPlaceholder: "예: error, failed, exception",
-          regex: "이전 응답 일치 정규식 (선택 사항)",
-          regexPlaceholder: "예: (y/n)|proceed\\?",
-          errorLabelRequired: "라벨을 입력하세요",
-          errorContentRequired: "프롬프트 내용을 입력하세요",
-          save: "저장",
-          cancel: "취소",
-        },
-      },
     },
     github: {
       searching: "검색 중...",
@@ -719,7 +662,6 @@ export const ko: TranslationResources = {
         browser: "브라우저",
         agent: "에이전트",
         workspace: "워크스페이스",
-        workflowRuns: "Agent Radar",
       },
       switcher: {
         trigger: "탭 전환 ({{count}}개 열림)",
@@ -2182,14 +2124,6 @@ export const ko: TranslationResources = {
       loadError: "Diff를 불러오지 못했습니다.",
       capabilityMissing: "커밋 diff를 보려면 호스트를 업데이트하세요.",
     },
-    workflowRuns: {
-      label: "Agent Radar",
-      subtitle: "워크플로 실행 및 세션",
-      emptyDescription: "이 워크스페이스에서 활성 또는 완료된 워크플로를 찾을 수 없습니다.",
-      viewChat: "대화 보기",
-      viewSubagent: "서브 에이전트 보기",
-      sessionCancelled: "세션이 취소되었습니다",
-    },
   },
   toolCallDetails: {
     error: "오류",
@@ -2384,11 +2318,6 @@ export const ko: TranslationResources = {
       title: "편집기",
       vimKeybindings: "Vim 키 바인딩",
       vimHint: "웹 및 데스크톱의 소스 파일에 적용됩니다.",
-      quickPrompts: {
-        title: "빠른 프롬프트 및 명령어",
-        hint: "고정 칩, 동적 응답 규칙 및 슬래시 자동완성 사용자 정의",
-        manage: "관리",
-      },
     },
     files: {
       title: "파일",
@@ -2661,16 +2590,6 @@ export const ko: TranslationResources = {
           ghostty: "Ghostty",
           pureBlack: "순수 검정",
           auto: "시스템",
-        },
-      },
-      terminalAppearance: {
-        title: "터미널 모양",
-        description: "내장 터미널의 색상 구성표 설정",
-        accessibilityLabel: "터미널 모양: {{value}}",
-        options: {
-          "follow-theme": "앱 테마 따르기",
-          pureBlack: "순수 블랙",
-          dark: "어두움",
         },
       },
       detailLevel: {

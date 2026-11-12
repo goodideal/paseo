@@ -205,28 +205,7 @@ function getUpstreamVersionInfo(options = { fetchNpm: false }) {
   };
 }
 
-function ensureBuiltinPluginsTsconfig() {
-  const tsconfigPath = path.join(repoRoot, "plugins", "tsconfig.json");
-  if (existsSync(tsconfigPath)) {
-    try {
-      const content = JSON.parse(readFileSync(tsconfigPath, "utf8"));
-      // 官方 plugins workspace 专属于内置 usage-source 插件。
-      // 若 include 包含 **/*.tsx，可能会把用户软链接到 plugins/ 的自定义外部插件扫入导致 TS17004 JSX 报错。
-      if (
-        Array.isArray(content.include) &&
-        content.include.some((p) => p.includes("**/*.tsx") || p === "**/*.ts")
-      ) {
-        content.include = ["*-usage-source/**/*.ts"];
-        writeFileSync(tsconfigPath, `${JSON.stringify(content, null, 2)}\n`);
-        console.log(
-          "🛡️ 已自动防御配置 plugins/tsconfig.json，收敛 include 仅检查内置 usage-source 插件。",
-        );
-      }
-    } catch {
-      // ignore
-    }
-  }
-}
+// Custom plugins live in plugin-custom/, keeping plugins/ clean and identical to upstream.
 
 function getGlobalInstallTargets() {
   const targets = [];
@@ -677,8 +656,6 @@ function findPluginManifest(dir) {
 
 function collectCustomPluginDirs() {
   const pluginDirs = new Map();
-
-  // 1. Scan plugin-custom
   const customRoot = path.join(repoRoot, "plugin-custom");
   if (existsSync(customRoot)) {
     for (const item of readdirSync(customRoot)) {
@@ -686,26 +663,6 @@ function collectCustomPluginDirs() {
       if (real) pluginDirs.set(item, real);
     }
   }
-
-  // 2. Scan plugins (e.g. desktop-pet or custom symlinks)
-  const pluginsRoot = path.join(repoRoot, "plugins");
-  if (existsSync(pluginsRoot)) {
-    for (const item of readdirSync(pluginsRoot)) {
-      if (
-        item.endsWith("-usage-source") ||
-        item === "hoplite-provider" ||
-        item === "muse-provider" ||
-        item === "antigravity-provider"
-      ) {
-        continue;
-      }
-      const real = findPluginManifest(path.join(pluginsRoot, item));
-      if (real && !pluginDirs.has(item)) {
-        pluginDirs.set(item, real);
-      }
-    }
-  }
-
   return pluginDirs;
 }
 
@@ -1032,7 +989,7 @@ if (shouldSyncUpstream) {
 }
 
 // Build Step
-ensureBuiltinPluginsTsconfig();
+// plugins/tsconfig.json stays synced with upstream/main
 console.log("\n=== [Build] Building Paseo Server & Components ===");
 run("npm", ["run", "build:server"]);
 

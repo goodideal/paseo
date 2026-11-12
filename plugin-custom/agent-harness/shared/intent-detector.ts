@@ -44,6 +44,9 @@ const PLAN_PATTERNS: RegExp[] = [
   /(?:改进点|优化点|建议点|薄弱点|风险点|关键点)/i,
   /列出.*(?:top|问题|建议|方案)/i,
   /^\s*\/(?:opsx-propose|opsx-explore|brainstorming|grilling|make-plan|design-is)\b/i,
+  // Greenfield / fullstack / multi-module application construction from scratch
+  /(?:从[零0]开始|全新|从头)?(?:开发|构建|搭建|实现|写一个)(?:全栈|完整|一套|一个)?(?:系统|应用|平台|游戏|项目|服务)/i,
+  /全栈|端到端|前后端|排行榜|排名/i,
 ];
 
 // High-confidence patterns for Code Review & Gate Audits
@@ -55,11 +58,13 @@ const REVIEW_PATTERNS: RegExp[] = [
 ];
 
 // Anchored Conventional Commit or explicit execution slash command prefixes
-const CONVENTIONAL_EXEC_PREFIX: RegExp =
+export const CONVENTIONAL_EXEC_PREFIX: RegExp =
   /^\s*(?:(?:fix|feat|chore|refactor|test|docs|style|build|ci|perf)\s*[:：]|\/(?:gitea\s+(?:dev|ship|release)|install-local)\b)/i;
 
 // Unanchored general execution action phrases
-const EXEC_ACTION_PATTERNS: RegExp[] = [/修复|落地|编写代码|直接修改|添加测试|打包|发布|同步到/i];
+const EXEC_ACTION_PATTERNS: RegExp[] = [
+  /修复|落地|编写代码|直接修改|添加测试|打包|发布|同步到|在[^，。！？\n]{1,30}?(?:中|里)实现|给[^，。！？\n]{1,30}?(?:增加|加上)|替换|微调/i,
+];
 
 // Domain role heuristic patterns
 const DOMAIN_ROLE_PATTERNS: ReadonlyArray<{ role: DomainRole; pattern: RegExp }> = [
@@ -71,7 +76,7 @@ const DOMAIN_ROLE_PATTERNS: ReadonlyArray<{ role: DomainRole; pattern: RegExp }>
   {
     role: "ui",
     pattern:
-      /\b(?:ui-ux-pro-max|unslop|visual-verdict|unistyles|popover|sheet|pill|hover|tailwind|expo|react\s*native|playwright)\b|前端|界面|样式|弹窗|组件|面板|视觉|移动端布局|交互体验/i,
+      /\b(?:ui|ux|ui-ux-pro-max|unslop|visual-verdict|unistyles|popover|sheet|pill|hover|tailwind|expo|react\s*native|playwright|css)\b|前端|界面|样式|弹窗|组件|面板|视觉|移动端|手机端|响应式|布局|图标|配色|交互体验/i,
   },
   {
     role: "qa",
@@ -84,7 +89,7 @@ const DOMAIN_ROLE_PATTERNS: ReadonlyArray<{ role: DomainRole; pattern: RegExp }>
   {
     role: "backend",
     pattern:
-      /\b(?:daemon|websocket|rpc|sqlite|dbx|terminal-worker|worktree|protocol|zod-aot|relay|noise\s*nk)\b|后端|协议兼容|数据库|进程通信|服务端/i,
+      /\b(?:daemon|websocket|rpc|sqlite|dbx|terminal-worker|worktree|protocol|zod-aot|relay|noise\s*nk|quota|proxy|gateway|scheduler|provider)\b|后端|协议兼容|数据库|进程通信|服务端|配额|网关|代理服务|限流|中间件/i,
   },
   {
     role: "scout",
@@ -94,11 +99,14 @@ const DOMAIN_ROLE_PATTERNS: ReadonlyArray<{ role: DomainRole; pattern: RegExp }>
   {
     role: "architect",
     pattern:
-      /\b(?:codebase-design|domain-modeling|deep\s*modules?|adr|glossary)\b|深模块|领域建模|系统架构/i,
+      /\b(?:codebase-design|domain-modeling|deep\s*modules?|adr|glossary)\b|深模块|领域建模|系统架构|整体架构|架构设计|架构评估|模块划分|架构是否合理/i,
   },
 ];
 
 const ROLE_ALIAS_MAP: Readonly<Record<string, DomainRole>> = {
+  orchestrator: "orchestrator",
+  lead: "orchestrator",
+  dispatcher: "orchestrator",
   ui: "ui",
   "ui-specialist": "ui",
   frontend: "ui",
@@ -118,11 +126,10 @@ const ROLE_ALIAS_MAP: Readonly<Record<string, DomainRole>> = {
   "scout-specialist": "scout",
   spike: "scout",
   general: "general",
-  lead: "architect",
-  orchestrator: "architect",
 };
 
 const ROLE_PROFILE_FILENAME: Record<DomainRole, string> = {
+  orchestrator: "orchestrator.json",
   ui: "ui-specialist.json",
   backend: "backend-specialist.json",
   pm: "product-specialist.json",
@@ -134,12 +141,13 @@ const ROLE_PROFILE_FILENAME: Record<DomainRole, string> = {
 };
 
 const ROLE_LAZY_TOOL_SLICE: Record<DomainRole, string> = {
+  orchestrator: "pm.yaml",
   ui: "ui.yaml",
   backend: "backend.yaml",
   pm: "pm.yaml",
   architect: "backend.yaml",
   qa: "ui.yaml",
-  review: "codex.yaml",
+  review: "review.yaml",
   scout: "pm.yaml",
   general: "codex.yaml",
 };
@@ -247,8 +255,9 @@ export function resolveMatrixModel(options: {
     ? DEFAULT_PROVIDER_MAPPINGS[normalizedProvider]
     : IDENTITY_MAPPING;
   const customOverride =
-    customMappings && Object.hasOwn(customMappings, provider)
-      ? customMappings[normalizedProvider]
+    customMappings &&
+    (Object.hasOwn(customMappings, normalizedProvider) || Object.hasOwn(customMappings, provider))
+      ? (customMappings[normalizedProvider] ?? customMappings[provider])
       : undefined;
   const providerMapping: ProviderModelMapping = { ...defaultMapping };
   if (customOverride) {
@@ -319,6 +328,15 @@ export function detectDomainRole(options: {
 
   const trimmed = options.text?.trim() ?? "";
   if (trimmed) {
+    // 1. Composite Full-Stack / Multi-Domain Collision Check:
+    // If text touches UI/Frontend AND Backend/Persistence/Database, promote to Thin Dispatcher (orchestrator -> flash)
+    const hasUi = /(?:\b(?:ui|ux)\b|前端|界面|样式|组件|移动端|手机端|页面)/i.test(trimmed);
+    const hasBackend =
+      /(?:\b(?:db|sqlite)\b|后台|后端|服务|接口|数据|保存|存储|数据库|持久化|排名)/i.test(trimmed);
+    if (hasUi && hasBackend) {
+      return buildRoleDecision("orchestrator", "heuristic:fullstack_orchestrator", options.homeDir);
+    }
+
     for (const entry of DOMAIN_ROLE_PATTERNS) {
       if (entry.pattern.test(trimmed)) {
         return buildRoleDecision(entry.role, `heuristic:${entry.role}`, options.homeDir);
@@ -335,7 +353,7 @@ export function resolveHarnessEnv(options: {
   homeDir?: string;
 }): Record<string, string> {
   const decision = buildRoleDecision(options.role, "env_resolve", options.homeDir);
-  const baseEnv: Record<string, string> = { ...(options.existingEnv ?? {}) };
+  const baseEnv: Record<string, string> = { ...options.existingEnv };
 
   const isRoleSwitch = Boolean(
     baseEnv.PASEO_HARNESS_ROLE && baseEnv.PASEO_HARNESS_ROLE !== options.role,
@@ -357,4 +375,147 @@ export function resolveHarnessEnv(options: {
   }
 
   return baseEnv;
+}
+
+const VALID_ROLES = new Set<DomainRole>([
+  "orchestrator",
+  "ui",
+  "backend",
+  "pm",
+  "architect",
+  "qa",
+  "review",
+  "scout",
+  "general",
+]);
+
+const VALID_TIERS = new Set<MatrixTier>(["plan", "review", "flash"]);
+
+export interface LlmIntentClassifierOptions {
+  text: string;
+  endpoint?: string;
+  apiKey?: string;
+  model?: string;
+  timeoutMs?: number;
+  fetchImpl?: typeof fetch;
+}
+
+export async function classifyIntentWithLlm(
+  options: LlmIntentClassifierOptions,
+): Promise<{ role: DomainRole; tier: MatrixTier } | null> {
+  const trimmed = options.text?.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const fetchFn = options.fetchImpl ?? (typeof fetch !== "undefined" ? fetch : undefined);
+  if (!fetchFn) {
+    return null;
+  }
+
+  let endpoint =
+    options.endpoint?.trim() ||
+    (typeof process !== "undefined" ? process.env?.HARNESS_LLM_ENDPOINT?.trim() : "");
+  let apiKey =
+    options.apiKey?.trim() ||
+    (typeof process !== "undefined" ? process.env?.HARNESS_LLM_API_KEY?.trim() : "") ||
+    "";
+
+  if (!endpoint && options.fetchImpl) {
+    endpoint = "https://llm.invalid/v1/chat/completions";
+    apiKey = apiKey || "test-placeholder-key";
+  }
+
+  if (!endpoint) {
+    return null;
+  }
+
+  const model = options.model || "lite";
+  const timeoutMs = options.timeoutMs ?? 450;
+
+  try {
+    const response = await fetchFn(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0,
+        max_tokens: 45,
+        messages: [
+          {
+            role: "system",
+            content:
+              'Classify coding task into JSON {"role":"ui"|"backend"|"pm"|"architect"|"qa"|"review"|"scout"|"general","tier":"flash"|"plan"|"review"}. Output raw JSON only.',
+          },
+          {
+            role: "user",
+            content: trimmed.slice(0, 500),
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    const rawContent = data.choices?.[0]?.message?.content?.trim();
+    if (!rawContent) {
+      return null;
+    }
+
+    const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return null;
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]) as { role?: unknown; tier?: unknown };
+    const role =
+      typeof parsed.role === "string" && VALID_ROLES.has(parsed.role as DomainRole)
+        ? (parsed.role as DomainRole)
+        : "general";
+    const tier =
+      typeof parsed.tier === "string" && VALID_TIERS.has(parsed.tier as MatrixTier)
+        ? (parsed.tier as MatrixTier)
+        : "flash";
+
+    return { role, tier };
+  } catch {
+    return null;
+  }
+}
+
+export async function detectDomainRoleHybrid(options: {
+  text?: string | null;
+  labels?: Readonly<Record<string, string>> | null;
+  homeDir?: string;
+  llmFallback?: Omit<LlmIntentClassifierOptions, "text"> & { enabled?: boolean };
+}): Promise<DomainRoleDecision> {
+  const fastDecision = detectDomainRole(options);
+  if (fastDecision.matchedRule !== "default_general") {
+    return fastDecision;
+  }
+
+  const trimmed = options.text?.trim() ?? "";
+  if (!trimmed || options.llmFallback?.enabled === false) {
+    return fastDecision;
+  }
+
+  const llmResult = await classifyIntentWithLlm({
+    ...options.llmFallback,
+    text: trimmed,
+  });
+
+  if (llmResult && llmResult.role !== "general") {
+    return buildRoleDecision(llmResult.role, `llm_fallback:${llmResult.role}`, options.homeDir);
+  }
+
+  return fastDecision;
 }

@@ -16,6 +16,7 @@ export const fr: TranslationResources = {
     loading: "Chargement…",
     failed: "Échec",
     retry: "Réessayer",
+
     title: "Rechercher",
     placeholder: "Rechercher dans le panneau",
     close: "Fermer la recherche",
@@ -198,64 +199,6 @@ export const fr: TranslationResources = {
     clientCommands: {
       archiveAgent: "Archiver l’agent actuel",
       freshDraft: "Archiver cet agent et démarrer un nouveau brouillon",
-    },
-    quickPrompts: {
-      bar: {
-        accessibilityHint: "Cliquer pour envoyer, appui long pour insérer dans l'éditeur",
-        manageAccessibility: "Gérer les invites rapides et les règles",
-      },
-      aiSuggestions: {
-        title: "Suggérer des réponses rapides avec l'IA",
-        hint: "En l'absence d'options explicites, utiliser l'IA pour suggérer les actions suivantes.",
-      },
-      modal: {
-        title: "Invites rapides et règles",
-        newPrompt: "Nouvelle invite rapide",
-        tabProject: "Current Project",
-        tabGlobal: "Global Prompts",
-        projectScope: "Project",
-        globalScope: "Global",
-        globalNotice: "Changes to global prompts apply across all projects on this machine.",
-        projectNotice:
-          "Customize prompts for this project. Global prompts can be disabled here or edited in the Global tab.",
-        globalReadOnlyHint:
-          "Global prompt: toggle to enable/disable for this project, or switch to Global tab to edit.",
-        newProjectPrompt: "New Project Prompt",
-        newGlobalPrompt: "New Global Prompt",
-        editProjectPrompt: "Edit Project Prompt",
-        editGlobalPrompt: "Edit Global Prompt",
-        jumpToGlobal: "Edit in Global tab",
-        emptyProjectItems: "No project-specific prompts yet. Inheriting active global prompts.",
-
-        resetToDefaults: "Rétablir les valeurs par défaut",
-        fixedBadge: "Fixe",
-        ruleBadge: "Règle dynamique",
-        moveUp: "Déplacer vers le haut",
-        moveDown: "Déplacer vers le bas",
-        edit: "Modifier",
-        delete: "Supprimer",
-        form: {
-          createTitle: "Nouvelle invite rapide",
-          editTitle: "Modifier l'invite rapide",
-          label: "Libellé",
-          labelPlaceholder: "ex. Continuer, Corriger l'erreur",
-          content: "Contenu de l'invite",
-          contentPlaceholder: "Invite complète à envoyer ou insérer...",
-          shortcut: "Raccourci de commande slash (facultatif)",
-          shortcutPlaceholder: "ex. continue (taper /continue pour appeler)",
-          triggerType: "Type de déclenchement",
-          triggerFixed: "Fixe (toujours visible)",
-          triggerRule: "Règle dynamique (conditionnelle)",
-          keywords: "Mots-clés dans la dernière réponse (séparés par des virgules)",
-          keywordsPlaceholder: "ex. error, failed, exception",
-          regex: "Expression régulière dans la dernière réponse (facultatif)",
-          regexPlaceholder: "ex. (y/n)|proceed\\?",
-          errorLabelRequired: "Le libellé est requis",
-          errorContentRequired: "Le contenu de l'invite est requis",
-          save: "Enregistrer",
-          cancel: "Annuler",
-        },
-      },
     },
     github: {
       searching: "Recherche…",
@@ -724,7 +667,6 @@ export const fr: TranslationResources = {
         browser: "Navigateur",
         agent: "Agent",
         workspace: "Espace de travail",
-        workflowRuns: "Agent Radar",
       },
       switcher: {
         trigger: "Changer d’onglet ({{count}} ouverts)",
@@ -2220,14 +2162,6 @@ export const fr: TranslationResources = {
       loadError: "Impossible de charger le diff",
       capabilityMissing: "Mettez à jour l’hôte pour afficher le diff des commits.",
     },
-    workflowRuns: {
-      label: "Agent Radar",
-      subtitle: "Exécutions de workflow et sessions",
-      emptyDescription: "Aucun workflow actif ou terminé trouvé dans cet espace de travail.",
-      viewChat: "Voir la discussion",
-      viewSubagent: "Voir le sous-agent",
-      sessionCancelled: "Session annulée",
-    },
   },
   toolCallDetails: {
     error: "Erreur",
@@ -2423,11 +2357,6 @@ export const fr: TranslationResources = {
       title: "Éditeur",
       vimKeybindings: "Raccourcis Vim",
       vimHint: "S’applique aux fichiers source dans l’app web et l’app de bureau.",
-      quickPrompts: {
-        title: "Invites rapides et commandes",
-        hint: "Personnaliser les puces fixes, les règles de réponse dynamique et l'autocomplétion slash",
-        manage: "Gérer",
-      },
     },
     files: {
       title: "Fichiers",
@@ -2704,17 +2633,6 @@ export const fr: TranslationResources = {
           ghostty: "Ghostty",
           pureBlack: "Noir pur",
           auto: "Système",
-        },
-      },
-      terminalAppearance: {
-        title: "Apparence du terminal",
-        description: "Définir le thème de couleur du terminal intégré",
-
-        accessibilityLabel: "Apparence du terminal : {{value}}",
-        options: {
-          "follow-theme": "Suivre le thème de l'application",
-          pureBlack: "Noir pur",
-          dark: "Sombre",
         },
       },
       detailLevel: {

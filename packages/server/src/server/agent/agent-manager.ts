@@ -1597,6 +1597,8 @@ export class AgentManager {
         config: sent,
         env: options.env,
         metadata: options.metadata ?? {},
+        initialPrompt: options.initialPrompt,
+        labels: options.labels ?? {},
       });
       // COMPAT(featureValues): added in v0.15.0, remove after 2027-05-01. A plugin written
       // against the previous SDK edits `config.featureValues`.
@@ -1608,7 +1610,13 @@ export class AgentManager {
         }),
         internal: config.internal,
       };
-      options = { ...options, env: request.env, metadata: request.metadata ?? options.metadata };
+      options = {
+        ...options,
+        env: request.env,
+        metadata: request.metadata ?? options.metadata,
+        initialPrompt: request.initialPrompt ?? options.initialPrompt,
+        labels: request.labels ?? options.labels,
+      };
     }
     await this.deleteAgentState(resolvedAgentId);
     const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
@@ -5217,7 +5225,7 @@ export class AgentManager {
         this.onStreamThreadStarted(agent);
         return undefined;
       case "usage_updated":
-        agent.lastUsage = event.usage;
+        agent.lastUsage = { ...agent.lastUsage, ...event.usage };
         this.emitState(agent);
         return undefined;
       case "mode_changed":

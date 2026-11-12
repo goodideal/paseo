@@ -9,11 +9,13 @@ import type {
   PluginSettingsScreenContribution,
   PluginCommandCenterItemContribution,
   PluginClientSlashCommandContribution,
+  PluginComposerItemContribution,
 } from "@getpaseo/plugin/client";
 
 describe("Quick Prompts Client Entrypoint", () => {
-  it("registers composer pill, workspace header buttons, settings screen, command center item, and slash commands", () => {
+  it("registers composer pill, composer item, workspace header buttons, settings screen, command center item, and slash commands", () => {
     const pills: PluginComposerPillContribution[] = [];
+    const composerItems: PluginComposerItemContribution[] = [];
     const headerButtons: PluginHeaderButtonContribution[] = [];
     const settingsScreens: PluginSettingsScreenContribution[] = [];
     const commandCenterItems: PluginCommandCenterItemContribution[] = [];
@@ -98,6 +100,13 @@ describe("Quick Prompts Client Entrypoint", () => {
           };
         },
       ),
+      addComposerItem: vi.fn((contribution: PluginComposerItemContribution) => {
+        composerItems.push(contribution);
+        return () => {
+          const idx = composerItems.indexOf(contribution);
+          if (idx !== -1) composerItems.splice(idx, 1);
+        };
+      }),
       addSettingsScreen: vi.fn((contribution: PluginSettingsScreenContribution) => {
         settingsScreens.push(contribution);
         return () => {
@@ -157,6 +166,10 @@ describe("Quick Prompts Client Entrypoint", () => {
         expect(headerButtons.find((b) => b.workspaceId === "ws-wt")).toBeUndefined();
         expect(headerButtons).toHaveLength(1);
 
+        expect(client.addComposerItem).toHaveBeenCalledTimes(1);
+        expect(composerItems).toHaveLength(1);
+        expect(composerItems[0].id).toBe("quick-prompts-draft");
+
         expect(client.addSettingsScreen).toHaveBeenCalledTimes(1);
         expect(settingsScreens).toHaveLength(1);
         expect(settingsScreens[0].id).toBe("quick-prompts");
@@ -170,6 +183,7 @@ describe("Quick Prompts Client Entrypoint", () => {
 
         cleanup();
         expect(pills).toHaveLength(0);
+        expect(composerItems).toHaveLength(0);
         expect(headerButtons).toHaveLength(0);
         expect(settingsScreens).toHaveLength(0);
         expect(commandCenterItems).toHaveLength(0);

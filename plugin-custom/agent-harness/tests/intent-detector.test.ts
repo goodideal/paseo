@@ -1,10 +1,24 @@
 import { describe, expect, it } from "vitest";
 import {
+  classifyIntentWithLlm,
   detectDomainRole,
+  detectDomainRoleHybrid,
   detectMatrixTier,
   resolveHarnessEnv,
   resolveMatrixModel,
 } from "../shared/intent-detector.js";
+
+const mockFetchSuccess = async () =>
+  new Response(
+    JSON.stringify({
+      choices: [{ message: { content: '{"role":"architect","tier":"plan"}' } }],
+    }),
+    { status: 200 },
+  );
+
+const mockFetchTimeout = async () => {
+  throw new DOMException("The operation was aborted", "TimeoutError");
+};
 
 describe("detectMatrixTier", () => {
   it("detects PLAN tier for architectural, CTO, and root-cause analysis requests", () => {
@@ -131,6 +145,16 @@ describe("resolveMatrixModel", () => {
     expect(flashDecision.targetModel).toBe("headroom/flash");
   });
 
+  it("classifies plugin implementation actions as flash execution", () => {
+    const decision = resolveMatrixModel({
+      provider: "claude",
+      currentModel: "flash",
+      text: "同意，但在quick button的插件中实现",
+    });
+    expect(decision.tier).toBe("flash");
+    expect(decision.matchedRule).toContain("exec_action");
+  });
+
   it("bypasses orchestration routing for antigravity safety-net provider", () => {
     const decision = resolveMatrixModel({
       provider: "antigravity",
@@ -196,6 +220,18 @@ describe("detectDomainRole", () => {
       expect(result.role, `Failed Backend detection for: ${text}`).toBe("backend");
     }
   });
+
+  it("detects Orchestrator role for composite fullstack requirements touching both UI and backend", () => {
+    const fullstackText = "全栈需求：开发移动端前端页面与后端数据库接口存储";
+    const result = detectDomainRole({ text: fullstackText });
+    expect(result.role).toBe("orchestrator");
+    expect(result.matchedRule).toBe("heuristic:fullstack_orchestrator");
+  });
+
+  it("does not falsely classify 'fix build feedback loop' as orchestrator due to word boundaries", () => {
+    const result = detectDomainRole({ text: "fix build feedback loop" });
+    expect(result.role).not.toBe("orchestrator");
+  });
 });
 
 describe("resolveHarnessEnv", () => {
@@ -209,6 +245,17 @@ describe("resolveHarnessEnv", () => {
     expect(env.PASEO_HARNESS_PROFILE).toBe("/Users/jerry/.agents/profiles/ui-specialist.json");
     expect(env.LAZY_TOOL_CONFIG).toBe("/Users/jerry/.config/lazy-tool/profiles/ui.yaml");
     expect(env.PATH).toBe("/usr/bin");
+  });
+
+  it("injects review profile and lazy-tool review.yaml when role is review", () => {
+    const env = resolveHarnessEnv({
+      role: "review",
+      existingEnv: { PATH: "/usr/bin" },
+      homeDir: "/Users/jerry",
+    });
+    expect(env.PASEO_HARNESS_ROLE).toBe("review");
+    expect(env.PASEO_HARNESS_PROFILE).toBe("/Users/jerry/.agents/profiles/security-review.json");
+    expect(env.LAZY_TOOL_CONFIG).toBe("/Users/jerry/.config/lazy-tool/profiles/review.yaml");
   });
 
   it("preserves caller-provided LAZY_TOOL_CONFIG if already present", () => {
@@ -249,5 +296,57 @@ describe("resolveHarnessEnv", () => {
 
     const resultCr = detectMatrixTier("cr-1234 fix login bug");
     expect(resultCr.tier).not.toBe("review");
+  });
+
+  it("correctly classifies mobile UI design & layout review as UI role and PLAN tier", () => {
+    const prompt = "审视所有移动端的 ui 设计和布局，分析如何实现 ui 的一致性以及手机端的友好性。";
+    const roleDecision = detectDomainRole({ text: prompt });
+    expect(roleDecision.role).toBe("ui");
+
+    const tierDecision = detectMatrixTier(prompt);
+    expect(tierDecision.tier).toBe("plan");
+  });
+
+  it("falls back to L2 LLM classifier when L1 heuristic returns general, and degrades gracefully on timeout", async () => {
+    const hybridDecision = await detectDomainRoleHybrid({
+      text: "梳理多租户隔离策略与数据流向",
+      homeDir: "/Users/jerry",
+      llmFallback: {
+        enabled: true,
+        fetchImpl: mockFetchSuccess as unknown as typeof fetch,
+      },
+    });
+    expect(hybridDecision.role).toBe("architect");
+    expect(hybridDecision.matchedRule).toBe("llm_fallback:architect");
+
+    const degraded = await classifyIntentWithLlm({
+      text: "梳理多租户隔离策略与数据流向",
+      fetchImpl: mockFetchTimeout as unknown as typeof fetch,
+      timeoutMs: 50,
+    });
+    expect(degraded).toBeNull();
+  });
+
+  it("returns null when no endpoint or apiKey is configured and no fetchImpl is injected", async () => {
+    const originalEndpoint = process.env.HARNESS_LLM_ENDPOINT;
+    const originalKey = process.env.HARNESS_LLM_API_KEY;
+    const originalBase = process.env.ANTHROPIC_BASE_URL;
+    const originalAuth = process.env.ANTHROPIC_AUTH_TOKEN;
+    try {
+      delete process.env.HARNESS_LLM_ENDPOINT;
+      delete process.env.HARNESS_LLM_API_KEY;
+      delete process.env.ANTHROPIC_BASE_URL;
+      delete process.env.ANTHROPIC_AUTH_TOKEN;
+
+      const result = await classifyIntentWithLlm({
+        text: "梳理多租户隔离策略与数据流向",
+      });
+      expect(result).toBeNull();
+    } finally {
+      if (originalEndpoint !== undefined) process.env.HARNESS_LLM_ENDPOINT = originalEndpoint;
+      if (originalKey !== undefined) process.env.HARNESS_LLM_API_KEY = originalKey;
+      if (originalBase !== undefined) process.env.ANTHROPIC_BASE_URL = originalBase;
+      if (originalAuth !== undefined) process.env.ANTHROPIC_AUTH_TOKEN = originalAuth;
+    }
   });
 });

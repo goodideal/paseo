@@ -93,6 +93,8 @@ const beforeSchemas = {
     config: true,
     env: true,
     metadata: true,
+    initialPrompt: true,
+    labels: true,
   }).strict(),
   "agent.open.before": z
     .object({
@@ -219,6 +221,10 @@ export function publishAgentStream(
   }
 }
 
+function withInheritedMetadata<T extends object, M>(result: T, metadata: M | undefined): T {
+  return metadata !== undefined ? { ...result, metadata } : result;
+}
+
 export async function validateBeforeResult<Name extends keyof PluginWireBeforeRequests>(
   name: Name,
   input: PluginWireBeforeRequests[Name],
@@ -241,7 +247,7 @@ export async function validateBeforeResult<Name extends keyof PluginWireBeforeRe
     ) {
       throw new Error("agent.open.before hooks can only change env, tools, and mcpServers");
     }
-    return { ...result, metadata: previous.metadata };
+    return withInheritedMetadata(result, previous.metadata);
   }
   if (name === "agent.create.before") {
     const previous = beforeSchemas["agent.create.before"].parse(input);
@@ -250,13 +256,13 @@ export async function validateBeforeResult<Name extends keyof PluginWireBeforeRe
       throw new Error("agent.create.before hooks cannot change the workspace directory");
     }
     // Omitted means unchanged: the next hook sees what this one was handed.
-    return { ...result, metadata: next.metadata ?? previous.metadata };
+    return withInheritedMetadata(result, next.metadata ?? previous.metadata);
   }
   if (name === "workspace.create.before") {
     const previous = beforeSchemas["workspace.create.before"].parse(input);
     const next = beforeSchemas["workspace.create.before"].parse(result);
     // Omitted means unchanged; an explicit {} still replaces.
-    return { ...result, metadata: next.metadata ?? previous.metadata };
+    return withInheritedMetadata(result, next.metadata ?? previous.metadata);
   }
   if (name === "worktree.create.before") {
     const previous = beforeSchemas["worktree.create.before"].parse(input);

@@ -16,6 +16,7 @@ export const ja: TranslationResources = {
     loading: "読み込み中…",
     failed: "失敗",
     retry: "再試行",
+
     title: "検索",
     placeholder: "ペイン内を検索",
     close: "検索を閉じる",
@@ -197,64 +198,6 @@ export const ja: TranslationResources = {
     clientCommands: {
       archiveAgent: "現在のエージェントをアーカイブ",
       freshDraft: "このエージェントをアーカイブして新しい下書きを開始",
-    },
-    quickPrompts: {
-      bar: {
-        accessibilityHint: "クリックで直接送信、長押しで編集欄に入力",
-        manageAccessibility: "定型文とルールを管理",
-      },
-      aiSuggestions: {
-        title: "AI によるクイック返信候補",
-        hint: "明示的な選択肢がない場合、AI を使用して次のアクションを提案します。",
-      },
-      modal: {
-        title: "定型文とルール",
-        newPrompt: "定型文を新規作成",
-        tabProject: "Current Project",
-        tabGlobal: "Global Prompts",
-        projectScope: "Project",
-        globalScope: "Global",
-        globalNotice: "Changes to global prompts apply across all projects on this machine.",
-        projectNotice:
-          "Customize prompts for this project. Global prompts can be disabled here or edited in the Global tab.",
-        globalReadOnlyHint:
-          "Global prompt: toggle to enable/disable for this project, or switch to Global tab to edit.",
-        newProjectPrompt: "New Project Prompt",
-        newGlobalPrompt: "New Global Prompt",
-        editProjectPrompt: "Edit Project Prompt",
-        editGlobalPrompt: "Edit Global Prompt",
-        jumpToGlobal: "Edit in Global tab",
-        emptyProjectItems: "No project-specific prompts yet. Inheriting active global prompts.",
-
-        resetToDefaults: "デフォルトに戻す",
-        fixedBadge: "常時表示",
-        ruleBadge: "動的ルール",
-        moveUp: "上に移動",
-        moveDown: "下に移動",
-        edit: "編集",
-        delete: "削除",
-        form: {
-          createTitle: "定型文を新規作成",
-          editTitle: "定型文を編集",
-          label: "表示ラベル",
-          labelPlaceholder: "例: 続行, エラー修正",
-          content: "プロンプト内容",
-          contentPlaceholder: "送信または編集欄に入力する完全なプロンプト...",
-          shortcut: "スラッシュコマンド短縮形 (任意)",
-          shortcutPlaceholder: "例: continue (/continue で呼び出し)",
-          triggerType: "トリガー種別",
-          triggerFixed: "常時表示 (常にチップバーに表示)",
-          triggerRule: "動的ルール (条件付き表示)",
-          keywords: "前回の返信に含まれるキーワード (カンマ区切り)",
-          keywordsPlaceholder: "例: error, failed, exception",
-          regex: "前回の返信に一致する正規表現 (任意)",
-          regexPlaceholder: "例: (y/n)|proceed\\?",
-          errorLabelRequired: "ラベルを入力してください",
-          errorContentRequired: "プロンプト内容を入力してください",
-          save: "保存",
-          cancel: "キャンセル",
-        },
-      },
     },
     github: {
       searching: "検索中...",
@@ -724,7 +667,6 @@ export const ja: TranslationResources = {
         browser: "ブラウザ",
         agent: "エージェント",
         workspace: "ワークスペース",
-        workflowRuns: "Agent Radar",
       },
       switcher: {
         trigger: "タブを切り替え（{{count}}件開いています）",
@@ -2193,15 +2135,6 @@ export const ja: TranslationResources = {
       loadError: "差分の読み込みに失敗しました",
       capabilityMissing: "コミット差分を表示するにはホストを更新してください。",
     },
-    workflowRuns: {
-      label: "Agent Radar",
-      subtitle: "ワークフローの実行とセッション",
-      emptyDescription:
-        "このワークスペースにはアクティブまたは完了したワークフローは見つかりませんでした。",
-      viewChat: "チャットを表示",
-      viewSubagent: "サブエージェントを表示",
-      sessionCancelled: "セッションがキャンセルされました",
-    },
   },
   toolCallDetails: {
     error: "エラー",
@@ -2397,11 +2330,6 @@ export const ja: TranslationResources = {
       title: "エディター",
       vimKeybindings: "Vim キーバインド",
       vimHint: "Web とデスクトップのソースファイルに適用されます。",
-      quickPrompts: {
-        title: "定型文とショートカットコマンド",
-        hint: "常時表示チップ、動的返信ルール、スラッシュ補完をカスタマイズ",
-        manage: "管理",
-      },
     },
     files: {
       title: "ファイル",
@@ -2671,17 +2599,6 @@ export const ja: TranslationResources = {
           ghostty: "Ghostty",
           pureBlack: "ピュアブラック",
           auto: "システム",
-        },
-      },
-      terminalAppearance: {
-        title: "ターミナルの外観",
-        description: "内蔵ターミナルの配色を設定",
-
-        accessibilityLabel: "ターミナルの外観: {{value}}",
-        options: {
-          "follow-theme": "アプリのテーマに従う",
-          pureBlack: "ピュアブラック",
-          dark: "ダーク",
         },
       },
       detailLevel: {

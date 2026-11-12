@@ -1,6 +1,7 @@
 import type { PluginClientContext, PluginButtonRegistration } from "@getpaseo/plugin/client";
 import { QuickPromptsSettingsScreen } from "./client/settings-screen.js";
 import { QuickPromptsPopover } from "./client/popover.js";
+import { QuickPromptsComposerItem } from "./client/composer-item.js";
 import { WorkspaceKindPopover } from "./client/workspace-kind-popover.js";
 import { quickPromptsGlobalGetRpc, type QuickPromptItem } from "./shared/contracts.js";
 import { setCachedGlobalItems } from "./client/use-quick-prompts.js";
@@ -154,7 +155,17 @@ export default function contribute(client: PluginClientContext) {
     workspaceButtons.clear();
   });
 
-  // 3. Register settings screen
+  // 3. Register composer item for Draft and New Workspace composers (non-intrusive SDK seam)
+  if (typeof client.addComposerItem === "function") {
+    cleanups.push(
+      client.addComposerItem({
+        id: "quick-prompts-draft",
+        Component: QuickPromptsComposerItem,
+      }),
+    );
+  }
+
+  // 4. Register settings screen
   cleanups.push(
     client.addSettingsScreen({
       id: "quick-prompts",

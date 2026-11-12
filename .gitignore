@@ -99,3 +99,10 @@ app.json
 
 # Project-local Serena configuration and memories.
 .serena/
+
+# Local runtime databases and crawler evidence
+/data/
+/bin/
+.evidence/
+**/.evidence/
+.artifacts/

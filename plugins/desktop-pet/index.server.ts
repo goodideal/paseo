@@ -30,7 +30,7 @@ export default function contribute(server: PluginServerContext) {
   // Sync XP and Level into projection
   projection.setXpAndLevel(xpManager.getXp(), xpManager.getLevel());
 
-  let timerHandle: NodeJS.Timeout | null = null;
+  let timerHandle: ReturnType<typeof setInterval> | null = null;
   let subscriber: AgentSubscriber | null = null;
   let serverObservation: { dispose(): void } | null = null;
   let lastPaseoContext: any = null;

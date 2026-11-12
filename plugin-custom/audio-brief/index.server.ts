@@ -1,4 +1,4 @@
-import type { PluginServerContext } from "@getpaseo/plugin";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { audioBriefSynthesizeRpc } from "./shared/contracts.js";
 import { AudioBriefService } from "./server/audio-brief-service.js";
 import { audioBriefSettings, type AudioBriefSettings } from "./shared/settings.js";

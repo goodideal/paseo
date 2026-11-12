@@ -546,6 +546,7 @@ async function resolveRunWorkspace(
   options: AgentRunOptions,
   cwd: string,
   callerAgentId: string | undefined,
+  firstAgentContext?: { prompt: string; provider?: string },
 ): Promise<RunWorkspace> {
   const newWorkspace = resolveNewWorkspaceKind(options);
   const explicit = newWorkspace ? undefined : options.workspace?.trim();
@@ -564,11 +565,19 @@ async function resolveRunWorkspace(
     return resolveExistingRunWorkspace(client, ambientWorkspaceId);
   }
 
-  // TODO: thread the run `prompt` as firstAgentContext so workspace-level
-  // title/branch generation picks up the task description (U8/U6 deferred).
   const source = buildRunWorkspaceSource(options, cwd);
   const result = await client.createWorkspace({
     source,
+    ...(firstAgentContext?.prompt
+      ? {
+          firstAgentContext: {
+            prompt: firstAgentContext.prompt,
+            ...(firstAgentContext.provider
+              ? { provider: firstAgentContext.provider as never }
+              : {}),
+          },
+        }
+      : {}),
     ...(callerAgentId ? { callerAgentId } : {}),
   });
 
@@ -625,7 +634,10 @@ export async function runRunCommand(
     const requestEnv = Object.keys(env).length > 0 ? env : undefined;
 
     const callerAgentId = await resolveCallerAgentId(client);
-    const workspace = await resolveRunWorkspace(client, options, cwd, callerAgentId);
+    const workspace = await resolveRunWorkspace(client, options, cwd, callerAgentId, {
+      prompt,
+      provider: resolvedProviderModel.provider,
+    });
     const workspaceId = workspace.id;
     const runCwd = workspace.cwd;
 

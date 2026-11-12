@@ -5,8 +5,12 @@ const base = "plugin-custom";
 const CONTRIBUTION_ID = /^[a-z][a-z0-9-]*$/;
 
 // Read lucide icons to verify
-const lucidePath = path.resolve("node_modules/lucide-react-native/dist/cjs/lucide-react-native.js");
-const lucideContent = fs.readFileSync(lucidePath, "utf8");
+const lucideCandidates = [
+  path.resolve("node_modules/lucide-react-native/dist/cjs/lucide-react-native.js"),
+  path.resolve("packages/app/node_modules/lucide-react-native/dist/cjs/lucide-react-native.js"),
+];
+const lucidePath = lucideCandidates.find((p) => fs.existsSync(p));
+const lucideContent = lucidePath ? fs.readFileSync(lucidePath, "utf8") : "";
 
 function isValidLucideIcon(name) {
   if (!name || typeof name !== "string") return false;
