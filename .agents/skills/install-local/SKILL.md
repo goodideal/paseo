@@ -161,16 +161,16 @@ git remote set-url origin https://github.com/goodideal/paseo.git
 
 - **核心意图**：
   1. 提供 `scripts/install-local.mjs`（`npm run install:local`），一键将本地定制源码编译并同步到本地全局 Volta 安装路径；
-  2. 在全库 `package.json` 的版本号后追加 `-custom.<DDhhmm>` 后缀（如 `0.10.1-custom.290946`），同时在 App UI（设置面板、侧边栏帮助、欢迎页）、CLI 终端输出中统一展示为友好格式 `v0.10.1 [mod-290946]`（如 `v0.10.1 [mod-290946]`，DD 代表日期，hhmm 代表小时分钟），精准识别构建时刻；
+  2. **构建/安装期动态注入 `-custom.d<DDhhmm>`**：Git 源码中所有 13 个 `package.json` 保持与上游一致的纯净版本号（杜绝上游发版时的 13 处 `package.json` 冲突与 `package-lock.json` 脏污）；仅在执行 `npm run install:local` 构建 Daemon Web UI（通过 `EXPO_PUBLIC_PASEO_CUSTOM_VERSION` -> `packages/app/src/utils/app-version.ts`）与写入 Volta 全局运行时目标目录 `package.json` 时动态注入 `-custom.d<DDhhmm>`，在 UI 与 CLI 中统一展示为 `v<base> [mod-DDhhmm]`；
   3. 让原生版本号转换、桌面更新检测、设置面板及 Changelog 正确识别并剥离该后缀及 `[mod-DDhhmm]` 标签，避免本地客户端与服务端被误判为版本漂移，或在构建原生安装包时正则解析崩溃。
 - **涉及核心文件**：
-  - `scripts/install-local.mjs`（本地维护、上游同步、编译与全局 Volta 路径增量覆盖安装，自动维护 `-custom.<DDhhmm>` 及格式化展示）
+  - `scripts/install-local.mjs`（构建/安装期动态生成 `-custom.d<DDhhmm>` 并注入 Web UI 环境变量与 Volta 全局目标 `package.json`）
+  - `packages/app/src/utils/app-version.ts`（优先读取构建期注入的 `EXPO_PUBLIC_PASEO_CUSTOM_VERSION`）
   - `packages/app/native-release-version.js` & `native-release-version.test.ts`（版本号正则允许 `-custom`、时间戳后缀及 `[mod-...]` 标签）
   - `packages/app/src/desktop/updates/desktop-updates.ts` & `desktop-updates.test.ts`（格式化为 `v<base> [mod-DDhhmm]`，并在版本比对归一化时剥离）
   - `packages/app/src/screens/settings-screen.tsx`（版本比对去除 `-custom` 与 `[mod-...]`，消除误报 mismatch）
   - `packages/app/src/changelog/internal/changelog-sheet.tsx`（更新日志展示时剥离 `-custom` 与 `[mod-...]`）
   - `packages/cli/src/version.ts` & `version.test.ts` & `cli.ts`（CLI `--version` 输出格式化为 `v<base> [mod-DDhhmm]`）
-  - 根目录及各子包 `package.json`（版本同步为 `<upstream_version>-custom.<DDhhmm>`）
 
 ---
 

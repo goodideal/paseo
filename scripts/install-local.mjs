@@ -46,6 +46,29 @@ function getModTimestamp() {
   return `d${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}`;
 }
 
+function computeCustomBuildVersion(rawVersion) {
+  const baseVersion = String(rawVersion || "0.0.0")
+    .replace(/^v/i, "")
+    .replace(/-custom(?:\.[\w-]+)?$/, "")
+    .replace(/\s*\[[^\]]+\]$/, "");
+  return `${baseVersion}-custom.${getModTimestamp()}`;
+}
+
+function writeStampedPackageJson(srcPath, destPath, customVersion) {
+  const pkg = JSON.parse(readFileSync(srcPath, "utf8"));
+  pkg.version = customVersion;
+  for (const section of ["dependencies", "optionalDependencies", "peerDependencies"]) {
+    const deps = pkg[section];
+    if (!deps || typeof deps !== "object") continue;
+    for (const name of Object.keys(deps)) {
+      if (name.startsWith("@getpaseo/") && deps[name] !== "*") {
+        deps[name] = customVersion;
+      }
+    }
+  }
+  writeFileSync(destPath, `${JSON.stringify(pkg, null, 2)}\n`);
+}
+
 function formatModDisplayVersion(version) {
   if (!version) return "unknown";
   const val = String(version).trim();
@@ -85,12 +108,12 @@ Options:
   --upstream-version, --upstream 显示官方上游 (upstream) 最新版本、提交与 npm 标签
   --status            显示当前本地分支、官方 upstream 版本对比、全局安装位置与守护进程状态
   --check-upstream    检查官方 (upstream) 最新更新与版本差异，不执行合并或构建
-  --sync-upstream     一键同步官方更新 (fetch + merge/rebase + 保持 -custom 后缀 + 构建安装)
+  --sync-upstream     一键同步官方更新 (fetch + merge/rebase + 刷新依赖 + 构建安装)
   --sync              --sync-upstream 的别名
   --rebase            与 --sync-upstream 配合使用，使用 rebase 替代默认的 merge
   --stash             与 --sync-upstream 配合使用，如果有未提交的更改则自动 stash 并恢复
   --verify            运行核心质量门禁验证 (typecheck:server 与 5 个核心定制特性单测回归，失败即停)
-  --bump, --stamp     刷新当前构建时刻版本标识 (-custom.<DDhhmm>) 并同步各子包
+  --bump, --stamp     强制重新打包 Web UI 并在全局安装产物中刷新当前时刻标识 (-custom.<DDhhmm>)，不修改源码 package.json
   --force-ui          强制重新打包编译 Web UI (默认在 packages/app 无改动且产物就绪时自动跳过)
   --skip-ui           跳过 Web UI 编译打包 (仅构建服务端和桌面端，大幅提升快速调试效率)
   --skip-desktop      跳过 Electron 桌面端主进程编译
@@ -446,26 +469,6 @@ function checkUpstream() {
   }
 }
 
-function bumpCustomVersion() {
-  console.log("🏷️ 校验并维护自定义版本标识 (-custom)...");
-  try {
-    const rootPkgPath = path.join(repoRoot, "package.json");
-    const rootPkg = JSON.parse(readFileSync(rootPkgPath, "utf8"));
-    const baseVersion = rootPkg.version
-      .replace(/^v/i, "")
-      .replace(/-custom(?:\.[\w-]+)?$/, "")
-      .replace(/\s*\[[^\]]+\]$/, "");
-    rootPkg.version = `${baseVersion}-custom.${getModTimestamp()}`;
-    writeFileSync(rootPkgPath, `${JSON.stringify(rootPkg, null, 2)}\n`);
-    console.log(
-      `   -> 更新根版本号为: ${rootPkg.version} (${formatModDisplayVersion(rootPkg.version)})`,
-    );
-    run("node", ["scripts/sync-workspace-versions.mjs"]);
-  } catch (err) {
-    console.warn("⚠️ 同步子包版本号时出现提示:", err.message);
-  }
-}
-
 function syncUpstream() {
   ensureUpstreamRemote();
   console.log("=== [1/4] 同步官方上游更新 (Upstream Sync) ===");
@@ -511,19 +514,8 @@ function syncUpstream() {
       }
     } catch {
       console.error("\n❌ 合并/变基官方更新时发生冲突，请手动解决冲突后再继续执行 install:local。");
-      console.error("\n💡 批量解决 package.json 版本冲突技巧：");
       console.error(
-        '   1. 在根目录 package.json 中仅将 version 冲突修改为最新上游版本加上 -custom（如 "0.9.0-beta.x-custom"）并保存',
-      );
-      console.error(
-        "   2. 对所有子包 package.json 使用 ours 丢弃冲突标记：git checkout --ours packages/*/package.json",
-      );
-      console.error("   3. 运行版本同步脚本秒级重写：node scripts/sync-workspace-versions.mjs");
-      console.error("   4. 标记解决：git add package.json packages/*/package.json");
-      console.error(
-        useRebase
-          ? "   5. 解决业务代码冲突后执行: git rebase --continue"
-          : "   5. 解决业务代码冲突后执行: git commit",
+        useRebase ? "   解决冲突后执行: git rebase --continue" : "   解决冲突后执行: git commit",
       );
       process.exit(1);
     } finally {
@@ -536,8 +528,6 @@ function syncUpstream() {
         }
       }
     }
-
-    bumpCustomVersion();
 
     console.log("📦 刷新安装依赖 (npm install)...");
     run("npm", ["install"]);
@@ -836,7 +826,7 @@ function verifyCustomPlugins() {
 
 function shouldBuildWebUi() {
   if (skipUi) return false;
-  if (forceUi) return true;
+  if (forceUi || shouldBump) return true;
 
   const targetUi = path.join(
     repoRoot,
@@ -984,9 +974,13 @@ if (shouldSyncUpstream) {
     console.log("\n✅ 官方更新同步完成 (--no-build，跳过构建)。");
     process.exit(0);
   }
-} else if (shouldBump) {
-  bumpCustomVersion();
 }
+
+const rootPkgForBuild = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
+const customBuildVersion = computeCustomBuildVersion(rootPkgForBuild.version);
+console.log(
+  `🏷️ 本次构建自定义版本标识 (仅注入构建与全局安装产物): ${formatModDisplayVersion(customBuildVersion)} (${customBuildVersion})`,
+);
 
 // Build Step
 // plugins/tsconfig.json stays synced with upstream/main
@@ -1005,6 +999,7 @@ if (shouldBuildWebUi()) {
     env: {
       ...process.env,
       EXPO_NO_TELEMETRY: "1",
+      EXPO_PUBLIC_PASEO_CUSTOM_VERSION: customBuildVersion,
     },
   });
 } else {
@@ -1021,7 +1016,7 @@ if (!skipDesktop) {
   console.log("⏩ 已跳过 Desktop 构建 (--skip-desktop)");
 }
 
-function copySubpackageToTarget(target, pkg) {
+function copySubpackageToTarget(target, pkg, customVersion) {
   const pkgTarget = path.join(target.modulesDir, pkg);
   if (!existsSync(pkgTarget)) {
     return;
@@ -1030,7 +1025,11 @@ function copySubpackageToTarget(target, pkg) {
   console.log(`  - 更新 @getpaseo/${pkg}`);
   rmSync(path.join(pkgTarget, "dist"), { recursive: true, force: true });
   cpSync(path.join(pkgSrc, "dist"), path.join(pkgTarget, "dist"), { recursive: true });
-  cpSync(path.join(pkgSrc, "package.json"), path.join(pkgTarget, "package.json"));
+  writeStampedPackageJson(
+    path.join(pkgSrc, "package.json"),
+    path.join(pkgTarget, "package.json"),
+    customVersion,
+  );
 
   const pkgNodeModules = path.join(pkgSrc, "node_modules");
   if (existsSync(pkgNodeModules)) {
@@ -1093,11 +1092,15 @@ if (!buildOnly) {
       const cliSrc = path.join(repoRoot, "packages", "cli");
       cpSync(path.join(cliSrc, "dist"), path.join(target.cliDir, "dist"), { recursive: true });
       cpSync(path.join(cliSrc, "bin"), path.join(target.cliDir, "bin"), { recursive: true });
-      cpSync(path.join(cliSrc, "package.json"), path.join(target.cliDir, "package.json"));
+      writeStampedPackageJson(
+        path.join(cliSrc, "package.json"),
+        path.join(target.cliDir, "package.json"),
+        customBuildVersion,
+      );
 
       // Copy subpackages
       for (const pkg of subpackages) {
-        copySubpackageToTarget(target, pkg);
+        copySubpackageToTarget(target, pkg, customBuildVersion);
       }
 
       syncMissingRuntimeDependencies(target, subpackages);
@@ -1110,10 +1113,9 @@ if (!buildOnly) {
 console.log("\n=======================================================");
 console.log("✅ Paseo 本地编译与安装全部就绪！");
 console.log("=======================================================");
-const localPkgAfter = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
 const upstreamAfter = getUpstreamVersionInfo();
 console.log(
-  `📌 当前安装版本:   ${formatModDisplayVersion(localPkgAfter.version)} (${localPkgAfter.version})`,
+  `📌 当前安装版本:   ${formatModDisplayVersion(customBuildVersion)} (${customBuildVersion})`,
 );
 console.log(
   `📌 官方上游版本:   ${upstreamAfter.version} (upstream/main${upstreamAfter.commit ? `: ${upstreamAfter.commit.split(" ")[0]}` : ""}, 落后 ${upstreamAfter.behindCount} 个提交)`,

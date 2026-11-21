@@ -32,7 +32,6 @@ import {
   mapCodexPlanToToolCall,
   normalizeCodexOutputSchema,
   readCodexHostMcpServers,
-  readCodexThread,
   toAgentUsage,
 } from "./codex-app-server-agent.js";
 
@@ -89,7 +88,7 @@ describe("Codex executable discovery", () => {
   });
 });
 
-import { CodexAppServerClient, CodexAppServerRpcError } from "./codex/app-server-transport.js";
+import { CodexAppServerClient } from "./codex/app-server-transport.js";
 import {
   createCodexAppServerChildProcess,
   createFakeCodexAppServer,
@@ -4370,160 +4369,6 @@ describe("Codex app-server provider", () => {
     });
   });
 
-  test("settles running sub-agent and its launch card when close_agent completes", async () => {
-    const session = createSession();
-    const events: AgentStreamEvent[] = [];
-    session.subscribe((event) => events.push(event));
-
-    await asInternals(session).handleNotification("item/completed", {
-      threadId: "test-thread",
-      item: {
-        type: "collabAgentToolCall",
-        id: "call-spawn-1",
-        tool: "spawn_agent",
-        status: "completed",
-        prompt: "Run investigation.",
-        receiver_thread_ids: ["child-thread-close-test"],
-        agents_states: {
-          "child-thread-close-test": "running",
-        },
-      },
-    });
-
-    const initialProviderEvents = events.flatMap((event) =>
-      event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
-    );
-    expect(initialProviderEvents.at(-1)).toMatchObject({
-      type: "upsert",
-      id: "child-thread-close-test",
-      status: "running",
-    });
-
-    await asInternals(session).handleNotification("item/completed", {
-      threadId: "test-thread",
-      item: {
-        type: "collabAgentToolCall",
-        id: "call-close-1",
-        tool: "close_agent",
-        status: "completed",
-        receiver_thread_ids: ["child-thread-close-test"],
-        agents_states: {
-          "child-thread-close-test": { completed: "DONE" },
-        },
-      },
-    });
-
-    const finalProviderEvents = events.flatMap((event) =>
-      event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
-    );
-    expect(finalProviderEvents.at(-1)).toMatchObject({
-      type: "upsert",
-      id: "child-thread-close-test",
-      status: "completed",
-    });
-
-    const timelineEvents = events.filter((event) => event.type === "timeline");
-    const launchCards = timelineEvents.filter(
-      (event) => event.item.type === "tool_call" && event.item.callId === "call-spawn-1",
-    );
-    expect(launchCards.at(-1)?.item).toMatchObject({
-      type: "tool_call",
-      callId: "call-spawn-1",
-      status: "completed",
-    });
-
-    const closeCards = timelineEvents.filter(
-      (event) => event.item.type === "tool_call" && event.item.callId === "call-close-1",
-    );
-    expect(closeCards.length).toBe(0);
-  });
-
-  test("replays historical spawn_agent closed by close_agent as completed", async () => {
-    const session = createSession();
-    session.client = {
-      request: vi.fn(async (method: string, params: unknown) => {
-        if (method !== "thread/read") return {};
-        const p = params as { threadId?: string };
-        if (p.threadId === "test-thread") {
-          return {
-            thread: {
-              turns: [
-                {
-                  items: [
-                    {
-                      type: "collabAgentToolCall",
-                      id: "call-hist-spawn",
-                      tool: "spawn_agent",
-                      status: "completed",
-                      prompt: "Inspect cluster.",
-                      receiver_thread_ids: ["child-thread-hist"],
-                      agents_states: {
-                        "child-thread-hist": "running",
-                      },
-                    },
-                    {
-                      type: "collabAgentToolCall",
-                      id: "call-hist-close",
-                      tool: "close_agent",
-                      status: "completed",
-                      receiver_thread_ids: ["child-thread-hist"],
-                      agents_states: {
-                        "child-thread-hist": "running",
-                      },
-                    },
-                  ],
-                },
-              ],
-            },
-          };
-        }
-        if (p.threadId === "child-thread-hist") {
-          return {
-            thread: {
-              turns: [
-                {
-                  items: [
-                    {
-                      type: "agentMessage",
-                      id: "msg-child-done",
-                      text: "Cluster OK",
-                    },
-                  ],
-                },
-              ],
-            },
-          };
-        }
-        return { thread: { turns: [] } };
-      }),
-    };
-
-    const history: AgentStreamEvent[] = [];
-    for await (const event of session.streamHistory()) {
-      history.push(event);
-    }
-
-    const timelineEvents = history.filter((event) => event.type === "timeline");
-    const launchCard = timelineEvents.find(
-      (event) => event.item.type === "tool_call" && event.item.callId === "call-hist-spawn",
-    );
-    expect(launchCard?.item).toMatchObject({
-      type: "tool_call",
-      callId: "call-hist-spawn",
-      status: "completed",
-    });
-
-    const upserts = history.flatMap((event) =>
-      event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
-    );
-    expect(upserts).toContainEqual(
-      expect.objectContaining({
-        id: "child-thread-hist",
-        status: "completed",
-      }),
-    );
-  });
-
   test("keeps a settled child completed until Codex starts another child turn", async () => {
     const appServer = createFakeCodexAppServer();
     const session = new CodexAppServerAgentSession(
@@ -5975,130 +5820,6 @@ describe("Codex app-server provider", () => {
         },
       },
     ]);
-  });
-
-  test("loads Codex persisted history from paginated threads using thread/turns/list fallback", async () => {
-    const session = createSession();
-    const requests: Array<{ method: string; params: unknown }> = [];
-    session.client = {
-      request: vi.fn(async (method: string, params: unknown) => {
-        requests.push({ method, params });
-        if (method === "thread/read") {
-          const readParams = params as { includeTurns?: boolean };
-          if (readParams?.includeTurns) {
-            throw new CodexAppServerRpcError(
-              "paginated threads do not support thread/read(includeTurns=true)",
-              -32600,
-              null,
-            );
-          }
-          return {
-            thread: {
-              id: "test-thread",
-              historyMode: "paginated",
-            },
-          };
-        }
-        if (method === "thread/turns/list") {
-          const listParams = params as { cursor?: string };
-          if (!listParams.cursor) {
-            return {
-              data: [
-                {
-                  id: "turn-1",
-                  items: [
-                    {
-                      type: "userMessage",
-                      id: "msg-1",
-                      content: [{ type: "text", text: "First turn message" }],
-                      timestamp: "2026-05-01T10:00:00.000Z",
-                    },
-                  ],
-                },
-              ],
-              nextCursor: "cursor-page-2",
-            };
-          }
-          if (listParams.cursor === "cursor-page-2") {
-            return {
-              data: [
-                {
-                  id: "turn-2",
-                  items: [
-                    {
-                      type: "agentMessage",
-                      id: "msg-2",
-                      text: "Second turn response",
-                      timestamp: "2026-05-01T10:00:02.000Z",
-                    },
-                  ],
-                },
-              ],
-              nextCursor: null,
-            };
-          }
-        }
-        return {};
-      }),
-    };
-
-    await asInternals(session).loadPersistedHistory(session.client);
-
-    const history: AgentStreamEvent[] = [];
-    for await (const event of session.streamHistory()) {
-      history.push(event);
-    }
-
-    expect(requests).toEqual([
-      { method: "thread/read", params: { threadId: "test-thread", includeTurns: true } },
-      { method: "thread/read", params: { threadId: "test-thread", includeTurns: false } },
-      {
-        method: "thread/turns/list",
-        params: { threadId: "test-thread", itemsView: "full", sortDirection: "asc" },
-      },
-      {
-        method: "thread/turns/list",
-        params: {
-          threadId: "test-thread",
-          itemsView: "full",
-          sortDirection: "asc",
-          cursor: "cursor-page-2",
-        },
-      },
-    ]);
-    expect(history).toEqual([
-      {
-        type: "timeline",
-        provider: "codex",
-        timestamp: "2026-05-01T10:00:00.000Z",
-        item: {
-          type: "user_message",
-          text: "First turn message",
-          messageId: "msg-1",
-        },
-      },
-      {
-        type: "timeline",
-        provider: "codex",
-        timestamp: "2026-05-01T10:00:02.000Z",
-        item: {
-          type: "assistant_message",
-          text: "Second turn response",
-          messageId: "msg-2",
-        },
-      },
-    ]);
-  });
-
-  test("readCodexThread re-throws unexpected errors that are not paginated thread errors", async () => {
-    const client = {
-      request: vi.fn(async () => {
-        throw new Error("network disconnect");
-      }),
-      notify: vi.fn(),
-      dispose: vi.fn(async () => {}),
-    };
-    await expect(readCodexThread(client, "thread-1")).rejects.toThrow("network disconnect");
   });
 
   test("retains native turn ids from persisted user messages", async () => {
@@ -9231,6 +8952,7 @@ command = "/usr/local/bin/lazy-tool"
 args = ["--config", "/etc/lazy.yaml", "serve"]
 `;
       writeFileSync(path.join(tempDir, "config.toml"), configToml);
+      const hostMcpServers = await readCodexHostMcpServers(tempDir);
       const session = new CodexAppServerAgentSession(
         createConfig({
           mcpServers: {
@@ -9242,13 +8964,13 @@ args = ["--config", "/etc/lazy.yaml", "serve"]
         () => {
           throw new Error("Test session cannot spawn Codex app-server");
         },
-        { codexHome: tempDir },
+        { codexHome: tempDir, hostMcpServers },
         false,
         false,
         false,
-      ) as unknown as { buildCodexInnerConfig(): Promise<Record<string, unknown> | null> };
+      ) as unknown as { buildCodexInnerConfig(): Record<string, unknown> | null };
 
-      const innerConfig = await session.buildCodexInnerConfig();
+      const innerConfig = session.buildCodexInnerConfig();
       expect(innerConfig).toMatchObject({
         mcp_servers: {
           lazy_tool: {

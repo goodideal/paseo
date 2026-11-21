@@ -17,20 +17,11 @@ const patchedPackages = [
   // Backport https://github.com/software-mansion/enriched-markdown/pull/924: preserve settled
   // Android measurements across parent clones. Remove those hunks when upgrading past
   // 1.2.0-nightly-20261019-926ef06f0; reconcile the other local patch hunks separately.
-  ...(existsSync("packages/app/node_modules/react-native-enriched-markdown")
-    ? [
-        {
-          nodeModulesPath: "packages/app/node_modules/react-native-enriched-markdown",
-          patchPrefix: "react-native-enriched-markdown+",
-          cwd: "packages/app",
-        },
-      ]
-    : [
-        {
-          nodeModulesPath: "node_modules/react-native-enriched-markdown",
-          patchPrefix: "react-native-enriched-markdown+",
-        },
-      ]),
+  {
+    nodeModulesPath: "packages/app/node_modules/react-native-enriched-markdown",
+    patchPrefix: "react-native-enriched-markdown+",
+    cwd: "packages/app",
+  },
   // Registry cleanup: remove after react-native-unistyles ships
   // https://github.com/jpudysz/react-native-unistyles/pull/1203.
   // Adaptive themes: keep until colorScheme reads no longer consume listener-owned media changes.
@@ -53,20 +44,10 @@ const patchedPackages = [
     patchPrefix: "react-native-reanimated+",
   },
   // The native chat timeline. The patch's header lists its hunks and the upstream issue.
-  ...(existsSync("packages/app/node_modules/@legendapp/list")
-    ? [
-        {
-          nodeModulesPath: "packages/app/node_modules/@legendapp/list",
-          patchPrefix: "@legendapp+list+",
-          cwd: "packages/app",
-        },
-      ]
-    : [
-        {
-          nodeModulesPath: "node_modules/@legendapp/list",
-          patchPrefix: "@legendapp+list+",
-        },
-      ]),
+  {
+    nodeModulesPath: "node_modules/@legendapp/list",
+    patchPrefix: "@legendapp+list+",
+  },
   // Native sidebar lists. Besides gesture sessions and panel-gesture arbitration, the drop gives
   // each moved cell a fresh transform host. Reanimated re-applies a view's last animated
   // transform to every React commit, so a reused host painted one frame of new order plus old
