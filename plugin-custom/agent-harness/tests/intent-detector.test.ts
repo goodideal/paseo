@@ -158,10 +158,10 @@ describe("resolveMatrixModel", () => {
   it("bypasses orchestration routing for antigravity safety-net provider", () => {
     const decision = resolveMatrixModel({
       provider: "antigravity",
-      currentModel: "gemini-3.8-flash-high",
+      currentModel: "gemini-4-hydrogen-high",
       text: "你作为CTO，设计一套全新的分布式架构方案",
     });
-    expect(decision.targetModel).toBe("gemini-3.8-flash-high");
+    expect(decision.targetModel).toBe("gemini-4-hydrogen-high");
     expect(decision.matchedRule).toBe("bypass_safety_net");
   });
 });

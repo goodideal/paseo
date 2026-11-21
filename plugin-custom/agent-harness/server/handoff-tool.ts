@@ -1,16 +1,23 @@
 import { defineAgentTool, type AgentToolDefinition } from "@getpaseo/plugin/server";
 import type { PaseoApi } from "@getpaseo/client";
 import {
+  findSpecialist,
+  normalizeProviderName,
+  resolveResumeExecutionMode,
+  resolveTargetModelForTier,
+} from "../shared/config-resolver.js";
+import {
   formatSpecialistRolePrefix,
   HARNESS_HANDOFF_TOOL_NAME,
   HarnessHandoffToolInputSchema,
   resolveResumeExecutionModeId,
   resolveSpecialistTargetTier,
 } from "../shared/contracts.js";
-import { DEFAULT_PROVIDER_MAPPINGS, normalizeProvider } from "../shared/intent-detector.js";
+import { DEFAULT_PROVIDER_MAPPINGS } from "../shared/intent-detector.js";
 import { parseHarnessMetadata } from "../shared/lifecycle-state.js";
 import type {
   DomainRole,
+  EffectiveHarnessConfig,
   HandoffTargetRole,
   HarnessAgentMetadata,
   HarnessTransitionKind,
@@ -28,6 +35,7 @@ export interface SpawnSpecialistParams {
   title: string;
   specPrompt: string;
   waitForCompletion?: boolean;
+  config?: EffectiveHarnessConfig | null;
   getLatestMetadata?: (
     agentId: string,
   ) => Promise<HarnessAgentMetadata | null> | HarnessAgentMetadata | null;
@@ -69,18 +77,48 @@ export async function spawnHarnessSpecialist(
     title,
     specPrompt,
     waitForCompletion,
+    config,
     getLatestMetadata,
     shouldEmitTimeline,
     emitTimelineEvent,
   } = params;
 
-  const targetTier = resolveSpecialistTargetTier(targetRole);
-  const normalizedProvider = normalizeProvider(parentProvider);
-  const mapping = DEFAULT_PROVIDER_MAPPINGS[normalizedProvider];
-  const targetModel = mapping ? mapping[targetTier] : targetTier;
-  const execModeId = resolveResumeExecutionModeId(normalizedProvider, null);
+  const specialist = config ? findSpecialist(config, targetRole) : undefined;
 
-  const rolePrefix = formatSpecialistRolePrefix(targetRole);
+  // Resolve target provider: honor specialist's preferredProvider if configured
+  let targetProvider = parentProvider;
+  if (config?.honorSpecialistPreferredProvider && specialist?.preferredProvider?.trim()) {
+    targetProvider = specialist.preferredProvider.trim();
+  }
+
+  const normalizedProvider = normalizeProviderName(targetProvider);
+
+  // Resolve target tier
+  const targetTier = specialist?.preferredTier || resolveSpecialistTargetTier(targetRole);
+
+  // Resolve target model
+  let targetModel = "";
+  if (specialist?.modelOverride?.trim()) {
+    targetModel = specialist.modelOverride.trim();
+  } else if (config) {
+    targetModel = resolveTargetModelForTier(config, normalizedProvider, targetTier);
+  } else {
+    const mapping = DEFAULT_PROVIDER_MAPPINGS[normalizedProvider];
+    targetModel = mapping ? mapping[targetTier] : targetTier;
+  }
+
+  // Resolve default mode id
+  let execModeId: string | null = null;
+  if (specialist?.defaultModeId?.trim()) {
+    execModeId = specialist.defaultModeId.trim();
+  } else if (config) {
+    execModeId = resolveResumeExecutionMode(config, normalizedProvider, null);
+  } else {
+    execModeId = resolveResumeExecutionModeId(normalizedProvider, null);
+  }
+
+  const rolePrefix =
+    specialist?.handoffTitlePrefix?.trim() || formatSpecialistRolePrefix(targetRole);
   const trimmedTitle = title.trim();
   const normalizedTitle = trimmedTitle.startsWith(rolePrefix)
     ? trimmedTitle
@@ -214,6 +252,7 @@ export async function spawnHarnessSpecialist(
 }
 
 export function createHarnessHandoffTool(options: {
+  getConfig?: () => EffectiveHarnessConfig | null;
   getLatestMetadata?: (
     agentId: string,
   ) => Promise<HarnessAgentMetadata | null> | HarnessAgentMetadata | null;
@@ -233,14 +272,22 @@ export function createHarnessHandoffTool(options: {
     },
   ) => Promise<void>;
 }): AgentToolDefinition {
+  const currentConfig = options.getConfig ? options.getConfig() : null;
+  const availableHandoffs = currentConfig
+    ? currentConfig.specialists
+        .filter((s) => s.enabled && s.handoffEnabled)
+        .map((s) => s.id)
+        .join(", ")
+    : "ui, backend, qa, review";
+
   return defineAgentTool({
     name: HARNESS_HANDOFF_TOOL_NAME,
     title: "Harness Specialist Handoff",
-    description:
-      "Spawns a domain specialist (ui, backend, qa, review) in the current workspace with clean context to execute the confirmed plan.",
+    description: `Spawns a domain specialist (${availableHandoffs}) in the current workspace with clean context to execute the confirmed plan.`,
     input: HarnessHandoffToolInputSchema,
     execute: async (input, context) => {
       const { agent, paseo } = context;
+      const effectiveConfig = options.getConfig ? options.getConfig() : null;
       const res = await spawnHarnessSpecialist({
         paseo,
         parentAgentId: agent.id,
@@ -251,6 +298,7 @@ export function createHarnessHandoffTool(options: {
         title: input.title,
         specPrompt: input.specPrompt,
         waitForCompletion: input.waitForCompletion,
+        config: effectiveConfig,
         getLatestMetadata: options.getLatestMetadata,
         shouldEmitTimeline: options.shouldEmitTimeline,
         emitTimelineEvent: options.emitTimelineEvent

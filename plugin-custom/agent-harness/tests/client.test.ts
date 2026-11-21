@@ -8,6 +8,7 @@ vi.mock("@getpaseo/plugin/client", async (importOriginal) => {
   return {
     ...actual,
     useSettings: vi.fn(() => ({ status: "ready", values: DEFAULT_AGENT_HARNESS_SETTINGS })),
+    useRpc: vi.fn(() => vi.fn().mockResolvedValue({})),
   };
 });
 
@@ -43,6 +44,24 @@ vi.mock("@getpaseo/plugin/client/ui", () => ({
         disabled: Boolean(disabled),
         onChange: (e: any) => onValueChange(Boolean(e.target.checked)),
       }),
+    ),
+  SettingsSelect: ({ label, value, options, onValueChange, disabled }: any) =>
+    React.createElement(
+      "div",
+      { "data-testid": "settings-select" },
+      label,
+      React.createElement(
+        "select",
+        {
+          "aria-label": label,
+          value,
+          disabled: Boolean(disabled),
+          onChange: (e: any) => onValueChange(e.target.value),
+        },
+        options.map((o: any) =>
+          React.createElement("option", { key: o.value, value: o.value }, o.label),
+        ),
+      ),
     ),
   SettingsAction: ({ label, hint, actionLabel, onPress, disabled }: any) =>
     React.createElement(

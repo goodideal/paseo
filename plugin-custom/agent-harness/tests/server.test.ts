@@ -16,6 +16,7 @@ function createTestServer(settingsOverride?: Record<string, unknown>) {
           phaseLifecycleEnabled: true,
           planTurnSoftLimit: 3,
           autoDowngradePlanOnExec: true,
+          autoApproveReadOnlyShellInPlan: true,
           ...settingsOverride,
         },
       }),
@@ -1147,15 +1148,18 @@ describe("agent-harness server contribute", () => {
       };
 
       // 1. permission.before
-      await hooks["agent.permission.before"]({
-        agent,
-        request: {
-          id: "perm_req_123",
-          provider: "claude",
-          name: "ExitPlanMode",
-          kind: "plan",
+      await hooks["agent.permission.before"](
+        {
+          agent,
+          request: {
+            id: "perm_req_123",
+            provider: "claude",
+            name: "ExitPlanMode",
+            kind: "plan",
+          },
         },
-      });
+        context,
+      );
 
       // 2. permission.after with resolution allow
       await hooks["agent.permission.after"](
@@ -1185,6 +1189,89 @@ describe("agent-harness server contribute", () => {
           }),
         }),
       );
+    });
+
+    it("auto-approves read-only shell commands in plan mode via permission.before", async () => {
+      const { hooks } = createTestServer();
+      const respondToPermissionMock = vi.fn().mockResolvedValue(undefined);
+      const handle = {
+        respondToPermission: respondToPermissionMock,
+      };
+      const context = {
+        paseo: {
+          agents: {
+            ref: vi.fn().mockReturnValue(handle),
+          },
+        },
+      };
+
+      const agent = {
+        id: "agt_plan_readonly_cmd",
+        provider: "claude",
+        metadata: {
+          [HARNESS_METADATA_KEY]: {
+            ...createInitialHarnessMetadata({
+              role: "orchestrator",
+              tier: "plan",
+              model: "plan",
+            }),
+            phase: "design",
+          },
+        },
+      };
+
+      // 1. Read-only command (e.g. git status) should be auto-approved
+      await hooks["agent.permission.before"](
+        {
+          agent,
+          request: {
+            id: "perm_req_readonly_1",
+            provider: "claude",
+            name: "Bash",
+            input: { command: "git status" },
+          },
+        },
+        context,
+      );
+
+      expect(handle.respondToPermission).toHaveBeenCalledWith({
+        requestId: "perm_req_readonly_1",
+        response: { behavior: "allow" },
+      });
+
+      // 2. Destructive or write command (e.g. rm -rf) should NOT be auto-approved
+      respondToPermissionMock.mockClear();
+      await hooks["agent.permission.before"](
+        {
+          agent,
+          request: {
+            id: "perm_req_write_1",
+            provider: "claude",
+            name: "Bash",
+            input: { command: "rm -rf dist" },
+          },
+        },
+        context,
+      );
+
+      expect(handle.respondToPermission).not.toHaveBeenCalled();
+
+      // 3. Write redirection (e.g. git status > out.txt) should NOT be auto-approved
+      respondToPermissionMock.mockClear();
+      await hooks["agent.permission.before"](
+        {
+          agent,
+          request: {
+            id: "perm_req_redirect_1",
+            provider: "claude",
+            name: "Bash",
+            input: { command: "git status > out.txt" },
+          },
+        },
+        context,
+      );
+
+      expect(handle.respondToPermission).not.toHaveBeenCalled();
     });
   });
 

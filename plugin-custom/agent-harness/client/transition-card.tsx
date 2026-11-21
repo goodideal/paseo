@@ -227,7 +227,7 @@ export const HarnessTransitionCard = memo(function HarnessTransitionCard(
               onPress={handleOpenSpecialist}
               style={({ pressed }) => [
                 styles.openButton,
-                pressed && { opacity: 0.7, backgroundColor: theme.colors.surface3 },
+                pressed && { opacity: 0.7, backgroundColor: theme.colors.surface2 },
               ]}
             >
               <Text style={styles.openButtonText}>Open Specialist</Text>

@@ -1,6 +1,15 @@
-export type MatrixTier = "plan" | "review" | "flash";
+/**
+ * Built-in matrix tiers supported out of the box.
+ * MatrixTier is widened to allow user-defined custom tiers.
+ */
+export type BuiltInMatrixTier = "plan" | "review" | "flash";
+export type MatrixTier = BuiltInMatrixTier | (string & {});
 
-export type DomainRole =
+/**
+ * Built-in domain roles supported out of the box.
+ * DomainRole is widened to allow user-defined specialist roles.
+ */
+export type BuiltInDomainRole =
   | "orchestrator"
   | "ui"
   | "backend"
@@ -10,10 +19,12 @@ export type DomainRole =
   | "review"
   | "scout"
   | "general";
+export type DomainRole = BuiltInDomainRole | (string & {});
 
-export type HandoffTargetRole = "ui" | "backend" | "qa" | "review";
+/** Specialist handoff target role (supports built-in and user-defined roles). */
+export type HandoffTargetRole = "ui" | "backend" | "qa" | "review" | (string & {});
 
-export type ProviderModelMapping = Record<MatrixTier, string>;
+export type ProviderModelMapping = Record<string, string>;
 
 export interface RouterDecision {
   tier: MatrixTier;
@@ -28,6 +39,7 @@ export interface DomainRoleDecision {
   matchedRule: string;
   profilePath: string;
   lazyToolConfigPath: string;
+  specialistConfig?: HarnessSpecialistConfig;
 }
 
 /** Top-level key stored inside `agent.metadata` for Agent Harness lifecycle tracking. */
@@ -37,7 +49,7 @@ export const HARNESS_METADATA_KEY = "agentHarness" as const;
 export const HARNESS_METADATA_VERSION = 1 as const;
 
 /** Execution lifecycle phase decoupled from domain role. */
-export type HarnessPhase = "design" | "exec" | "review";
+export type HarnessPhase = "design" | "exec" | "review" | (string & {});
 
 /** Trigger reason recorded when a model tier transition or specialist handoff occurs. */
 export type HarnessDowngradeReason =
@@ -88,3 +100,142 @@ export type HarnessAgentMetadata = {
   lastBilledTier: MatrixTier | null;
   lastBilledModel: string | null;
 };
+
+// ============================================================================
+// Granular Specialist & Harness Configuration Types (v2)
+// ============================================================================
+
+export interface HarnessTierConfig {
+  id: string;
+  name: string;
+  icon?: string;
+  defaultPhase: HarnessPhase;
+  description?: string;
+}
+
+export interface ProviderModeConfig {
+  supportsNativePlanMode: boolean;
+  resumeExecutionModeId?: string;
+}
+
+export type McpServerConfigEntry =
+  | {
+      type: "stdio";
+      command: string;
+      args?: string[];
+      env?: Record<string, string>;
+      alwaysLoad?: boolean;
+    }
+  | {
+      type: "http";
+      url: string;
+      headers?: Record<string, string>;
+      alwaysLoad?: boolean;
+    }
+  | {
+      type: "sse";
+      url: string;
+      headers?: Record<string, string>;
+      alwaysLoad?: boolean;
+    };
+
+export interface HarnessSpecialistConfig {
+  id: string;
+  name: string;
+  shortLabel: string;
+  description: string;
+  icon: string;
+  color?: string;
+  enabled: boolean;
+  builtIn: boolean;
+  preferredProvider?: string;
+  preferredTier?: MatrixTier;
+  modelOverride?: string;
+  defaultModeId?: string;
+  thinkingOptionId?: string;
+  lockTierOnLabel?: boolean;
+  handoffEnabled: boolean;
+  handoffPriority: number;
+  handoffTitlePrefix: string;
+  handoffDefaultPrompt: string;
+  syncToDaemonProfile: boolean;
+  primarySkills: string[];
+  mandatorySkillActivation: boolean;
+  skillsRoot?: string;
+  docsFocus: string[];
+  qualityGates: string[];
+  ssotOutputTarget?: string;
+  rolePromptTemplate?: string;
+  lazyToolSlice?: string;
+  allowedMcpServers: string[];
+  excludedMcpServers: string[];
+  injectedMcpServers: string[];
+  extraEnv?: Record<string, string>;
+  aliases: string[];
+  matchPatterns: string[];
+  profileFilename?: string;
+}
+
+/** Local repo override defined in `<repoRoot>/.paseo/agent-harness.json`. */
+export interface RepoHarnessOverride {
+  enabled?: boolean;
+  defaultFallbackRole?: string;
+  defaultFallbackTier?: string;
+  specialistOverrides?: Record<string, Partial<HarnessSpecialistConfig>>;
+  extraDocsFocus?: string[];
+  extraQualityGates?: string[];
+}
+
+/**
+ * Resolved effective configuration merging Host Plugin Settings with Repo Overrides.
+ */
+export interface EffectiveHarnessConfig {
+  enabled: boolean;
+  overrideIfDefaultOnly: boolean;
+  debugLogs: boolean;
+  phaseLifecycleEnabled: boolean;
+  planTurnSoftLimit: number;
+  autoDowngradePlanOnExec: boolean;
+  enforceNativePlanMode: boolean;
+  emitTimelineTransitions: boolean;
+  docWhitelistPattern: string;
+  affirmativeConfirmWords: string[];
+  profilesDir: string;
+  lazyToolProfilesDir: string;
+  defaultSkillsRoot: string;
+  autoSyncDiskProfiles: boolean;
+  autoSyncDaemonAgentProfiles: boolean;
+  enforceSessionMcpFiltering: boolean;
+  mcpServerCatalog: Record<string, McpServerConfigEntry>;
+  tiers: HarnessTierConfig[];
+  providerMappings: Record<string, Record<string, string>>;
+  providerModes: Record<string, ProviderModeConfig>;
+  bypassProviders: string[];
+  honorSpecialistPreferredProvider: boolean;
+  specialists: HarnessSpecialistConfig[];
+  defaultFallbackRole: string;
+  defaultFallbackTier: string;
+  enableFullstackOrchestratorCollision: boolean;
+  fullstackUiPattern: string;
+  fullstackBackendPattern: string;
+  tierPatterns: {
+    plan: string[];
+    review: string[];
+    execAction: string[];
+    conventionalExecPrefix: string;
+  };
+  llmFallbackEnabled: boolean;
+  llmFallbackEndpoint: string;
+  llmFallbackApiKey: string;
+  llmFallbackModel: string;
+  llmFallbackTimeoutMs: number;
+  llmFallbackApplyRole: boolean;
+  injectSystemPromptBanner: boolean;
+  enforceWorkspaceBoundaryGuardrail: boolean;
+  workspaceBoundaryNotice: string;
+  phaseRules: Record<string, string>;
+  enableRepoConfigOverride: boolean;
+  repoConfigRelativePath: string;
+  repoOverrideLoaded?: boolean;
+  repoRoot?: string;
+}

@@ -1,9 +1,11 @@
+import { compileSafeRegex, isNativePlanModeSupported } from "./config-resolver.js";
 import { supportsNativePlanMode } from "./contracts.js";
 import { CONVENTIONAL_EXEC_PREFIX } from "./intent-detector.js";
 import {
   HARNESS_METADATA_KEY,
   HARNESS_METADATA_VERSION,
   type DomainRole,
+  type EffectiveHarnessConfig,
   type HarnessAgentMetadata,
   type HarnessDowngradeReason,
   type HarnessPhase,
@@ -13,7 +15,7 @@ import {
 const WRITE_TOOL_NAME_PATTERN =
   /^(?:edit|multiedit|write|notebookedit|apply_patch|write_file|edit_file|replace_in_files|replace_symbol_body|replace_content|patch)$/i;
 
-const DOC_WHITELIST_PATTERN = /\.(?:md|mdx|txt)$/i;
+const DEFAULT_DOC_WHITELIST_PATTERN = /\.(?:md|mdx|txt)$/i;
 const OPENSPEC_WHITELIST_PATTERN = /(?:^|[\\/])openspec[\\/]/i;
 
 const NEGATIVE_DISCUSSION_PATTERNS: RegExp[] = [
@@ -78,6 +80,7 @@ for (const word of SHORT_AFFIRMATIVE_EXEC_WORDS) {
 export function hasShortAffirmativeExecConfirmation(
   userText: string,
   planTurnCount: number,
+  customWords?: string[],
 ): boolean {
   if (planTurnCount < 1 || !userText || !userText.trim()) {
     return false;
@@ -93,6 +96,12 @@ export function hasShortAffirmativeExecConfirmation(
   }
 
   const lower = trimmed.toLowerCase();
+  if (customWords && customWords.length > 0) {
+    for (const w of customWords) {
+      if (lower === w.toLowerCase()) return true;
+    }
+  }
+
   if (SHORT_AFFIRMATIVE_EXEC_WORDS.has(lower)) {
     return true;
   }
@@ -112,7 +121,12 @@ export function shouldEnforceNativePlanMode(params: {
   roleLockedByLabel: boolean;
   hasParentAgent: boolean;
   provider: string;
+  config?: EffectiveHarnessConfig | null;
 }): boolean {
+  const isSupported = params.config
+    ? isNativePlanModeSupported(params.config, params.provider)
+    : supportsNativePlanMode(params.provider);
+
   return (
     params.phaseLifecycleEnabled &&
     params.enforceNativePlanMode &&
@@ -121,13 +135,23 @@ export function shouldEnforceNativePlanMode(params: {
     !params.userModelLocked &&
     !params.roleLockedByLabel &&
     !params.hasParentAgent &&
-    supportsNativePlanMode(params.provider)
+    isSupported
   );
 }
 
-export function tierToPhase(tier: MatrixTier, role?: DomainRole): HarnessPhase {
+export function tierToPhase(
+  tier: MatrixTier,
+  role?: DomainRole,
+  config?: EffectiveHarnessConfig | null,
+): HarnessPhase {
   if (tier === "review" || role === "review") {
     return "review";
+  }
+  if (config) {
+    const tierCfg = config.tiers.find((t) => t.id === tier);
+    if (tierCfg?.defaultPhase) {
+      return tierCfg.defaultPhase;
+    }
   }
   if (tier === "plan") {
     return "design";
@@ -146,6 +170,7 @@ export function createInitialHarnessMetadata(params: {
   resumeModeId?: string | null;
   lastBilledTier?: MatrixTier | null;
   lastBilledModel?: string | null;
+  config?: EffectiveHarnessConfig | null;
 }): HarnessAgentMetadata {
   return {
     version: HARNESS_METADATA_VERSION,
@@ -153,7 +178,7 @@ export function createInitialHarnessMetadata(params: {
     initialTier: params.tier,
     currentTier: params.tier,
     currentModel: params.model ?? null,
-    phase: tierToPhase(params.tier, params.role),
+    phase: tierToPhase(params.tier, params.role, params.config),
     roleMatchedRule: params.roleMatchedRule,
     tierMatchedRule: params.tierMatchedRule,
     userModelLocked: Boolean(params.userModelLocked),
@@ -243,12 +268,15 @@ export function extractTimelineItems(raw: unknown): readonly unknown[] {
   return [];
 }
 
-function isExemptDocPath(p: string): boolean {
+function isExemptDocPath(p: string, docPatternRegex?: RegExp | null): boolean {
   const trimmed = p.trim();
   if (!trimmed) {
     return false;
   }
-  return DOC_WHITELIST_PATTERN.test(trimmed) || OPENSPEC_WHITELIST_PATTERN.test(trimmed);
+  if (docPatternRegex && docPatternRegex.test(trimmed)) {
+    return true;
+  }
+  return DEFAULT_DOC_WHITELIST_PATTERN.test(trimmed) || OPENSPEC_WHITELIST_PATTERN.test(trimmed);
 }
 
 function extractPathsFromTool(item: Record<string, unknown>): string[] {
@@ -330,7 +358,10 @@ function extractPathsFromTool(item: Record<string, unknown>): string[] {
   return paths;
 }
 
-export function inspectTurnTimeline(items: readonly unknown[]): {
+export function inspectTurnTimeline(
+  items: readonly unknown[],
+  docWhitelistPattern?: string,
+): {
   latestUserText: string;
   detectedCodeWrite: boolean;
   handoffInvoked: boolean;
@@ -361,6 +392,7 @@ export function inspectTurnTimeline(items: readonly unknown[]): {
 
   let detectedCodeWrite = false;
   let handoffInvoked = false;
+  const docRegex = docWhitelistPattern ? compileSafeRegex(docWhitelistPattern) : null;
 
   for (const rawItem of currentTurnItems) {
     if (typeof rawItem !== "object" || rawItem === null) {
@@ -380,7 +412,7 @@ export function inspectTurnTimeline(items: readonly unknown[]): {
           : "";
     const detailType = detail && typeof detail.type === "string" ? detail.type : "";
 
-    // 1. Check handoff invocation (harness_handoff host tool, Skill paseo-handoff, or shell paseo run / paseo-handoff)
+    // 1. Check handoff invocation
     const parseRecord = (val: unknown): Record<string, unknown> | null => {
       if (typeof val === "object" && val !== null && !Array.isArray(val)) {
         return val as Record<string, unknown>;
@@ -436,10 +468,9 @@ export function inspectTurnTimeline(items: readonly unknown[]): {
     if (isWriteTool) {
       const paths = extractPathsFromTool(item);
       if (paths.length === 0) {
-        // Write tool invoked without detectable path: non-whitelisted mutation
         detectedCodeWrite = true;
       } else {
-        const allExempt = paths.every(isExemptDocPath);
+        const allExempt = paths.every((p) => isExemptDocPath(p, docRegex));
         if (!allExempt) {
           detectedCodeWrite = true;
         }
@@ -495,6 +526,7 @@ export interface EvaluateTurnAfterTransitionParams {
     handoffInvoked: boolean;
   };
   providerFlashModel?: string;
+  lockTierOnLabel?: boolean;
 }
 
 export interface EvaluateTurnAfterTransitionResult {
@@ -508,7 +540,8 @@ export interface EvaluateTurnAfterTransitionResult {
 export function evaluateTurnAfterTransition(
   params: EvaluateTurnAfterTransitionParams,
 ): EvaluateTurnAfterTransitionResult {
-  const { meta, turnId, settings, timelineInspection, providerFlashModel } = params;
+  const { meta, turnId, settings, timelineInspection, providerFlashModel, lockTierOnLabel } =
+    params;
   const nextTurnCount = meta.turnCount + 1;
   const isPlanDesign = meta.currentTier === "plan" && meta.phase === "design";
   const nextPlanTurnCount = isPlanDesign ? meta.planTurnCount + 1 : meta.planTurnCount;
@@ -526,11 +559,16 @@ export function evaluateTurnAfterTransition(
     handoffSuggestedAtTurn = nextTurnCount;
   }
 
+  const isRoleProtected =
+    lockTierOnLabel !== undefined
+      ? lockTierOnLabel
+      : meta.role === "pm" || meta.role === "architect";
+
   const canAutoDowngrade =
     settings.autoDowngradePlanOnExec &&
     meta.autoDowngradedAtTurn === null &&
     !meta.userModelLocked &&
-    !(meta.roleLockedByLabel && (meta.role === "pm" || meta.role === "architect"));
+    !(meta.roleLockedByLabel && isRoleProtected);
 
   const hasExecIntent =
     nextTurnCount >= 2 &&

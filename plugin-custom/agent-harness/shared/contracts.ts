@@ -14,20 +14,11 @@ import type {
 // Pure Wire Schemas (No .transform(), .catch(), or .preprocess())
 // ============================================================================
 
-export const MatrixTierSchema = z.enum(["plan", "review", "flash"]);
-export const DomainRoleSchema = z.enum([
-  "orchestrator",
-  "ui",
-  "backend",
-  "pm",
-  "architect",
-  "qa",
-  "review",
-  "scout",
-  "general",
-]);
-export const HandoffTargetRoleSchema = z.enum(["ui", "backend", "qa", "review"]);
-export const HarnessPhaseSchema = z.enum(["design", "exec", "review"]);
+export const MatrixTierSchema = z.string().min(1).max(64);
+export const DomainRoleSchema = z.string().min(1).max(64);
+export const HandoffTargetRoleSchema = z.string().min(1).max(64);
+export const HarnessPhaseSchema = z.string().min(1).max(64);
+
 export const HarnessDowngradeReasonSchema = z.enum([
   "explicit_exec_intent",
   "write_tool_in_plan",
@@ -36,6 +27,7 @@ export const HarnessDowngradeReasonSchema = z.enum([
   "manual_switch",
   "specialist_handoff",
 ]);
+
 export const HarnessTransitionKindSchema = z.enum([
   "initial_route",
   "plan_approved",
@@ -147,7 +139,7 @@ export const HARNESS_HANDOFF_TOOL_NAME = "harness_handoff" as const;
 
 export const HarnessHandoffToolInputSchema = z.object({
   targetRole: HandoffTargetRoleSchema.describe(
-    "Specialist domain role to spawn in the current workspace: ui, backend, qa, or review.",
+    "Specialist domain role to spawn in the current workspace (e.g. ui, backend, qa, review, or custom specialist).",
   ),
   title: z
     .string()
@@ -236,6 +228,69 @@ export const harnessHandoffRpc = defineRpc({
 export type HarnessHandoffInput = z.infer<typeof harnessHandoffRpc.input>;
 export type HarnessHandoffOutput = z.infer<typeof harnessHandoffRpc.output>;
 
+export const harnessInspectEnvironmentRpc = defineRpc({
+  name: "agent_harness.environment.inspect.request",
+  input: z.object({
+    workspaceId: z.string().nullable().optional(),
+    cwd: z.string().nullable().optional(),
+  }),
+  output: z.object({
+    availableProviders: z.array(
+      z.object({
+        provider: z.string(),
+        enabled: z.boolean(),
+        models: z.array(z.string()),
+      }),
+    ),
+    diskProfiles: z.array(
+      z.object({
+        filename: z.string(),
+        role: z.string(),
+        name: z.string().optional(),
+        exists: z.boolean(),
+      }),
+    ),
+    lazyToolSlices: z.array(z.string()),
+    hasRepoOverride: z.boolean(),
+    repoOverridePath: z.string().nullable(),
+  }),
+});
+
+export type HarnessInspectEnvironmentInput = z.infer<typeof harnessInspectEnvironmentRpc.input>;
+export type HarnessInspectEnvironmentOutput = z.infer<typeof harnessInspectEnvironmentRpc.output>;
+
+export const harnessSyncProfilesRpc = defineRpc({
+  name: "agent_harness.profiles.sync.request",
+  input: z.object({
+    action: z.enum(["import_from_disk", "export_to_disk", "sync_daemon_profiles"]),
+  }),
+  output: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    importedCount: z.number().int().optional(),
+    exportedCount: z.number().int().optional(),
+    syncedCount: z.number().int().optional(),
+    errors: z.array(z.string()).optional(),
+  }),
+});
+
+export type HarnessSyncProfilesInput = z.infer<typeof harnessSyncProfilesRpc.input>;
+export type HarnessSyncProfilesOutput = z.infer<typeof harnessSyncProfilesRpc.output>;
+
+export const harnessEffectiveConfigRpc = defineRpc({
+  name: "agent_harness.config.effective.request",
+  input: z.object({
+    workspaceId: z.string().nullable().optional(),
+    cwd: z.string().nullable().optional(),
+  }),
+  output: z.object({
+    config: z.record(z.string(), z.unknown()),
+  }),
+});
+
+export type HarnessEffectiveConfigInput = z.infer<typeof harnessEffectiveConfigRpc.input>;
+export type HarnessEffectiveConfigOutput = z.infer<typeof harnessEffectiveConfigRpc.output>;
+
 // ============================================================================
 // Shared Pure Helpers (Provider Plan Mode & Specialist Tier Mapping)
 // ============================================================================
@@ -274,7 +329,8 @@ export function resolveSpecialistTargetTier(role: HandoffTargetRole): MatrixTier
 }
 
 export function formatSpecialistRolePrefix(role: HandoffTargetRole | DomainRole): string {
-  switch (role) {
+  const norm = role.toLowerCase().trim();
+  switch (norm) {
     case "ui":
       return "[UI]";
     case "backend":
@@ -292,7 +348,7 @@ export function formatSpecialistRolePrefix(role: HandoffTargetRole | DomainRole)
     case "scout":
       return "[Scout]";
     default:
-      return "[Specialist]";
+      return `[${norm.charAt(0).toUpperCase() + norm.slice(1)}]`;
   }
 }
 

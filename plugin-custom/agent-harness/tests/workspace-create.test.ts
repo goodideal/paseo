@@ -38,7 +38,7 @@ describe("agent-harness workspace.create.before", () => {
       },
     };
 
-    const result = await workspaceHook({ request });
+    const result = await workspaceHook(request);
     expect(result.agent.config.model).toBe("plan");
     expect(result.agent.config.title).toContain("分析一下线上的hub环境");
   });
@@ -54,7 +54,7 @@ describe("agent-harness workspace.create.before", () => {
       firstAgentContext: { prompt: "/gitea dev and release beta" },
     };
 
-    const result = await workspaceHook({ request });
+    const result = await workspaceHook(request);
     expect(result.agent.config.model).toBe("flash");
   });
 
@@ -65,8 +65,8 @@ describe("agent-harness workspace.create.before", () => {
       agent: { config: { provider: "codex", cwd: "/tmp/demo", model: "flash" } },
     };
 
-    const result = await workspaceHook({ request });
-    expect(result.agent.config.model).toBe("flash");
+    const result = await workspaceHook(request);
+    expect(result).toBeUndefined();
   });
 });
 
@@ -82,7 +82,7 @@ describe("agent-harness agent.create.before fallback", () => {
       },
     };
 
-    const result = await agentHook({ request });
+    const result = await agentHook(request);
     expect(result.config.model).toBe("custom/plan");
   });
 });
