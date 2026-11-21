@@ -304,7 +304,20 @@ function getGlobalInstallTargets() {
   return targets;
 }
 
-function checkDaemonDrift() {
+function readLiveDaemonStatus() {
+  const output = runCapture("paseo", ["daemon", "status"], { timeout: 3000 });
+  if (!output) return null;
+  const versionMatch = output.match(/^daemonVersion:\s*(.+)$/m);
+  const workerPidMatch = output.match(/^workerPid:\s*(\d+)$/m);
+  const localDaemonMatch = output.match(/^localDaemon:\s*(.+)$/m);
+  return {
+    daemonVersion: versionMatch ? versionMatch[1].trim() : null,
+    workerPid: workerPidMatch ? Number(workerPidMatch[1]) : null,
+    localDaemon: localDaemonMatch ? localDaemonMatch[1].trim() : null,
+  };
+}
+
+function checkDaemonDrift(expectedVersion = null) {
   const pidFile = path.join(os.homedir(), ".paseo", "paseo.pid");
   if (!existsSync(pidFile)) return null;
   try {
@@ -319,8 +332,12 @@ function checkDaemonDrift() {
 
     const ageStr = Number(diffDays) >= 1 ? `${diffDays} 天前` : `${diffHours} 小时前`;
 
-    // Check Volta/npm global installed mtime
     const targets = getGlobalInstallTargets();
+    const installedVersion = expectedVersion || (targets.length > 0 ? targets[0].version : null);
+    const liveStatus = readLiveDaemonStatus();
+    const runningVersion = liveStatus?.daemonVersion ?? null;
+    const workerPid = liveStatus?.workerPid ?? null;
+
     let isStale = false;
     let mtimeStr = null;
     if (targets.length > 0) {
@@ -328,6 +345,15 @@ function checkDaemonDrift() {
       if (existsSync(cliEntry)) {
         const installedMtime = statSync(cliEntry).mtime;
         mtimeStr = installedMtime.toLocaleString();
+      }
+    }
+
+    if (runningVersion && installedVersion && installedVersion !== "unknown") {
+      isStale = runningVersion !== installedVersion;
+    } else if (targets.length > 0) {
+      const cliEntry = path.join(targets[0].cliDir, "dist", "index.js");
+      if (existsSync(cliEntry)) {
+        const installedMtime = statSync(cliEntry).mtime;
         if (installedMtime.getTime() > startedAt.getTime() + 5000) {
           isStale = true;
         }
@@ -336,8 +362,11 @@ function checkDaemonDrift() {
 
     return {
       pid: pidInfo.pid,
+      workerPid,
       listen: pidInfo.listen,
       startedAt: pidInfo.startedAt,
+      runningVersion,
+      installedVersion,
       diffHours,
       diffDays,
       ageStr,
@@ -400,13 +429,25 @@ function showStatus() {
   console.log(`\n⚡ 守护进程 (Daemon) 状态:`);
   const drift = checkDaemonDrift();
   if (drift) {
+    const workerNote = drift.workerPid ? `, workerPid: ${drift.workerPid}` : "";
     console.log(
-      `   - 配置文件记录 PID: ${drift.pid}, 监听: ${drift.listen}, 启动于: ${drift.startedAt} (${drift.ageStr})`,
+      `   - 守护进程 PID: ${drift.pid}${workerNote}, 监听: ${drift.listen}, 启动于: ${drift.startedAt} (${drift.ageStr})`,
     );
-    if (drift.isStale) {
+    if (drift.runningVersion) {
       console.log(
-        `   ⚠️ 运行态漂移: 守护进程启动于 ${drift.ageStr}，早于全局最新构建 (${drift.mtimeStr})！`,
+        `   - 实际运行版本: ${formatModDisplayVersion(drift.runningVersion)} (${drift.runningVersion})`,
       );
+    }
+    if (drift.isStale) {
+      if (drift.runningVersion && drift.installedVersion) {
+        console.log(
+          `   ⚠️ 运行态漂移: 守护进程运行 ${formatModDisplayVersion(drift.runningVersion)}，落后于已安装版本 ${formatModDisplayVersion(drift.installedVersion)}！`,
+        );
+      } else {
+        console.log(
+          `   ⚠️ 运行态漂移: 守护进程启动于 ${drift.ageStr}，早于全局最新构建 (${drift.mtimeStr})！`,
+        );
+      }
       console.log(`   👉 建议在宿主终端执行: paseo restart 载入最新运行时`);
     } else {
       console.log(`   ✅ 守护进程运行正常，已是最新构建实例`);
@@ -1122,10 +1163,13 @@ console.log(
 );
 console.log("⚠️  重要提示 (Critical Safety Notice):");
 console.log("   切勿让 AI Agent 自动 kill 或重启 6767 端口的守护进程！");
-const driftAfterInstall = checkDaemonDrift();
+const driftAfterInstall = checkDaemonDrift(customBuildVersion);
 if (driftAfterInstall && driftAfterInstall.isStale) {
+  const versionDetail = driftAfterInstall.runningVersion
+    ? `运行中 ${formatModDisplayVersion(driftAfterInstall.runningVersion)} -> 已安装 ${formatModDisplayVersion(customBuildVersion)}`
+    : `启动于 ${driftAfterInstall.ageStr}`;
   console.log(
-    `🚨 运行态漂移告警: 守护进程 (PID ${driftAfterInstall.pid}) 启动于 ${driftAfterInstall.ageStr}，落后于刚刚安装的最新版本！`,
+    `🚨 运行态漂移告警: 守护进程 (PID ${driftAfterInstall.pid}) ${versionDetail}，落后于刚刚安装的最新版本！`,
   );
 }
 console.log("👉 请在你的宿主终端手动执行以下命令重启守护进程以生效：");
