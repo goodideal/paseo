@@ -33,7 +33,7 @@ export function MarkdownLocalImage({
   const [status, setStatus] = useState<"loading" | "loaded" | "error">("loading");
   const [directUri, setDirectUri] = useState<string | null>(null);
   const [attachment, setAttachment] = useState<AttachmentMetadata | null>(null);
-  const attachmentUrl = useAttachmentPreviewUrl(attachment);
+  const attachmentPreview = useAttachmentPreviewUrl(attachment);
 
   const resolvedSource = useMemo(() => {
     return resolveMarkdownImageSource({ source, documentPath, workspaceRoot });
@@ -82,9 +82,13 @@ export function MarkdownLocalImage({
     }
   }, [resolvedSource, client]);
 
-  const finalUri = directUri ?? attachmentUrl;
+  const finalUri =
+    directUri ?? (attachmentPreview.status === "ready" ? attachmentPreview.url : null);
 
-  if (status === "loading" || (status === "loaded" && !finalUri)) {
+  if (
+    status === "loading" ||
+    (status === "loaded" && !directUri && attachmentPreview.status === "loading")
+  ) {
     return (
       <View style={styles.placeholderContainer}>
         <ThemedLoadingSpinner color={UnistylesRuntime.getTheme().colors.foregroundMuted} />
@@ -92,7 +96,11 @@ export function MarkdownLocalImage({
     );
   }
 
-  if (status === "error" || !finalUri) {
+  if (
+    status === "error" ||
+    (status === "loaded" && !directUri && attachmentPreview.status === "failed") ||
+    !finalUri
+  ) {
     const fallbackName =
       resolvedSource?.kind === "file" ? resolvedSource.path.split("/").pop() : alt || "Image";
     return (
