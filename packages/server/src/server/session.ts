@@ -1,33 +1,6 @@
 import { DiffSession } from "./diff/index.js";
 import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import type { AgentMessageDelivery } from "./agent/agent-messages/index.js";
-import { WorkflowSession } from "./session/workflow/workflow-session.js";
-import type { WorkflowPresetRegistry } from "./workflows/workflow-preset-registry.js";
-import type { WorkflowService } from "./workflows/workflow-service.js";
-import type { StepExecutor } from "./workflows/step-executors.js";
-
-function createWorkflowSession(
-  options: SessionOptions,
-  host: { emit: (msg: SessionOutboundMessage) => void },
-  workspaceRegistry: WorkspaceRegistry,
-  logger: pino.Logger,
-): WorkflowSession | null {
-  if (!options.workflowService || !options.workflowPresets) return null;
-  return new WorkflowSession({
-    host,
-    workflowService: options.workflowService,
-    presets: options.workflowPresets,
-    principalId: options.workflowPrincipalId ?? options.clientId,
-    permissions: options.permissions,
-    executor: options.workflowExecutor,
-    resolveWorkspace: async ({ projectId, workspaceId }) => {
-      const workspace = await workspaceRegistry.get(workspaceId);
-      if (!workspace || workspace.projectId !== projectId) return null;
-      return { cwd: workspace.cwd };
-    },
-    logger,
-  });
-}
 import { AgentDirectory, type BackgroundVisibility } from "./agent/directory.js";
 import { ConnectedHostSession } from "./connected-hosts/index.js";
 import type { ConnectedHosts } from "./connected-hosts/index.js";
@@ -553,10 +526,6 @@ export interface SessionOptions {
   workspaceLabelService?: WorkspaceLabelService;
   filesystem?: SessionFileSystem;
   scheduleService: ScheduleService;
-  workflowService?: WorkflowService;
-  workflowPresets?: WorkflowPresetRegistry;
-  workflowPrincipalId?: string;
-  workflowExecutor?: StepExecutor;
   checkoutDiffManager: CheckoutDiffManager;
   github?: ForgeService;
   createAgentMcpTransport?: AgentMcpTransportFactory;
@@ -918,7 +887,6 @@ export class Session {
   private readonly checkoutSession: CheckoutSession;
   private readonly diffSession: DiffSession;
   private readonly scheduleSession: ScheduleSession;
-  private readonly workflowSession: WorkflowSession | null;
   private readonly providerCatalogSession: ProviderCatalogSession;
   private readonly usageSession: UsageSession;
   private readonly speechModelsSession: SpeechModelsSession;
@@ -1152,12 +1120,6 @@ export class Session {
       scheduleService,
       logger: this.sessionLogger,
     });
-    this.workflowSession = createWorkflowSession(
-      options,
-      { emit: (msg) => this.emit(msg) },
-      this.workspaceRegistry,
-      this.sessionLogger,
-    );
     this.providerCatalogSession = new ProviderCatalogSession({
       host: {
         emit: (msg) => this.emit(msg),
@@ -2789,17 +2751,6 @@ export class Session {
     if (promise) await promise;
   }
 
-  private dispatchScheduleOrWorkflowMessage(msg: SessionInboundMessage): Promise<void> | undefined {
-    return this.dispatchScheduleMessage(msg) ?? this.dispatchWorkflowMessage(msg);
-  }
-
-  private dispatchWorkflowMessage(msg: SessionInboundMessage): Promise<void> | undefined {
-    if (!this.workflowSession || !msg.type.startsWith("workflow.")) return undefined;
-    return this.workflowSession.handle(
-      msg as Extract<SessionInboundMessage, { type: `workflow.${string}` }>,
-    );
-  }
-
   private dispatchAgentObservationMessage(
     msg: SessionInboundMessage,
     source?: object,
@@ -2814,7 +2765,7 @@ export class Session {
   private dispatchHostServiceMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     return (
       this.dispatchTerminalMessage(msg) ??
-      this.dispatchScheduleOrWorkflowMessage(msg) ??
+      this.dispatchScheduleMessage(msg) ??
       this.speechModelsSession.dispatch(msg)
     );
   }
@@ -4501,6 +4452,7 @@ export class Session {
       reject(getErrorMessageOr(error, "Failed to update workspace metadata"));
     }
   }
+
   private async handleWorkspaceBaseBranchSetRequest(
     msg: WorkspaceBaseBranchSetRequest,
   ): Promise<void> {
@@ -9098,6 +9050,7 @@ export class Session {
       );
     }
   }
+
   private async handleAgentForkContextRequest(
     msg: Extract<SessionInboundMessage, { type: "agent.fork_context.request" }>,
   ): Promise<void> {

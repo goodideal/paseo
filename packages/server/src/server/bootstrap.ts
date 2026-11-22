@@ -14,8 +14,8 @@ import { describeHookWorkspace } from "./plugins/lifecycle/index.js";
 import express from "express";
 import { createServer as createHTTPServer, type IncomingMessage, type ServerResponse } from "http";
 import { constants, existsSync, unlinkSync } from "fs";
-import { mkdir, open, rm, stat, writeFile } from "fs/promises";
-import { createHash, randomUUID } from "node:crypto";
+import { open, rm, stat } from "fs/promises";
+import { randomUUID } from "node:crypto";
 import { getHostName } from "./host-name.js";
 import path from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -166,25 +166,6 @@ import {
 } from "./workspace-registry.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { ScheduleService } from "./schedule/service.js";
-import { WorkflowStore } from "./workflows/workflow-store.js";
-import { StepAdapterRegistry } from "./workflows/step-adapter-registry.js";
-import { registerBuiltInWorkflowStepManifests } from "./workflows/core-step-manifests.js";
-import { createWorkflowPresetRegistry } from "./workflows/workflow-preset-registry.js";
-import { WorkflowService } from "./workflows/workflow-service.js";
-import { StepExecutor } from "./workflows/step-executors.js";
-import { createDefaultVerificationProfileRegistry } from "./workflows/verification-profiles.js";
-import {
-  extractWorkflowAgentHandoff,
-  isWorkflowAgentHandoff,
-} from "./workflows/workflow-agent-handoff.js";
-import type { WorkflowArtifact, WorkflowRun } from "./workflows/workflow-models.js";
-import {
-  getCurrentBranch,
-  pushCurrentBranch,
-  createPullRequest as createCheckoutPullRequest,
-} from "../utils/checkout-git.js";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { DaemonConfigStore, type MutableDaemonConfig } from "./daemon-config-store.js";
 import { createOrchestrationSkills } from "./orchestration-skills/index.js";
 import {
@@ -699,14 +680,6 @@ export async function createPaseoDaemon(
   });
   const browserToolsPolicy = new DaemonConfigBrowserToolsPolicy(daemonConfigStore);
   const browserToolsBroker = new BrowserToolsBroker({});
-  const workflowStore = new WorkflowStore({ paseoHome: config.paseoHome });
-  const workflowRegistry = new StepAdapterRegistry();
-  registerBuiltInWorkflowStepManifests(workflowRegistry);
-  const workflowPresets = createWorkflowPresetRegistry(workflowRegistry);
-  const workflowService = new WorkflowService({
-    store: workflowStore,
-    registry: workflowRegistry,
-  });
   const pluginRuntime: PluginService = new PluginService(logger, daemonConfigStore, daemonVersion, {
     usageAgents: {
       hasAgent: (id) => agentManager.getAgent(id) !== null,
@@ -719,10 +692,8 @@ export async function createPaseoDaemon(
     }),
     builtinPlugins: resolveBuiltinPluginLoader(dependencies),
     settingsDirectory: path.join(config.paseoHome, "plugin-settings"),
-    workflowPresets,
-    workflowRegistry,
-    workflowService,
   });
+
   const serverId = getOrCreateServerId(config.paseoHome, { logger });
   const daemonKeyPair = await loadOrCreateDaemonKeyPair(config.paseoHome, logger);
   const managedProcesses = createBootstrapManagedProcessRegistry(config, logger);
@@ -1513,341 +1484,6 @@ export async function createPaseoDaemon(
       },
     );
   };
-  const execFileAsync = promisify(execFile);
-  const workflowProfiles = createDefaultVerificationProfileRegistry();
-  const saveWorkflowArtifact = async (
-    run: WorkflowRun,
-    kind: string,
-    content: string,
-  ): Promise<WorkflowArtifact> => {
-    const id = `artifact_${randomUUID().replaceAll("-", "")}`;
-    const now = Date.now();
-    const contentBuffer = Buffer.from(content, "utf8");
-    const contentHash = createHash("sha256").update(contentBuffer).digest("hex");
-    const artifactPath = `artifacts/${run.id}/${id}.txt`;
-    const artifactDir = path.join(config.paseoHome, "artifacts", run.id);
-    await mkdir(artifactDir, { recursive: true });
-    await writeFile(path.join(artifactDir, `${id}.txt`), contentBuffer);
-
-    const artifact: WorkflowArtifact = {
-      id,
-      kind,
-      path: artifactPath,
-      contentHash,
-      bytes: contentBuffer.length,
-      redacted: false,
-      createdAt: now,
-    };
-
-    workflowStore.update(
-      { projectId: run.projectId, workspaceId: run.workspaceId, runId: run.id },
-      (current) => ({
-        ...current,
-        artifacts: [...current.artifacts, artifact],
-        updatedAt: now,
-      }),
-    );
-
-    return artifact;
-  };
-  const workflowExecutor = new StepExecutor(workflowRegistry, workflowProfiles, {
-    createWorktree: async ({ workspaceRoot, branch, baseBranch, title }) => {
-      const result = await createPaseoWorktreeForTools(
-        {
-          cwd: workspaceRoot,
-          branchName: branch,
-          refName: baseBranch,
-          worktreeSlug: branch,
-          ...(title ? { title } : {}),
-          firstAgentContext: { attachments: [] },
-        },
-        baseBranch
-          ? {
-              resolveDefaultBranch: async () => baseBranch,
-            }
-          : undefined,
-      );
-      return {
-        worktreePath: result.worktree.worktreePath,
-        branch: result.worktree.branchName,
-        workspaceId: result.workspace.workspaceId,
-      };
-    },
-    dispatchAgent: async ({ cwd, promptId, provider }) => {
-      const result = await createAgent({
-        kind: "mcp",
-        provider: provider ?? "codex",
-        title: `Workflow ${promptId}`,
-        cwd,
-        workspaceId: (await findWorkspaceIdForCwdExternal(cwd)) ?? undefined,
-        initialPrompt: promptId,
-        notifyOnFinish: false,
-        internal: true,
-      });
-      return { agentId: result.snapshot.id, sessionId: result.snapshot.id, resumable: true };
-    },
-    runAgentUntilComplete: async ({ cwd, prompt, profile, mode, run, stepId }) => {
-      let provider = "codex";
-      if (
-        typeof profile === "object" &&
-        profile &&
-        "provider" in profile &&
-        typeof profile.provider === "string"
-      ) {
-        provider = profile.provider;
-      } else if (typeof profile === "string" && profile !== "default") {
-        provider = profile;
-      }
-      const agentResult = await createAgent({
-        kind: "mcp",
-        provider,
-        title: `Workflow ${run.id} - ${stepId}`,
-        cwd,
-        workspaceId: (await findWorkspaceIdForCwdExternal(cwd)) ?? run.workspaceId,
-        notifyOnFinish: false,
-        internal: true,
-      });
-      const agentId = agentResult.snapshot.id;
-      if (!wsServer) throw new Error("Daemon is not accepting agent messages");
-      await sendPromptToAgent({
-        agentMessages: wsServer.agentMessages,
-        agentManager,
-        agentStorage,
-        agentId,
-        prompt,
-        sessionMode: mode,
-        logger,
-      });
-      const waitResult = await agentManager.waitForAgentEvent(agentId, { waitForActive: true });
-      if (waitResult.permission) {
-        const finalArtifact = await saveWorkflowArtifact(
-          run,
-          "agent_output",
-          waitResult.lastMessage ?? "",
-        );
-        return {
-          agentId,
-          sessionId: agentId,
-          outcome: "permission_pending",
-          finalArtifactId: finalArtifact.id,
-        };
-      }
-      if (waitResult.status === "error") {
-        const finalArtifact = await saveWorkflowArtifact(
-          run,
-          "agent_output",
-          waitResult.lastMessage ?? "",
-        );
-        return {
-          agentId,
-          sessionId: agentId,
-          outcome: "failed",
-          finalArtifactId: finalArtifact.id,
-        };
-      }
-      if (waitResult.status === "closed") {
-        const finalArtifact = await saveWorkflowArtifact(
-          run,
-          "agent_output",
-          waitResult.lastMessage ?? "",
-        );
-        return {
-          agentId,
-          sessionId: agentId,
-          outcome: "cancelled",
-          finalArtifactId: finalArtifact.id,
-        };
-      }
-      const finalContent = waitResult.lastMessage ?? "";
-      const finalArtifact = await saveWorkflowArtifact(run, "agent_output", finalContent);
-      const handoffResult = extractWorkflowAgentHandoff(finalContent);
-      let handoffArtifactId: string | undefined = undefined;
-      if (isWorkflowAgentHandoff(handoffResult)) {
-        const handoffArtifact = await saveWorkflowArtifact(
-          run,
-          "handoff",
-          JSON.stringify(handoffResult, null, 2),
-        );
-        handoffArtifactId = handoffArtifact.id;
-      }
-      return {
-        agentId,
-        sessionId: agentId,
-        outcome: "completed",
-        finalArtifactId: finalArtifact.id,
-        ...(handoffArtifactId ? { handoffArtifactId } : {}),
-      };
-    },
-    continueAgentUntilComplete: async ({ agentId, prompt, mode, run }) => {
-      if (!wsServer) throw new Error("Daemon is not accepting agent messages");
-      await sendPromptToAgent({
-        agentMessages: wsServer.agentMessages,
-        agentManager,
-        agentStorage,
-        agentId,
-        prompt,
-        sessionMode: mode,
-        logger,
-      });
-      const waitResult = await agentManager.waitForAgentEvent(agentId, { waitForActive: true });
-      if (waitResult.permission) {
-        const finalArtifact = await saveWorkflowArtifact(
-          run,
-          "agent_output",
-          waitResult.lastMessage ?? "",
-        );
-        return {
-          agentId,
-          sessionId: agentId,
-          outcome: "permission_pending",
-          finalArtifactId: finalArtifact.id,
-        };
-      }
-      if (waitResult.status === "error") {
-        const finalArtifact = await saveWorkflowArtifact(
-          run,
-          "agent_output",
-          waitResult.lastMessage ?? "",
-        );
-        return {
-          agentId,
-          sessionId: agentId,
-          outcome: "failed",
-          finalArtifactId: finalArtifact.id,
-        };
-      }
-      if (waitResult.status === "closed") {
-        const finalArtifact = await saveWorkflowArtifact(
-          run,
-          "agent_output",
-          waitResult.lastMessage ?? "",
-        );
-        return {
-          agentId,
-          sessionId: agentId,
-          outcome: "cancelled",
-          finalArtifactId: finalArtifact.id,
-        };
-      }
-      const finalContent = waitResult.lastMessage ?? "";
-      const finalArtifact = await saveWorkflowArtifact(run, "agent_output", finalContent);
-      const handoffResult = extractWorkflowAgentHandoff(finalContent);
-      let handoffArtifactId: string | undefined = undefined;
-      if (isWorkflowAgentHandoff(handoffResult)) {
-        const handoffArtifact = await saveWorkflowArtifact(
-          run,
-          "handoff",
-          JSON.stringify(handoffResult, null, 2),
-        );
-        handoffArtifactId = handoffArtifact.id;
-      }
-      return {
-        agentId,
-        sessionId: agentId,
-        outcome: "completed",
-        finalArtifactId: finalArtifact.id,
-        ...(handoffArtifactId ? { handoffArtifactId } : {}),
-      };
-    },
-    waitForInteraction: async ({ run, stepId, question, promptArtifactId }) => {
-      const answered = run.interactions?.findLast(
-        (item) => item.stepId === stepId && item.status === "answered",
-      );
-      if (answered) {
-        return {
-          interactionId: answered.id,
-          status: "answered",
-          answerArtifactId: answered.answerArtifactId,
-          responderId: answered.responderId,
-          answeredAt: answered.answeredAt,
-        };
-      }
-      const existingPending = run.interactions?.findLast(
-        (item) => item.stepId === stepId && item.status === "pending",
-      );
-      if (existingPending) {
-        return {
-          interactionId: existingPending.id,
-          status: "pending",
-        };
-      }
-      let effectivePromptArtifactId = promptArtifactId;
-      if (!effectivePromptArtifactId) {
-        const promptArtifact = await saveWorkflowArtifact(
-          run,
-          "interaction_prompt",
-          question ?? "Awaiting user input",
-        );
-        effectivePromptArtifactId = promptArtifact.id;
-      }
-      const interactionId = `interaction_${randomUUID().replaceAll("-", "")}`;
-      await workflowService.createInteraction({
-        projectId: run.projectId,
-        workspaceId: run.workspaceId,
-        runId: run.id,
-        stepId,
-        promptArtifactId: effectivePromptArtifactId,
-        interactionId,
-      });
-      return {
-        interactionId,
-        status: "pending",
-      };
-    },
-    runVerification: async ({ profile, cwd }) => {
-      try {
-        const result = await execFileAsync(profile.command, profile.args, {
-          cwd,
-          timeout: profile.timeoutMs,
-          maxBuffer: 32 * 1024 * 1024,
-          env: Object.fromEntries(
-            (profile.envAllowlist ?? []).flatMap((key) =>
-              process.env[key] === undefined ? [] : [[key, process.env[key]]],
-            ),
-          ),
-        });
-        return { passed: true, report: `${result.stdout}${result.stderr}` };
-      } catch (err: unknown) {
-        const errorRecord =
-          typeof err === "object" && err !== null ? (err as Record<string, unknown>) : null;
-        const out = typeof errorRecord?.stdout === "string" ? errorRecord.stdout : "";
-        const errOut = typeof errorRecord?.stderr === "string" ? errorRecord.stderr : "";
-        let report = `${out}\n${errOut}`.trim();
-        if (!report) {
-          report = err instanceof Error ? err.message : String(err);
-        }
-        return { passed: false, report: report.slice(0, 1024 * 1024) };
-      }
-    },
-    gitPush: async ({ cwd }) => {
-      await pushCurrentBranch(cwd, github);
-      const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd });
-      return { success: true, commitSha: stdout.trim() };
-    },
-    createPullRequest: async ({ cwd, title, baseBranch, branch }) => {
-      const result = await createCheckoutPullRequest(
-        cwd,
-        { title, base: baseBranch, head: branch === "HEAD" ? undefined : branch },
-        github,
-      );
-      return { prUrl: result.url, prNumber: result.number };
-    },
-    findPullRequest: async ({ cwd, branch }) => {
-      const headRef = branch === "HEAD" ? await getCurrentBranch(cwd) : branch;
-      if (!headRef) return null;
-      const current = await github.getCurrentPullRequestStatus({ cwd, headRef });
-      return current?.number ? { prUrl: current.url, prNumber: current.number } : null;
-    },
-    executePluginAdapter: async ({ pluginId, adapterType, input, run, timeoutMs }) => {
-      return pluginRuntime.executeWorkflowStepAdapter({
-        pluginId,
-        adapterType,
-        input,
-        run,
-        timeoutMs,
-      });
-    },
-  });
   const scheduleService = new ScheduleService({
     paseoHome: config.paseoHome,
     logger,
@@ -2331,9 +1967,6 @@ export async function createPaseoDaemon(
               orchestrationSkills,
               workspaceLabelService,
               workspaceArchiveOperations,
-              workflowService,
-              workflowPresets,
-              workflowExecutor,
             );
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();

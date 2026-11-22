@@ -18,13 +18,6 @@ import {
 } from "@getpaseo/plugin/server/provider";
 import { z } from "zod";
 
-export interface PluginWorkflowPresetMetadata {
-  workflowId: string;
-  name: string;
-  sourcePreset: string;
-  definition: unknown;
-}
-
 export interface PluginProviderMetadata {
   requiresConfiguration?: boolean;
   hasCatalogCacheKey?: boolean;
@@ -50,19 +43,6 @@ export interface PluginUsageSourceMetadata {
   label: string;
   provider?: string;
   icon?: string;
-}
-
-export interface PluginWorkflowStepAdapterMetadata {
-  type: string;
-  version: string;
-  executionRisk: "read" | "workspace_observe" | "workspace_write" | "external_write" | "privileged";
-  requiredPermissions: string[];
-  repositoryCallable: boolean;
-  idempotency: "none" | "required";
-  cancellation: "unsupported" | "supported" | "best_effort";
-  recovery: "not_resumable" | "resumable" | "inspect_before_retry";
-  supportedPlatforms: Array<"darwin" | "linux" | "win32">;
-  resourceConflictKey: string;
 }
 
 export interface PluginWorktreeManagerCapabilities {
@@ -98,7 +78,7 @@ export type PluginProcessRequest =
       pluginId: string;
       bundle: string;
       appVersion: string;
-      pluginDirectory?: string;
+      pluginDirectory: string;
       settingsDirectory?: string;
     }
   | {
@@ -153,8 +133,6 @@ export type PluginProcessMessage =
       methods: string[];
       subscriptions?: string[];
       providers: PluginProviderMetadata[];
-      workflowPresets?: PluginWorkflowPresetMetadata[];
-      workflowStepAdapters?: PluginWorkflowStepAdapterMetadata[];
       usageSources?: PluginUsageSourceMetadata[];
       hooks?: string[];
       worktreeManager?: PluginWorktreeManagerCapabilities | null;
@@ -299,7 +277,7 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
         pluginId: z.string().min(1),
         bundle: z.string(),
         appVersion: z.string(),
-        pluginDirectory: z.string().optional(),
+        pluginDirectory: z.string(),
         settingsDirectory: z.string().optional(),
       })
       .strict(),
@@ -401,27 +379,6 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
   ],
 );
 
-const workflowStepAdapterMetadataSchema = z
-  .object({
-    type: z.string().min(1),
-    version: z.string().min(1),
-    executionRisk: z.enum([
-      "read",
-      "workspace_observe",
-      "workspace_write",
-      "external_write",
-      "privileged",
-    ]),
-    requiredPermissions: z.array(z.string()),
-    repositoryCallable: z.boolean(),
-    idempotency: z.enum(["none", "required"]),
-    cancellation: z.enum(["unsupported", "supported", "best_effort"]),
-    recovery: z.enum(["not_resumable", "resumable", "inspect_before_retry"]),
-    supportedPlatforms: z.array(z.enum(["darwin", "linux", "win32"])),
-    resourceConflictKey: z.string().min(1),
-  })
-  .strict();
-
 export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.discriminatedUnion(
   "type",
   [
@@ -439,19 +396,6 @@ export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.dis
         methods: z.array(z.string()),
         subscriptions: z.array(z.string()).optional(),
         providers: z.array(providerMetadataSchema),
-        workflowPresets: z
-          .array(
-            z
-              .object({
-                workflowId: z.string().min(1),
-                name: z.string().min(1),
-                sourcePreset: z.string().min(1),
-                definition: z.unknown(),
-              })
-              .strict(),
-          )
-          .optional(),
-        workflowStepAdapters: z.array(workflowStepAdapterMetadataSchema).optional(),
         usageSources: z.array(usageSourceMetadataSchema).optional(),
         hooks: hooksSchema.optional(),
         worktreeManager: worktreeManagerCapabilitiesSchema.nullable().optional(),

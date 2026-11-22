@@ -1,4 +1,4 @@
-import type { PluginWorkflowPreset } from "@getpaseo/plugin/server";
+import type { PluginWorkflowPreset } from "../../shared/workflow-types.js";
 import type { GiteaWorkflowPolicy } from "../../shared/types.js";
 
 interface StepDefinition {

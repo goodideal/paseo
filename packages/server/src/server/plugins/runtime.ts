@@ -50,8 +50,6 @@ import type {
   PluginProcessRequest,
   PluginProviderMetadata,
   PluginUsageSourceMetadata,
-  PluginWorkflowPresetMetadata,
-  PluginWorkflowStepAdapterMetadata,
   PluginWorktreeManagerCapabilities,
 } from "./plugin-process-protocol.js";
 import { PluginProcessMessageSchema } from "./plugin-process-protocol.js";
@@ -149,8 +147,6 @@ interface LoadedPlugin {
   worktreeManager: PluginWorktreeManagerCapabilities | null;
   providers: readonly PluginProviderMetadata[];
   usageSources: readonly PluginUsageSourceMetadata[];
-  workflowPresets: readonly PluginWorkflowPresetMetadata[];
-  workflowStepAdapters: readonly PluginWorkflowStepAdapterMetadata[];
   child: PluginChild | null;
   outputCapture: PluginOutputCapture | null;
   pending: Map<string, PendingInvocation>;
@@ -491,16 +487,6 @@ export class PluginRuntime {
     return this.plugins.get(pluginId)?.providers ?? [];
   }
 
-  getWorkflowPresetRegistrations(pluginId: string): readonly PluginWorkflowPresetMetadata[] {
-    return this.plugins.get(pluginId)?.workflowPresets ?? [];
-  }
-
-  getWorkflowStepAdapterRegistrations(
-    pluginId: string,
-  ): readonly PluginWorkflowStepAdapterMetadata[] {
-    return this.plugins.get(pluginId)?.workflowStepAdapters ?? [];
-  }
-
   getUsageSourceRegistrations(pluginId: string): readonly PluginUsageSourceMetadata[] {
     return this.plugins.get(pluginId)?.usageSources ?? [];
   }
@@ -677,21 +663,12 @@ export class PluginRuntime {
     this.logTails.delete(pluginId);
   }
 
-  async invoke(
-    pluginId: string,
-    method: string,
-    input: unknown,
-    timeoutMs?: number,
-  ): Promise<unknown> {
+  async invoke(pluginId: string, method: string, input: unknown): Promise<unknown> {
     const loaded = this.plugins.get(pluginId);
     if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
     if (!loaded.methods.has(method))
       throw new Error(`Plugin ${pluginId} does not contribute RPC ${method}`);
-    return this.request(
-      loaded,
-      { type: "invoke", requestId: randomUUID(), method, input },
-      { timeoutMs },
-    );
+    return this.request(loaded, { type: "invoke", requestId: randomUUID(), method, input });
   }
 
   /** Starts one subscriber's handler in the plugin process. */
@@ -1033,9 +1010,6 @@ export class PluginRuntime {
         loaded.pending.delete(requestId);
         if (message.type === "tool.call")
           void send(child, { type: "tool.cancel", requestId }).catch(() => {});
-        if (message.type === "hook") {
-          void send(child, { type: "hook.cancel", requestId }).catch(() => {});
-        }
         if (isWorktreeManagerRequest(message))
           void send(child, { type: "worktree.cancel", requestId }).catch(() => {});
         if (isInstallationRequest(message))
@@ -1126,8 +1100,6 @@ export class PluginRuntime {
         worktreeManager: null,
         providers: [],
         usageSources: [],
-        workflowPresets: [],
-        workflowStepAdapters: [],
         child: null,
         outputCapture: null,
         pending: new Map(),
@@ -1261,8 +1233,6 @@ export class PluginRuntime {
       worktreeManager: ready.worktreeManager ?? null,
       providers: ready.providers ?? [],
       usageSources: ready.usageSources ?? [],
-      workflowPresets: ready.workflowPresets ?? [],
-      workflowStepAdapters: ready.workflowStepAdapters ?? [],
       child,
       outputCapture,
       pending,

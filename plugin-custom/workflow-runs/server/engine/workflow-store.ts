@@ -1,7 +1,26 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
-import { ensurePrivateDirectory, writePrivateFileAtomicSync } from "../private-files.js";
+import { randomUUID } from "node:crypto";
 import { WorkflowRunSchema, type WorkflowRun } from "./workflow-models.js";
+
+function ensurePrivateDirectory(directory: string): void {
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+}
+
+function writePrivateFileAtomicSync(filePath: string, content: string): void {
+  const dir = path.dirname(filePath);
+  ensurePrivateDirectory(dir);
+  const tempPath = path.join(dir, `.${path.basename(filePath)}.${randomUUID()}.tmp`);
+  writeFileSync(tempPath, content, { encoding: "utf8", mode: 0o600 });
+  renameSync(tempPath, filePath);
+}
 
 export interface WorkflowScope {
   projectId: string;

@@ -12,11 +12,6 @@ export type {
   PluginSettings,
   PluginSettingsState,
   PluginSubscriptionContext,
-  PluginWorkflowStepAdapterManifest,
-  PluginWorkflowStepAdapterRegistration,
-  PluginWorkflowStepExecutionContext,
-  PluginWorkflowRunReference,
-  PluginWorkflowPreset,
 } from "./contracts.js";
 export type {
   PluginHooks,

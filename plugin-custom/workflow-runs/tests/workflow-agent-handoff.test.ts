@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { extractWorkflowAgentHandoff, isWorkflowAgentHandoff } from "./workflow-agent-handoff.js";
+import {
+  extractWorkflowAgentHandoff,
+  isWorkflowAgentHandoff,
+} from "../server/engine/workflow-agent-handoff.js";
 
 describe("Workflow Agent Handoff Extractor", () => {
   it("extracts a valid paseo-workflow-handoff JSON block", () => {

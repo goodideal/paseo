@@ -5,10 +5,22 @@ import {
   useAgent,
   useAgents,
   usePaseo,
+  useRpc,
   useWorkspace,
   type PluginWorkspacePanelProps,
 } from "@getpaseo/plugin/client";
 import { Icon, ScrollView, TextInput, useToast } from "@getpaseo/plugin/client/ui";
+import {
+  workflowApprovalApproveRpc,
+  workflowApprovalDenyRpc,
+  workflowApprovalListRpc,
+  workflowInteractionRespondRpc,
+  workflowRunCancelRpc,
+  workflowRunInspectRpc,
+  workflowRunListRpc,
+  workflowRunResumeRpc,
+  workflowRunRetryRpc,
+} from "../shared/contracts.js";
 import {
   buildProjectedWorkflowRuns,
   isProjectedRunId,
@@ -75,10 +87,20 @@ export function WorkflowRunsPanelView({
   const [interactionDraft, setInteractionDraft] = useState("");
   const [isPending, setIsPending] = useState(false);
 
+  const runList = useRpc(workflowRunListRpc);
+  const runInspect = useRpc(workflowRunInspectRpc);
+  const runCancel = useRpc(workflowRunCancelRpc);
+  const runResume = useRpc(workflowRunResumeRpc);
+  const runRetry = useRpc(workflowRunRetryRpc);
+  const approvalList = useRpc(workflowApprovalListRpc);
+  const approvalApprove = useRpc(workflowApprovalApproveRpc);
+  const approvalDeny = useRpc(workflowApprovalDenyRpc);
+  const interactionRespond = useRpc(workflowInteractionRespondRpc);
+
   const loadRuns = useCallback(async () => {
-    if (!projectId || !paseo?.workflows) return;
+    if (!projectId) return;
     try {
-      const res = await paseo.workflows.runList({ projectId, workspaceId });
+      const res = await runList({ projectId, workspaceId });
       if (!res.error && res.runs) {
         setRawRuns(
           res.runs.map((r: any) => ({
@@ -92,13 +114,13 @@ export function WorkflowRunsPanelView({
     } catch {
       // Daemon might not have any workflow runs yet
     }
-  }, [paseo, projectId, workspaceId]);
+  }, [projectId, runList, workspaceId]);
 
   const loadDetail = useCallback(
     async (runId: string) => {
-      if (isProjectedRunId(runId) || !projectId || !paseo?.workflows) return;
+      if (isProjectedRunId(runId) || !projectId) return;
       try {
-        const res = await paseo.workflows.runInspect({ projectId, workspaceId, runId });
+        const res = await runInspect({ projectId, workspaceId, runId });
         if (res.run) {
           setRemoteDetail({
             runId: res.run.runId,
@@ -108,7 +130,7 @@ export function WorkflowRunsPanelView({
             stepAttempts: res.run.stepAttempts,
           });
         }
-        const appr = await paseo.workflows.approvalList({ projectId, workspaceId, runId });
+        const appr = await approvalList({ projectId, workspaceId, runId });
         if (appr.approvals) {
           setApprovals(appr.approvals);
         }
@@ -116,7 +138,7 @@ export function WorkflowRunsPanelView({
         toast.error(err instanceof Error ? err.message : "Failed to inspect workflow run");
       }
     },
-    [paseo, projectId, toast, workspaceId],
+    [approvalList, projectId, runInspect, toast, workspaceId],
   );
 
   useEffect(() => {
@@ -156,7 +178,7 @@ export function WorkflowRunsPanelView({
         await paseo.agents.ref(agentId).archive();
         toast.show("Session archived", { variant: "success" });
       } else {
-        const res = await paseo.workflows.runCancel({
+        const res = await runCancel({
           projectId,
           workspaceId,
           runId: detail.runId,
@@ -177,7 +199,7 @@ export function WorkflowRunsPanelView({
     if (!detail || detail.isProjected || !projectId) return;
     setIsPending(true);
     try {
-      const res = await paseo.workflows.runResume({
+      const res = await runResume({
         projectId,
         workspaceId,
         runId: detail.runId,
@@ -200,13 +222,13 @@ export function WorkflowRunsPanelView({
     setIsPending(true);
     try {
       const res = approve
-        ? await paseo.workflows.approvalApprove({
+        ? await approvalApprove({
             projectId,
             workspaceId,
             runId: detail.runId,
             approvalId: pending.approvalId,
           })
-        : await paseo.workflows.approvalDeny({
+        : await approvalDeny({
             projectId,
             workspaceId,
             runId: detail.runId,
@@ -228,7 +250,7 @@ export function WorkflowRunsPanelView({
     if (!detail || detail.isProjected || !projectId) return;
     setIsPending(true);
     try {
-      const res = await paseo.workflows.runRetry({
+      const res = await runRetry({
         projectId,
         workspaceId,
         runId: detail.runId,
@@ -249,7 +271,7 @@ export function WorkflowRunsPanelView({
     if (!detail?.pendingInteraction || !interactionDraft.trim() || !projectId) return;
     setIsPending(true);
     try {
-      const res = await paseo.workflows.interactionRespond({
+      const res = await interactionRespond({
         projectId,
         workspaceId,
         runId: detail.runId,

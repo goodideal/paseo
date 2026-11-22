@@ -269,10 +269,10 @@ test("createPaseoApi borrows daemon capabilities without exposing connection own
     "dispose",
     "hosts",
     "observeEvents",
+    "plugins",
     "projects",
     "providers",
     "terminals",
-    "workflows",
     "workspaces",
   ]);
   expect("connect" in paseo).toBe(false);
@@ -1875,42 +1875,38 @@ test("canceled timeline handles and captured state are collectible while their A
   expect(result.stdout).toContain('"phase":"API alive"');
 }, 20000);
 
-test("workflow actions delegate through the public PaseoApi group", async () => {
-  const { client, ws } = await connectClient({ workflowEngine: true });
-  const listing = client.workflows.runList({
+test("plugin actions delegate through the public PaseoApi group", async () => {
+  const { client, ws } = await connectClient();
+  const pending = client.plugins.invoke("workflow-runs", "workflow.run.list", {
     projectId: "project_sdk",
     workspaceId: "workspace_sdk",
-    requestId: "workflow-list-1",
-    status: "waiting_approval",
   });
-  expect(parseSentSessionMessage(ws.sent.at(-1))).toEqual({
-    type: "workflow.run.list.request",
-    projectId: "project_sdk",
-    workspaceId: "workspace_sdk",
-    requestId: "workflow-list-1",
-    status: "waiting_approval",
+  const sent = parseSentSessionMessage(ws.sent.at(-1)) as {
+    type: string;
+    requestId: string;
+    pluginId: string;
+    method: string;
+    input: unknown;
+  };
+  expect(sent).toMatchObject({
+    type: "plugin.rpc.invoke.request",
+    pluginId: "workflow-runs",
+    method: "workflow.run.list",
+    input: {
+      projectId: "project_sdk",
+      workspaceId: "workspace_sdk",
+    },
   });
   ws.message(
     sessionMessage({
-      type: "workflow.run.list.response",
+      type: "plugin.rpc.invoke.response",
       payload: {
-        projectId: "project_sdk",
-        workspaceId: "workspace_sdk",
-        runId: null,
-        requestId: "workflow-list-1",
-        runs: [],
-        error: null,
+        requestId: sent.requestId,
+        output: { runs: [], error: null },
       },
     }),
   );
-  await expect(listing).resolves.toEqual({
-    projectId: "project_sdk",
-    workspaceId: "workspace_sdk",
-    runId: null,
-    requestId: "workflow-list-1",
-    runs: [],
-    error: null,
-  });
+  await expect(pending).resolves.toEqual({ runs: [], error: null });
   await client.close();
 });
 
@@ -1922,7 +1918,7 @@ test("createPaseoClient passes localCredential to daemon client hello auth", asy
     reconnect: { enabled: false },
   });
 
-  void client.connect();
+  void client.connect().catch(() => {});
   const ws = FakeWebSocket.instances.at(-1)!;
   ws.open();
   const hello = parseSentFrame(ws.sent.at(-1));

@@ -3,10 +3,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
-import { compileWorkflowDefinition, evaluateCondition } from "./definition-compiler.js";
-import { StepAdapterRegistry } from "./step-adapter-registry.js";
-import { WorkflowStore } from "./workflow-store.js";
-import type { WorkflowRun } from "./workflow-models.js";
+import {
+  compileWorkflowDefinition,
+  evaluateCondition,
+} from "../server/engine/definition-compiler.js";
+import { StepAdapterRegistry } from "../server/engine/step-adapter-registry.js";
+import { WorkflowStore } from "../server/engine/workflow-store.js";
+import type { WorkflowRun } from "../server/engine/workflow-models.js";
 
 const tempDirectories: string[] = [];
 

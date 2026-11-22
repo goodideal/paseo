@@ -35,9 +35,6 @@ import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type pino from "pino";
 import type { ProjectRegistry, WorkspaceRegistry } from "./workspace-registry.js";
-import type { WorkflowService } from "./workflows/workflow-service.js";
-import type { WorkflowPresetRegistry } from "./workflows/workflow-preset-registry.js";
-import type { StepExecutor } from "./workflows/step-executors.js";
 import type { ProjectUpdate } from "./workspace-reconciliation-service.js";
 import type { ScheduleService } from "./schedule/service.js";
 import type { CheckoutDiffManager, CheckoutDiffMetrics } from "./checkout-diff-manager.js";
@@ -644,9 +641,6 @@ export class VoiceAssistantWebSocketServer {
   private eventLoopDelayMonitor: ReturnType<typeof monitorEventLoopDelay> | null = null;
   private unsubscribeSpeechReadiness: (() => void) | null = null;
   private unsubscribeDaemonConfigChange: (() => void) | null = null;
-  private readonly workflowService?: WorkflowService;
-  private readonly workflowPresets?: WorkflowPresetRegistry;
-  private readonly workflowExecutor?: StepExecutor;
   private unsubscribeTerminalActivity: (() => void) | null = null;
   private readonly browserToolsBroker: BrowserToolsBroker | null;
   private readonly hubRelationships: HubRelationshipManagement | null;
@@ -724,9 +718,6 @@ export class VoiceAssistantWebSocketServer {
     orchestrationSkills?: SessionOptions["orchestrationSkills"],
     workspaceLabelService?: WorkspaceLabelService,
     workspaceArchiveOperations?: WorkspaceArchiveOperations,
-    workflowService?: WorkflowService,
-    workflowPresets?: WorkflowPresetRegistry,
-    workflowExecutor?: StepExecutor,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
@@ -802,9 +793,6 @@ export class VoiceAssistantWebSocketServer {
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
     this.workspaceRegistry = workspaceRegistry ?? createNoopWorkspaceRegistry();
     this.workspaceLabelService = workspaceLabelService ?? null;
-    this.workflowService = workflowService;
-    this.workflowPresets = workflowPresets;
-    this.workflowExecutor = workflowExecutor;
     const requiredServices = requireWebSocketServices({
       scheduleService,
       checkoutDiffManager,
@@ -1762,9 +1750,6 @@ export class VoiceAssistantWebSocketServer {
       scriptRuntimeStore: this.scriptRuntimeStore ?? undefined,
       workspaceSetupObservation: this.workspaceSetupObservation,
       workspaceSetupRuntime: this.workspaceSetupRuntime,
-      workflowService: this.workflowService,
-      workflowPresets: this.workflowPresets,
-      workflowExecutor: this.workflowExecutor,
       workspaceArchiveOperations: this.workspaceArchiveOperations,
       onBranchChanged: this.onBranchChanged ?? undefined,
       getDaemonTcpPort: this.getDaemonTcpPort ?? undefined,
@@ -2098,10 +2083,6 @@ export class VoiceAssistantWebSocketServer {
         workspaceRequestReceipts: true,
         creationLifecycle: true,
         hubAgentRpc: true,
-        // COMPAT(workflowEngine): added in v0.8.0, remove gate after 2027-03-25 once daemon floor supports Workflow Engine.
-        ...(this.workflowService ? { workflowEngine: true } : {}),
-        // COMPAT(workflowInteractions): added in v0.10.2, remove gate after 2027-03-29 once daemon floor supports Workflow Interactions.
-        ...(this.workflowService ? { workflowInteractions: true } : {}),
         backgroundWorkspaces: true,
         // COMPAT(backgroundAgents): added in v0.15.0; remove gate after 2027-05-03.
         backgroundAgents: true,

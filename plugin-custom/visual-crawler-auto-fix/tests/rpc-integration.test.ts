@@ -23,7 +23,6 @@ type RpcHandler = (input: unknown, context?: unknown) => Promise<unknown>;
 
 describe("VisualCrawlerAutoFix Plugin Server Integration (Task 4.3)", () => {
   const handlers = new Map<string, RpcHandler>();
-  let registeredPreset: unknown = null;
   let testStorePath: string;
   let store: TaskStore;
 
@@ -31,14 +30,10 @@ describe("VisualCrawlerAutoFix Plugin Server Integration (Task 4.3)", () => {
     handle(rpcContract: { name: string }, handler: RpcHandler) {
       handlers.set(rpcContract.name, handler);
     },
-    registerWorkflowPreset(preset: unknown) {
-      registeredPreset = preset;
-    },
   } as unknown as PluginServerContext;
 
   beforeEach(() => {
     handlers.clear();
-    registeredPreset = null;
     testStorePath = join(
       tmpdir(),
       `test-vc-store-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.json`,
@@ -46,12 +41,8 @@ describe("VisualCrawlerAutoFix Plugin Server Integration (Task 4.3)", () => {
     store = new TaskStore(testStorePath, 3);
   });
 
-  it("registers workflow preset and all required RPC handlers", () => {
+  it("registers all required RPC handlers and syncs workflow preset via workflow-runs plugin", async () => {
     contribute(mockServerContext, { store });
-    expect(registeredPreset).toMatchObject({
-      workflowId: "visual-crawler-fix",
-      sourcePreset: "visual-crawler",
-    });
     expect(handlers.has(startCrawlRpc.name)).toBe(true);
     expect(handlers.has(stopCrawlRpc.name)).toBe(true);
     expect(handlers.has(getCrawlStatusRpc.name)).toBe(true);
@@ -59,6 +50,67 @@ describe("VisualCrawlerAutoFix Plugin Server Integration (Task 4.3)", () => {
     expect(handlers.has(approveDirectiveRpc.name)).toBe(true);
     expect(handlers.has(batchApproveRpc.name)).toBe(true);
     expect(handlers.has(getWorkerPoolStatusRpc.name)).toBe(true);
+
+    store.upsertDirective({
+      id: "dir-rpc-1",
+      clusterKey: "cluster-rpc-1",
+      title: "Button alignment",
+      severity: "P1",
+      category: "visual_defect",
+      affectedPages: ["/"],
+      occurrenceCount: 1,
+      errorDetails: { message: "Misaligned" },
+      evidence: {},
+      suggestedFix: "Align flex",
+      status: "pending_review",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    const invoked: Array<{ pluginId: string; method: string; input: unknown }> = [];
+    const approveHandler = handlers.get(approveDirectiveRpc.name)!;
+    const res = (await approveHandler(
+      { directiveId: "dir-rpc-1", projectId: "p1", workspaceId: "ws1" },
+      {
+        paseo: {
+          plugins: {
+            invoke: async (pluginId: string, method: string, input: unknown) => {
+              invoked.push({ pluginId, method, input });
+              if (method === "workflow.registry.register") {
+                return { ok: true, registeredPresets: 1, registeredAdapters: 0 };
+              }
+              return { runId: "run_via_plugin_1", run: null, error: null };
+            },
+          },
+        },
+      },
+    )) as { ok: boolean; workflowRunId: string };
+
+    expect(res).toEqual({ ok: true, workflowRunId: "run_via_plugin_1" });
+    expect(invoked).toHaveLength(2);
+    expect(invoked[0]).toMatchObject({
+      pluginId: "workflow-runs",
+      method: "workflow.registry.register",
+      input: {
+        pluginId: "visual-crawler-auto-fix",
+        presets: [
+          expect.objectContaining({
+            workflowId: "visual-crawler-fix",
+            sourcePreset: "visual-crawler-auto-fix",
+          }),
+        ],
+      },
+    });
+    expect(invoked[1]).toMatchObject({
+      pluginId: "workflow-runs",
+      method: "workflow.run.create",
+      input: {
+        projectId: "p1",
+        workspaceId: "ws1",
+        workflowId: "visual-crawler-fix",
+        input: { directiveId: "dir-rpc-1" },
+      },
+    });
   });
 
   it("maps approved directive to a scope-bound workflow run without legacy double dispatch", async () => {

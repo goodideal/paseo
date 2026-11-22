@@ -16,8 +16,6 @@ import type {
   PluginHandlerContext,
   PluginServerContext,
   PluginServerContribution,
-  PluginWorkflowPreset,
-  PluginWorkflowStepAdapterRegistration,
   PluginWorktreeCreateInput,
   PluginWorktreeRemoveRequest,
   PluginWorktreeRestoreRequest,
@@ -29,7 +27,7 @@ import {
   type PluginSubscriptionHandler,
 } from "./subscription-handlers.js";
 import { fileURLToPath } from "node:url";
-import { z, type ZodType } from "zod";
+import type { ZodType } from "zod";
 import {
   ProviderEventSchema,
   type ProviderConnection,
@@ -120,8 +118,6 @@ export function createPluginWorker(options: {
   const handlers = new Map<string, RegisteredRpc>();
   const subscriptions = new PluginSubscriptionHandlers({ send, sendAndWait });
   const providers = new Map<string, ProviderRegistration>();
-  const workflowPresets = new Map<string, PluginWorkflowPreset>();
-  const workflowStepAdapters = new Map<string, PluginWorkflowStepAdapterRegistration>();
   const usageSources = new Map<string, UsageSourceRegistration>();
   let worktreeManager: WorktreeManagerRegistration | null = null;
   const worktreeRequests = new Map<string, AbortController>();
@@ -236,59 +232,6 @@ export function createPluginWorker(options: {
     }
     if (usageSources.has(id)) throw new Error(`Duplicate usage source: ${id}`);
     usageSources.set(id, { ...source, id });
-  }
-
-  function registerWorkflowPreset(preset: PluginWorkflowPreset): void {
-    const workflowId = preset.workflowId.trim();
-    if (!workflowId) throw new Error("Plugin workflow preset requires workflowId");
-    if (workflowPresets.has(workflowId)) {
-      throw new Error(`Duplicate plugin workflow preset: ${workflowId}`);
-    }
-    workflowPresets.set(workflowId, { ...preset, workflowId });
-  }
-
-  function registerWorkflowStepAdapter(adapter: PluginWorkflowStepAdapterRegistration): void {
-    const type = adapter.type.trim();
-    if (!type) throw new Error("Plugin workflow step adapter requires type");
-    if (workflowStepAdapters.has(type)) {
-      throw new Error(`Duplicate plugin workflow step adapter: ${type}`);
-    }
-    workflowStepAdapters.set(type, adapter);
-    register(
-      {
-        name: `workflow.step.${type}`,
-        input: z.object({
-          input: z.record(z.string(), z.unknown()),
-          run: z
-            .object({
-              projectId: z.string(),
-              workspaceId: z.string(),
-              runId: z.string(),
-              workspaceRoot: z.string().optional(),
-              stepOutputs: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
-            })
-            .passthrough(),
-        }),
-        output: z.record(z.string(), z.unknown()),
-      } as unknown as PluginRpcContract,
-      async (rawInput, context) => {
-        const payload = rawInput as {
-          input: Record<string, unknown>;
-          run: {
-            projectId: string;
-            workspaceId: string;
-            runId: string;
-            workspaceRoot?: string;
-            stepOutputs?: Record<string, Record<string, unknown>>;
-          };
-        };
-        return adapter.execute(payload.input, {
-          paseo: context.paseo,
-          run: payload.run,
-          stepOutputs: payload.run.stepOutputs,
-        });
-      },
-    );
   }
 
   function worktreeManagerCapabilities() {
@@ -526,8 +469,6 @@ export function createPluginWorker(options: {
       handle,
       registerProvider,
       registerUsageSource,
-      registerWorkflowPreset,
-      registerWorkflowStepAdapter,
       registerWorktreeManager,
       registerSettings,
       addHook: hooks.addHook,
@@ -545,26 +486,11 @@ export function createPluginWorker(options: {
           id: source.id,
           label: source.label,
           provider: source.provider,
-          icon:
-            source.icon && message.pluginDirectory
-              ? await readPluginProviderIcon(message.pluginDirectory, source.icon)
-              : undefined,
+          icon: source.icon
+            ? await readPluginProviderIcon(message.pluginDirectory, source.icon)
+            : undefined,
         })),
     );
-    const stepAdapterMetadata = [...workflowStepAdapters.values()]
-      .sort((left, right) => left.type.localeCompare(right.type))
-      .map((adapter) => ({
-        type: adapter.type,
-        version: adapter.version,
-        executionRisk: adapter.executionRisk,
-        requiredPermissions: adapter.requiredPermissions,
-        repositoryCallable: adapter.repositoryCallable,
-        idempotency: adapter.idempotency,
-        cancellation: adapter.cancellation,
-        recovery: adapter.recovery,
-        supportedPlatforms: adapter.supportedPlatforms,
-        resourceConflictKey: adapter.resourceConflictKey,
-      }));
     send({
       type: "ready",
       methods: [...handlers.keys()].sort(),
@@ -574,11 +500,7 @@ export function createPluginWorker(options: {
       providers: [...providers.values()]
         .sort((left, right) => left.id.localeCompare(right.id))
         .map(providerMetadata),
-      workflowPresets: [...workflowPresets.values()].sort((left, right) =>
-        left.workflowId.localeCompare(right.workflowId),
-      ),
-      ...(stepAdapterMetadata.length > 0 ? { workflowStepAdapters: stepAdapterMetadata } : {}),
-      ...(usageSourceMetadata.length > 0 ? { usageSources: usageSourceMetadata } : {}),
+      usageSources: usageSourceMetadata,
     });
   }
 
@@ -999,20 +921,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   };
   process.on("message", (raw) => {
     const parsed = PluginProcessRequestSchema.safeParse(raw);
-    if (!worker) {
-      if (parsed.success && parsed.data.type === "initialize") {
-        try {
-          initializeEnvironmentProxy();
-          worker = createPluginWorker({ channel, contribute: evaluateBundle(parsed.data.bundle) });
-        } catch (error) {
-          channel.send({ type: "fatal", error: describeError(error) });
-          return;
-        }
-      } else {
-        const errorMsg = !parsed.success
-          ? `Plugin worker failed to parse message: ${parsed.error.message}`
-          : `Plugin worker received unexpected message before initialize: ${(raw as { type?: unknown })?.type}`;
-        channel.send({ type: "fatal", error: errorMsg });
+    if (!worker && parsed.success && parsed.data.type === "initialize") {
+      try {
+        initializeEnvironmentProxy();
+        worker = createPluginWorker({ channel, contribute: evaluateBundle(parsed.data.bundle) });
+      } catch (error) {
+        channel.send({ type: "fatal", error: describeError(error) });
         return;
       }
     }

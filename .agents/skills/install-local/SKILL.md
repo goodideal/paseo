@@ -174,20 +174,16 @@ git remote set-url origin https://github.com/goodideal/paseo.git
 
 ---
 
-### 特性 E：插件化 Usage Source 与 Workflow 引擎整合及插件目录隔离 (`packages/server` & `packages/plugin` & `plugins/`)
+### 特性 E：插件跨调用能力与本地插件目录隔离 (`packages/client` & `plugins/` & `plugin-custom/`)
 
 - **核心意图**：
-  1. **官方插件化 Usage 体系融合**：官方自 v0.10.1 起将额度用量抓取重构为独立的 `@getpaseo/builtin-plugins` 体系（位于 `plugins/*-usage-source`），并在 `PluginServerContext` 中引入 `registerUsageSource`；
-  2. **Workflow 引擎注入**：定制分支支持在插件中注册工作流预设（`registerWorkflowPreset`）。在 `packages/server` 插件进程重构为 `createPluginWorker({ channel, contribute })` 工厂模式后，定制逻辑必须通过 `contribute` 函数注入并随 `ready` 消息回传主进程；
-  3. **内置插件与外部扩展插件隔离**：官方将 `plugins` 纳入 monorepo workspaces。由于本地常使用软链接将外部自定义插件（如 `agent-radar`、`gitea-workflow`）挂载到 `plugins/`，必须严格配置 `plugins/tsconfig.json` 的 `include` 仅限定为内置插件（`["*-usage-source/**/*.ts"]`），防止外部包含 JSX 的组件代码引发 `TS17004` 报错。
+  1. **通用插件跨调用能力 (`PaseoApi.plugins.invoke`)**：在 `packages/client/src/index.ts` 暴露通用 `paseo.plugins.invoke(pluginId, method, input)`（直接复用官方 `DaemonClient.invokePluginRpc`，0 新增核心协议），Workflow 引擎已完整下沉至独立插件 `plugin-custom/workflow-runs/`，彻底移除 `packages/plugin`、`plugin-process*`、`runtime.ts`、`plugins/index.ts`、`bootstrap.ts`、`session.ts`、`websocket-server.ts` 中的所有 Workflow 侵入代码；
+  2. **内置插件与外部扩展插件隔离**：官方将 `plugins` 纳入 monorepo workspaces，本地定制插件统一存放在 `plugin-custom/` 下并通过 `~/.paseo/config.json` 以 directory source 挂载，避免污染官方 `plugins/` 目录。
 - **涉及核心文件**：
-  - `packages/plugin/src/server/contracts.ts`（`PluginServerContext` 声明 `registerUsageSource` 与 `registerWorkflowPreset?`）
-  - `packages/server/src/server/plugins/plugin-process-protocol.ts`（消息协议定义 `usageSources` 与 `workflowPresets`）
-  - `packages/server/src/server/plugins/plugin-process.ts`（`createPluginWorker` 内初始化、注册与 `ready` 上报）
-  - `packages/server/src/server/plugins/runtime.ts`（运行时接收并存储 registrations）
-  - `packages/server/src/server/plugins/index.ts`（插件服务生命周期 publish 与 remove）
-  - `plugins/tsconfig.json`（`include` 限定为 `["*-usage-source/**/*.ts"]`）
-  - 自定义插件测试：在 mock `PluginServerContext` 时必须包含 `registerUsageSource: vi.fn()`。
+  - `packages/client/src/index.ts`（暴露通用 `PaseoPluginActions.invoke`）
+  - `plugin-custom/workflow-runs/`（独立 DAG Workflow 引擎与前端面板，提供标准插件 RPC）
+  - `plugin-custom/gitea-workflow/` & `plugin-custom/visual-crawler-auto-fix/`（通过 `paseo.plugins.invoke("workflow-runs", ...)` 注册预设与调度步骤）
+  - `plugins/tsconfig.json`（与 `upstream/main` 保持一致）
 
 ---
 

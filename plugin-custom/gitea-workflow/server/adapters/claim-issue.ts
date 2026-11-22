@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { PluginWorkflowStepAdapterRegistration } from "@getpaseo/plugin/server";
+import type { PluginWorkflowStepAdapterRegistration } from "../../shared/workflow-types.js";
 import type { GiteaClientPool } from "../client-pool.js";
 import type { IssueRunIndexStore } from "../store.js";
 import { TRIGGER_LABELS } from "../../shared/types.js";

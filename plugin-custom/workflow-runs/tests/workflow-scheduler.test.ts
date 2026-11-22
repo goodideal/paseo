@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import type { WorkflowDefinition } from "./definition-compiler.js";
-import { scheduleWorkflow } from "./workflow-scheduler.js";
-import { StepAdapterRegistry } from "./step-adapter-registry.js";
-import type { WorkflowRun } from "./workflow-models.js";
+import type { WorkflowDefinition } from "../server/engine/definition-compiler.js";
+import { scheduleWorkflow } from "../server/engine/workflow-scheduler.js";
+import { StepAdapterRegistry } from "../server/engine/step-adapter-registry.js";
+import type { WorkflowRun } from "../server/engine/workflow-models.js";
 
 function makeRun(overrides: Partial<WorkflowRun> = {}): WorkflowRun {
   return {

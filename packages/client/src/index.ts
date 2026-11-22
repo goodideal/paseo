@@ -589,21 +589,8 @@ export interface PaseoConfigActions {
   ): Promise<{ requestId: string; config: MutableDaemonConfig }>;
 }
 
-export interface PaseoWorkflowActions {
-  definitionList: DaemonClient["workflowDefinitionList"];
-  definitionInspect: DaemonClient["workflowDefinitionInspect"];
-  runCreate: DaemonClient["workflowRunCreate"];
-  runList: DaemonClient["workflowRunList"];
-  runInspect: DaemonClient["workflowRunInspect"];
-  runCancel: DaemonClient["workflowRunCancel"];
-  runRetry: DaemonClient["workflowRunRetry"];
-  runResume: DaemonClient["workflowRunResume"];
-  approvalList: DaemonClient["workflowApprovalList"];
-  approvalApprove: DaemonClient["workflowApprovalApprove"];
-  approvalDeny: DaemonClient["workflowApprovalDeny"];
-  artifactList: DaemonClient["workflowArtifactList"];
-  artifactGet: DaemonClient["workflowArtifactGet"];
-  interactionRespond: DaemonClient["workflowInteractionRespond"];
+export interface PaseoPluginActions {
+  invoke: DaemonClient["invokePluginRpc"];
 }
 
 export interface PaseoApi {
@@ -615,7 +602,7 @@ export interface PaseoApi {
   readonly projects: PaseoProjectActions;
   readonly agents: PaseoAgentActions;
   readonly providers: PaseoProviderActions;
-  readonly workflows: PaseoWorkflowActions;
+  readonly plugins: PaseoPluginActions;
   readonly config: PaseoConfigActions;
 }
 
@@ -919,21 +906,8 @@ export function createPaseoApi(
         });
       },
     },
-    workflows: {
-      definitionList: (options) => daemonClient.workflowDefinitionList(options),
-      definitionInspect: (options) => daemonClient.workflowDefinitionInspect(options),
-      runCreate: (options) => daemonClient.workflowRunCreate(options),
-      runList: (options) => daemonClient.workflowRunList(options),
-      runInspect: (options) => daemonClient.workflowRunInspect(options),
-      runCancel: (options) => daemonClient.workflowRunCancel(options),
-      runRetry: (options) => daemonClient.workflowRunRetry(options),
-      runResume: (options) => daemonClient.workflowRunResume(options),
-      approvalList: (options) => daemonClient.workflowApprovalList(options),
-      approvalApprove: (options) => daemonClient.workflowApprovalApprove(options),
-      approvalDeny: (options) => daemonClient.workflowApprovalDeny(options),
-      artifactList: (options) => daemonClient.workflowArtifactList(options),
-      artifactGet: (options) => daemonClient.workflowArtifactGet(options),
-      interactionRespond: (options) => daemonClient.workflowInteractionRespond(options),
+    plugins: {
+      invoke: (pluginId, method, input) => daemonClient.invokePluginRpc(pluginId, method, input),
     },
     config: {
       get: (requestId) => daemonClient.getDaemonConfig(requestId),

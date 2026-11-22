@@ -1,46 +1,3 @@
-export interface PluginWorkflowStepAdapterManifest {
-  type: string;
-  version: string;
-  inputSchema: ZodType;
-  outputSchema: ZodType;
-  executionRisk: "read" | "workspace_observe" | "workspace_write" | "external_write" | "privileged";
-  requiredPermissions: string[];
-  repositoryCallable: boolean;
-  idempotency: "none" | "required";
-  cancellation: "unsupported" | "supported" | "best_effort";
-  recovery: "not_resumable" | "resumable" | "inspect_before_retry";
-  supportedPlatforms: Array<"darwin" | "linux" | "win32">;
-  resourceConflictKey: string;
-}
-
-export interface PluginWorkflowRunReference {
-  projectId: string;
-  workspaceId: string;
-  runId: string;
-  workspaceRoot?: string;
-  stepOutputs?: Record<string, Record<string, unknown>>;
-}
-
-export interface PluginWorkflowStepExecutionContext {
-  paseo: PaseoApi;
-  run: PluginWorkflowRunReference;
-  stepOutputs?: Record<string, Record<string, unknown>>;
-}
-
-export interface PluginWorkflowStepAdapterRegistration extends PluginWorkflowStepAdapterManifest {
-  execute(
-    input: Record<string, unknown>,
-    context: PluginWorkflowStepExecutionContext,
-  ): Promise<Record<string, unknown>>;
-}
-
-export interface PluginWorkflowPreset {
-  workflowId: string;
-  name: string;
-  sourcePreset: string;
-  definition: unknown;
-}
-
 import type { PaseoApi } from "@getpaseo/client";
 import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
 import type { PluginRpcContract, PluginSubscriptionContract, PluginWireInput } from "../rpc.js";
@@ -108,8 +65,6 @@ export interface PluginServerContext extends PluginLifecycleRegistration {
   ): void;
   registerProvider(provider: ProviderRegistration): void;
   registerUsageSource(source: UsageSourceRegistration): void;
-  registerWorkflowPreset?(preset: PluginWorkflowPreset): void;
-  registerWorkflowStepAdapter?(adapter: PluginWorkflowStepAdapterRegistration): void;
   registerWorktreeManager(manager: WorktreeManagerRegistration): () => void;
 }
 

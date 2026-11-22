@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import type { PluginWorkflowStepAdapterRegistration } from "@getpaseo/plugin/server";
+import type { PluginWorkflowStepAdapterRegistration } from "../../shared/workflow-types.js";
 import type { IssueRunIndexStore } from "../store.js";
 import type { SettingsManager } from "../settings-manager.js";
 

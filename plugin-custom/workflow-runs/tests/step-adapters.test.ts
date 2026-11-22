@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { registerBuiltInWorkflowStepManifests } from "./core-step-manifests.js";
-import { StepAdapterRegistry } from "./step-adapter-registry.js";
-import { StepExecutor, type StepExecutorHost } from "./step-executors.js";
-import { VerificationProfileRegistry } from "./verification-profiles.js";
-import type { WorkflowRun, WorkflowStepAttempt } from "./workflow-models.js";
-import { WorkflowStepAttemptSchema } from "./workflow-models.js";
+import { registerBuiltInWorkflowStepManifests } from "../server/engine/core-step-manifests.js";
+import { StepAdapterRegistry } from "../server/engine/step-adapter-registry.js";
+import { StepExecutor, type StepExecutorHost } from "../server/engine/step-executors.js";
+import { VerificationProfileRegistry } from "../server/engine/verification-profiles.js";
+import type { WorkflowRun, WorkflowStepAttempt } from "../server/engine/workflow-models.js";
+import { WorkflowStepAttemptSchema } from "../server/engine/workflow-models.js";
 
 function makeRun(
   stepId: string,

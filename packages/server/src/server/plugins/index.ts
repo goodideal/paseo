@@ -1,4 +1,3 @@
-import { z } from "zod";
 import type { PluginAgentToolsRuntime } from "./agent-tools.js";
 import type { PluginLifecycle } from "./lifecycle/index.js";
 import path from "node:path";
@@ -31,12 +30,7 @@ import { BuiltinPluginLoader, type BuiltinPlugin } from "./builtin/index.js";
 import type {
   PluginProviderInstallationMetadata,
   PluginProviderMetadata,
-  PluginWorkflowPresetMetadata,
-  PluginWorkflowStepAdapterMetadata,
 } from "./plugin-process-protocol.js";
-import type { WorkflowPresetRegistry } from "../workflows/workflow-preset-registry.js";
-import type { StepAdapterRegistry } from "../workflows/step-adapter-registry.js";
-import type { WorkflowService } from "../workflows/workflow-service.js";
 import { readPluginProviderIcon } from "./provider-icon.js";
 import {
   type AgentUsageLookup,
@@ -61,15 +55,11 @@ interface PluginRuntimePort {
   removeWorktree?: PluginWorktreeManagerRuntime["removeWorktree"];
   restoreWorktree?: PluginWorktreeManagerRuntime["restoreWorktree"];
   catalog: PluginRuntime["catalog"];
-  invoke(pluginId: string, method: string, input: unknown, timeoutMs?: number): Promise<unknown>;
+  invoke(pluginId: string, method: string, input: unknown): Promise<unknown>;
   startSubscription: PluginRuntime["startSubscription"];
   getLogs(pluginId: string): PluginLogEntry[];
   clearLogs(pluginId: string): void;
   getProviderRegistrations?(pluginId: string): readonly PluginProviderMetadata[];
-  getWorkflowPresetRegistrations?(pluginId: string): readonly PluginWorkflowPresetMetadata[];
-  getWorkflowStepAdapterRegistrations?(
-    pluginId: string,
-  ): readonly PluginWorkflowStepAdapterMetadata[];
   getUsageSourceRegistrations(pluginId: string): readonly PluginUsageSourceMetadata[];
   fetchUsage: PluginRuntime["fetchUsage"];
   discoverUsage: PluginRuntime["discoverUsage"];
@@ -91,9 +81,6 @@ interface PluginRuntimePort {
 interface PluginServiceDependencies {
   usageAgents?: AgentUsageLookup;
   settingsDirectory?: string;
-  workflowPresets?: WorkflowPresetRegistry;
-  workflowRegistry?: StepAdapterRegistry;
-  workflowService?: WorkflowService;
   runtime?: PluginRuntimePort;
   managedSources?: ManagedPluginSources;
   builtinPlugins?: BuiltinPluginLoader;
@@ -673,12 +660,10 @@ export class PluginService {
     await publishTurn;
     try {
       await this.publishProviderRegistrations(pluginId, sourcePath);
-      this.publishWorkflowRegistrations(pluginId);
       this.publishUsageSources(pluginId);
     } catch (error) {
       try {
         this.removeProviderRegistrations(pluginId);
-        this.removeWorkflowRegistrations(pluginId);
         this.removeUsageSources(pluginId);
       } finally {
         await this.runtime.stopPluginById(pluginId);
@@ -689,7 +674,6 @@ export class PluginService {
 
   private stopPlugin(pluginId: string): Promise<boolean> {
     this.removeProviderRegistrations(pluginId);
-    this.removeWorkflowRegistrations(pluginId);
     this.removeUsageSources(pluginId);
     return this.runtime.stopPluginById(pluginId);
   }
@@ -705,78 +689,8 @@ export class PluginService {
     for (const pluginId of this.providerIdsByPlugin.keys()) {
       this.removeProviderRegistrations(pluginId);
     }
-    for (const pluginId of this.usageSourceIdsByPlugin.keys()) {
-      this.removeUsageSources(pluginId);
-    }
-    for (const pluginId of Object.keys(this.configStore.get().plugins ?? {})) {
-      this.removeWorkflowRegistrations(pluginId);
-    }
+    for (const pluginId of this.usageSourceIdsByPlugin.keys()) this.removeUsageSources(pluginId);
     await this.runtime.stopAll();
-  }
-
-  private publishWorkflowRegistrations(pluginId: string): void {
-    const adapters = this.runtime.getWorkflowStepAdapterRegistrations?.(pluginId) ?? [];
-    for (const adapter of adapters) {
-      this.dependencies.workflowRegistry?.registerPlugin({
-        pluginId,
-        manifest: {
-          ...adapter,
-          requiredPermissions:
-            adapter.requiredPermissions as import("../authorization/index.js").DaemonPermission[],
-          inputSchema: z.record(z.string(), z.unknown()),
-          outputSchema: z.record(z.string(), z.unknown()),
-        },
-      });
-    }
-    const presets = this.runtime.getWorkflowPresetRegistrations?.(pluginId) ?? [];
-    for (const preset of presets) {
-      this.dependencies.workflowPresets?.register({
-        workflowId: preset.workflowId,
-        name: preset.name,
-        sourcePreset: pluginId,
-        definition:
-          preset.definition as import("../workflows/definition-compiler.js").WorkflowDefinition,
-      });
-    }
-  }
-
-  async executeWorkflowStepAdapter(params: {
-    pluginId: string;
-    adapterType: string;
-    input: Record<string, unknown>;
-    run: import("../workflows/workflow-models.js").WorkflowRun;
-    timeoutMs?: number;
-  }): Promise<Record<string, unknown>> {
-    const stepOutputs: Record<string, Record<string, unknown>> = {};
-    for (const attempt of params.run.stepAttempts) {
-      if (attempt.declaredOutputs) {
-        stepOutputs[attempt.stepId] = attempt.declaredOutputs;
-      }
-    }
-    const output = await this.runtime.invoke(
-      params.pluginId,
-      `workflow.step.${params.adapterType}`,
-      {
-        input: params.input,
-        run: {
-          projectId: params.run.projectId,
-          workspaceId: params.run.workspaceId,
-          workspaceRoot: params.run.workspaceRoot,
-          runId: params.run.id,
-          stepOutputs,
-        },
-      },
-      params.timeoutMs,
-    );
-    return (output ?? {}) as Record<string, unknown>;
-  }
-
-  private removeWorkflowRegistrations(pluginId: string): void {
-    const removedTypes = this.dependencies.workflowRegistry?.unregisterPlugin(pluginId) ?? [];
-    this.dependencies.workflowPresets?.unregisterPlugin(pluginId);
-    if (removedTypes.length > 0) {
-      this.dependencies.workflowService?.handlePluginUnload(pluginId, removedTypes);
-    }
   }
 
   private publishUsageSources(pluginId: string): void {

@@ -92,58 +92,56 @@ export default function contribute(
     }
   };
 
-  // Register the visual-crawler-fix workflow preset with Core if available
-  if (server.registerWorkflowPreset) {
-    server.registerWorkflowPreset({
-      workflowId: "visual-crawler-fix",
-      name: "Visual Crawler Auto-Fix",
-      sourcePreset: "visual-crawler",
-      definition: {
-        id: "visual-crawler-fix",
-        revision: "1",
-        maxConcurrency: 1,
-        maxArtifactBytes: 1024 * 1024,
-        steps: [
-          {
-            id: "worktree",
-            type: "worktree.create",
-            timeoutMs: 60_000,
-            retries: 0,
-            concurrency: 1,
-            approval: "automatic",
-          },
-          {
-            id: "repair",
-            type: "agent.dispatch",
-            dependsOn: ["worktree"],
-            timeoutMs: 300_000,
-            retries: 0,
-            concurrency: 1,
-            approval: "automatic",
-          },
-          {
-            id: "verify",
-            type: "verify.command",
-            dependsOn: ["repair"],
-            timeoutMs: 60_000,
-            retries: 0,
-            concurrency: 1,
-            approval: "automatic",
-          },
-          {
-            id: "ship",
-            type: "git.create_pr",
-            dependsOn: ["verify"],
-            when: "steps.verify.outputs.passed == true",
-            timeoutMs: 60_000,
-            retries: 0,
-            concurrency: 1,
-            approval: "required",
-          },
-        ],
-      },
-    });
-  }
+  const visualCrawlerPreset = {
+    workflowId: "visual-crawler-fix",
+    name: "Visual Crawler Auto-Fix",
+    sourcePreset: "visual-crawler-auto-fix",
+    definition: {
+      id: "visual-crawler-fix",
+      revision: "1",
+      maxConcurrency: 1,
+      maxArtifactBytes: 1024 * 1024,
+      steps: [
+        {
+          id: "worktree",
+          type: "worktree.create",
+          timeoutMs: 60_000,
+          retries: 0,
+          concurrency: 1,
+          approval: "automatic",
+        },
+        {
+          id: "repair",
+          type: "agent.dispatch",
+          dependsOn: ["worktree"],
+          timeoutMs: 300_000,
+          retries: 0,
+          concurrency: 1,
+          approval: "automatic",
+        },
+        {
+          id: "verify",
+          type: "verify.command",
+          dependsOn: ["repair"],
+          timeoutMs: 60_000,
+          retries: 0,
+          concurrency: 1,
+          approval: "automatic",
+        },
+        {
+          id: "ship",
+          type: "git.create_pr",
+          dependsOn: ["verify"],
+          when: "steps.verify.outputs.passed == true",
+          timeoutMs: 60_000,
+          retries: 0,
+          concurrency: 1,
+          approval: "required",
+        },
+      ],
+    },
+  };
+  let presetRegistered = false;
 
   server.handle(startCrawlRpc, async (input) => {
     try {
@@ -178,13 +176,23 @@ export default function contribute(
       const res = await options.workflowRunner.createRun({ directiveId });
       runId = res.runId;
     } else {
-      if (!context?.paseo) throw new Error("Paseo Workflow API is unavailable");
-      const runRes = await context.paseo.workflows.runCreate({
+      if (!context?.paseo?.plugins?.invoke) {
+        throw new Error("Paseo Workflow Runs plugin RPC is unavailable");
+      }
+      if (!presetRegistered) {
+        await context.paseo.plugins.invoke("workflow-runs", "workflow.registry.register", {
+          pluginId: "visual-crawler-auto-fix",
+          presets: [visualCrawlerPreset],
+          stepAdapters: [],
+        });
+        presetRegistered = true;
+      }
+      const runRes = (await context.paseo.plugins.invoke("workflow-runs", "workflow.run.create", {
         projectId: scope.projectId,
         workspaceId: scope.workspaceId,
         workflowId: "visual-crawler-fix",
         input: { directiveId },
-      });
+      })) as { runId?: string | null; error?: string | null };
       if (runRes.error || !runRes.runId) {
         throw new Error(runRes.error ?? "Workflow Run creation returned no runId");
       }

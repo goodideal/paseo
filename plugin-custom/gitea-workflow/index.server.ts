@@ -22,6 +22,14 @@ import { createGiteaStepAdapters } from "./server/adapters/index.js";
 import { giteaWorkflowPresets } from "./server/presets/issue-to-pr.js";
 import { EvidenceManager } from "./server/evidence-manager.js";
 import { EvidencePruner } from "./server/cleanup.js";
+import { WorkflowStepJobRunner } from "./server/step-job-runner.js";
+import {
+  WORKFLOW_RUNS_PLUGIN_ID,
+  createWorkflowRunsClient,
+  toStepAdapterManifest,
+  workflowStepDispatchRpc,
+  workflowStepPollRpc,
+} from "./shared/workflow-types.js";
 
 function getPaseoHome(): string {
   return process.env.PASEO_HOME || join(homedir(), ".paseo");
@@ -84,21 +92,47 @@ export default function contribute(server: PluginServerContext) {
   let activePaseo: PaseoApi | null = null;
   let paseoClient: PaseoClient | null = null;
 
+  const stepAdapters = createGiteaStepAdapters(clientPool, indexStore, settingsManager);
+  const stepJobRunner = new WorkflowStepJobRunner(stepAdapters);
+  let registrySynced = false;
+
+  const ensureRegistryRegistered = async (api: PaseoApi): Promise<void> => {
+    if (registrySynced || !api.plugins?.invoke) return;
+    await api.plugins.invoke(WORKFLOW_RUNS_PLUGIN_ID, "workflow.registry.register", {
+      pluginId: "gitea-workflow",
+      stepAdapters: stepAdapters.map(toStepAdapterManifest),
+      presets: giteaWorkflowPresets.map((preset) => ({
+        workflowId: preset.workflowId,
+        name: preset.name,
+        sourcePreset: preset.sourcePreset ?? "gitea-workflow",
+        definition: preset.definition,
+      })),
+    });
+    registrySynced = true;
+  };
+
+  const workflowsClient = createWorkflowRunsClient(
+    () => paseoClient ?? activePaseo,
+    ensureRegistryRegistered,
+  );
+
   const pruner = new EvidencePruner(
     EvidenceManager,
     {
       runInspect: (opts: { projectId: string; workspaceId: string; runId: string }) =>
-        (paseoClient ?? activePaseo)!.workflows.runInspect(opts),
+        workflowsClient.runInspect(opts),
     } as any,
     settingsManager,
   );
 
-  for (const adapter of createGiteaStepAdapters(clientPool, indexStore, settingsManager)) {
-    server.registerWorkflowStepAdapter?.(adapter);
-  }
-  for (const preset of giteaWorkflowPresets) {
-    server.registerWorkflowPreset?.(preset);
-  }
+  server.handle(workflowStepDispatchRpc, (input, context) => {
+    activePaseo = context.paseo;
+    return stepJobRunner.dispatch(input, context);
+  });
+
+  server.handle(workflowStepPollRpc, ({ jobId }) => {
+    return stepJobRunner.poll(jobId);
+  });
 
   let poller: MultiProjectPoller | null = null;
   let retryTimer: NodeJS.Timeout | null = null;
@@ -117,6 +151,12 @@ export default function contribute(server: PluginServerContext) {
         });
       }
       await paseoClient.connect();
+      await ensureRegistryRegistered(paseoClient).catch((err) => {
+        console.warn(
+          "[gitea-workflow] Deferred workflow registry sync:",
+          (err as Error)?.message ?? String(err),
+        );
+      });
 
       if (!poller && !isDisposed) {
         poller = new MultiProjectPoller({
@@ -124,7 +164,7 @@ export default function contribute(server: PluginServerContext) {
           resolver,
           clientPool,
           indexStore,
-          getWorkflows: () => (paseoClient ?? activePaseo)?.workflows,
+          getWorkflows: () => (paseoClient || activePaseo ? workflowsClient : undefined),
           getProjects: async () => {
             const api = paseoClient ?? activePaseo;
             if (!api) return [];
@@ -181,7 +221,7 @@ export default function contribute(server: PluginServerContext) {
         resolver,
         clientPool,
         indexStore,
-        getWorkflows: () => context.paseo.workflows,
+        getWorkflows: () => createWorkflowRunsClient(() => context.paseo, ensureRegistryRegistered),
         getProjects: async () => {
           const list = await context.paseo.projects.list();
           return list.projects;
@@ -204,10 +244,11 @@ export default function contribute(server: PluginServerContext) {
   });
 
   server.handle(approveTaskRpc, async ({ taskId }, context) => {
-    const workflows = context.paseo.workflows;
-    if (!workflows) {
+    activePaseo = context.paseo;
+    if (!context.paseo.plugins?.invoke) {
       return { ok: false, error: "Workflow service is unavailable" };
     }
+    const workflows = createWorkflowRunsClient(() => context.paseo, ensureRegistryRegistered);
     try {
       const task = await store.getTask(taskId);
       const projectId = task?.projectId ?? "default";
@@ -234,10 +275,11 @@ export default function contribute(server: PluginServerContext) {
   });
 
   server.handle(rejectTaskRpc, async ({ taskId, feedback }, context) => {
-    const workflows = context.paseo.workflows;
-    if (!workflows) {
+    activePaseo = context.paseo;
+    if (!context.paseo.plugins?.invoke) {
       return { ok: false, error: "Workflow service is unavailable" };
     }
+    const workflows = createWorkflowRunsClient(() => context.paseo, ensureRegistryRegistered);
     try {
       const task = await store.getTask(taskId);
       const projectId = task?.projectId ?? "default";
