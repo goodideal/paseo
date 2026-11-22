@@ -22,7 +22,15 @@ export type BuiltInDomainRole =
 export type DomainRole = BuiltInDomainRole | (string & {});
 
 /** Specialist handoff target role (supports built-in and user-defined roles). */
-export type HandoffTargetRole = "ui" | "backend" | "qa" | "review" | (string & {});
+export type HandoffTargetRole =
+  | "architect"
+  | "pm"
+  | "ui"
+  | "backend"
+  | "qa"
+  | "review"
+  | "scout"
+  | (string & {});
 
 export type ProviderModelMapping = Record<string, string>;
 
@@ -139,6 +147,16 @@ export type McpServerConfigEntry =
       alwaysLoad?: boolean;
     };
 
+export interface AgentTeamSummary {
+  projectSlug: string;
+  preset: string;
+  manifestPath: string;
+  checkoutRoot: string;
+  mainRepoRoot: string;
+  hasLocalAntigravityPlugin: boolean;
+  roles: string[];
+}
+
 export interface HarnessSpecialistConfig {
   id: string;
   name: string;
@@ -148,6 +166,7 @@ export interface HarnessSpecialistConfig {
   color?: string;
   enabled: boolean;
   builtIn: boolean;
+  readonly?: boolean;
   preferredProvider?: string;
   preferredTier?: MatrixTier;
   modelOverride?: string;
@@ -211,6 +230,7 @@ export interface EffectiveHarnessConfig {
   providerMappings: Record<string, Record<string, string>>;
   providerModes: Record<string, ProviderModeConfig>;
   bypassProviders: string[];
+  bypassModels: string[];
   honorSpecialistPreferredProvider: boolean;
   specialists: HarnessSpecialistConfig[];
   defaultFallbackRole: string;
@@ -238,4 +258,5 @@ export interface EffectiveHarnessConfig {
   repoConfigRelativePath: string;
   repoOverrideLoaded?: boolean;
   repoRoot?: string;
+  agentTeam?: AgentTeamSummary | null;
 }

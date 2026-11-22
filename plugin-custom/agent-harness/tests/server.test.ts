@@ -1,6 +1,13 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import contribute from "../index.server.js";
-import { createInitialHarnessMetadata } from "../shared/lifecycle-state.js";
+import {
+  hasLocalAntigravityTeamPlugin,
+  loadWorkspaceAgentTeam,
+} from "../server/agent-team-loader.js";
+import { createInitialHarnessMetadata, HARNESS_LEAF_META_KEY } from "../shared/lifecycle-state.js";
 import { HARNESS_METADATA_KEY, type HarnessAgentMetadata } from "../shared/types.js";
 
 function createTestServer(settingsOverride?: Record<string, unknown>) {
@@ -259,11 +266,26 @@ describe("agent-harness server contribute", () => {
     expect(openedSecond.env.PASEO_HARNESS_ROLE).toBe("backend");
   });
 
-  it("skips harness injection for antigravity safety-net provider in agent.open.before", async () => {
+  it("skips harness injection across full lifecycle when antigravity uses gemini-pro-orchestrator", async () => {
     const { hooks } = createTestServer();
 
+    const created = await hooks["agent.create.before"]({
+      request: {
+        config: {
+          provider: "antigravity",
+          cwd: "/Users/jerry/projects/ai/paseo",
+          model: "gemini-pro-orchestrator",
+          title: "重构 UI 组件样式",
+        },
+      },
+    });
+    expect(created.config.model).toBe("gemini-pro-orchestrator");
+    expect(created.config.systemPrompt).toBeUndefined();
+    expect(created.metadata?.agentHarnessBypassed).toBe(true);
+    expect(created.metadata?.[HARNESS_METADATA_KEY]).toBeUndefined();
+
     const openRequest = {
-      agentId: "agt_agy_1",
+      agentId: "agt_agy_orch_1",
       workspaceId: "wks_1",
       provider: "antigravity",
       cwd: "/Users/jerry/projects/ai/paseo",
@@ -271,6 +293,7 @@ describe("agent-harness server contribute", () => {
       purpose: "interactive",
       title: "重构 UI 组件样式",
       labels: {},
+      metadata: created.metadata,
       tools: [],
       env: { EXISTING_VAR: "1" },
       mcpServers: {},
@@ -279,6 +302,65 @@ describe("agent-harness server contribute", () => {
     const transformed = await hooks["agent.open.before"]({ request: openRequest });
     expect(transformed.env.PASEO_HARNESS_ROLE).toBeUndefined();
     expect(transformed.env.LAZY_TOOL_CONFIG).toBeUndefined();
+    expect(transformed.tools).toEqual([]);
+
+    const { context, handle } = createMockContext({
+      timelineItems: [{ type: "user_message", text: "yes, continue" }],
+    });
+    await hooks["agent.turn.before"](
+      {
+        agent: {
+          id: "agt_agy_orch_1",
+          provider: "antigravity",
+          metadata: created.metadata,
+        },
+      },
+      context,
+    );
+    expect(handle.setModel).not.toHaveBeenCalled();
+  });
+
+  it("enables capability harness and Gemini 4 routing for non-orchestrator antigravity models", async () => {
+    const { hooks } = createTestServer();
+
+    const created = await hooks["agent.create.before"]({
+      request: {
+        config: {
+          provider: "antigravity",
+          cwd: "/Users/jerry/projects/ai/paseo/agy-ui-leaf",
+          model: "gemini-4-hydrogen-high",
+          title: "设计一个多视口响应式 UI 布局方案",
+          labels: { role: "ui" },
+        },
+      },
+    });
+
+    // role=ui has preferredTier=flash -> gemini-4-hydrogen-high; prompt banner uses read_file
+    expect(created.config.model).toBe("gemini-4-hydrogen-high");
+    expect(created.config.systemPrompt).toContain("read_file");
+    expect(created.config.systemPrompt).not.toContain("invoke the `Skill` tool");
+    expect(created.metadata?.[HARNESS_METADATA_KEY]?.role).toBe("ui");
+
+    const opened = await hooks["agent.open.before"]({
+      request: {
+        agentId: "agt_agy_ui_1",
+        workspaceId: "wks_1",
+        provider: "antigravity",
+        cwd: "/Users/jerry/projects/ai/paseo/agy-ui-leaf",
+        reason: "create",
+        purpose: "interactive",
+        title: "设计一个多视口响应式 UI 布局方案",
+        labels: {},
+        metadata: created.metadata,
+        tools: [],
+        env: {},
+        mcpServers: {},
+      },
+    });
+
+    expect(opened.env.PASEO_HARNESS_ROLE).toBe("ui");
+    expect(opened.env.LAZY_TOOL_CONFIG).toContain("profiles/ui.yaml");
+    expect(opened.tools.some((t: any) => t.name === "harness_handoff")).toBe(true);
   });
 
   describe("Step 1: System Prompt decoupled by decision.tier", () => {
@@ -414,20 +496,36 @@ describe("agent-harness server contribute", () => {
       expect(harnessMeta.phase).toBe("exec");
     });
 
-    it("does not initialize metadata for antigravity safety-net provider", async () => {
+    it("skips harness metadata for antigravity orchestrator models, and initializes for single-tier antigravity models", async () => {
       const { hooks } = createTestServer();
-      const res = await hooks["agent.create.before"]({
+      const bypassedRes = await hooks["agent.create.before"]({
         request: {
           config: {
             provider: "antigravity",
-            cwd: "/dummy",
-            model: "gemini-2.5-flash",
-            title: "fix: button alignment",
+            cwd: "/dummy-orch",
+            model: "gemini-pro-orchestrator-neon",
+            title: "分析架构设计",
           },
         },
       });
 
-      expect(res.metadata?.[HARNESS_METADATA_KEY]).toBeUndefined();
+      expect(bypassedRes.metadata?.[HARNESS_METADATA_KEY]).toBeUndefined();
+      expect(bypassedRes.metadata?.agentHarnessBypassed).toBe(true);
+
+      const singleTierRes = await hooks["agent.create.before"]({
+        request: {
+          config: {
+            provider: "antigravity",
+            cwd: "/dummy-single",
+            model: "gemini-4-hydrogen-high",
+            title: "分析系统架构与设计方案",
+          },
+        },
+      });
+
+      expect(singleTierRes.config.model).toBe("gemini-4-carbon-high");
+      expect(singleTierRes.metadata?.[HARNESS_METADATA_KEY]).toBeDefined();
+      expect(singleTierRes.metadata?.[HARNESS_METADATA_KEY]?.currentTier).toBe("plan");
     });
   });
 
@@ -1214,6 +1312,8 @@ describe("agent-harness server contribute", () => {
               role: "orchestrator",
               tier: "plan",
               model: "plan",
+              roleMatchedRule: "default",
+              tierMatchedRule: "plan",
             }),
             phase: "design",
           },
@@ -1807,6 +1907,1095 @@ describe("agent-harness server contribute", () => {
       await hooks["agent.close.after"]({ agent: { id: "agt_close_1" } });
       await hooks["agent.archive.after"]({ agent: { id: "agt_archive_1" } });
       expect(true).toBe(true);
+    });
+
+    it("applies L2 LLM role classification when endpoint is configured and avoids duplicate fetch on open", async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: '{"role":"architect","tier":"plan"}' } }],
+          }),
+          { status: 200 },
+        ),
+      );
+
+      try {
+        const { hooks } = createTestServer({
+          llmFallbackEnabled: true,
+          llmFallbackEndpoint: "https://llm.example.com/v1/chat/completions",
+          llmFallbackApiKey: "test-key",
+          llmFallbackApplyRole: true,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const created = await hooks["agent.create.before"]({
+          request: {
+            config: {
+              provider: "antigravity",
+              cwd: "/tmp/llm-apply-role-cwd",
+              model: "gemini-4-hydrogen-high",
+              title: "梳理跨租户状态流向",
+            },
+          },
+        });
+
+        expect(created.config.model).toBe("gemini-4-carbon-high");
+        expect(created.metadata?.[HARNESS_METADATA_KEY]?.role).toBe("architect");
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+        const opened = await hooks["agent.open.before"]({
+          request: {
+            agentId: "agt_llm_1",
+            workspaceId: "wks_1",
+            provider: "antigravity",
+            cwd: "/tmp/llm-apply-role-cwd",
+            reason: "create",
+            purpose: "interactive",
+            title: "梳理跨租户状态流向",
+            labels: {},
+            tools: [],
+            env: {},
+            mcpServers: {},
+          },
+        });
+
+        expect(opened.env.PASEO_HARNESS_ROLE).toBe("architect");
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+
+    it("auto-syncs daemon agentProfiles on subscription update when paseo API has been captured", async () => {
+      let subscriber = null as ((state: any) => void) | null;
+      const patchMock = vi.fn().mockResolvedValue({ requestId: "req-sync", config: {} });
+      const registeredRpcHandlers: Record<string, any> = {};
+
+      const mockServer: any = {
+        registerSettings: vi.fn().mockReturnValue({
+          read: vi.fn().mockResolvedValue({
+            status: "ready",
+            values: { enabled: true, autoSyncDaemonAgentProfiles: true },
+          }),
+          subscribe: vi.fn().mockImplementation((cb) => {
+            subscriber = cb;
+            return () => {};
+          }),
+        }),
+        handle: vi.fn().mockImplementation((contract: any, handler: any) => {
+          registeredRpcHandlers[contract.name] = handler;
+        }),
+        addHook: vi.fn().mockReturnValue(() => {}),
+      };
+
+      contribute(mockServer);
+
+      const inspectHandler = registeredRpcHandlers["agent_harness.environment.inspect.request"];
+      expect(inspectHandler).toBeDefined();
+
+      const mockPaseo = {
+        providers: {
+          snapshot: vi.fn().mockResolvedValue({
+            entries: [
+              {
+                provider: "antigravity",
+                enabled: true,
+                models: [{ id: "gemini-4-hydrogen-high" }, { id: "gemini-4-carbon-high" }],
+              },
+            ],
+          }),
+        },
+        config: {
+          get: vi.fn().mockResolvedValue({ requestId: "req-g", config: { agentProfiles: [] } }),
+          patch: patchMock,
+        },
+      };
+
+      const inspectRes = await inspectHandler({}, { paseo: mockPaseo });
+      expect(inspectRes.availableProviders).toEqual([
+        {
+          provider: "antigravity",
+          enabled: true,
+          models: ["gemini-4-hydrogen-high", "gemini-4-carbon-high"],
+        },
+      ]);
+      expect(patchMock).toHaveBeenCalledTimes(1);
+
+      const { DEFAULT_AGENT_HARNESS_SETTINGS } = await import("../shared/settings.js");
+      subscriber?.({
+        status: "ready",
+        values: {
+          ...DEFAULT_AGENT_HARNESS_SETTINGS,
+          autoSyncDaemonAgentProfiles: true,
+          specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) =>
+            s.id === "ui" ? { ...s, preferredProvider: "antigravity" } : s,
+          ),
+        },
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(patchMock).toHaveBeenCalledTimes(2);
+      const patchedProfiles = patchMock.mock.calls[1][0].agentProfiles;
+      const uiProfile = patchedProfiles.find((p: any) => p.id === "harness-ui");
+      expect(uiProfile?.provider).toBe("antigravity");
+      expect(uiProfile?.model).toBe("gemini-4-hydrogen-high");
+    });
+
+    it("bypasses resumed untracked gemini-pro-orchestrator via snapshot and rejects harnessSwitchTierRpc", async () => {
+      const registeredRpcHandlers: Record<string, any> = {};
+      const { mockServer, hooks } = createTestServer();
+      mockServer.handle.mockImplementation((contract: any, handler: any) => {
+        registeredRpcHandlers[contract.name] = handler;
+      });
+      contribute(mockServer);
+
+      const switchHandler = registeredRpcHandlers["agent_harness.tier.switch.request"];
+      const setModelMock = vi.fn();
+      const setMetadataMock = vi.fn().mockResolvedValue(undefined);
+      const handle = {
+        current: () => ({
+          id: "agt_resumed_orch",
+          provider: "antigravity",
+          runtimeInfo: { provider: "antigravity", model: "gemini-pro-orchestrator" },
+          metadata: {},
+        }),
+        setModel: setModelMock,
+        setMetadata: setMetadataMock,
+      };
+      const context: any = {
+        paseo: {
+          agents: {
+            ref: () => handle,
+          },
+        },
+      };
+
+      // Turn without prior agent.create.before metadata must probe snapshot and bypass + persist flag
+      await hooks["agent.turn.before"](
+        {
+          agent: {
+            id: "agt_resumed_orch",
+            provider: "antigravity",
+            title: "你作为CTO，分析整体系统架构",
+            metadata: {},
+          },
+        },
+        context,
+      );
+      expect(setModelMock).not.toHaveBeenCalled();
+      expect(setMetadataMock).toHaveBeenCalledWith({ agentHarnessBypassed: true });
+
+      // Subsequent agent.open.before for a resumed untracked antigravity session without labels.role must conservatively bypass
+      const openedResumed = await hooks["agent.open.before"](
+        {
+          request: {
+            agentId: "agt_resumed_unknown_ag",
+            provider: "antigravity",
+            cwd: "/workspace/resumed",
+            reason: "resume",
+            purpose: "interactive",
+            title: "设计系统架构",
+            labels: {},
+            tools: [],
+            env: {},
+            mcpServers: {},
+          },
+        },
+        {
+          paseo: {
+            agents: {
+              ref: () => ({
+                current: () => ({
+                  id: "agt_resumed_unknown_ag",
+                  provider: "antigravity",
+                  metadata: {},
+                }),
+              }),
+            },
+          },
+        },
+      );
+      expect(openedResumed.env.PASEO_HARNESS_ROLE).toBeUndefined();
+      expect(openedResumed.tools).toEqual([]);
+
+      // harnessSwitchTierRpc must reject bypassed orchestrator sessions
+      await expect(
+        switchHandler(
+          { agentId: "agt_resumed_orch", targetTier: "plan", currentModeId: null },
+          context,
+        ),
+      ).rejects.toThrow(/Orchestrator/i);
+      expect(setModelMock).not.toHaveBeenCalled();
+    });
+
+    it("retries syncDaemonProfilesIfNeeded after patch error and prevents bypassed bleeding across shared cwd", async () => {
+      let subscriber = null as ((state: any) => void) | null;
+      const patchMock = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("transient daemon write error"))
+        .mockResolvedValueOnce({ requestId: "req-ok", config: {} });
+      const hooks: Record<string, any> = {};
+      const registeredRpcHandlers: Record<string, any> = {};
+
+      const mockServer: any = {
+        registerSettings: vi.fn().mockReturnValue({
+          read: vi.fn().mockResolvedValue({
+            status: "ready",
+            values: { enabled: true, autoSyncDaemonAgentProfiles: true },
+          }),
+          subscribe: vi.fn().mockImplementation((cb) => {
+            subscriber = cb;
+            return () => {};
+          }),
+        }),
+        handle: vi.fn().mockImplementation((contract: any, handler: any) => {
+          registeredRpcHandlers[contract.name] = handler;
+        }),
+        addHook: vi.fn().mockImplementation((name, handler) => {
+          hooks[name] = handler;
+          return () => {};
+        }),
+      };
+
+      contribute(mockServer);
+
+      const mockPaseo = {
+        providers: { snapshot: vi.fn().mockResolvedValue({ entries: [] }) },
+        config: {
+          get: vi.fn().mockResolvedValue({ requestId: "req-g", config: { agentProfiles: [] } }),
+          patch: patchMock,
+        },
+      };
+
+      // First capture triggers sync which fails on patch
+      await registeredRpcHandlers["agent_harness.environment.inspect.request"](
+        {},
+        { paseo: mockPaseo },
+      );
+      expect(patchMock).toHaveBeenCalledTimes(1);
+
+      // Same settings emitted again must retry because signature was not committed on error
+      const { DEFAULT_AGENT_HARNESS_SETTINGS } = await import("../shared/settings.js");
+      subscriber?.({
+        status: "ready",
+        values: { ...DEFAULT_AGENT_HARNESS_SETTINGS, autoSyncDaemonAgentProfiles: true },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(patchMock).toHaveBeenCalledTimes(2);
+
+      // Bypassed orchestrator created in /shared-cwd must NOT bleed bypassed=true to next empty-prompt session
+      const bypassedRes = await hooks["agent.create.before"]({
+        request: {
+          config: {
+            provider: "antigravity",
+            cwd: "/shared-cwd",
+            model: "gemini-pro-orchestrator",
+            title: "Orchestrate task",
+          },
+        },
+      });
+      expect(bypassedRes.metadata?.agentHarnessBypassed).toBe(true);
+
+      const nextLeafRes = await hooks["agent.create.before"]({
+        request: {
+          config: {
+            provider: "antigravity",
+            cwd: "/shared-cwd",
+            model: "gemini-4-hydrogen-high",
+            title: "",
+          },
+        },
+      });
+      expect(nextLeafRes.metadata?.agentHarnessBypassed).toBeUndefined();
+      expect(nextLeafRes.metadata?.[HARNESS_METADATA_KEY]).toBeDefined();
+    });
+
+    it("skips specialist modelOverride in handoff-tool when honorSpecialistPreferredProvider is false", async () => {
+      const { DEFAULT_AGENT_HARNESS_SETTINGS } = await import("../shared/settings.js");
+      const { hooks } = createTestServer({
+        honorSpecialistPreferredProvider: false,
+        specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) =>
+          s.id === "ui"
+            ? {
+                ...s,
+                preferredProvider: "antigravity",
+                modelOverride: "gemini-4-neon-high",
+              }
+            : s,
+        ),
+      });
+
+      const opened = await hooks["agent.open.before"]({
+        request: {
+          agentId: "agt_parent_mismatch",
+          provider: "claude",
+          cwd: "/workspace/mismatch",
+          reason: "create",
+          purpose: "interactive",
+          title: "Architecture planning",
+          labels: {},
+          tools: [],
+          env: {},
+          mcpServers: {},
+        },
+      });
+      const handoffTool = opened.tools.find((t: any) => t.name === "harness_handoff");
+      expect(handoffTool).toBeDefined();
+
+      const childHandle = {
+        id: "agt_child_claude",
+        agentId: "agt_child_claude",
+        status: "running",
+      };
+      const createAgentMock = vi.fn().mockResolvedValue(childHandle);
+      const parentHandle = {
+        current: () => ({
+          provider: "claude",
+          cwd: "/workspace/mismatch",
+          workspaceId: "ws_mismatch",
+          metadata: {},
+        }),
+        timeline: { append: vi.fn().mockResolvedValue({}) },
+      };
+      const handoffRes = await handoffTool.execute(
+        {
+          targetRole: "ui",
+          title: "[UI] Styling update",
+          specPrompt: "Update button styles cleanly.",
+        },
+        {
+          agent: {
+            id: "agt_parent_mismatch",
+            provider: "claude",
+            cwd: "/workspace/mismatch",
+            workspaceId: "ws_mismatch",
+          },
+          paseo: {
+            agents: {
+              ref: () => parentHandle,
+              create: createAgentMock,
+            },
+            workspaces: {
+              ref: () => ({
+                agents: {
+                  create: createAgentMock,
+                },
+              }),
+            },
+          },
+        },
+      );
+
+      expect(handoffRes.isError).toBeUndefined();
+      const createArg = createAgentMock.mock.calls[0][0];
+      expect(createArg.config.provider).toBe("claude/flash");
+      expect(createArg.config.provider).not.toContain("gemini-4-neon-high");
+    });
+
+    it("loads N dynamic roles from .agents/agent-team.json with worktree fallback, enforces antigravity LAZY_TOOL_CONFIG avoidance, injects role markdown & leaf guard", async () => {
+      const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), "paseo-federation-"));
+      try {
+        const mainRepo = path.join(tmpBase, "main-repo");
+        const worktreeDir = path.join(tmpBase, "wt-1");
+        const wtGitDir = path.join(mainRepo, ".git", "worktrees", "wt-1");
+        const teamAgentsDir = path.join(mainRepo, ".agents", "plugins", "team-demo", "agents");
+        fs.mkdirSync(wtGitDir, { recursive: true });
+        fs.mkdirSync(teamAgentsDir, { recursive: true });
+        fs.mkdirSync(worktreeDir, { recursive: true });
+
+        fs.writeFileSync(path.join(wtGitDir, "commondir"), "../..\n", "utf8");
+        fs.writeFileSync(path.join(worktreeDir, ".git"), `gitdir: ${wtGitDir}\n`, "utf8");
+
+        fs.writeFileSync(
+          path.join(mainRepo, ".agents", "agent-team.json"),
+          JSON.stringify(
+            {
+              schema_version: "1.0.0",
+              project_slug: "demo",
+              preset: "custom",
+              roles: ["fe-uiux", "fe-architect", "fe-developer", "be-developer", "be-reviewer"],
+              capabilities: ["matt-sdd"],
+              mcp_sources: ["serena"],
+              guards: ["guard-serena-nomem"],
+              tracker: "local",
+              flow: { openspec: false, contracts: false, workflows: false, scaffold_docs: false },
+              git_mode: "exclude",
+              bindings: {
+                "be-developer": { provider: "codex", tier: "flash" },
+                "be-reviewer": { provider: "claude", tier: "review" },
+              },
+            },
+            null,
+            2,
+          ),
+          "utf8",
+        );
+
+        fs.writeFileSync(
+          path.join(mainRepo, ".agents", "plugins", "team-demo", "mcp_config.json"),
+          JSON.stringify({ mcpServers: {} }),
+          "utf8",
+        );
+        fs.writeFileSync(
+          path.join(teamAgentsDir, "be-developer.md"),
+          "---\nname: be-developer\n---\n\nBe Developer Custom Soul Body",
+          "utf8",
+        );
+        fs.writeFileSync(
+          path.join(teamAgentsDir, "be-reviewer.md"),
+          "---\nname: be-reviewer\ntools: [read_file]\n---\n\nStrict Read-Only Reviewer Soul",
+          "utf8",
+        );
+
+        const registeredRpcHandlers: Record<string, any> = {};
+        const { mockServer, hooks } = createTestServer();
+        mockServer.handle.mockImplementation((contract: any, handler: any) => {
+          registeredRpcHandlers[contract.name] = handler;
+        });
+        contribute(mockServer);
+
+        const inspectHandler = registeredRpcHandlers["agent_harness.environment.inspect.request"];
+        const effectiveHandler = registeredRpcHandlers["agent_harness.config.effective.request"];
+        const mockPaseo = {
+          providers: { snapshot: vi.fn().mockResolvedValue({ entries: [] }) },
+        };
+
+        // Main repo: inspect returns 5 roles + hasLocalAntigravityPlugin=true
+        const inspectMain = await inspectHandler({ cwd: mainRepo }, { paseo: mockPaseo });
+        expect(inspectMain.agentTeam).toEqual(
+          expect.objectContaining({
+            projectSlug: "demo",
+            rolesCount: 5,
+            hasLocalAntigravityPlugin: true,
+          }),
+        );
+
+        // Worktree without local .agents/plugins falls back to mainRepo's 5 roles, hasLocalAntigravityPlugin=false
+        const effectiveWt = await effectiveHandler({ cwd: worktreeDir }, { paseo: mockPaseo });
+        expect(effectiveWt.config.specialists).toHaveLength(5);
+        expect(effectiveWt.config.agentTeam?.hasLocalAntigravityPlugin).toBe(false);
+
+        // Main repo antigravity root session receives 3-line Federation Bridge and no LAZY_TOOL_CONFIG
+        const agCreated = await hooks["agent.create.before"]({
+          request: {
+            config: {
+              provider: "antigravity",
+              cwd: mainRepo,
+              model: "gemini-4-hydrogen-high",
+              title: "Orchestrate feature task",
+            },
+          },
+        });
+        expect(agCreated.config.systemPrompt).toContain("[Agent Harness — Federation Bridge]");
+        expect(agCreated.config.systemPrompt).not.toContain("[Capability Harness Active Profile]");
+
+        const agOpened = await hooks["agent.open.before"]({
+          request: {
+            agentId: "agt_main_ag",
+            provider: "antigravity",
+            cwd: mainRepo,
+            reason: "create",
+            purpose: "interactive",
+            title: "Orchestrate feature task",
+            labels: {},
+            metadata: agCreated.metadata,
+            tools: [],
+            env: {},
+            mcpServers: { serena: { command: "serena" } },
+          },
+        });
+        expect(agOpened.env.LAZY_TOOL_CONFIG).toBeUndefined();
+        expect(agOpened.mcpServers).toEqual({ serena: { command: "serena" } });
+
+        // Worktree antigravity lacks local plugin -> still injects LAZY_TOOL_CONFIG
+        const wtOpened = await hooks["agent.open.before"]({
+          request: {
+            agentId: "agt_wt_ag",
+            provider: "antigravity",
+            cwd: worktreeDir,
+            reason: "create",
+            purpose: "interactive",
+            title: "Implement feature",
+            labels: { role: "fe-developer" },
+            tools: [],
+            env: {},
+            mcpServers: {},
+          },
+        });
+        expect(wtOpened.env.LAZY_TOOL_CONFIG).toContain("ui.yaml");
+
+        // Codex session in mainRepo still injects LAZY_TOOL_CONFIG
+        const codexOpened = await hooks["agent.open.before"]({
+          request: {
+            agentId: "agt_main_codex",
+            provider: "codex",
+            cwd: mainRepo,
+            reason: "create",
+            purpose: "interactive",
+            title: "Build backend API",
+            labels: { role: "be-developer" },
+            tools: [],
+            env: {},
+            mcpServers: {},
+          },
+        });
+        expect(codexOpened.env.LAZY_TOOL_CONFIG).toContain("backend.yaml");
+
+        // Root interactive handoff spawns be-developer onto codex/flash with leaf label + hides harness_handoff in child
+        const handoffTool = agOpened.tools.find((t: any) => t.name === "harness_handoff");
+        expect(handoffTool).toBeDefined();
+
+        const createdPayloads: any[] = [];
+        const createChildMock = vi.fn().mockImplementation(async (req: any) => {
+          createdPayloads.push(req);
+          return { id: `child_${createdPayloads.length}`, status: "running" };
+        });
+
+        await handoffTool.execute(
+          {
+            targetRole: "be-developer",
+            title: "Implement endpoint",
+            specPrompt: "Build the HTTP route cleanly.",
+          },
+          {
+            agent: {
+              id: "agt_main_ag",
+              provider: "antigravity",
+              cwd: mainRepo,
+              workspaceId: "ws_demo",
+            },
+            paseo: {
+              agents: {
+                ref: () => ({
+                  current: () => ({
+                    provider: "antigravity",
+                    cwd: mainRepo,
+                    workspaceId: "ws_demo",
+                    metadata: agCreated.metadata,
+                  }),
+                  timeline: { append: vi.fn().mockResolvedValue({}) },
+                }),
+                create: createChildMock,
+              },
+              workspaces: {
+                ref: () => ({ agents: { create: createChildMock } }),
+              },
+            },
+          },
+        );
+
+        const devSpawnReq = createdPayloads[0];
+        expect(devSpawnReq.config.provider).toBe("codex/flash");
+        expect(devSpawnReq.labels).toEqual({
+          role: "be-developer",
+          "paseo.harness-leaf": "1",
+        });
+
+        // Passing spawned child into agent.create.before + agent.open.before injects soul markdown & hides harness_handoff
+        const leafCreated = await hooks["agent.create.before"]({
+          request: {
+            initialPrompt: devSpawnReq.prompt,
+            labels: devSpawnReq.labels,
+            config: {
+              provider: "codex",
+              model: "flash",
+              cwd: mainRepo,
+              title: devSpawnReq.title,
+            },
+          },
+        });
+        expect(leafCreated.config.systemPrompt).toContain("Be Developer Custom Soul Body");
+        expect(leafCreated.config.systemPrompt).toContain("Leaf Specialist Boundary");
+        expect(leafCreated.metadata?.agentHarnessLeaf).toBe(true);
+
+        const leafOpened = await hooks["agent.open.before"]({
+          request: {
+            agentId: "child_1",
+            provider: "codex",
+            cwd: mainRepo,
+            reason: "create",
+            purpose: "interactive",
+            title: devSpawnReq.title,
+            labels: devSpawnReq.labels,
+            metadata: leafCreated.metadata,
+            tools: [],
+            env: {},
+            mcpServers: {},
+          },
+        });
+        expect(leafOpened.env.PASEO_HARNESS_LEAF).toBe("1");
+        expect(leafOpened.tools.some((t: any) => t.name === "harness_handoff")).toBe(false);
+
+        // Readonly be-reviewer spawns onto claude/review with modeId="plan" and Read-Only Enforcement
+        await handoffTool.execute(
+          {
+            targetRole: "be-reviewer",
+            title: "Audit code",
+            specPrompt: "Review backend changes.",
+          },
+          {
+            agent: {
+              id: "agt_main_ag",
+              provider: "antigravity",
+              cwd: mainRepo,
+              workspaceId: "ws_demo",
+            },
+            paseo: {
+              agents: {
+                ref: () => ({
+                  current: () => ({
+                    provider: "antigravity",
+                    cwd: mainRepo,
+                    workspaceId: "ws_demo",
+                    metadata: agCreated.metadata,
+                  }),
+                  timeline: { append: vi.fn().mockResolvedValue({}) },
+                }),
+                create: createChildMock,
+              },
+              workspaces: {
+                ref: () => ({ agents: { create: createChildMock } }),
+              },
+            },
+          },
+        );
+
+        const reviewerSpawnReq = createdPayloads[1];
+        expect(reviewerSpawnReq.config.provider).toBe("claude/review");
+        expect(reviewerSpawnReq.config.modeId).toBe("plan");
+
+        const reviewerCreated = await hooks["agent.create.before"]({
+          request: {
+            initialPrompt: reviewerSpawnReq.prompt,
+            labels: reviewerSpawnReq.labels,
+            config: {
+              provider: "claude",
+              model: "review",
+              cwd: mainRepo,
+              title: reviewerSpawnReq.title,
+            },
+          },
+        });
+        expect(reviewerCreated.config.modeId).toBe("plan");
+        expect(reviewerCreated.config.systemPrompt).toContain("Strict Read-Only Reviewer Soul");
+        expect(reviewerCreated.config.systemPrompt).toContain("Read-Only Specialist Enforcement");
+      } finally {
+        fs.rmSync(tmpBase, { recursive: true, force: true });
+      }
+    });
+
+    it("keeps active specialist banner on fullstack prompt when manifest omits orchestrator", async () => {
+      const tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), "harness-fullstack-no-orch-"));
+      try {
+        fs.mkdirSync(path.join(tmpRepo, ".agents", "plugins", "team-demo"), { recursive: true });
+        fs.writeFileSync(
+          path.join(tmpRepo, ".agents", "agent-team.json"),
+          JSON.stringify({
+            schema_version: 2,
+            preset: "go-api",
+            roles: ["be-impl", "be-reviewer"],
+          }),
+        );
+        fs.writeFileSync(
+          path.join(tmpRepo, ".agents", "plugins", "team-demo", "mcp_config.json"),
+          JSON.stringify({ mcpServers: {} }),
+        );
+
+        const { hooks } = createTestServer({ enforceSessionMcpFiltering: true });
+        const prompt = "全栈实现一个带 React UI 前端和 Go 后端存储的看板应用";
+
+        const created = await hooks["agent.create.before"]({
+          request: {
+            initialPrompt: prompt,
+            config: {
+              provider: "antigravity",
+              cwd: tmpRepo,
+              title: "Fullstack Board",
+            },
+          },
+        });
+
+        expect(created.config.systemPrompt).toContain("[Agent Harness — Federation Bridge]");
+        const meta = created.metadata[HARNESS_METADATA_KEY];
+        expect(["be-impl", "be-reviewer"]).toContain(meta.role);
+        expect(meta.role).not.toBe("orchestrator");
+
+        const opened = await hooks["agent.open.before"]({
+          request: {
+            agentId: "agt_no_orch_ag",
+            reason: "create",
+            purpose: "interactive",
+            provider: "antigravity",
+            cwd: tmpRepo,
+            title: "Fullstack Board",
+            metadata: created.metadata,
+            env: { LAZY_TOOL_CONFIG: "/keep/existing.yaml" },
+          },
+        });
+        expect(opened.env.LAZY_TOOL_CONFIG).toBe("/keep/existing.yaml");
+      } finally {
+        fs.rmSync(tmpRepo, { recursive: true, force: true });
+      }
+    });
+
+    it("locks readonly specialist modeId=plan across create, switch_tier RPC, and turn.after", async () => {
+      const tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), "harness-readonly-lock-"));
+      try {
+        fs.mkdirSync(path.join(tmpRepo, ".agents", "plugins", "team-demo", "agents"), {
+          recursive: true,
+        });
+        fs.writeFileSync(
+          path.join(tmpRepo, ".agents", "agent-team.json"),
+          JSON.stringify({
+            schema_version: 2,
+            preset: "go-api",
+            roles: ["be-impl", "be-reviewer"],
+            bindings: {
+              "be-reviewer": {
+                provider: "claude",
+                tier: "review",
+                modeId: "acceptEdits",
+              },
+            },
+          }),
+        );
+        fs.writeFileSync(
+          path.join(tmpRepo, ".agents", "plugins", "team-demo", "agents", "be-reviewer.md"),
+          "---\nname: be-reviewer\nreadonly: true\n---\nReview strictly read-only.\n",
+        );
+
+        const registeredRpcHandlers: Record<string, any> = {};
+        const { mockServer, hooks, cleanup } = createTestServer({
+          autoDowngradePlanOnExec: true,
+          phaseLifecycleEnabled: true,
+        });
+        cleanup();
+        mockServer.handle.mockImplementation((contract: any, handler: any) => {
+          registeredRpcHandlers[contract.name] = handler;
+        });
+        contribute(mockServer);
+
+        const created = await hooks["agent.create.before"]({
+          request: {
+            initialPrompt: "Review backend changes",
+            labels: { role: "be-reviewer" },
+            config: {
+              provider: "claude",
+              cwd: tmpRepo,
+              modeId: "bypassPermissions",
+            },
+          },
+        });
+        expect(created.config.modeId).toBe("plan");
+
+        const switchHandler = registeredRpcHandlers["agent_harness.tier.switch.request"];
+        expect(switchHandler).toBeDefined();
+
+        const setModelMock = vi.fn().mockResolvedValue(undefined);
+        const setMetadataMock = vi.fn().mockResolvedValue(undefined);
+        const roMeta = createInitialHarnessMetadata({
+          role: "be-reviewer",
+          tier: "plan",
+          model: "plan",
+          roleMatchedRule: "keyword:review",
+          tierMatchedRule: "review:kw",
+          userModelLocked: false,
+          roleLockedByLabel: false,
+        });
+
+        const rpcResult = await switchHandler(
+          {
+            agentId: "agt_ro_switch",
+            targetTier: "flash",
+            currentModeId: "bypassPermissions",
+            reason: "Attempt switch",
+          },
+          {
+            paseo: {
+              agents: {
+                ref: () => ({
+                  current: () => ({
+                    provider: "claude",
+                    cwd: tmpRepo,
+                    options: { model: "plan" },
+                    metadata: { [HARNESS_METADATA_KEY]: roMeta },
+                  }),
+                  setModel: setModelMock,
+                  setMetadata: setMetadataMock,
+                  timeline: { append: vi.fn().mockResolvedValue({}) },
+                }),
+              },
+            },
+          },
+        );
+        expect(rpcResult.recommendedModeId).toBe("plan");
+
+        const turnSetModel = vi.fn().mockResolvedValue(undefined);
+        const turnSetMetadata = vi.fn().mockResolvedValue(undefined);
+        const turnAfterHook =
+          mockServer.addHook.mock.calls.find((c: any) => c[0] === "agent.turn.after")?.[1] ??
+          hooks["agent.turn.after"];
+        expect(turnAfterHook).toBeDefined();
+
+        const metaWithTurn1 = { ...roMeta, turnCount: 1, planTurnCount: 1 };
+        await turnAfterHook(
+          {
+            agent: {
+              id: "agt_ro_turn",
+              provider: "claude",
+              cwd: tmpRepo,
+              metadata: { [HARNESS_METADATA_KEY]: metaWithTurn1 },
+            },
+          },
+          {
+            paseo: {
+              agents: {
+                ref: () => ({
+                  current: () => ({
+                    provider: "claude",
+                    cwd: tmpRepo,
+                    metadata: { [HARNESS_METADATA_KEY]: metaWithTurn1 },
+                  }),
+                  setModel: turnSetModel,
+                  setMetadata: turnSetMetadata,
+                  timeline: {
+                    refetch: vi.fn().mockResolvedValue({
+                      items: [
+                        { type: "user_message", text: "Execute now" },
+                        { type: "tool_call", name: "edit_file", status: "completed" },
+                      ],
+                    }),
+                    append: vi.fn().mockResolvedValue({}),
+                  },
+                }),
+              },
+            },
+          },
+        );
+        expect(turnSetModel).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tmpRepo, { recursive: true, force: true });
+      }
+    });
+
+    it("isolates concurrent same-cwd leaf/root creates and strips harness_handoff on leaf open & reopen", async () => {
+      const tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), "harness-sibling-queue-"));
+      try {
+        fs.mkdirSync(path.join(tmpRepo, ".agents", "plugins", "team-demo"), { recursive: true });
+        fs.writeFileSync(
+          path.join(tmpRepo, ".agents", "agent-team.json"),
+          JSON.stringify({
+            schema_version: 2,
+            preset: "react-ts",
+            roles: ["fe-developer", "be-developer"],
+          }),
+        );
+
+        const { hooks } = createTestServer();
+
+        const leafCreated = await hooks["agent.create.before"]({
+          request: {
+            initialPrompt: "Implement backend API endpoint",
+            labels: {
+              "paseo.harness-leaf": "1",
+              role: "be-developer",
+            },
+            config: {
+              provider: "codex",
+              cwd: tmpRepo,
+              title: "Leaf Worker",
+            },
+          },
+        });
+        expect(leafCreated.metadata[HARNESS_LEAF_META_KEY]).toBe(true);
+        expect(leafCreated.metadata[HARNESS_METADATA_KEY].role).toBe("be-developer");
+
+        const rootCreated = await hooks["agent.create.before"]({
+          request: {
+            initialPrompt: "Coordinate feature work",
+            config: {
+              provider: "claude",
+              cwd: tmpRepo,
+              title: "Root Planner",
+            },
+          },
+        });
+        expect(rootCreated.metadata[HARNESS_LEAF_META_KEY]).toBeUndefined();
+        expect(rootCreated.metadata[HARNESS_METADATA_KEY].role).toBe("fe-developer");
+
+        const rootOpened = await hooks["agent.open.before"]({
+          request: {
+            agentId: "agt_root_sibling",
+            reason: "create",
+            purpose: "interactive",
+            provider: "claude",
+            cwd: tmpRepo,
+            title: "Root Planner",
+            metadata: rootCreated.metadata,
+            tools: [],
+          },
+        });
+        expect(rootOpened.env.PASEO_HARNESS_LEAF).toBeUndefined();
+        expect(rootOpened.tools.some((t: any) => t.name === "harness_handoff")).toBe(true);
+
+        const leafOpened = await hooks["agent.open.before"]({
+          request: {
+            agentId: "agt_leaf_sibling",
+            reason: "create",
+            purpose: "interactive",
+            provider: "codex",
+            cwd: tmpRepo,
+            title: "Leaf Worker",
+            metadata: leafCreated.metadata,
+            tools: [{ name: "harness_handoff" }, { name: "read_file" }],
+          },
+        });
+        expect(leafOpened.env.PASEO_HARNESS_LEAF).toBe("1");
+        expect(leafOpened.tools.map((t: any) => t.name)).toEqual(["read_file"]);
+
+        const leafReopened = await hooks["agent.open.before"]({
+          request: {
+            agentId: "agt_leaf_sibling",
+            reason: "resume",
+            purpose: "interactive",
+            provider: "codex",
+            cwd: tmpRepo,
+            title: "Leaf Worker",
+            metadata: leafCreated.metadata,
+            tools: [{ name: "harness_handoff" }, { name: "read_file" }],
+          },
+        });
+        expect(leafReopened.tools.map((t: any) => t.name)).toEqual(["read_file"]);
+      } finally {
+        fs.rmSync(tmpRepo, { recursive: true, force: true });
+      }
+    });
+
+    it("loads agent-team fallback from ~/.gemini/team-kits, expands placeholders, blocks traversal, and invalidates mtime cache", () => {
+      const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), "harness-loader-direct-"));
+      try {
+        const mockHome = path.join(tmpBase, "home");
+        const repoDir = path.join(tmpBase, "repo");
+        fs.mkdirSync(path.join(mockHome, ".gemini", "team-kits", "plugins", "team-ops", "agents"), {
+          recursive: true,
+        });
+        fs.mkdirSync(path.join(mockHome, ".local", "bin"), { recursive: true });
+        fs.mkdirSync(path.join(mockHome, ".volta", "bin"), { recursive: true });
+        fs.writeFileSync(path.join(mockHome, ".local", "bin", "ocr"), "#!/bin/sh\n");
+        fs.writeFileSync(path.join(mockHome, ".volta", "bin", "playwright-cli"), "#!/bin/sh\n");
+
+        fs.mkdirSync(path.join(repoDir, ".agents"), { recursive: true });
+        const manifestPath = path.join(repoDir, ".agents", "agent-team.json");
+        fs.writeFileSync(
+          manifestPath,
+          JSON.stringify({
+            schema_version: 2,
+            preset: "custom",
+            roles: ["ops-auditor", "../../outside"],
+            bindings: {
+              "ops-auditor": { provider: "codex", tier: "review" },
+            },
+          }),
+        );
+        fs.writeFileSync(
+          path.join(
+            mockHome,
+            ".gemini",
+            "team-kits",
+            "plugins",
+            "team-ops",
+            "agents",
+            "ops-auditor.md",
+          ),
+          "---\nname: ops-auditor\nreadonly: true\n---\nHome={{HOME}} OCR={{OCR_BIN}} PW={{PLAYWRIGHT_CLI_BIN}}\n",
+        );
+        fs.writeFileSync(path.join(tmpBase, "outside.md"), "SHOULD_NOT_LOAD");
+
+        const first = loadWorkspaceAgentTeam(repoDir, mockHome);
+        expect(first).not.toBeNull();
+        expect(first?.summary.hasLocalAntigravityPlugin).toBe(false);
+        expect(first?.summary.roles).toEqual(["ops-auditor"]);
+        expect(first?.specialists[0]?.readonly).toBe(true);
+        expect(first?.specialists[0]?.matchPatterns.length).toBeGreaterThan(0);
+        expect(first?.specialists[0]?.rolePromptTemplate).toBe(
+          `Home=${mockHome} OCR=${path.join(mockHome, ".local", "bin", "ocr")} PW=${path.join(mockHome, ".volta", "bin", "playwright-cli")}`,
+        );
+        expect(first?.specialists[0]?.preferredProvider).toBe("codex");
+
+        // Ensure hasLocalAntigravityTeamPlugin rejects traversal slugs even with fake outer mcp_config.json
+        fs.mkdirSync(path.join(repoDir, ".agents", "plugins"), { recursive: true });
+        fs.mkdirSync(path.join(repoDir, ".agents", "team-outside"), { recursive: true });
+        fs.writeFileSync(
+          path.join(repoDir, ".agents", "team-outside", "mcp_config.json"),
+          JSON.stringify({ mcpServers: {} }),
+        );
+        expect(hasLocalAntigravityTeamPlugin(repoDir, "../team-outside")).toBe(false);
+        expect(hasLocalAntigravityTeamPlugin(repoDir, "../../outside")).toBe(false);
+
+        // Update manifest with bumped mtime to confirm cache invalidation
+        const prevStat = fs.statSync(manifestPath);
+        fs.writeFileSync(
+          manifestPath,
+          JSON.stringify({
+            schema_version: 2,
+            preset: "custom",
+            roles: ["ops-auditor"],
+            bindings: {
+              "ops-auditor": { provider: "claude", tier: "plan" },
+            },
+          }),
+        );
+        const bumpedTime = new Date(prevStat.mtimeMs + 2000);
+        fs.utimesSync(manifestPath, bumpedTime, bumpedTime);
+
+        const second = loadWorkspaceAgentTeam(repoDir, mockHome);
+        expect(second).not.toBeNull();
+        expect(second?.specialists[0]?.preferredProvider).toBe("claude");
+        expect(second?.specialists[0]?.preferredTier).toBe("plan");
+      } finally {
+        fs.rmSync(tmpBase, { recursive: true, force: true });
+      }
+    });
+
+    it("routes unlabelled natural-language prompts via inferred matchPatterns for workspace roles", async () => {
+      const tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), "harness-dynamic-matchpatterns-"));
+      try {
+        fs.mkdirSync(path.join(tmpRepo, ".agents", "plugins", "team-demo"), { recursive: true });
+        fs.writeFileSync(
+          path.join(tmpRepo, ".agents", "agent-team.json"),
+          JSON.stringify({
+            schema_version: 2,
+            preset: "fullstack",
+            roles: ["fe-developer", "be-developer", "be-reviewer"],
+          }),
+        );
+
+        const { hooks } = createTestServer();
+
+        const reviewCreated = await hooks["agent.create.before"]({
+          request: {
+            initialPrompt: "请对变更执行双轴审查与质量门禁检查",
+            config: {
+              provider: "claude",
+              cwd: tmpRepo,
+            },
+          },
+        });
+        expect(reviewCreated.metadata[HARNESS_METADATA_KEY].role).toBe("be-reviewer");
+
+        const backendCreated = await hooks["agent.create.before"]({
+          request: {
+            initialPrompt: "优化后端数据库与 RPC 服务端接口",
+            config: {
+              provider: "codex",
+              cwd: tmpRepo,
+            },
+          },
+        });
+        expect(backendCreated.metadata[HARNESS_METADATA_KEY].role).toBe("be-developer");
+      } finally {
+        fs.rmSync(tmpRepo, { recursive: true, force: true });
+      }
     });
   });
 });

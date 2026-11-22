@@ -2,6 +2,7 @@ import { defineAgentTool, type AgentToolDefinition } from "@getpaseo/plugin/serv
 import type { PaseoApi } from "@getpaseo/client";
 import {
   findSpecialist,
+  isNativePlanModeSupported,
   normalizeProviderName,
   resolveResumeExecutionMode,
   resolveTargetModelForTier,
@@ -12,9 +13,10 @@ import {
   HarnessHandoffToolInputSchema,
   resolveResumeExecutionModeId,
   resolveSpecialistTargetTier,
+  supportsNativePlanMode,
 } from "../shared/contracts.js";
 import { DEFAULT_PROVIDER_MAPPINGS } from "../shared/intent-detector.js";
-import { parseHarnessMetadata } from "../shared/lifecycle-state.js";
+import { HARNESS_LEAF_LABEL_KEY, parseHarnessMetadata } from "../shared/lifecycle-state.js";
 import type {
   DomainRole,
   EffectiveHarnessConfig,
@@ -96,10 +98,17 @@ export async function spawnHarnessSpecialist(
   // Resolve target tier
   const targetTier = specialist?.preferredTier || resolveSpecialistTargetTier(targetRole);
 
-  // Resolve target model
+  // Resolve target model (only apply modelOverride when compatible with resolved target provider)
+  const preferredSpecProvider = specialist?.preferredProvider?.trim()
+    ? normalizeProviderName(specialist.preferredProvider)
+    : "";
+  const canApplyModelOverride =
+    Boolean(specialist?.modelOverride?.trim()) &&
+    (!preferredSpecProvider || normalizedProvider === preferredSpecProvider);
+
   let targetModel = "";
-  if (specialist?.modelOverride?.trim()) {
-    targetModel = specialist.modelOverride.trim();
+  if (canApplyModelOverride) {
+    targetModel = specialist!.modelOverride!.trim();
   } else if (config) {
     targetModel = resolveTargetModelForTier(config, normalizedProvider, targetTier);
   } else {
@@ -107,9 +116,14 @@ export async function spawnHarnessSpecialist(
     targetModel = mapping ? mapping[targetTier] : targetTier;
   }
 
-  // Resolve default mode id
+  // Resolve default mode id (read-only enforcement takes precedence over custom defaultModeId)
+  const supportsPlanMode = config
+    ? isNativePlanModeSupported(config, normalizedProvider)
+    : supportsNativePlanMode(normalizedProvider);
   let execModeId: string | null = null;
-  if (specialist?.defaultModeId?.trim()) {
+  if (specialist?.readonly && supportsPlanMode) {
+    execModeId = "plan";
+  } else if (specialist?.defaultModeId?.trim()) {
     execModeId = specialist.defaultModeId.trim();
   } else if (config) {
     execModeId = resolveResumeExecutionMode(config, normalizedProvider, null);
@@ -129,6 +143,11 @@ export async function spawnHarnessSpecialist(
     ...(execModeId ? { modeId: execModeId } : {}),
   };
 
+  const spawnLabels = {
+    role: targetRole,
+    [HARNESS_LEAF_LABEL_KEY]: "1",
+  };
+
   let childHandle;
   if (workspaceId && paseo.workspaces) {
     childHandle = await paseo.workspaces.ref(workspaceId).agents.create({
@@ -136,7 +155,7 @@ export async function spawnHarnessSpecialist(
       parent: parentAgentId,
       title: normalizedTitle,
       prompt: specPrompt,
-      labels: { role: targetRole },
+      labels: spawnLabels,
     });
   } else {
     childHandle = await paseo.agents.create({
@@ -145,7 +164,7 @@ export async function spawnHarnessSpecialist(
       parent: parentAgentId,
       title: normalizedTitle,
       prompt: specPrompt,
-      labels: { role: targetRole },
+      labels: spawnLabels,
     });
   }
 
@@ -252,7 +271,7 @@ export async function spawnHarnessSpecialist(
 }
 
 export function createHarnessHandoffTool(options: {
-  getConfig?: () => EffectiveHarnessConfig | null;
+  getConfig?: (cwd?: string | null) => EffectiveHarnessConfig | null;
   getLatestMetadata?: (
     agentId: string,
   ) => Promise<HarnessAgentMetadata | null> | HarnessAgentMetadata | null;
@@ -273,12 +292,11 @@ export function createHarnessHandoffTool(options: {
   ) => Promise<void>;
 }): AgentToolDefinition {
   const currentConfig = options.getConfig ? options.getConfig() : null;
-  const availableHandoffs = currentConfig
-    ? currentConfig.specialists
-        .filter((s) => s.enabled && s.handoffEnabled)
-        .map((s) => s.id)
-        .join(", ")
-    : "ui, backend, qa, review";
+  const enabledHandoffIds = currentConfig
+    ? currentConfig.specialists.filter((s) => s.enabled && s.handoffEnabled).map((s) => s.id)
+    : [];
+  const availableHandoffs =
+    enabledHandoffIds.length > 0 ? enabledHandoffIds.join(", ") : "ui, backend, qa, review";
 
   return defineAgentTool({
     name: HARNESS_HANDOFF_TOOL_NAME,
@@ -287,7 +305,7 @@ export function createHarnessHandoffTool(options: {
     input: HarnessHandoffToolInputSchema,
     execute: async (input, context) => {
       const { agent, paseo } = context;
-      const effectiveConfig = options.getConfig ? options.getConfig() : null;
+      const effectiveConfig = options.getConfig ? options.getConfig(agent.cwd) : null;
       const res = await spawnHarnessSpecialist({
         paseo,
         parentAgentId: agent.id,

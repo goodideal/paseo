@@ -198,4 +198,259 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
     expect(env.LAZY_TOOL_CONFIG).toBe("/Users/testuser/.config/lazy-tool/profiles/backend.yaml");
     expect(env.PASEO_HARNESS_SKILLS_ROOT).toBe("/Users/jerry/.agents/skills");
   });
+
+  it("migrates v2 settings cleanly to v3 (model-level antigravity bypass and specialist fixes)", () => {
+    const v2Values = {
+      ...DEFAULT_AGENT_HARNESS_SETTINGS,
+      bypassProviders: ["antigravity", "custom-bypass"],
+      bypassModels: undefined,
+      llmFallbackEnabled: true,
+      llmFallbackEndpoint: "",
+      providerMappings: {
+        claude: { plan: "plan", review: "review", flash: "flash" },
+      },
+      providerModes: {
+        claude: { supportsNativePlanMode: true, resumeExecutionModeId: "acceptEdits" },
+      },
+      specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) => {
+        if (s.id === "general") {
+          return {
+            ...s,
+            profileFilename: "architect.json",
+            mandatorySkillActivation: true,
+            ssotOutputTarget: "openspec/changes/<change-name>/design.md",
+          };
+        }
+        if (s.id === "pm" || s.id === "architect") {
+          return { ...s, defaultModeId: "plan" };
+        }
+        if (s.id === "orchestrator") {
+          return {
+            ...s,
+            rolePromptTemplate:
+              "Spawn via paseo run --provider claude --mode bypassPermissions --label role=architect",
+          };
+        }
+        return s;
+      }),
+    };
+
+    const migrate = agentHarnessSettings.migrate!;
+    const migrated = migrate(v2Values, 2) as typeof DEFAULT_AGENT_HARNESS_SETTINGS;
+
+    expect(migrated.bypassProviders).toEqual(["custom-bypass"]);
+    expect(migrated.bypassModels).toEqual(["^gemini-pro-orchestrator"]);
+    expect(migrated.providerMappings.antigravity).toEqual({
+      plan: "gemini-4-carbon-high",
+      review: "gemini-4-argon-high",
+      flash: "gemini-4-hydrogen-high",
+    });
+    expect(migrated.providerModes.antigravity).toEqual({
+      supportsNativePlanMode: false,
+      resumeExecutionModeId: "full-access",
+    });
+    expect(migrated.llmFallbackEnabled).toBe(false);
+
+    const general = migrated.specialists.find((s) => s.id === "general")!;
+    expect(general.profileFilename).toBe("general.json");
+    expect(general.mandatorySkillActivation).toBe(false);
+    expect(general.ssotOutputTarget).toBe("");
+
+    const pm = migrated.specialists.find((s) => s.id === "pm")!;
+    const architect = migrated.specialists.find((s) => s.id === "architect")!;
+    expect(pm.defaultModeId).toBe("");
+    expect(architect.defaultModeId).toBe("");
+
+    const orchestrator = migrated.specialists.find((s) => s.id === "orchestrator")!;
+    expect(orchestrator.rolePromptTemplate).not.toContain("--provider claude");
+  });
+
+  it("clones schema defaults independently and repairs empty/gemini-3 antigravity configs while preserving custom orchestrator prompts", () => {
+    const sampleA = agentHarnessSettings.schema.parse({});
+    const sampleB = agentHarnessSettings.schema.parse({});
+    sampleA.bypassProviders.push("mutated-provider");
+    sampleA.providerMappings.antigravity.flash = "mutated-model";
+    expect(sampleB.bypassProviders).toEqual([]);
+    expect(sampleB.providerMappings.antigravity.flash).toBe("gemini-4-hydrogen-high");
+
+    const customOrchestratorPrompt = "Custom company orchestrator protocol — keep verbatim.";
+    const v2Values = {
+      ...DEFAULT_AGENT_HARNESS_SETTINGS,
+      providerMappings: {
+        antigravity: {},
+        claude: { plan: "plan", review: "review", flash: "flash" },
+      },
+      specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) => {
+        if (s.id === "ui") {
+          return { ...s, modelOverride: "gemini-3.8-flash-old" };
+        }
+        if (s.id === "orchestrator") {
+          return { ...s, rolePromptTemplate: customOrchestratorPrompt };
+        }
+        return s;
+      }),
+      phaseRules: {
+        ...DEFAULT_AGENT_HARNESS_SETTINGS.phaseRules,
+        orchestrator: customOrchestratorPrompt,
+      },
+    };
+
+    const migrated = agentHarnessSettings.migrate!(
+      v2Values,
+      2,
+    ) as typeof DEFAULT_AGENT_HARNESS_SETTINGS;
+    expect(migrated.providerMappings.antigravity).toEqual({
+      plan: "gemini-4-carbon-high",
+      review: "gemini-4-argon-high",
+      flash: "gemini-4-hydrogen-high",
+    });
+
+    const ui = migrated.specialists.find((s) => s.id === "ui")!;
+    expect(ui.modelOverride).toBe("");
+
+    const orchestrator = migrated.specialists.find((s) => s.id === "orchestrator")!;
+    expect(orchestrator.rolePromptTemplate).toBe(customOrchestratorPrompt);
+    expect(migrated.phaseRules.orchestrator).toBe(customOrchestratorPrompt);
+  });
+
+  it("adapts buildSystemPromptBanner for antigravity using read_file and normalized skills", () => {
+    const config = resolveEffectiveHarnessConfig(DEFAULT_AGENT_HARNESS_SETTINGS);
+    const backend = findSpecialist(config, "backend")!;
+    const banner = buildSystemPromptBanner({
+      config,
+      specialist: backend,
+      tier: "flash",
+      targetModel: "gemini-4-hydrogen-high",
+      roleMatchedRule: "label:role",
+      tierMatchedRule: "role_tier:backend",
+      homeDir: "/tmp/mock-home",
+      provider: "antigravity",
+    });
+
+    expect(banner).toContain("read_file");
+    expect(banner).not.toContain("invoke the `Skill` tool");
+    expect(banner).toContain("codebase-design, tdd, test-gardener");
+    expect(banner).not.toContain("mattpocock-skills:");
+  });
+
+  it("replaces builtin specialists with workspace agent-team N roles, skips antigravity LAZY_TOOL_CONFIG, and enforces federation/leaf prompts", () => {
+    const dynamicSpecialists = [
+      {
+        ...DEFAULT_AGENT_HARNESS_SETTINGS.specialists[1],
+        id: "fe-uiux",
+        name: "UI/UX Lead",
+        shortLabel: "fe-uiux",
+        builtIn: false,
+        readonly: false,
+        preferredProvider: "",
+        preferredTier: "flash",
+        lazyToolSlice: "ui.yaml",
+        rolePromptTemplate: "Own unslop and design tokens.",
+      },
+      {
+        ...DEFAULT_AGENT_HARNESS_SETTINGS.specialists[2],
+        id: "be-developer",
+        name: "Backend Engineer",
+        shortLabel: "be-developer",
+        builtIn: false,
+        readonly: false,
+        preferredProvider: "codex",
+        preferredTier: "flash",
+        lazyToolSlice: "backend.yaml",
+        rolePromptTemplate: "Own backend API and TDD.",
+      },
+      {
+        ...DEFAULT_AGENT_HARNESS_SETTINGS.specialists[6],
+        id: "be-reviewer",
+        name: "Backend Reviewer",
+        shortLabel: "be-reviewer",
+        builtIn: false,
+        readonly: true,
+        preferredProvider: "claude",
+        preferredTier: "review",
+        lazyToolSlice: "review.yaml",
+        rolePromptTemplate: "Strict read-only review.",
+      },
+    ];
+
+    const federatedConfig = resolveEffectiveHarnessConfig(
+      DEFAULT_AGENT_HARNESS_SETTINGS,
+      null,
+      "/tmp/demo-repo",
+      {
+        summary: {
+          projectSlug: "demo",
+          preset: "fullstack-monorepo",
+          manifestPath: "/tmp/demo-repo/.agents/agent-team.json",
+          checkoutRoot: "/tmp/demo-repo",
+          mainRepoRoot: "/tmp/demo-repo",
+          hasLocalAntigravityPlugin: true,
+          roles: ["fe-uiux", "be-developer", "be-reviewer"],
+        },
+        specialists: dynamicSpecialists,
+      },
+    );
+
+    expect(federatedConfig.specialists.map((s) => s.id)).toEqual([
+      "fe-uiux",
+      "be-developer",
+      "be-reviewer",
+    ]);
+    expect(federatedConfig.agentTeam?.projectSlug).toBe("demo");
+
+    // Root single-tier Antigravity gets concise 3-line Federation Bridge and no LAZY_TOOL_CONFIG overwrite
+    const rootBridge = buildSystemPromptBanner({
+      config: federatedConfig,
+      specialist: federatedConfig.specialists[0],
+      tier: "flash",
+      targetModel: "gemini-4-hydrogen-high",
+      roleMatchedRule: "default_general",
+      homeDir: "/tmp/mock-home",
+      provider: "antigravity",
+    });
+    expect(rootBridge).toContain("[Agent Harness — Federation Bridge]");
+    expect(rootBridge).toContain("be-developer (codex·flash)");
+    expect(rootBridge).toContain("be-reviewer (claude·review·RO)");
+    expect(rootBridge).not.toContain("[Capability Harness Active Profile]");
+
+    const agEnv = resolveSpecialistEnvironment({
+      config: federatedConfig,
+      specialist: federatedConfig.specialists[0],
+      existingEnv: {},
+      homeDir: "/tmp/mock-home",
+      provider: "antigravity",
+    });
+    expect(agEnv.LAZY_TOOL_CONFIG).toBeUndefined();
+    expect(agEnv.PASEO_HARNESS_LEAF).toBeUndefined();
+
+    // Non-Antigravity provider (codex) keeps LAZY_TOOL_CONFIG, and leaf gets PASEO_HARNESS_LEAF=1
+    const codexLeafEnv = resolveSpecialistEnvironment({
+      config: federatedConfig,
+      specialist: federatedConfig.specialists[1],
+      existingEnv: {},
+      homeDir: "/tmp/mock-home",
+      provider: "codex",
+      isLeaf: true,
+    });
+    expect(codexLeafEnv.LAZY_TOOL_CONFIG).toBe(
+      "/tmp/mock-home/.config/lazy-tool/profiles/backend.yaml",
+    );
+    expect(codexLeafEnv.PASEO_HARNESS_LEAF).toBe("1");
+
+    // Readonly leaf reviewer banner includes role markdown, read-only enforcement, and leaf guardrail
+    const reviewerBanner = buildSystemPromptBanner({
+      config: federatedConfig,
+      specialist: federatedConfig.specialists[2],
+      tier: "review",
+      targetModel: "review",
+      roleMatchedRule: "label:role",
+      homeDir: "/tmp/mock-home",
+      provider: "claude",
+      isLeaf: true,
+      isSpawnedSpecialist: true,
+    });
+    expect(reviewerBanner).toContain("Strict read-only review.");
+    expect(reviewerBanner).toContain("Read-Only Specialist Enforcement");
+    expect(reviewerBanner).toContain("Leaf Specialist Boundary");
+  });
 });

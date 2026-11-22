@@ -2,8 +2,17 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { PaseoApi } from "@getpaseo/client";
-import { expandHomeDir, joinPosixPath } from "../shared/config-resolver.js";
-import type { HarnessSpecialistConfig, RepoHarnessOverride } from "../shared/types.js";
+import {
+  expandHomeDir,
+  normalizeProviderName,
+  resolveTargetModelForTier,
+} from "../shared/config-resolver.js";
+import { DEFAULT_PROVIDER_MAPPINGS } from "../shared/intent-detector.js";
+import type {
+  EffectiveHarnessConfig,
+  HarnessSpecialistConfig,
+  RepoHarnessOverride,
+} from "../shared/types.js";
 
 export interface DiskProfileEntry {
   filename: string;
@@ -279,13 +288,55 @@ export function loadRepoHarnessOverride(
 const MANAGED_PROFILE_PREFIX = "harness-";
 
 /**
+ * Converts PascalCase / camelCase icon names (e.g. `CheckCircle`) into kebab-case (`check-circle`).
+ */
+export function toKebabCaseIcon(icon: string): string {
+  const trimmed = icon.trim();
+  if (!trimmed) {
+    return "bot";
+  }
+  return trimmed
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .replace(/([A-Z])([A-Z][a-z])/g, "$1-$2")
+    .replace(/[\s_]+/g, "-")
+    .toLowerCase();
+}
+
+function extractRoleFromNotes(notes: unknown): string | null {
+  if (typeof notes !== "string" || !notes.trim()) {
+    return null;
+  }
+  const match = /\brole:\s*([a-z][a-z0-9_-]*)\b/i.exec(notes);
+  return match?.[1]?.toLowerCase() ?? null;
+}
+
+function resolveSyncedModelId(
+  specialist: HarnessSpecialistConfig,
+  provider: string,
+  effectiveConfig?: EffectiveHarnessConfig | null,
+): string {
+  const override = specialist.modelOverride?.trim();
+  if (override) {
+    return override;
+  }
+  const tier = specialist.preferredTier?.trim() || "flash";
+  const normProvider = normalizeProviderName(provider);
+  if (effectiveConfig) {
+    return resolveTargetModelForTier(effectiveConfig, normProvider, tier);
+  }
+  const mapping = DEFAULT_PROVIDER_MAPPINGS[normProvider];
+  return mapping?.[tier]?.trim() || tier;
+}
+
+/**
  * Synchronizes enabled specialists to Paseo daemon's native agentProfiles.
- * Only updates or removes profiles managed by agent-harness (prefixed with harness-),
- * preserving user-defined profiles completely.
+ * Resolves real target model IDs via providerMappings/modelOverride, normalizes icons to kebab-case,
+ * and merges in-place with existing non-harness profiles matching the same `role: <id>` annotation.
  */
 export async function syncDaemonAgentProfiles(
   paseo: PaseoApi,
   specialists: HarnessSpecialistConfig[],
+  effectiveConfig?: EffectiveHarnessConfig | null,
 ): Promise<{ syncedCount: number; errors: string[] }> {
   if (!paseo.config?.get || !paseo.config?.patch) {
     return { syncedCount: 0, errors: ["Paseo config API not available"] };
@@ -297,12 +348,19 @@ export async function syncDaemonAgentProfiles(
       Record<string, unknown>
     >;
 
-    // Keep all non-harness-managed profiles
-    const preservedProfiles = existingProfiles.filter((p) => {
-      const id = typeof p.id === "string" ? p.id : "";
-      return !id.startsWith(MANAGED_PROFILE_PREFIX);
-    });
+    const existingByRole = new Map<string, Record<string, unknown>>();
+    for (const profile of existingProfiles) {
+      const id = typeof profile.id === "string" ? profile.id : "";
+      if (!id || id.startsWith(MANAGED_PROFILE_PREFIX)) {
+        continue;
+      }
+      const role = extractRoleFromNotes(profile.notes);
+      if (role && !existingByRole.has(role)) {
+        existingByRole.set(role, profile);
+      }
+    }
 
+    const mergedExistingIds = new Set<string>();
     const harnessProfiles: Array<Record<string, unknown>> = [];
     let syncedCount = 0;
 
@@ -311,20 +369,68 @@ export async function syncDaemonAgentProfiles(
         continue;
       }
 
+      const existingMatch = existingByRole.get(s.id.toLowerCase());
+      const targetId =
+        typeof existingMatch?.id === "string" && existingMatch.id
+          ? existingMatch.id
+          : `${MANAGED_PROFILE_PREFIX}${s.id}`;
+      if (existingMatch && typeof existingMatch.id === "string") {
+        mergedExistingIds.add(existingMatch.id);
+      }
+
+      const provider =
+        s.preferredProvider?.trim() ||
+        (typeof existingMatch?.provider === "string" && existingMatch.provider.trim()
+          ? existingMatch.provider.trim()
+          : "claude");
+      const existingProviderMatches =
+        typeof existingMatch?.provider === "string" &&
+        normalizeProviderName(existingMatch.provider) === normalizeProviderName(provider);
+      const canInheritModeId =
+        existingProviderMatches &&
+        (s.defaultModeId !== "" || existingMatch?.harnessManaged !== true);
+      const canInheritThinking =
+        existingProviderMatches &&
+        (s.thinkingOptionId !== "" || existingMatch?.harnessManaged !== true);
+      const resolvedModel = resolveSyncedModelId(s, provider, effectiveConfig);
+      const resolvedModeId =
+        s.defaultModeId?.trim() ||
+        (canInheritModeId &&
+        typeof existingMatch?.modeId === "string" &&
+        existingMatch.modeId.trim()
+          ? existingMatch.modeId.trim()
+          : undefined);
+      const resolvedThinking =
+        s.thinkingOptionId?.trim() ||
+        (canInheritThinking &&
+        typeof existingMatch?.thinkingOptionId === "string" &&
+        existingMatch.thinkingOptionId.trim()
+          ? existingMatch.thinkingOptionId.trim()
+          : undefined);
+
       harnessProfiles.push({
-        id: `${MANAGED_PROFILE_PREFIX}${s.id}`,
-        name: s.name,
-        icon: s.icon.toLowerCase(),
+        id: targetId,
+        name:
+          typeof existingMatch?.name === "string" && existingMatch.name.trim()
+            ? existingMatch.name
+            : s.name,
+        icon: toKebabCaseIcon(s.icon),
         color: s.color || "slate",
-        provider: s.preferredProvider || "claude",
-        model: s.preferredTier || "flash",
-        ...(s.defaultModeId ? { modeId: s.defaultModeId } : {}),
-        ...(s.thinkingOptionId ? { thinkingOptionId: s.thinkingOptionId } : {}),
+        provider,
+        model: resolvedModel,
+        ...(resolvedModeId ? { modeId: resolvedModeId } : {}),
+        ...(resolvedThinking ? { thinkingOptionId: resolvedThinking } : {}),
         notes: `role: ${s.id} | managed by agent-harness | ${s.description}`,
         harnessManaged: true,
       });
       syncedCount++;
     }
+
+    // Keep all non-harness-managed profiles that were not merged in-place
+    const preservedProfiles = existingProfiles.filter((p) => {
+      const id = typeof p.id === "string" ? p.id : "";
+      return !id.startsWith(MANAGED_PROFILE_PREFIX) && !mergedExistingIds.has(id);
+    });
 
     const nextProfiles = [...preservedProfiles, ...harnessProfiles];
     await paseo.config.patch({ agentProfiles: nextProfiles as any });

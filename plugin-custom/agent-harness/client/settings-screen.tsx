@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Text, View, StyleSheet } from "react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { useSettings, useRpc } from "@getpaseo/plugin/client";
@@ -10,6 +10,7 @@ import {
   SettingsSwitch,
   SettingsSelect,
   SettingsInput,
+  type SettingsInputHandle,
   useToast,
 } from "@getpaseo/plugin/client/ui";
 import {
@@ -17,7 +18,101 @@ import {
   DEFAULT_AGENT_HARNESS_SETTINGS,
   type AgentHarnessSettings,
 } from "../shared/settings.js";
+import {
+  BUILTIN_BYPASS_MODELS,
+  BUILTIN_PROVIDER_MAPPINGS,
+  BUILTIN_TIERS,
+} from "../shared/presets.js";
+import { isModelBypassed } from "../shared/intent-detector.js";
+import type { HarnessSpecialistConfig } from "../shared/types.js";
+import {
+  normalizeProviderName,
+  resolveTargetModelForTier,
+  resolveEffectiveHarnessConfig,
+} from "../shared/config-resolver.js";
 import { harnessInspectEnvironmentRpc, harnessSyncProfilesRpc } from "../shared/contracts.js";
+
+const KNOWN_PROVIDERS = ["antigravity", "claude", "codex", "opencode", "pi"] as const;
+
+const ANTIGRAVITY_GEMINI4_MODELS = [
+  "gemini-4-carbon-high",
+  "gemini-4-hydrogen-high",
+  "gemini-4-argon-high",
+  "gemini-4-neon-high",
+  "gemini-4-carbon-medium",
+  "gemini-4-hydrogen-medium",
+  "gemini-4-argon-medium",
+  "gemini-4-neon-medium",
+] as const;
+
+const BUILTIN_LAZY_TOOL_SLICES = [
+  "ui.yaml",
+  "backend.yaml",
+  "pm.yaml",
+  "review.yaml",
+  "codex.yaml",
+] as const;
+
+function formatProviderDisplayLabel(providerId: string): string {
+  switch (providerId) {
+    case "antigravity":
+      return "Antigravity";
+    case "claude":
+      return "Claude";
+    case "codex":
+      return "Codex";
+    case "opencode":
+      return "OpenCode";
+    case "pi":
+      return "Pi";
+    default:
+      return providerId;
+  }
+}
+
+function isSelectableRoutingModel(
+  providerId: string,
+  modelId: string,
+  bypassModels: readonly string[] = BUILTIN_BYPASS_MODELS,
+): boolean {
+  if (!modelId.trim()) return false;
+  if (normalizeProviderName(providerId) === "antigravity") {
+    if (/^gemini-3/i.test(modelId) || isModelBypassed(modelId, bypassModels)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+const INPUT_SAVE_DEBOUNCE_MS = 300;
+
+function mergeSettingsPatches(
+  prev: Partial<AgentHarnessSettings>,
+  next: Partial<AgentHarnessSettings>,
+): Partial<AgentHarnessSettings> {
+  let mergedProviderMappings = next.providerMappings ?? prev.providerMappings;
+  if (prev.providerMappings && next.providerMappings) {
+    mergedProviderMappings = { ...prev.providerMappings };
+    for (const [provider, tierMap] of Object.entries(next.providerMappings)) {
+      mergedProviderMappings[provider] = {
+        ...(mergedProviderMappings[provider] ?? {}),
+        ...tierMap,
+      };
+    }
+  }
+  return {
+    ...prev,
+    ...next,
+    ...(mergedProviderMappings ? { providerMappings: mergedProviderMappings } : {}),
+  };
+}
+
+function parseCommaList(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
 
 export interface HarnessSettingsScreenProps extends PluginSurfaceProps {
   settingsOverride?: any;
@@ -30,8 +125,34 @@ export function HarnessSettingsScreen({ theme, settingsOverride }: HarnessSettin
   const inspectRpc = useRpc(harnessInspectEnvironmentRpc);
   const syncProfilesRpc = useRpc(harnessSyncProfilesRpc);
 
-  const [inspectInfo, setInspectInfo] = React.useState<any>(null);
-  const [isSyncing, setIsSyncing] = React.useState(false);
+  const [inspectInfo, setInspectInfo] = useState<any>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [selectedProvider, setSelectedProvider] = useState<string>("antigravity");
+  const [selectedSpecialistId, setSelectedSpecialistId] = useState<string>("ui");
+
+  const latestSettingsRef = useRef(settings);
+  latestSettingsRef.current = settings;
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+  const pendingPatchRef = useRef<Partial<AgentHarnessSettings>>({});
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inputRefs = useRef<Record<string, SettingsInputHandle | null>>({});
+
+  const setInputRef = useCallback(
+    (id: string) => (handle: SettingsInputHandle | null) => {
+      inputRefs.current[id] = handle;
+    },
+    [],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current !== null) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+    };
+  }, []);
 
   React.useEffect(() => {
     inspectRpc({})
@@ -86,22 +207,82 @@ export function HarnessSettingsScreen({ theme, settingsOverride }: HarnessSettin
     [theme],
   );
 
+  const flushPatch = useCallback(async (patchToSave: Partial<AgentHarnessSettings>) => {
+    const cur = latestSettingsRef.current;
+    if (cur?.status !== "ready" || typeof cur.save !== "function") {
+      return;
+    }
+    const baseValues: AgentHarnessSettings = cur.values ?? DEFAULT_AGENT_HARNESS_SETTINGS;
+    const nextValues = {
+      ...baseValues,
+      ...patchToSave,
+      ...(patchToSave.providerMappings
+        ? {
+            providerMappings: {
+              ...baseValues.providerMappings,
+              ...Object.fromEntries(
+                Object.entries(patchToSave.providerMappings).map(([prov, tierMap]) => [
+                  prov,
+                  { ...(baseValues.providerMappings?.[prov] ?? {}), ...tierMap },
+                ]),
+              ),
+            },
+          }
+        : {}),
+    };
+    try {
+      const ok = await cur.save(nextValues, cur.revision);
+      if (ok === false) {
+        toastRef.current.error("Failed to save Agent Harness settings.");
+      }
+    } catch (err) {
+      toastRef.current.error(
+        `Failed to save Agent Harness settings: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }, []);
+
+  const commitPatch = useCallback(
+    (patch: Partial<AgentHarnessSettings>) => {
+      if (debounceTimerRef.current !== null) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+      const combined = mergeSettingsPatches(pendingPatchRef.current, patch);
+      pendingPatchRef.current = {};
+      void flushPatch(combined);
+    },
+    [flushPatch],
+  );
+
+  const scheduleDebouncedSave = useCallback(
+    (patch: Partial<AgentHarnessSettings>) => {
+      pendingPatchRef.current = mergeSettingsPatches(pendingPatchRef.current, patch);
+      if (debounceTimerRef.current !== null) {
+        clearTimeout(debounceTimerRef.current);
+      }
+      debounceTimerRef.current = setTimeout(() => {
+        debounceTimerRef.current = null;
+        const buffered = pendingPatchRef.current;
+        pendingPatchRef.current = {};
+        void flushPatch(buffered);
+      }, INPUT_SAVE_DEBOUNCE_MS);
+    },
+    [flushPatch],
+  );
+
   const handleToggle = useCallback(
     (key: keyof AgentHarnessSettings) => (value: boolean) => {
-      if (settings.status === "ready") {
-        void settings.save({ ...settings.values, [key]: value }, settings.revision);
-      }
+      commitPatch({ [key]: value } as Partial<AgentHarnessSettings>);
     },
-    [settings],
+    [commitPatch],
   );
 
   const handleSelect = useCallback(
     (key: keyof AgentHarnessSettings) => (value: any) => {
-      if (settings.status === "ready") {
-        void settings.save({ ...settings.values, [key]: value }, settings.revision);
-      }
+      commitPatch({ [key]: value } as Partial<AgentHarnessSettings>);
     },
-    [settings],
+    [commitPatch],
   );
 
   const handleRetry = useCallback(() => {
@@ -120,6 +301,134 @@ export function HarnessSettingsScreen({ theme, settingsOverride }: HarnessSettin
       await settings.save(DEFAULT_AGENT_HARNESS_SETTINGS, revision);
     }
   }, [settings]);
+
+  const values: AgentHarnessSettings =
+    settings.status === "ready" ? settings.values : DEFAULT_AGENT_HARNESS_SETTINGS;
+
+  const inspectedProviderMap = useMemo(() => {
+    const map = new Map<string, { enabled: boolean; models: string[] }>();
+    const list = Array.isArray(inspectInfo?.availableProviders)
+      ? inspectInfo.availableProviders
+      : [];
+    for (const item of list) {
+      if (item && typeof item.provider === "string") {
+        map.set(normalizeProviderName(item.provider), {
+          enabled: Boolean(item.enabled),
+          models: Array.isArray(item.models) ? item.models : [],
+        });
+      }
+    }
+    return map;
+  }, [inspectInfo]);
+
+  const providerIds = useMemo(() => {
+    const ids = new Set<string>(KNOWN_PROVIDERS);
+    for (const key of Object.keys(values.providerMappings ?? {})) {
+      ids.add(normalizeProviderName(key));
+    }
+    for (const key of inspectedProviderMap.keys()) {
+      ids.add(key);
+    }
+    return Array.from(ids).filter(Boolean);
+  }, [values.providerMappings, inspectedProviderMap]);
+
+  const getModelsForProvider = useCallback(
+    (providerId: string): string[] => {
+      const norm = normalizeProviderName(providerId);
+      const set = new Set<string>();
+      if (norm === "antigravity") {
+        for (const m of ANTIGRAVITY_GEMINI4_MODELS) {
+          set.add(m);
+        }
+      }
+      const inspected = inspectedProviderMap.get(norm);
+      if (inspected) {
+        for (const m of inspected.models) {
+          if (isSelectableRoutingModel(norm, m, values.bypassModels)) {
+            set.add(m);
+          }
+        }
+      }
+      const mapped = values.providerMappings?.[norm] ?? BUILTIN_PROVIDER_MAPPINGS[norm] ?? {};
+      for (const m of Object.values(mapped)) {
+        if (typeof m === "string" && isSelectableRoutingModel(norm, m, values.bypassModels)) {
+          set.add(m);
+        }
+      }
+      return Array.from(set);
+    },
+    [inspectedProviderMap, values.bypassModels, values.providerMappings],
+  );
+
+  const specialistsList =
+    values.specialists?.length > 0
+      ? values.specialists
+      : DEFAULT_AGENT_HARNESS_SETTINGS.specialists;
+  const activeSpecialist =
+    specialistsList.find((s) => s.id === selectedSpecialistId) ?? specialistsList[0] ?? null;
+
+  useEffect(() => {
+    const map = values.providerMappings?.[selectedProvider] ?? {};
+    const tierIds = (values.tiers?.length ? values.tiers : BUILTIN_TIERS).map((t) => t.id);
+    for (const tierId of tierIds) {
+      inputRefs.current[`tier-input-${tierId}`]?.replaceText(map[tierId] ?? "");
+    }
+    // Sync displayed tier input values only when selectedProvider changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProvider]);
+
+  useEffect(() => {
+    inputRefs.current["spec-model-override"]?.replaceText(activeSpecialist?.modelOverride ?? "");
+    // Sync displayed specialist override input only when selectedSpecialistId changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSpecialistId]);
+
+  const updateActiveSpecialist = useCallback(
+    (patch: Partial<HarnessSpecialistConfig>, debounce = false) => {
+      const currentSpecialists: AgentHarnessSettings["specialists"] =
+        pendingPatchRef.current.specialists ??
+        latestSettingsRef.current?.values?.specialists ??
+        specialistsList;
+      const target =
+        currentSpecialists.find((s) => s.id === (activeSpecialist?.id ?? selectedSpecialistId)) ??
+        activeSpecialist;
+      if (!target) return;
+      const nextSpecialists: AgentHarnessSettings["specialists"] = currentSpecialists.map((s) =>
+        s.id === target.id ? { ...s, ...patch } : s,
+      );
+      if (debounce) {
+        scheduleDebouncedSave({ specialists: nextSpecialists });
+      } else {
+        commitPatch({ specialists: nextSpecialists });
+      }
+    },
+    [activeSpecialist, commitPatch, scheduleDebouncedSave, selectedSpecialistId, specialistsList],
+  );
+
+  const updateProviderTierModel = useCallback(
+    (providerId: string, tierId: string, modelId: string, debounce = false) => {
+      const norm = normalizeProviderName(providerId);
+      const baseMappings =
+        latestSettingsRef.current?.values?.providerMappings ?? values.providerMappings ?? {};
+      const pendingProviderMap = pendingPatchRef.current.providerMappings?.[norm];
+      const nextProviderMap = {
+        ...(baseMappings[norm] ?? {}),
+        ...(pendingProviderMap ?? {}),
+        [tierId]: modelId.trim(),
+      };
+      const patch: Partial<AgentHarnessSettings> = {
+        providerMappings: {
+          [norm]: nextProviderMap,
+        },
+      };
+      if (debounce) {
+        scheduleDebouncedSave(patch);
+      } else {
+        commitPatch(patch);
+      }
+    },
+    [commitPatch, scheduleDebouncedSave, values.providerMappings],
+  );
 
   if (settings.status === "loading") {
     return (
@@ -162,14 +471,92 @@ export function HarnessSettingsScreen({ theme, settingsOverride }: HarnessSettin
     );
   }
 
-  const values = settings.values;
   const isSaving = settings.saving;
+  const tiers = values.tiers?.length ? values.tiers : BUILTIN_TIERS;
+  const effectiveConfig = resolveEffectiveHarnessConfig(values);
 
   const fallbackModelOptions = [
     { label: "Lite (lite)", value: "lite" },
     { label: "Pro (pro)", value: "pro" },
     { label: "Flash (flash)", value: "flash" },
   ];
+
+  const targetProviderOptions = providerIds.map((pid) => {
+    const status = inspectedProviderMap.get(pid);
+    const suffix = status ? (status.enabled ? " · Active" : " · Disabled") : "";
+    return {
+      label: `${formatProviderDisplayLabel(pid)}${suffix}`,
+      value: pid,
+    };
+  });
+
+  const activeProviderModels = getModelsForProvider(selectedProvider);
+
+  const specialistSelectOptions = specialistsList.map((s) => ({
+    label: `${s.name} (${s.preferredProvider || "inherit"} · ${s.modelOverride || s.preferredTier || "flash"})`,
+    value: s.id,
+  }));
+
+  const specialistProviderOptions = [
+    { label: "Inherit (Caller Default)", value: "" },
+    ...providerIds.map((pid) => ({
+      label: formatProviderDisplayLabel(pid),
+      value: pid,
+    })),
+  ];
+
+  const tierSelectOptions = tiers.map((t) => ({
+    label: `${t.name} (${t.id})`,
+    value: t.id,
+  }));
+
+  const activeSpecialistProvider = activeSpecialist?.preferredProvider?.trim() || "claude";
+  const resolvedTierModel = activeSpecialist
+    ? resolveTargetModelForTier(
+        effectiveConfig,
+        activeSpecialistProvider,
+        activeSpecialist.preferredTier || "flash",
+      )
+    : "flash";
+  const activeSpecialistModels = activeSpecialist
+    ? getModelsForProvider(activeSpecialistProvider)
+    : [];
+  const modelOverrideOptions = [
+    { label: `Use Tier Mapping (${resolvedTierModel})`, value: "" },
+    ...activeSpecialistModels.map((m) => ({ label: m, value: m })),
+    ...(activeSpecialist?.modelOverride &&
+    !activeSpecialistModels.includes(activeSpecialist.modelOverride)
+      ? [{ label: activeSpecialist.modelOverride, value: activeSpecialist.modelOverride }]
+      : []),
+  ];
+
+  const lazySliceSet = new Set<string>(BUILTIN_LAZY_TOOL_SLICES);
+  if (Array.isArray(inspectInfo?.lazyToolSlices)) {
+    for (const s of inspectInfo.lazyToolSlices) {
+      if (typeof s === "string" && s.trim()) {
+        lazySliceSet.add(s.trim());
+      }
+    }
+  }
+  if (activeSpecialist?.lazyToolSlice?.trim()) {
+    lazySliceSet.add(activeSpecialist.lazyToolSlice.trim());
+  }
+  const lazySliceOptions = [
+    { label: "Default (None)", value: "" },
+    ...Array.from(lazySliceSet)
+      .sort()
+      .map((s) => ({ label: s, value: s })),
+  ];
+
+  const availableProvidersSummary =
+    Array.isArray(inspectInfo?.availableProviders) && inspectInfo.availableProviders.length > 0
+      ? inspectInfo.availableProviders
+          .map(
+            (p: { provider: string; enabled: boolean; models?: string[] }) =>
+              `${p.provider} (${p.enabled ? "enabled" : "off"}, ${p.models?.length ?? 0} models)`,
+          )
+          .join(", ")
+      : "Not inspected";
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -190,6 +577,13 @@ export function HarnessSettingsScreen({ theme, settingsOverride }: HarnessSettin
             onValueChange={handleToggle("overrideIfDefaultOnly")}
           />
           <SettingsSwitch
+            label="Honor Specialist Provider"
+            hint="Use each specialist's configured Preferred Provider during handoff"
+            value={values.honorSpecialistPreferredProvider}
+            disabled={isSaving}
+            onValueChange={handleToggle("honorSpecialistPreferredProvider")}
+          />
+          <SettingsSwitch
             label="Debug Logs"
             hint="Log harness routing decisions and turn lifecycle transitions to daemon log"
             value={values.debugLogs}
@@ -205,6 +599,161 @@ export function HarnessSettingsScreen({ theme, settingsOverride }: HarnessSettin
           />
         </SettingsCard>
       </SettingsSection>
+
+      <SettingsSection title="Provider Tier Mappings & Bypass">
+        <SettingsCard>
+          <SettingsSelect
+            label="Target Provider"
+            hint="Select a provider to configure Plan, Flash, and Review model mappings"
+            value={selectedProvider}
+            options={targetProviderOptions}
+            disabled={isSaving}
+            onValueChange={(pid) => setSelectedProvider(pid)}
+          />
+          {tiers.map((tier) => {
+            const currentValue = values.providerMappings?.[selectedProvider]?.[tier.id] ?? "";
+            const presetOptions = [
+              { label: "Custom / Unset", value: "" },
+              ...(currentValue && !activeProviderModels.includes(currentValue)
+                ? [{ label: currentValue, value: currentValue }]
+                : []),
+              ...activeProviderModels.map((m) => ({ label: m, value: m })),
+              ...(activeProviderModels.length === 0 && currentValue !== tier.id
+                ? [{ label: tier.id, value: tier.id }]
+                : []),
+            ];
+
+            return (
+              <React.Fragment key={`${selectedProvider}:${tier.id}`}>
+                <SettingsSelect
+                  label={`${tier.name} Tier Preset`}
+                  hint={`Quick-select target model for ${selectedProvider} (${tier.id})`}
+                  value={currentValue}
+                  options={presetOptions}
+                  disabled={isSaving}
+                  onValueChange={(nextModel) => {
+                    inputRefs.current[`tier-input-${tier.id}`]?.replaceText(nextModel);
+                    updateProviderTierModel(selectedProvider, tier.id, nextModel, false);
+                  }}
+                />
+                <SettingsInput
+                  ref={setInputRef(`tier-input-${tier.id}`)}
+                  key={`tier-input-${tier.id}`}
+                  label={`${tier.name} Model ID`}
+                  hint="Custom model identifier override for this tier"
+                  initialValue={currentValue}
+                  placeholder={tier.id}
+                  onChangeText={(text) =>
+                    updateProviderTierModel(selectedProvider, tier.id, text, true)
+                  }
+                />
+              </React.Fragment>
+            );
+          })}
+          <SettingsInput
+            ref={setInputRef("bypass-models-input")}
+            key="bypass-models-input"
+            label="Bypass Model Patterns"
+            hint="Comma-separated model regexes excluded from Harness (e.g. ^gemini-pro-orchestrator)"
+            initialValue={(values.bypassModels ?? []).join(", ")}
+            placeholder="^gemini-pro-orchestrator"
+            onChangeText={(text) => scheduleDebouncedSave({ bypassModels: parseCommaList(text) })}
+          />
+          <SettingsInput
+            ref={setInputRef("bypass-providers-input")}
+            key="bypass-providers-input"
+            label="Bypass Providers"
+            hint="Comma-separated provider IDs excluded entirely from Harness routing"
+            initialValue={(values.bypassProviders ?? []).join(", ")}
+            placeholder="Optional provider IDs"
+            onChangeText={(text) =>
+              scheduleDebouncedSave({ bypassProviders: parseCommaList(text) })
+            }
+          />
+        </SettingsCard>
+      </SettingsSection>
+
+      {activeSpecialist ? (
+        <SettingsSection title="Specialist Roles Matrix">
+          <SettingsCard>
+            <SettingsSelect
+              label="Active Specialist"
+              hint="Choose a specialist role to customize its Agent, tier, model, and tool slice"
+              value={activeSpecialist.id}
+              options={specialistSelectOptions}
+              disabled={isSaving}
+              onValueChange={(id) => setSelectedSpecialistId(id)}
+            />
+            <SettingsSwitch
+              label="Enable Specialist"
+              hint={activeSpecialist.description || `Enable routing for ${activeSpecialist.id}`}
+              value={activeSpecialist.enabled}
+              disabled={isSaving}
+              onValueChange={(enabled) => updateActiveSpecialist({ enabled })}
+            />
+            <SettingsSelect
+              label="Preferred Provider"
+              hint="Target coding agent when spawning or handing off to this specialist"
+              value={activeSpecialist.preferredProvider ?? ""}
+              options={specialistProviderOptions}
+              disabled={isSaving}
+              onValueChange={(preferredProvider) => updateActiveSpecialist({ preferredProvider })}
+            />
+            <SettingsSelect
+              label="Preferred Tier"
+              hint="Default capability tier mapped to the target provider's model"
+              value={activeSpecialist.preferredTier ?? "flash"}
+              options={tierSelectOptions}
+              disabled={isSaving}
+              onValueChange={(preferredTier) => updateActiveSpecialist({ preferredTier })}
+            />
+            <SettingsSelect
+              label="Model Override Preset"
+              hint="Pin a specific model ID or use the provider's tier mapping"
+              value={activeSpecialist.modelOverride ?? ""}
+              options={modelOverrideOptions}
+              disabled={isSaving}
+              onValueChange={(modelOverride) => {
+                inputRefs.current["spec-model-override"]?.replaceText(modelOverride);
+                updateActiveSpecialist({ modelOverride }, false);
+              }}
+            />
+            <SettingsInput
+              ref={setInputRef("spec-model-override")}
+              key="spec-model-override"
+              label="Model Override ID"
+              hint="Leave empty to follow Preferred Tier mapping"
+              initialValue={activeSpecialist.modelOverride ?? ""}
+              placeholder={resolvedTierModel}
+              onChangeText={(modelOverride) =>
+                updateActiveSpecialist({ modelOverride: modelOverride.trim() }, true)
+              }
+            />
+            <SettingsSwitch
+              label="Lock Tier on Role Label"
+              hint="Keep assigned tier locked across turns when invoked via role label"
+              value={Boolean(activeSpecialist.lockTierOnLabel)}
+              disabled={isSaving}
+              onValueChange={(lockTierOnLabel) => updateActiveSpecialist({ lockTierOnLabel })}
+            />
+            <SettingsSwitch
+              label="Show in Handoff Popover"
+              hint="Display this specialist in the Composer Harness handoff menu"
+              value={activeSpecialist.handoffEnabled}
+              disabled={isSaving}
+              onValueChange={(handoffEnabled) => updateActiveSpecialist({ handoffEnabled })}
+            />
+            <SettingsSelect
+              label="Lazy-Tool Slice"
+              hint="MCP capability slice injected via LAZY_TOOL_CONFIG"
+              value={activeSpecialist.lazyToolSlice ?? ""}
+              options={lazySliceOptions}
+              disabled={isSaving}
+              onValueChange={(lazyToolSlice) => updateActiveSpecialist({ lazyToolSlice })}
+            />
+          </SettingsCard>
+        </SettingsSection>
+      ) : null}
 
       <SettingsSection title="Phase Lifecycle & Gates">
         <SettingsCard>
@@ -256,10 +805,17 @@ export function HarnessSettingsScreen({ theme, settingsOverride }: HarnessSettin
         <SettingsCard>
           <SettingsSwitch
             label="Enable LLM Fallback Classifier"
-            hint="Use LLM endpoint to classify ambiguous intents when regex heuristics miss"
+            hint="Use configured OpenAI-compatible endpoint when regex heuristics miss"
             value={values.llmFallbackEnabled}
             disabled={isSaving}
             onValueChange={handleToggle("llmFallbackEnabled")}
+          />
+          <SettingsSwitch
+            label="Apply Role from Classifier"
+            hint="Update specialist domain role when L2 classifier returns a specific role"
+            value={values.llmFallbackApplyRole}
+            disabled={isSaving}
+            onValueChange={handleToggle("llmFallbackApplyRole")}
           />
           <SettingsSelect
             label="LLM Fallback Model"
@@ -268,6 +824,48 @@ export function HarnessSettingsScreen({ theme, settingsOverride }: HarnessSettin
             disabled={isSaving}
             onValueChange={handleSelect("llmFallbackModel")}
           />
+          <SettingsInput
+            ref={setInputRef("llm-fallback-endpoint")}
+            key="llm-fallback-endpoint"
+            label="Classifier Endpoint URL"
+            hint="OpenAI-compatible /v1/chat/completions endpoint; required for L2 fallback"
+            initialValue={values.llmFallbackEndpoint ?? ""}
+            placeholder="https://your-llm.example.com/v1/chat/completions"
+            onChangeText={(text) => scheduleDebouncedSave({ llmFallbackEndpoint: text.trim() })}
+          />
+          <SettingsInput
+            ref={setInputRef("llm-fallback-apikey")}
+            key="llm-fallback-apikey"
+            label="Classifier API Key"
+            hint={
+              values.llmFallbackApiKey
+                ? "Bearer token stored securely; enter a new key to replace or clear below"
+                : "Bearer token sent to the classifier endpoint"
+            }
+            initialValue=""
+            placeholder={
+              values.llmFallbackApiKey ? "Configured (enter new key to replace)" : "sk-..."
+            }
+            secureTextEntry
+            onChangeText={(text) => {
+              const trimmed = text.trim();
+              if (trimmed.length > 0) {
+                scheduleDebouncedSave({ llmFallbackApiKey: trimmed });
+              }
+            }}
+          />
+          {values.llmFallbackApiKey ? (
+            <SettingsAction
+              label="Clear Classifier API Key"
+              hint="Remove the stored bearer token"
+              actionLabel="Clear API Key"
+              disabled={isSaving}
+              onPress={() => {
+                inputRefs.current["llm-fallback-apikey"]?.replaceText("");
+                commitPatch({ llmFallbackApiKey: "" });
+              }}
+            />
+          ) : null}
         </SettingsCard>
       </SettingsSection>
 
@@ -319,12 +917,16 @@ export function HarnessSettingsScreen({ theme, settingsOverride }: HarnessSettin
         {inspectInfo ? (
           <SettingsCard>
             <Text style={styles.infoText}>
-              Host Environment Status:{"\n"}• Disk Profiles Found:{" "}
-              {inspectInfo.diskProfiles?.length ?? 0}
+              Host Environment Status:{"\n"}• Available Providers: {availableProvidersSummary}
+              {"\n"}• Disk Profiles Found: {inspectInfo.diskProfiles?.length ?? 0}
               {"\n"}• Lazy-Tool Slices Found: {inspectInfo.lazyToolSlices?.length ?? 0}
               {"\n"}• Workspace Repo Override:{" "}
               {inspectInfo.hasRepoOverride
                 ? "Active (" + inspectInfo.repoOverridePath + ")"
+                : "None"}
+              {"\n"}• Workspace Agent Team:{" "}
+              {inspectInfo.agentTeam
+                ? `Active (team-${inspectInfo.agentTeam.projectSlug}, ${inspectInfo.agentTeam.rolesCount} roles)`
                 : "None"}
             </Text>
           </SettingsCard>

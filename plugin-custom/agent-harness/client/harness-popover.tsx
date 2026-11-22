@@ -1,10 +1,23 @@
-import React, { memo, useCallback, useMemo, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { View, Text, Pressable, StyleSheet } from "react-native";
 import type { PluginButtonContentProps } from "@getpaseo/plugin/client";
-import { useAgent, useRpc } from "@getpaseo/plugin/client";
-import { Icon, useToast } from "@getpaseo/plugin/client/ui";
-import { harnessHandoffRpc, harnessSwitchTierRpc } from "../shared/contracts.js";
-import type { HandoffTargetRole, MatrixTier } from "../shared/types.js";
+import { useAgent, useRpc, useSettings } from "@getpaseo/plugin/client";
+import { Icon, ScrollView, useToast } from "@getpaseo/plugin/client/ui";
+import {
+  harnessEffectiveConfigRpc,
+  harnessHandoffRpc,
+  harnessSwitchTierRpc,
+} from "../shared/contracts.js";
+import { isModelBypassed } from "../shared/intent-detector.js";
+import { HARNESS_BYPASSED_META_KEY } from "../shared/lifecycle-state.js";
+import { BUILTIN_BYPASS_MODELS, BUILTIN_SPECIALISTS } from "../shared/presets.js";
+import { agentHarnessSettings } from "../shared/settings.js";
+import type {
+  AgentTeamSummary,
+  HandoffTargetRole,
+  HarnessSpecialistConfig,
+  MatrixTier,
+} from "../shared/types.js";
 import {
   capitalize,
   extractAgentHarnessMetadata,
@@ -29,16 +42,104 @@ export const HarnessPopover = memo(function HarnessPopover({
   const toast = useToast();
   const switchTierRpc = useRpc(harnessSwitchTierRpc);
   const handoffRpc = useRpc(harnessHandoffRpc);
+  const effectiveConfigRpc = useRpc(harnessEffectiveConfigRpc);
+  const settings = useSettings(agentHarnessSettings);
 
   const agent = useAgent(agentId, (a) => ({
     status: a.status,
     provider: a.provider,
     model: a.model,
+    cwd: a.cwd,
     currentModeId: a.currentModeId,
     metadata: a.metadata,
   }));
 
+  const [workspaceSpecialists, setWorkspaceSpecialists] = useState<
+    HarnessSpecialistConfig[] | null
+  >(null);
+  const [workspaceAgentTeam, setWorkspaceAgentTeam] = useState<AgentTeamSummary | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!effectiveConfigRpc) return;
+    Promise.resolve(effectiveConfigRpc({ workspaceId, cwd: agent?.cwd ?? null }))
+      .then((res) => {
+        if (cancelled || !res || typeof res !== "object") return;
+        const cfg = (res as { config?: unknown }).config as
+          | { specialists?: unknown; agentTeam?: AgentTeamSummary | null }
+          | undefined;
+        if (cfg && Array.isArray(cfg.specialists)) {
+          setWorkspaceSpecialists(cfg.specialists as HarnessSpecialistConfig[]);
+        }
+        if (cfg && "agentTeam" in cfg) {
+          setWorkspaceAgentTeam(cfg.agentTeam ?? null);
+        }
+      })
+      .catch(() => {
+        // Keep fallback specialists from host settings
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [agent?.cwd, effectiveConfigRpc, workspaceId]);
+
   const meta = useMemo(() => extractAgentHarnessMetadata(agent?.metadata), [agent?.metadata]);
+  const isBypassedSession = useMemo(() => {
+    if (meta) return false;
+    const rawMeta = agent?.metadata as Record<string, unknown> | undefined;
+    if (Boolean(rawMeta?.[HARNESS_BYPASSED_META_KEY])) {
+      return true;
+    }
+    const configuredBypassModels =
+      settings.status === "ready" && Array.isArray(settings.values.bypassModels)
+        ? settings.values.bypassModels
+        : BUILTIN_BYPASS_MODELS;
+    return isModelBypassed(agent?.model, configuredBypassModels);
+  }, [agent?.metadata, agent?.model, meta, settings]);
+
+  const handoffSpecialists = useMemo(() => {
+    const isDynamicWorkspaceTeam = Boolean(workspaceAgentTeam);
+    const mapSpecialist = (s: HarnessSpecialistConfig) => {
+      const displayName =
+        isDynamicWorkspaceTeam || (!s.builtIn && s.shortLabel === s.id)
+          ? s.id
+          : s.shortLabel
+            ? `${s.shortLabel} Specialist`
+            : s.name;
+      const targetProvider =
+        s.preferredProvider?.trim() || (isDynamicWorkspaceTeam ? "inherit" : "");
+      const targetModel = s.modelOverride?.trim() || s.preferredTier || "flash";
+      return {
+        role: s.id as HandoffTargetRole,
+        name: displayName,
+        desc: targetProvider
+          ? `${targetProvider} · ${targetModel}`
+          : s.description || `Role: ${s.id}`,
+        icon: s.icon || "Bot",
+        readonly: Boolean(s.readonly),
+      };
+    };
+
+    const sourceSpecialists =
+      workspaceSpecialists && workspaceSpecialists.length > 0
+        ? workspaceSpecialists
+        : settings.status === "ready" && Array.isArray(settings.values.specialists)
+          ? settings.values.specialists
+          : BUILTIN_SPECIALISTS;
+
+    const configured = sourceSpecialists
+      .filter((s) => s.enabled && s.handoffEnabled)
+      .slice()
+      .sort((a, b) => (a.handoffPriority ?? 50) - (b.handoffPriority ?? 50))
+      .map(mapSpecialist);
+
+    return configured.length > 0
+      ? configured
+      : BUILTIN_SPECIALISTS.filter((s) => s.handoffEnabled)
+          .slice()
+          .sort((a, b) => (a.handoffPriority ?? 50) - (b.handoffPriority ?? 50))
+          .map(mapSpecialist);
+  }, [settings, workspaceAgentTeam, workspaceSpecialists]);
 
   const [isSwitching, setIsSwitching] = useState(false);
   const [isHandoffRunning, setIsHandoffRunning] = useState(false);
@@ -50,7 +151,7 @@ export const HarnessPopover = memo(function HarnessPopover({
   // Handle manual model tier switch
   const handleSwitchTier = useCallback(
     async (targetTier: MatrixTier) => {
-      if (isSwitching) return;
+      if (isSwitching || isBypassedSession) return;
       setIsSwitching(true);
       try {
         const res = await switchTierRpc({
@@ -69,7 +170,7 @@ export const HarnessPopover = memo(function HarnessPopover({
         setIsSwitching(false);
       }
     },
-    [agentId, isSwitching, switchTierRpc, toast],
+    [agent?.currentModeId, agentId, isBypassedSession, isSwitching, switchTierRpc, toast],
   );
 
   // Handle specialist handoff
@@ -279,10 +380,33 @@ export const HarnessPopover = memo(function HarnessPopover({
           fontWeight: "600",
           color: theme.colors.foreground,
         },
+        specialistScroll: {
+          maxHeight: 210,
+        },
         specialistGrid: {
           flexDirection: "row",
           flexWrap: "wrap",
           gap: 6,
+        },
+        specialistNameRow: {
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          flex: 1,
+          gap: 4,
+        },
+        readonlyTag: {
+          backgroundColor: theme.colors.surface2,
+          paddingHorizontal: 4,
+          paddingVertical: 1,
+          borderRadius: 3,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: theme.colors.border,
+        },
+        readonlyTagText: {
+          fontSize: 8,
+          fontWeight: "700",
+          color: theme.colors.statusWarning,
         },
         specialistCard: {
           width: "48.9%",
@@ -306,6 +430,7 @@ export const HarnessPopover = memo(function HarnessPopover({
           fontSize: 11,
           fontWeight: "600",
           color: theme.colors.foreground,
+          flexShrink: 1,
         },
         specialistDesc: {
           fontSize: 9,
@@ -333,6 +458,11 @@ export const HarnessPopover = memo(function HarnessPopover({
 
   const isPlanMode = agent?.currentModeId === "plan";
   const isDesignPhase = meta?.phase === "design";
+  const phaseBadgeText = meta
+    ? `${formatRoleDisplayName(meta.role)} · ${meta.phase}`
+    : isBypassedSession
+      ? "NATIVE ORCHESTRATOR"
+      : "UNTRACKED";
 
   return (
     <View style={styles.container}>
@@ -342,9 +472,7 @@ export const HarnessPopover = memo(function HarnessPopover({
           <Icon name={pillIcon} size={13} color={theme.colors.accent} />
           <Text style={styles.headerTitle}>Agent Harness</Text>
           <View style={styles.phaseBadge}>
-            <Text style={styles.phaseBadgeText}>
-              {meta ? `${formatRoleDisplayName(meta.role)} · ${meta.phase}` : "UNTRACKED"}
-            </Text>
+            <Text style={styles.phaseBadgeText}>{phaseBadgeText}</Text>
           </View>
         </View>
 
@@ -373,7 +501,9 @@ export const HarnessPopover = memo(function HarnessPopover({
           <View style={styles.metricCol}>
             <Text style={styles.metricLabel}>Next Turn</Text>
             <View style={styles.metricTierRow}>
-              <Text style={styles.metricTier}>{capitalize(currentTier)}</Text>
+              <Text style={styles.metricTier}>
+                {isBypassedSession ? "Native" : capitalize(currentTier)}
+              </Text>
             </View>
             <Text style={styles.metricModel} numberOfLines={1}>
               {meta?.currentModel ?? agent?.model ?? "—"}
@@ -420,22 +550,30 @@ export const HarnessPopover = memo(function HarnessPopover({
 
       {/* Manual Tier Switch */}
       <Text style={styles.sectionTitle}>Model Tier Switch</Text>
+      {isBypassedSession ? (
+        <View style={styles.dualStateBanner}>
+          <Text style={styles.dualStateBannerText}>
+            Managed natively by Orchestrator — tier switching disabled.
+          </Text>
+        </View>
+      ) : null}
       <View style={styles.tierGrid}>
         {(["plan", "flash", "review"] as const).map((tier) => {
-          const isActive = currentTier === tier;
+          const isActive = !isBypassedSession && currentTier === tier;
           const tierIcon = tier === "plan" ? "Compass" : tier === "review" ? "ShieldCheck" : "Zap";
 
           return (
             <Pressable
               key={tier}
-              disabled={isSwitching}
+              disabled={isSwitching || isBypassedSession}
               accessibilityRole="button"
               accessibilityLabel={`Switch to ${tier}`}
               onPress={() => handleSwitchTier(tier)}
               style={({ pressed }) => [
                 styles.tierButton,
                 isActive && styles.tierButtonActive,
-                pressed && { opacity: 0.7, transform: [{ scale: 0.98 }] },
+                isBypassedSession && { opacity: 0.45 },
+                pressed && !isBypassedSession && { opacity: 0.7, transform: [{ scale: 0.98 }] },
               ]}
             >
               <Icon
@@ -463,67 +601,49 @@ export const HarnessPopover = memo(function HarnessPopover({
         </View>
       ) : null}
 
-      <View style={styles.specialistGrid}>
-        {(
-          [
-            {
-              role: "ui" as const,
-              name: "UI Specialist",
-              desc: "Frontend & styles",
-              icon: "Palette",
-            },
-            {
-              role: "backend" as const,
-              name: "Backend Specialist",
-              desc: "API & services",
-              icon: "Server",
-            },
-            {
-              role: "qa" as const,
-              name: "QA Gatekeeper",
-              desc: "Tests & verify",
-              icon: "CheckCircle2",
-            },
-            {
-              role: "review" as const,
-              name: "Reviewer (Gate)",
-              desc: "Dual-axis audit",
-              icon: "ShieldCheck",
-            },
-          ] as const
-        ).map((spec) => {
-          const isHighlight = isDesignPhase && (spec.role === "ui" || spec.role === "backend");
+      <ScrollView style={styles.specialistScroll}>
+        <View style={styles.specialistGrid}>
+          {handoffSpecialists.map((spec) => {
+            const isHighlight = isDesignPhase && (spec.role === "ui" || spec.role === "backend");
 
-          return (
-            <Pressable
-              key={spec.role}
-              disabled={isHandoffRunning}
-              accessibilityRole="button"
-              accessibilityLabel={spec.name}
-              onPress={() => handleHandoff(spec.role)}
-              style={({ pressed }) => [
-                styles.specialistCard,
-                isHighlight && styles.specialistCardDesignHint,
-                pressed && { opacity: 0.7, transform: [{ scale: 0.98 }] },
-              ]}
-            >
-              <View style={styles.specialistHeader}>
-                <Icon
-                  name={spec.icon}
-                  size={12}
-                  color={isHighlight ? theme.colors.accent : theme.colors.foreground}
-                />
-                <Text style={styles.specialistName} numberOfLines={1}>
-                  {spec.name}
+            return (
+              <Pressable
+                key={spec.role}
+                disabled={isHandoffRunning}
+                accessibilityRole="button"
+                accessibilityLabel={spec.name}
+                onPress={() => handleHandoff(spec.role)}
+                style={({ pressed }) => [
+                  styles.specialistCard,
+                  isHighlight && styles.specialistCardDesignHint,
+                  pressed && { opacity: 0.7, transform: [{ scale: 0.98 }] },
+                ]}
+              >
+                <View style={styles.specialistHeader}>
+                  <Icon
+                    name={spec.icon}
+                    size={12}
+                    color={isHighlight ? theme.colors.accent : theme.colors.foreground}
+                  />
+                  <View style={styles.specialistNameRow}>
+                    <Text style={styles.specialistName} numberOfLines={1}>
+                      {spec.name}
+                    </Text>
+                    {spec.readonly ? (
+                      <View style={styles.readonlyTag}>
+                        <Text style={styles.readonlyTagText}>RO</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                </View>
+                <Text style={styles.specialistDesc} numberOfLines={1}>
+                  {spec.desc}
                 </Text>
-              </View>
-              <Text style={styles.specialistDesc} numberOfLines={1}>
-                {spec.desc}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
+              </Pressable>
+            );
+          })}
+        </View>
+      </ScrollView>
 
       {/* Open Settings Footer */}
       {onOpenSettings ? (

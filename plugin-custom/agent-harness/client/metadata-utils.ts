@@ -36,7 +36,7 @@ export function formatRoleDisplayName(role: DomainRole | HandoffTargetRole | str
     case "general":
       return "General";
     default:
-      return capitalize(normalized);
+      return normalized.includes("-") ? normalized : capitalize(normalized);
   }
 }
 

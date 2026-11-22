@@ -1,10 +1,12 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { PaseoApi } from "@getpaseo/client";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import {
   buildSystemPromptBanner,
   findSpecialist,
+  isNativePlanModeSupported,
   normalizeProviderName,
   resolveEffectiveHarnessConfig,
   resolveResumeExecutionMode,
@@ -16,14 +18,17 @@ import {
   classifyIntentWithLlm,
   detectDomainRole,
   detectDomainRoleHybrid,
-  normalizeProvider,
+  isModelBypassed,
   resolveHarnessEnv,
   resolveMatrixModel,
-  SAFETY_NET_PROVIDER,
 } from "./shared/intent-detector.js";
 import {
   createInitialHarnessMetadata,
+  extractSnapshotModel,
   extractTimelineItems,
+  HARNESS_BYPASSED_META_KEY,
+  HARNESS_LEAF_LABEL_KEY,
+  HARNESS_LEAF_META_KEY,
   hasExplicitExecTransitionIntent,
   hasShortAffirmativeExecConfirmation,
   inspectTurnTimeline,
@@ -31,10 +36,13 @@ import {
   shouldEnforceNativePlanMode,
   tierToPhase,
 } from "./shared/lifecycle-state.js";
+
+export { extractSnapshotModel } from "./shared/lifecycle-state.js";
 import { isReadOnlyShellCommand } from "./shared/plan-shell-policy.js";
 import {
   agentHarnessSettings,
   DEFAULT_AGENT_HARNESS_SETTINGS,
+  HarnessSpecialistConfigSchema,
   type AgentHarnessSettings,
 } from "./shared/settings.js";
 import {
@@ -50,6 +58,7 @@ import {
   type MatrixTier,
   type RouterDecision,
 } from "./shared/types.js";
+import { loadWorkspaceAgentTeam } from "./server/agent-team-loader.js";
 import { createHarnessHandoffTool } from "./server/handoff-tool.js";
 import {
   exportSpecialistsToDisk,
@@ -99,12 +108,15 @@ interface RoutedAgentConfigResult<T> {
   roleDecision: DomainRoleDecision;
   routerDecision: RouterDecision;
   specialist?: HarnessSpecialistConfig;
+  isBypassed: boolean;
 }
 
 export default function contribute(server: PluginServerContext) {
   const settings = server.registerSettings(agentHarnessSettings);
   let cachedSettings: AgentHarnessSettings = { ...DEFAULT_AGENT_HARNESS_SETTINGS };
   let hasSubscriptionUpdate = false;
+  let latestPaseo: PaseoApi | null = null;
+  let lastSyncedDaemonProfileSignature = "";
 
   function getEffectiveConfig(cwd?: string | null): EffectiveHarnessConfig {
     if (!cwd) {
@@ -113,7 +125,57 @@ export default function contribute(server: PluginServerContext) {
     const repoOverride = cachedSettings.enableRepoConfigOverride
       ? loadRepoHarnessOverride(cwd, cachedSettings.repoConfigRelativePath)
       : null;
-    return resolveEffectiveHarnessConfig(cachedSettings, repoOverride, cwd);
+    const agentTeamContext = loadWorkspaceAgentTeam(cwd, os.homedir());
+    return resolveEffectiveHarnessConfig(cachedSettings, repoOverride, cwd, agentTeamContext);
+  }
+
+  async function syncDaemonProfilesIfNeeded(settingsValues: AgentHarnessSettings): Promise<void> {
+    if (!settingsValues.autoSyncDaemonAgentProfiles || !latestPaseo) {
+      return;
+    }
+    const effective = resolveEffectiveHarnessConfig(settingsValues);
+    const signature = JSON.stringify(
+      settingsValues.specialists
+        .filter((s) => s.enabled && s.syncToDaemonProfile)
+        .map((s) => {
+          const provider = normalizeProviderName(s.preferredProvider || "claude");
+          return [
+            s.id,
+            s.name,
+            s.description,
+            s.preferredProvider,
+            s.preferredTier,
+            s.modelOverride,
+            s.defaultModeId,
+            s.thinkingOptionId,
+            s.icon,
+            s.color,
+            effective.providerMappings[provider],
+          ];
+        }),
+    );
+    if (signature === lastSyncedDaemonProfileSignature) {
+      return;
+    }
+    const syncResult = await syncDaemonAgentProfiles(
+      latestPaseo,
+      settingsValues.specialists,
+      effective,
+    );
+    if (syncResult.errors.length === 0) {
+      lastSyncedDaemonProfileSignature = signature;
+    }
+  }
+
+  function capturePaseoApi(paseo?: PaseoApi | null): void {
+    if (!paseo) {
+      return;
+    }
+    const isFirstCapture = latestPaseo === null;
+    latestPaseo = paseo;
+    if (isFirstCapture && cachedSettings.autoSyncDaemonAgentProfiles) {
+      void syncDaemonProfilesIfNeeded(cachedSettings);
+    }
   }
 
   function applySettings(state: Awaited<ReturnType<typeof settings.read>>) {
@@ -121,6 +183,9 @@ export default function contribute(server: PluginServerContext) {
       cachedSettings = { ...cachedSettings, ...state.values };
       if (cachedSettings.autoSyncDiskProfiles && cachedSettings.specialists?.length > 0) {
         exportSpecialistsToDisk(cachedSettings.specialists, cachedSettings.profilesDir);
+      }
+      if (hasSubscriptionUpdate && cachedSettings.autoSyncDaemonAgentProfiles) {
+        void syncDaemonProfilesIfNeeded(cachedSettings);
       }
     }
   }
@@ -145,6 +210,7 @@ export default function contribute(server: PluginServerContext) {
 
   // In-memory shadow metadata cache: agentId -> HarnessAgentMetadata
   const latestMetadataByAgent = new Map<string, HarnessAgentMetadata>();
+  const bypassedAgentIds = new Set<string>();
 
   // In-flight plan permission requests: requestId -> { agentId, createdAt }
   const pendingPlanPermissions = new Map<string, { agentId: string; createdAt: number }>();
@@ -179,22 +245,43 @@ export default function contribute(server: PluginServerContext) {
     }
   }
 
-  // Short-lived cache of creation context by normalized cwd
-  const recentCreationContext = new Map<
-    string,
-    { prompt: string; labels?: Record<string, string>; timestamp: number }
-  >();
-  let lastWorkspaceCreationContext: {
+  interface WorkspaceContextEntry {
     prompt: string;
     labels?: Record<string, string>;
+    bypassed?: boolean;
     timestamp: number;
-  } | null = null;
+  }
+
+  interface AgentCreationContextEntry {
+    prompt: string;
+    labels?: Record<string, string>;
+    bypassed: boolean;
+    isLeaf: boolean;
+    role?: DomainRole;
+    title?: string;
+    resolvedRole?: DomainRole;
+    resolvedRoleRule?: string;
+    timestamp: number;
+  }
+
+  // Separate workspace-level and agent-level creation contexts so sibling agent spawns never bleed labels or leaf/bypass flags.
+  const pendingWorkspaceContext = new Map<string, WorkspaceContextEntry>();
+  let lastWorkspaceCreationContext: WorkspaceContextEntry | null = null;
+  const recentAgentContextQueue = new Map<string, AgentCreationContextEntry[]>();
 
   function cleanupOldPrompts() {
     const now = Date.now();
-    for (const [key, val] of recentCreationContext.entries()) {
+    for (const [key, val] of pendingWorkspaceContext.entries()) {
       if (now - val.timestamp > PROMPT_CACHE_TTL_MS) {
-        recentCreationContext.delete(key);
+        pendingWorkspaceContext.delete(key);
+      }
+    }
+    for (const [key, queue] of recentAgentContextQueue.entries()) {
+      const fresh = queue.filter((entry) => now - entry.timestamp <= PROMPT_CACHE_TTL_MS);
+      if (fresh.length === 0) {
+        recentAgentContextQueue.delete(key);
+      } else if (fresh.length !== queue.length) {
+        recentAgentContextQueue.set(key, fresh);
       }
     }
     if (
@@ -210,47 +297,230 @@ export default function contribute(server: PluginServerContext) {
     }
   }
 
-  function rememberCreationContext(
+  function rememberWorkspaceContext(
     cwd: string | undefined,
     prompt: string,
     labels?: Readonly<Record<string, string>>,
+    bypassed?: boolean,
   ) {
-    if (!cwd || (!prompt && !labels)) {
+    if (!cwd || (!prompt && !labels && bypassed === undefined)) {
       return;
     }
     const key = path.resolve(cwd);
-    const existing = recentCreationContext.get(key);
-    recentCreationContext.set(key, {
+    const existing = pendingWorkspaceContext.get(key);
+    pendingWorkspaceContext.set(key, {
       prompt: prompt || existing?.prompt || "",
       labels: mergeLabels(labels, existing?.labels),
+      bypassed: Boolean(bypassed),
       timestamp: Date.now(),
     });
   }
 
-  function resolveContextText(cwd: string | undefined, title: string | null | undefined): string {
+  function enqueueAgentCreationContext(
+    cwd: string | undefined,
+    entry: Omit<AgentCreationContextEntry, "timestamp">,
+  ) {
+    if (!cwd) {
+      return;
+    }
+    const key = path.resolve(cwd);
+    const queue = recentAgentContextQueue.get(key) ?? [];
+    queue.push({
+      ...entry,
+      labels: entry.labels ? { ...entry.labels } : undefined,
+      timestamp: Date.now(),
+    });
+    recentAgentContextQueue.set(key, queue);
+  }
+
+  function consumePendingWorkspaceContext(
+    cwd: string | undefined,
+  ): WorkspaceContextEntry | undefined {
+    if (!cwd) {
+      return undefined;
+    }
+    const key = path.resolve(cwd);
+    const entry = pendingWorkspaceContext.get(key);
+    if (entry) {
+      pendingWorkspaceContext.delete(key);
+    }
+    return entry;
+  }
+
+  function pickTextContext(title: string | null | undefined, cachedPrompt: string): string {
     const trimmedTitle = title?.trim() ?? "";
-    const cachedPrompt = cwd ? (recentCreationContext.get(path.resolve(cwd))?.prompt ?? "") : "";
     if (cachedPrompt && (!trimmedTitle || cachedPrompt.startsWith(trimmedTitle))) {
       return cachedPrompt;
     }
     return trimmedTitle || cachedPrompt;
   }
 
-  function consumeContextLabels(
-    cwd: string | undefined,
-    labels: Readonly<Record<string, string>> | null | undefined,
-  ): Record<string, string> | undefined {
+  function consumeAgentCreationContext(options: {
+    cwd: string | undefined;
+    labels: Readonly<Record<string, string>> | null | undefined;
+    title?: string | null;
+    metadata?: Record<string, unknown>;
+    env?: Record<string, string>;
+  }): {
+    prompt: string;
+    labels?: Record<string, string>;
+    bypassed: boolean;
+    isLeaf: boolean;
+    resolvedRole?: DomainRole;
+    resolvedRoleRule?: string;
+  } {
     const normalizedRequestLabels =
-      labels && Object.keys(labels).length > 0 ? { ...labels } : undefined;
-    if (!cwd) {
-      return normalizedRequestLabels;
+      options.labels && Object.keys(options.labels).length > 0 ? { ...options.labels } : undefined;
+    if (!options.cwd) {
+      return { prompt: "", labels: normalizedRequestLabels, bypassed: false, isLeaf: false };
     }
-    const key = path.resolve(cwd);
-    const cached = recentCreationContext.get(key);
-    if (cached) {
-      recentCreationContext.delete(key);
+    const key = path.resolve(options.cwd);
+    const queue = recentAgentContextQueue.get(key);
+    const metaObj = options.metadata;
+    const hasMetaKey = (k: string): boolean =>
+      Boolean(metaObj && Object.prototype.hasOwnProperty.call(metaObj, k));
+    const hasExplicitLeafFlag =
+      hasMetaKey(HARNESS_LEAF_META_KEY) ||
+      hasMetaKey(HARNESS_METADATA_KEY) ||
+      hasMetaKey(HARNESS_BYPASSED_META_KEY) ||
+      options.labels?.[HARNESS_LEAF_LABEL_KEY] === "1" ||
+      options.env?.PASEO_HARNESS_LEAF === "1";
+    const wantLeaf =
+      Boolean(metaObj?.[HARNESS_LEAF_META_KEY]) ||
+      options.labels?.[HARNESS_LEAF_LABEL_KEY] === "1" ||
+      options.env?.PASEO_HARNESS_LEAF === "1";
+    const hasExplicitBypassFlag =
+      hasMetaKey(HARNESS_BYPASSED_META_KEY) || hasMetaKey(HARNESS_METADATA_KEY);
+    const wantBypass = Boolean(metaObj?.[HARNESS_BYPASSED_META_KEY]);
+    const wantRole = options.labels?.role?.trim() || parseHarnessMetadata(metaObj)?.role;
+    const wantTitle = options.title?.trim();
+
+    if (queue && queue.length > 0) {
+      let bestIndex = -1;
+      let bestScore = -1;
+      for (let i = 0; i < queue.length; i += 1) {
+        const candidate = queue[i];
+        if (hasExplicitLeafFlag && candidate.isLeaf !== wantLeaf) {
+          continue;
+        }
+        if (hasExplicitBypassFlag && candidate.bypassed !== wantBypass) {
+          continue;
+        }
+        if (wantRole && candidate.role !== wantRole && candidate.labels?.role !== wantRole) {
+          continue;
+        }
+        let score = 0;
+        if (wantRole && (candidate.role === wantRole || candidate.labels?.role === wantRole)) {
+          score += 8;
+        }
+        if (
+          hasMetaKey(HARNESS_METADATA_KEY) &&
+          candidate.isLeaf === Boolean(metaObj?.[HARNESS_LEAF_META_KEY])
+        ) {
+          score += 4;
+        }
+        if (wantTitle && candidate.title && candidate.title === wantTitle) {
+          score += 2;
+        }
+        if (score > bestScore) {
+          bestScore = score;
+          bestIndex = i;
+        }
+      }
+      if (bestIndex >= 0) {
+        const [matched] = queue.splice(bestIndex, 1);
+        if (queue.length === 0) {
+          recentAgentContextQueue.delete(key);
+        }
+        return {
+          prompt: matched.prompt,
+          labels: mergeLabels(normalizedRequestLabels, matched.labels),
+          bypassed: Boolean(matched.bypassed),
+          isLeaf: Boolean(matched.isLeaf),
+          resolvedRole: matched.resolvedRole,
+          resolvedRoleRule: matched.resolvedRoleRule,
+        };
+      }
     }
-    return mergeLabels(normalizedRequestLabels, cached?.labels);
+
+    // Fallback: direct workspace.create -> agent.open without intermediate agent.create hook
+    const wsCached = consumePendingWorkspaceContext(options.cwd);
+    if (wsCached) {
+      return {
+        prompt: wsCached.prompt,
+        labels: mergeLabels(normalizedRequestLabels, wsCached.labels),
+        bypassed: Boolean(wsCached.bypassed),
+        isLeaf: false,
+      };
+    }
+
+    return { prompt: "", labels: normalizedRequestLabels, bypassed: false, isLeaf: false };
+  }
+
+  function resolveSpecialistWithFallback(
+    effectiveConfig: EffectiveHarnessConfig,
+    role: DomainRole,
+    preferred?: HarnessSpecialistConfig,
+  ): HarnessSpecialistConfig | undefined {
+    return (
+      preferred ??
+      findSpecialist(effectiveConfig, role) ??
+      findSpecialist(effectiveConfig, effectiveConfig.defaultFallbackRole) ??
+      effectiveConfig.specialists.find((s) => !s.readonly) ??
+      effectiveConfig.specialists[0]
+    );
+  }
+
+  function isAgentBypassed(
+    agent: { id: string; provider?: string; metadata?: unknown },
+    effectiveConfig: EffectiveHarnessConfig,
+  ): boolean {
+    const normalizedProvider = normalizeProviderName(agent.provider);
+    if (effectiveConfig.bypassProviders.some((p) => p.toLowerCase() === normalizedProvider)) {
+      return true;
+    }
+    if (bypassedAgentIds.has(agent.id)) {
+      return true;
+    }
+    const metaObj = agent.metadata as Record<string, unknown> | undefined;
+    return Boolean(metaObj?.[HARNESS_BYPASSED_META_KEY]);
+  }
+
+  async function detectAndRecordSnapshotBypass(
+    agent: { id: string; provider?: string; metadata?: unknown },
+    effectiveConfig: EffectiveHarnessConfig,
+    paseoApi?: PaseoApi | null,
+  ): Promise<boolean> {
+    if (isAgentBypassed(agent, effectiveConfig)) {
+      return true;
+    }
+    const meta = readLatestMetadata(agent);
+    if (meta || !paseoApi?.agents?.ref) {
+      return false;
+    }
+    try {
+      const handle = paseoApi.agents.ref(agent.id);
+      let snap = handle?.current?.();
+      if (!extractSnapshotModel(snap) && typeof handle?.refresh === "function") {
+        const refreshed = await handle.refresh().catch(() => undefined);
+        snap = refreshed?.agent ?? snap;
+      }
+      const snapModel = extractSnapshotModel(snap);
+      const snapBypassed =
+        Boolean(
+          (snap?.metadata as Record<string, unknown> | undefined)?.[HARNESS_BYPASSED_META_KEY],
+        ) || isModelBypassed(snapModel, effectiveConfig.bypassModels);
+      if (snapBypassed) {
+        bypassedAgentIds.add(agent.id);
+        if (typeof handle?.setMetadata === "function") {
+          void handle.setMetadata({ [HARNESS_BYPASSED_META_KEY]: true }).catch(() => {});
+        }
+        return true;
+      }
+    } catch {
+      // Ignore snapshot inspection error
+    }
+    return false;
   }
 
   async function routeAgentConfig<
@@ -268,18 +538,22 @@ export default function contribute(server: PluginServerContext) {
     hookStage: string,
     mergedLabels?: Readonly<Record<string, string>>,
     parentAgentCheck?: boolean,
+    options?: { isLeaf?: boolean; isExplicitRoleSpawn?: boolean },
   ): Promise<RoutedAgentConfigResult<T>> {
     const effectiveConfig = getEffectiveConfig(config.cwd);
 
-    const roleDecision = detectDomainRole({
+    let roleDecision = detectDomainRole({
       text,
       labels: mergedLabels,
       homeDir: os.homedir(),
       config: effectiveConfig,
     });
 
-    const specialist =
-      roleDecision.specialistConfig ?? findSpecialist(effectiveConfig, roleDecision.role);
+    let specialist = resolveSpecialistWithFallback(
+      effectiveConfig,
+      roleDecision.role,
+      roleDecision.specialistConfig,
+    );
 
     let decision = resolveMatrixModel({
       provider: config.provider,
@@ -290,14 +564,28 @@ export default function contribute(server: PluginServerContext) {
     });
 
     const normalizedProvider = normalizeProviderName(config.provider);
-    const isBypassed = effectiveConfig.bypassProviders.some(
-      (p) => p.toLowerCase() === normalizedProvider,
-    );
+    const isBypassed =
+      effectiveConfig.bypassProviders.some((p) => p.toLowerCase() === normalizedProvider) ||
+      isModelBypassed(config.model, effectiveConfig.bypassModels);
+
+    if (isBypassed) {
+      return {
+        config,
+        roleDecision,
+        routerDecision: decision,
+        specialist,
+        isBypassed: true,
+      };
+    }
+
+    const llmEndpoint =
+      effectiveConfig.llmFallbackEndpoint?.trim() ||
+      (typeof process !== "undefined" ? process.env?.HARNESS_LLM_ENDPOINT?.trim() : "");
 
     if (
       text.trim() &&
       effectiveConfig.llmFallbackEnabled &&
-      !isBypassed &&
+      Boolean(llmEndpoint) &&
       roleDecision.matchedRule === "default_general" &&
       decision.matchedRule === "default_fallback" &&
       !decision.matchedRule.startsWith("preserve_user_choice")
@@ -311,6 +599,22 @@ export default function contribute(server: PluginServerContext) {
       });
 
       if (llmResult) {
+        if (
+          effectiveConfig.llmFallbackApplyRole &&
+          llmResult.role &&
+          llmResult.role !== "general"
+        ) {
+          const llmSpecialist = findSpecialist(effectiveConfig, llmResult.role);
+          if (llmSpecialist) {
+            specialist = llmSpecialist;
+            roleDecision = {
+              ...roleDecision,
+              role: llmSpecialist.id,
+              matchedRule: `llm_fallback:${llmSpecialist.id}`,
+              specialistConfig: llmSpecialist,
+            };
+          }
+        }
         if (llmResult.tier !== "flash") {
           const targetModel = resolveTargetModelForTier(
             effectiveConfig,
@@ -392,6 +696,12 @@ export default function contribute(server: PluginServerContext) {
       if (hookStage !== "workspace.create") {
         nextModeId = "plan";
       }
+    } else if (
+      specialist?.readonly &&
+      hookStage !== "workspace.create" &&
+      isNativePlanModeSupported(effectiveConfig, config.provider)
+    ) {
+      nextModeId = "plan";
     }
 
     let nextSystemPrompt = config.systemPrompt;
@@ -399,7 +709,8 @@ export default function contribute(server: PluginServerContext) {
       !isBypassed &&
       text.trim() &&
       specialist &&
-      !config.systemPrompt?.includes("[Capability Harness Active Profile]")
+      !config.systemPrompt?.includes("[Capability Harness Active Profile]") &&
+      !config.systemPrompt?.includes("[Agent Harness — Federation Bridge]")
     ) {
       const harnessBanner = buildSystemPromptBanner({
         config: effectiveConfig,
@@ -409,6 +720,14 @@ export default function contribute(server: PluginServerContext) {
         roleMatchedRule: roleDecision.matchedRule,
         tierMatchedRule: decision.matchedRule,
         homeDir: os.homedir(),
+        provider: config.provider,
+        isLeaf: options?.isLeaf,
+        isSpawnedSpecialist: Boolean(
+          options?.isLeaf ||
+          options?.isExplicitRoleSpawn ||
+          mergedLabels?.role ||
+          mergedLabels?.profile,
+        ),
       });
 
       if (harnessBanner) {
@@ -444,6 +763,7 @@ export default function contribute(server: PluginServerContext) {
       roleDecision,
       routerDecision: decision,
       specialist,
+      isBypassed: false,
     };
   }
 
@@ -479,35 +799,46 @@ export default function contribute(server: PluginServerContext) {
       request.source?.kind === "directory"
         ? request.source.path
         : (request.source as { cwd?: string })?.cwd || request.agent?.config?.cwd;
-    if (sourcePath) {
-      rememberCreationContext(sourcePath, prompt, mergedLabels);
-    }
-    lastWorkspaceCreationContext = {
-      prompt,
-      labels: mergedLabels,
-      timestamp: Date.now(),
-    };
 
-    if (request.agent?.config) {
+    const workspaceAgent = request.agent;
+    const workspaceAgentConfig = workspaceAgent?.config;
+    let workspaceBypassed = false;
+    let routedAgentConfig = workspaceAgentConfig;
+    if (workspaceAgentConfig) {
       const parentAgentCheck = Boolean(
-        request.parentAgentId || mergedLabels?.["paseo.parent-agent-id"],
+        (request as { parentAgentId?: string; callerAgentId?: string }).parentAgentId ||
+        (request as { callerAgentId?: string }).callerAgentId ||
+        mergedLabels?.["paseo.parent-agent-id"],
       );
-      const { config: nextConfig } = await routeAgentConfig(
-        request.agent.config,
+      const result = await routeAgentConfig(
+        workspaceAgentConfig,
         prompt,
         "workspace.create",
         mergedLabels,
         parentAgentCheck,
       );
-      if (nextConfig !== request.agent.config) {
-        return {
-          ...request,
-          agent: {
-            ...request.agent,
-            config: nextConfig,
-          },
-        };
-      }
+      workspaceBypassed = result.isBypassed;
+      routedAgentConfig = result.config;
+    }
+
+    if (sourcePath) {
+      rememberWorkspaceContext(sourcePath, prompt, mergedLabels, workspaceBypassed);
+    }
+    lastWorkspaceCreationContext = {
+      prompt,
+      labels: mergedLabels,
+      bypassed: workspaceBypassed,
+      timestamp: Date.now(),
+    };
+
+    if (workspaceAgent && routedAgentConfig && routedAgentConfig !== workspaceAgentConfig) {
+      return {
+        ...request,
+        agent: {
+          ...workspaceAgent,
+          config: routedAgentConfig,
+        },
+      };
     }
 
     return undefined;
@@ -523,11 +854,11 @@ export default function contribute(server: PluginServerContext) {
     if (!request || typeof request !== "object") {
       return undefined;
     }
-    const repoContext = recentCreationContext.get(path.resolve(request.repoRoot));
-    const sourceContext = recentCreationContext.get(path.resolve(request.sourceCheckout));
+    const repoContext = pendingWorkspaceContext.get(path.resolve(request.repoRoot));
+    const sourceContext = pendingWorkspaceContext.get(path.resolve(request.sourceCheckout));
     const pending = repoContext ?? sourceContext ?? lastWorkspaceCreationContext;
     if (pending && request.path) {
-      rememberCreationContext(request.path, pending.prompt, pending.labels);
+      rememberWorkspaceContext(request.path, pending.prompt, pending.labels, pending.bypassed);
       lastWorkspaceCreationContext = null;
     }
     return undefined;
@@ -547,39 +878,73 @@ export default function contribute(server: PluginServerContext) {
     }
 
     const config = request.config;
-    const normalizedProvider = normalizeProvider(config.provider);
     const effectiveConfig = getEffectiveConfig(config.cwd);
-    const isSafetyNet =
-      normalizedProvider === SAFETY_NET_PROVIDER ||
-      (effectiveConfig.bypassProviders &&
-        effectiveConfig.bypassProviders.some((p) => p.toLowerCase() === normalizedProvider));
 
     const initialPrompt = request.initialPrompt?.trim() ?? "";
     const explicitTitle = config.title?.trim() ?? "";
-    const promptOrTitle = initialPrompt || resolveContextText(config.cwd, config.title);
-    const cachedLabels = config.cwd
-      ? recentCreationContext.get(path.resolve(config.cwd))?.labels
-      : undefined;
+    const workspaceContext = consumePendingWorkspaceContext(config.cwd);
+    const promptOrTitle =
+      initialPrompt || pickTextContext(config.title, workspaceContext?.prompt ?? "");
     const mergedLabels = mergeLabels(
       mergeLabels(readStringLabels(config), mergeLabels(readStringLabels(request), request.labels)),
-      cachedLabels,
+      workspaceContext?.labels,
     );
 
     const hasParentAgent = Boolean(
-      request.parentAgentId || request.parent || mergedLabels?.["paseo.parent-agent-id"],
+      (request as { parentAgentId?: string; parent?: string }).parentAgentId ||
+      (request as { parent?: string }).parent ||
+      mergedLabels?.["paseo.parent-agent-id"],
     );
-
-    if (config.cwd && (promptOrTitle || mergedLabels)) {
-      rememberCreationContext(config.cwd, promptOrTitle || explicitTitle, mergedLabels);
-    }
+    const isLeaf = mergedLabels?.[HARNESS_LEAF_LABEL_KEY] === "1";
+    const isExplicitRoleSpawn = Boolean(mergedLabels?.role || mergedLabels?.profile);
 
     const {
       config: nextConfig,
       roleDecision,
       routerDecision,
-    } = await routeAgentConfig(config, promptOrTitle, "agent.create", mergedLabels, hasParentAgent);
+      isBypassed,
+    } = await routeAgentConfig(
+      config,
+      promptOrTitle,
+      "agent.create",
+      mergedLabels,
+      hasParentAgent,
+      {
+        isLeaf,
+        isExplicitRoleSpawn,
+      },
+    );
 
-    if (cachedSettings.phaseLifecycleEnabled && !isSafetyNet) {
+    if (config.cwd) {
+      enqueueAgentCreationContext(config.cwd, {
+        prompt: promptOrTitle || explicitTitle,
+        labels: mergedLabels,
+        bypassed: isBypassed,
+        isLeaf,
+        role: roleDecision.role,
+        title: explicitTitle || undefined,
+        resolvedRole: roleDecision.matchedRule.startsWith("llm_fallback:")
+          ? roleDecision.role
+          : undefined,
+        resolvedRoleRule: roleDecision.matchedRule.startsWith("llm_fallback:")
+          ? roleDecision.matchedRule
+          : undefined,
+      });
+    }
+
+    if (isBypassed) {
+      return {
+        ...request,
+        config: nextConfig,
+        metadata: {
+          ...(request.metadata ?? {}),
+          [HARNESS_BYPASSED_META_KEY]: true,
+          ...(isLeaf ? { [HARNESS_LEAF_META_KEY]: true } : {}),
+        },
+      };
+    }
+
+    if (cachedSettings.phaseLifecycleEnabled) {
       const userModelLocked = routerDecision.matchedRule.startsWith("preserve_user_choice");
       const roleLockedByLabel =
         roleDecision.matchedRule.startsWith("label:") || Boolean(mergedLabels?.role);
@@ -595,7 +960,7 @@ export default function contribute(server: PluginServerContext) {
         userModelLocked,
         roleLockedByLabel,
         resumeModeId,
-        config: getEffectiveConfig(config.cwd),
+        config: effectiveConfig,
       });
 
       return {
@@ -604,14 +969,23 @@ export default function contribute(server: PluginServerContext) {
         metadata: {
           ...(request.metadata ?? {}),
           [HARNESS_METADATA_KEY]: initialMetadata,
+          ...(isLeaf ? { [HARNESS_LEAF_META_KEY]: true } : {}),
         },
       };
     }
 
-    if (nextConfig !== config) {
+    if (nextConfig !== config || isLeaf) {
       return {
         ...request,
         config: nextConfig,
+        ...(isLeaf
+          ? {
+              metadata: {
+                ...(request.metadata ?? {}),
+                [HARNESS_LEAF_META_KEY]: true,
+              },
+            }
+          : {}),
       };
     }
 
@@ -622,6 +996,7 @@ export default function contribute(server: PluginServerContext) {
   const removeAgentCreateAfterHook = server.addHook(
     "agent.create.after",
     async (payload, context) => {
+      capturePaseoApi(context?.paseo);
       if (
         !cachedSettings.enabled ||
         !cachedSettings.phaseLifecycleEnabled ||
@@ -631,6 +1006,10 @@ export default function contribute(server: PluginServerContext) {
       }
       const agent = payload?.agent ?? payload;
       if (!agent) return;
+      if ((agent.metadata as Record<string, unknown> | undefined)?.[HARNESS_BYPASSED_META_KEY]) {
+        bypassedAgentIds.add(agent.id);
+        return;
+      }
 
       const meta = parseHarnessMetadata(agent.metadata);
       if (!meta) {
@@ -662,7 +1041,8 @@ export default function contribute(server: PluginServerContext) {
   );
 
   // Hook 3: agent.open.before
-  const removeOpenHook = server.addHook("agent.open.before", async (payload) => {
+  const removeOpenHook = server.addHook("agent.open.before", async (payload, context) => {
+    capturePaseoApi(context?.paseo);
     if (!cachedSettings.enabled) {
       return undefined;
     }
@@ -676,24 +1056,96 @@ export default function contribute(server: PluginServerContext) {
     const normalizedProvider = normalizeProviderName(request.provider);
     const effectiveConfig = getEffectiveConfig(request.cwd);
 
-    if (effectiveConfig.bypassProviders.some((p) => p.toLowerCase() === normalizedProvider)) {
-      consumeContextLabels(request.cwd, request.labels);
-      return request;
-    }
-
     const existingMeta =
       latestMetadataByAgent.get(request.agentId) ?? parseHarnessMetadata(request.metadata);
     if (existingMeta) {
       latestMetadataByAgent.set(request.agentId, existingMeta);
     }
 
-    const isExistingSession = request.reason !== "create" && Boolean(existingMeta);
-    const textContext = resolveContextText(request.cwd, request.title);
-    const labelsContext = isExistingSession
-      ? request.labels && Object.keys(request.labels).length > 0
-        ? { ...request.labels }
-        : undefined
-      : consumeContextLabels(request.cwd, request.labels);
+    const metaObj = request.metadata as Record<string, unknown> | undefined;
+    const isExistingSession = Boolean(request.reason && request.reason !== "create");
+    const consumedContext = isExistingSession
+      ? {
+          prompt: "",
+          labels:
+            request.labels && Object.keys(request.labels).length > 0
+              ? { ...request.labels }
+              : undefined,
+          bypassed: false,
+          isLeaf: false,
+          resolvedRole: undefined,
+          resolvedRoleRule: undefined,
+        }
+      : consumeAgentCreationContext({
+          cwd: request.cwd,
+          labels: request.labels,
+          title: request.title,
+          metadata: metaObj,
+          env: request.env,
+        });
+    const textContext = pickTextContext(request.title, consumedContext.prompt);
+    const labelsContext = consumedContext.labels;
+    const hasOwnHarnessMeta = Boolean(metaObj?.[HARNESS_METADATA_KEY]);
+    const hasOwnLeafMeta = Boolean(metaObj?.[HARNESS_LEAF_META_KEY]);
+    const hasBypassMeta = Boolean(metaObj?.[HARNESS_BYPASSED_META_KEY]);
+    const isLeaf =
+      hasOwnLeafMeta ||
+      labelsContext?.[HARNESS_LEAF_LABEL_KEY] === "1" ||
+      request.labels?.[HARNESS_LEAF_LABEL_KEY] === "1" ||
+      request.env?.PASEO_HARNESS_LEAF === "1" ||
+      (!hasOwnHarnessMeta && consumedContext.isLeaf);
+
+    if (
+      effectiveConfig.bypassProviders.some((p) => p.toLowerCase() === normalizedProvider) ||
+      hasBypassMeta ||
+      bypassedAgentIds.has(request.agentId) ||
+      (!hasOwnHarnessMeta && consumedContext.bypassed)
+    ) {
+      bypassedAgentIds.add(request.agentId);
+      return request;
+    }
+
+    if (!existingMeta) {
+      const paseoApi = context?.paseo ?? latestPaseo;
+      let snapModel: string | null = null;
+      let snapBypassed = false;
+      let handleForMeta: ReturnType<NonNullable<PaseoApi["agents"]>["ref"]> | undefined;
+      if (paseoApi?.agents?.ref) {
+        try {
+          const handle = paseoApi.agents.ref(request.agentId);
+          handleForMeta = handle;
+          let snap = handle?.current?.();
+          if (!extractSnapshotModel(snap) && typeof handle?.refresh === "function") {
+            const refreshed = await handle.refresh().catch(() => undefined);
+            snap = refreshed?.agent ?? snap;
+          }
+          snapModel = extractSnapshotModel(snap);
+          snapBypassed =
+            Boolean(
+              (snap?.metadata as Record<string, unknown> | undefined)?.[HARNESS_BYPASSED_META_KEY],
+            ) || isModelBypassed(snapModel, effectiveConfig.bypassModels);
+        } catch {
+          // Ignore snapshot lookup failures
+        }
+      }
+      const isUntrackedResumedAntigravity =
+        request.reason !== "create" &&
+        normalizedProvider === "antigravity" &&
+        !labelsContext?.role &&
+        !request.labels?.role &&
+        !snapModel;
+      if (snapBypassed || isUntrackedResumedAntigravity) {
+        bypassedAgentIds.add(request.agentId);
+        if (snapBypassed && typeof handleForMeta?.setMetadata === "function") {
+          void handleForMeta.setMetadata({ [HARNESS_BYPASSED_META_KEY]: true }).catch(() => {});
+        }
+        return request;
+      }
+    }
+
+    const llmEndpoint =
+      effectiveConfig.llmFallbackEndpoint?.trim() ||
+      (typeof process !== "undefined" ? process.env?.HARNESS_LLM_ENDPOINT?.trim() : "");
 
     const roleDecision = existingMeta
       ? {
@@ -703,32 +1155,50 @@ export default function contribute(server: PluginServerContext) {
           lazyToolConfigPath: "",
           specialistConfig: findSpecialist(effectiveConfig, existingMeta.role),
         }
-      : await detectDomainRoleHybrid({
-          text: textContext,
-          labels: labelsContext,
-          homeDir: os.homedir(),
-          config: effectiveConfig,
-          llmFallback: {
-            enabled: effectiveConfig.llmFallbackEnabled,
-            endpoint: effectiveConfig.llmFallbackEndpoint,
-            apiKey: effectiveConfig.llmFallbackApiKey,
-            model: effectiveConfig.llmFallbackModel,
-            timeoutMs: effectiveConfig.llmFallbackTimeoutMs,
-          },
-        });
+      : consumedContext.resolvedRole && effectiveConfig.llmFallbackApplyRole
+        ? {
+            role: consumedContext.resolvedRole,
+            matchedRule:
+              consumedContext.resolvedRoleRule ?? `llm_fallback:${consumedContext.resolvedRole}`,
+            profilePath: "",
+            lazyToolConfigPath: "",
+            specialistConfig: findSpecialist(effectiveConfig, consumedContext.resolvedRole),
+          }
+        : await detectDomainRoleHybrid({
+            text: textContext,
+            labels: labelsContext,
+            homeDir: os.homedir(),
+            config: effectiveConfig,
+            llmFallback: {
+              enabled: effectiveConfig.llmFallbackEnabled && Boolean(llmEndpoint),
+              endpoint: effectiveConfig.llmFallbackEndpoint,
+              apiKey: effectiveConfig.llmFallbackApiKey,
+              model: effectiveConfig.llmFallbackModel,
+              timeoutMs: effectiveConfig.llmFallbackTimeoutMs,
+            },
+          });
 
-    const specialist =
-      roleDecision.specialistConfig ?? findSpecialist(effectiveConfig, roleDecision.role);
+    const specialist = resolveSpecialistWithFallback(
+      effectiveConfig,
+      roleDecision.role,
+      roleDecision.specialistConfig,
+    );
+
+    const isFederatedLocalAntigravity =
+      normalizedProvider === "antigravity" &&
+      Boolean(effectiveConfig.agentTeam?.hasLocalAntigravityPlugin);
 
     const nextEnv = resolveHarnessEnv({
       role: roleDecision.role,
       existingEnv: request.env ?? {},
       homeDir: os.homedir(),
       config: effectiveConfig,
+      provider: request.provider,
+      isLeaf,
     });
 
     let nextMcpServers = request.mcpServers;
-    if (specialist && effectiveConfig.enforceSessionMcpFiltering) {
+    if (specialist && effectiveConfig.enforceSessionMcpFiltering && !isFederatedLocalAntigravity) {
       nextMcpServers = resolveSessionMcpServers({
         config: effectiveConfig,
         specialist,
@@ -737,11 +1207,15 @@ export default function contribute(server: PluginServerContext) {
     }
 
     let nextTools = request.tools;
-    if (request.purpose === "interactive") {
+    if (isLeaf) {
+      if (Array.isArray(request.tools)) {
+        nextTools = request.tools.filter((t: any) => t?.name !== "harness_handoff");
+      }
+    } else if (request.purpose === "interactive") {
       const hasTool = request.tools?.some((t: any) => t.name === "harness_handoff");
       if (!hasTool) {
         const handoffTool = createHarnessHandoffTool({
-          getConfig: () => effectiveConfig,
+          getConfig: (cwd) => getEffectiveConfig(cwd ?? request.cwd),
           getLatestMetadata: (id) => latestMetadataByAgent.get(id) ?? null,
           shouldEmitTimeline: () => effectiveConfig.emitTimelineTransitions,
         });
@@ -768,12 +1242,22 @@ export default function contribute(server: PluginServerContext) {
   const removePermissionBeforeHook = server.addHook(
     "agent.permission.before",
     async (payload, context) => {
+      capturePaseoApi(context?.paseo);
       if (!cachedSettings.enabled || !cachedSettings.phaseLifecycleEnabled) {
         return;
       }
       const agent = payload?.agent ?? payload;
       const request = payload?.request ?? payload;
       if (!agent || !request) return;
+      if (
+        await detectAndRecordSnapshotBypass(
+          agent,
+          getEffectiveConfig(agent.cwd),
+          context?.paseo ?? latestPaseo,
+        )
+      ) {
+        return;
+      }
 
       if (request.kind === "plan" || request.name === "ExitPlanMode") {
         pendingPlanPermissions.set(request.id, {
@@ -822,6 +1306,7 @@ export default function contribute(server: PluginServerContext) {
   const removePermissionAfterHook = server.addHook(
     "agent.permission.after",
     async (payload, context) => {
+      capturePaseoApi(context?.paseo);
       if (!cachedSettings.enabled || !cachedSettings.phaseLifecycleEnabled) {
         return;
       }
@@ -829,6 +1314,15 @@ export default function contribute(server: PluginServerContext) {
       const requestId = payload?.requestId;
       const resolution = payload?.resolution;
       if (!agent || !requestId || !resolution) return;
+      if (
+        await detectAndRecordSnapshotBypass(
+          agent,
+          getEffectiveConfig(agent.cwd),
+          context?.paseo ?? latestPaseo,
+        )
+      ) {
+        return;
+      }
 
       const pending = pendingPlanPermissions.get(requestId);
       if (!pending) {
@@ -838,8 +1332,17 @@ export default function contribute(server: PluginServerContext) {
 
       if (resolution.behavior === "allow") {
         const meta = readLatestMetadata(agent);
-        if (meta && meta.currentTier === "plan" && !meta.userModelLocked && context.paseo?.agents) {
-          const effectiveConfig = getEffectiveConfig(agent.cwd);
+        const effectiveConfig = meta ? getEffectiveConfig(agent.cwd) : undefined;
+        const specialist =
+          meta && effectiveConfig ? findSpecialist(effectiveConfig, meta.role) : undefined;
+        if (
+          meta &&
+          effectiveConfig &&
+          meta.currentTier === "plan" &&
+          !meta.userModelLocked &&
+          !specialist?.readonly &&
+          context.paseo?.agents
+        ) {
           const flashModel = resolveTargetModelForTier(
             effectiveConfig,
             normalizeProviderName(agent.provider),
@@ -892,6 +1395,7 @@ export default function contribute(server: PluginServerContext) {
 
   // Hook 4: agent.turn.before
   const removeTurnHook = server.addHook("agent.turn.before", async (payload, context) => {
+    capturePaseoApi(context?.paseo);
     const agent = payload?.agent ?? payload;
     if (!agent) return;
 
@@ -900,16 +1404,18 @@ export default function contribute(server: PluginServerContext) {
 
     if (
       !effectiveConfig.enabled ||
-      effectiveConfig.bypassProviders.some((p) => p.toLowerCase() === normalizedProvider) ||
-      !context.paseo?.agents
+      !context.paseo?.agents ||
+      (await detectAndRecordSnapshotBypass(agent, effectiveConfig, context.paseo))
     ) {
       return;
     }
 
     const meta = readLatestMetadata(agent);
     const specialist = meta ? findSpecialist(effectiveConfig, meta.role) : undefined;
-    const isRoleLocked =
-      specialist?.lockTierOnLabel ?? (meta?.role === "pm" || meta?.role === "architect");
+    const isRoleLocked = Boolean(
+      specialist?.readonly ||
+      (specialist?.lockTierOnLabel ?? (meta?.role === "pm" || meta?.role === "architect")),
+    );
 
     // Pre-turn proactive downgrade on short affirmative confirmation
     if (
@@ -919,6 +1425,7 @@ export default function contribute(server: PluginServerContext) {
       meta.planTurnCount >= 1 &&
       effectiveConfig.autoDowngradePlanOnExec &&
       meta.autoDowngradedAtTurn === null &&
+      !specialist?.readonly &&
       !meta.userModelLocked &&
       !(meta.roleLockedByLabel && isRoleLocked)
     ) {
@@ -1004,6 +1511,9 @@ export default function contribute(server: PluginServerContext) {
     // Dynamic first-turn model upgrade when agent was created with empty prompt
     if (!switchedFirstTurnAgents.has(agent.id)) {
       switchedFirstTurnAgents.add(agent.id);
+      if (!meta && normalizedProvider === "antigravity") {
+        return;
+      }
       if (
         (meta?.turnCount ?? 0) > 0 ||
         meta?.userModelLocked ||
@@ -1048,6 +1558,7 @@ export default function contribute(server: PluginServerContext) {
 
   // Hook 5: agent.turn.after
   const removeTurnAfterHook = server.addHook("agent.turn.after", async (payload, context) => {
+    capturePaseoApi(context?.paseo);
     const agent = payload?.agent ?? payload;
     const turnId = payload?.turnId ?? null;
     const outcome = payload?.outcome ?? { kind: "completed" };
@@ -1060,8 +1571,8 @@ export default function contribute(server: PluginServerContext) {
       !effectiveConfig.enabled ||
       !effectiveConfig.phaseLifecycleEnabled ||
       outcome.kind !== "completed" ||
-      effectiveConfig.bypassProviders.some((p) => p.toLowerCase() === normalizedProvider) ||
-      !context.paseo?.agents
+      !context.paseo?.agents ||
+      (await detectAndRecordSnapshotBypass(agent, effectiveConfig, context.paseo))
     ) {
       return;
     }
@@ -1110,12 +1621,15 @@ export default function contribute(server: PluginServerContext) {
     }
 
     const specialist = findSpecialist(effectiveConfig, meta.role);
-    const isRoleProtected =
-      specialist?.lockTierOnLabel ?? (meta.role === "pm" || meta.role === "architect");
+    const isRoleProtected = Boolean(
+      specialist?.readonly ||
+      (specialist?.lockTierOnLabel ?? (meta.role === "pm" || meta.role === "architect")),
+    );
 
     const canAutoDowngrade =
       effectiveConfig.autoDowngradePlanOnExec &&
       meta.autoDowngradedAtTurn === null &&
+      !specialist?.readonly &&
       !meta.userModelLocked &&
       !(meta.roleLockedByLabel && isRoleProtected);
 
@@ -1228,6 +1742,7 @@ export default function contribute(server: PluginServerContext) {
     if (!agent) return;
     latestMetadataByAgent.delete(agent.id);
     switchedFirstTurnAgents.delete(agent.id);
+    bypassedAgentIds.delete(agent.id);
   });
 
   const removeArchiveHook = server.addHook("agent.archive.after", async (payload) => {
@@ -1235,6 +1750,7 @@ export default function contribute(server: PluginServerContext) {
     if (!agent) return;
     latestMetadataByAgent.delete(agent.id);
     switchedFirstTurnAgents.delete(agent.id);
+    bypassedAgentIds.delete(agent.id);
   });
 
   // Register Client RPC handlers
@@ -1243,14 +1759,28 @@ export default function contribute(server: PluginServerContext) {
     setLatestMetadata: async (id, meta, handle) => {
       await updateAgentMetadata(id, meta, handle);
     },
-    getConfig: (wId, cwd) => getEffectiveConfig(cwd),
+    getConfig: (_wId, cwd) => getEffectiveConfig(cwd),
     saveSpecialists: async (newSpecialists) => {
-      await settings.save({
+      const normalizedSpecialists = newSpecialists.map((s) =>
+        HarnessSpecialistConfigSchema.parse(s),
+      );
+      const nextSettings: AgentHarnessSettings = {
         ...cachedSettings,
-        specialists: newSpecialists,
-      });
+        specialists: normalizedSpecialists,
+      };
+      cachedSettings = nextSettings;
+      const settingsWithOptionalSave = settings as unknown as {
+        save?: (values: AgentHarnessSettings) => Promise<void>;
+      };
+      if (typeof settingsWithOptionalSave.save === "function") {
+        await settingsWithOptionalSave.save(nextSettings);
+      }
+      if (cachedSettings.autoSyncDaemonAgentProfiles) {
+        await syncDaemonProfilesIfNeeded(nextSettings);
+      }
     },
     emitTimelineTransitionsEnabled: () => cachedSettings.emitTimelineTransitions,
+    onPaseoAvailable: (paseo) => capturePaseoApi(paseo),
   });
 
   return () => {
@@ -1266,10 +1796,12 @@ export default function contribute(server: PluginServerContext) {
     removeTurnAfterHook();
     removeCloseHook();
     removeArchiveHook();
-    recentCreationContext.clear();
+    pendingWorkspaceContext.clear();
+    recentAgentContextQueue.clear();
     lastWorkspaceCreationContext = null;
     switchedFirstTurnAgents.clear();
     latestMetadataByAgent.clear();
+    bypassedAgentIds.clear();
     pendingPlanPermissions.clear();
   };
 }

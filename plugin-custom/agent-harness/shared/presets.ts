@@ -24,7 +24,14 @@ export const BUILTIN_TIERS: HarnessTierConfig[] = [
   },
 ];
 
+export const BUILTIN_BYPASS_MODELS: string[] = ["^gemini-pro-orchestrator"];
+
 export const BUILTIN_PROVIDER_MAPPINGS: Record<string, Record<string, string>> = {
+  antigravity: {
+    plan: "gemini-4-carbon-high",
+    review: "gemini-4-argon-high",
+    flash: "gemini-4-hydrogen-high",
+  },
   opencode: {
     plan: "custom/plan",
     review: "custom/review",
@@ -48,6 +55,10 @@ export const BUILTIN_PROVIDER_MAPPINGS: Record<string, Record<string, string>> =
 };
 
 export const BUILTIN_PROVIDER_MODES: Record<string, ProviderModeConfig> = {
+  antigravity: {
+    supportsNativePlanMode: false,
+    resumeExecutionModeId: "full-access",
+  },
   claude: {
     supportsNativePlanMode: true,
     resumeExecutionModeId: "acceptEdits",
@@ -61,6 +72,12 @@ export const BUILTIN_PROVIDER_MODES: Record<string, ProviderModeConfig> = {
     resumeExecutionModeId: "build",
   },
 };
+
+export const ORCHESTRATOR_DISPATCHER_RULE =
+  '- Paseo Thin Dispatcher Rule: As `role=orchestrator` (running on fast `flash` model), DO NOT write complex architecture or business code yourself, and DO NOT use Claude\'s internal `Agent` tool! Instead, act strictly as a fast Thin Dispatcher: 1) Spawn `role=architect` and `role=pm` via `harness_handoff` (or `paseo run --workspace "$PASEO_WORKSPACE_ID" --label role=<architect|pm> --title "<Role Task>" "<Prompt>"`, preserving `PASEO_AGENT_ID` and honoring each specialist\'s configured provider and model) to define `design.md`, shared contracts, and `proposal.md`/`spec.md`; 2) Once contracts are ready, spawn `role=backend` and `role=ui` in parallel (`harness_handoff` or `paseo run --no-wait` + `paseo wait`); 3) Spawn `role=review` for dual-axis gate verification, run final targeted verification, and report the summary.';
+
+export const LEGACY_ORCHESTRATOR_DISPATCHER_RULE =
+  '- Paseo Thin Dispatcher Rule: As `role=orchestrator` (running on fast `flash` model), DO NOT write complex architecture or business code yourself, and DO NOT use Claude\'s internal `Agent` tool! Instead, act strictly as a fast Thin Dispatcher: 1) Spawn `role=architect` (`plan` model) and `role=pm` (`plan` model) via `paseo run --workspace "$PASEO_WORKSPACE_ID" --provider claude --mode bypassPermissions --label role=<architect|pm> --title "<Role Task>" "<Prompt>"` (preserving `PASEO_AGENT_ID` so they group cleanly in your Subagents Track pill) to define `design.md`, shared contracts, and `proposal.md`/`spec.md`; 2) Once contracts are ready, spawn `role=backend` (`flash`) and `role=ui` (`flash`) in parallel (`--no-wait` + `paseo wait`); 3) Spawn `role=review` (`review`) for dual-axis gate verification, run final `npm test`, and report the summary.';
 
 export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
   {
@@ -88,8 +105,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     docsFocus: ["docs/architecture.md", "docs/agent-lifecycle.md"],
     qualityGates: [],
     ssotOutputTarget: "",
-    rolePromptTemplate:
-      '- Paseo Thin Dispatcher Rule: As `role=orchestrator` (running on fast `flash` model), DO NOT write complex architecture or business code yourself, and DO NOT use Claude\'s internal `Agent` tool! Instead, act strictly as a fast Thin Dispatcher: 1) Spawn `role=architect` (`plan` model) and `role=pm` (`plan` model) via `paseo run --workspace "$PASEO_WORKSPACE_ID" --provider claude --mode bypassPermissions --label role=<architect|pm> --title "<Role Task>" "<Prompt>"` (preserving `PASEO_AGENT_ID` so they group cleanly in your Subagents Track pill) to define `design.md`, shared contracts, and `proposal.md`/`spec.md`; 2) Once contracts are ready, spawn `role=backend` (`flash`) and `role=ui` (`flash`) in parallel (`--no-wait` + `paseo wait`); 3) Spawn `role=review` (`review`) for dual-axis gate verification, run final `npm test`, and report the summary.',
+    rolePromptTemplate: ORCHESTRATOR_DISPATCHER_RULE,
     lazyToolSlice: "pm.yaml",
     allowedMcpServers: ["claude-mem", "hub"],
     excludedMcpServers: ["dbx", "playwright"],
@@ -192,7 +208,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     preferredProvider: "claude",
     preferredTier: "plan",
     modelOverride: "",
-    defaultModeId: "plan",
+    defaultModeId: "",
     lockTierOnLabel: true,
     handoffEnabled: false,
     handoffPriority: 30,
@@ -236,7 +252,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     preferredProvider: "claude",
     preferredTier: "plan",
     modelOverride: "",
-    defaultModeId: "plan",
+    defaultModeId: "",
     lockTierOnLabel: true,
     handoffEnabled: false,
     handoffPriority: 40,
@@ -415,7 +431,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     handoffDefaultPrompt: "Analyze task requirements and implement robust code changes.",
     syncToDaemonProfile: false,
     primarySkills: ["mattpocock-skills:codebase-design", "mattpocock-skills:domain-modeling"],
-    mandatorySkillActivation: true,
+    mandatorySkillActivation: false,
     skillsRoot: "/Users/jerry/.agents/skills",
     docsFocus: [
       "docs/architecture.md",
@@ -424,7 +440,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
       "docs/glossary.md",
     ],
     qualityGates: [],
-    ssotOutputTarget: "openspec/changes/<change-name>/design.md",
+    ssotOutputTarget: "",
     rolePromptTemplate: "",
     lazyToolSlice: "codex.yaml",
     allowedMcpServers: ["serena", "claude-mem", "hub"],
@@ -433,7 +449,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     extraEnv: {},
     aliases: [],
     matchPatterns: [],
-    profileFilename: "architect.json",
+    profileFilename: "general.json",
   },
 ];
 
@@ -471,8 +487,7 @@ export const BUILTIN_FULLSTACK_BACKEND_PATTERN =
   "(?:\\b(?:db|sqlite)\\b|后台|后端|服务|接口|数据|保存|存储|数据库|持久化|排名)";
 
 export const BUILTIN_PHASE_RULES: Record<string, string> = {
-  orchestrator:
-    '- Paseo Thin Dispatcher Rule: As `role=orchestrator` (running on fast `flash` model), DO NOT write complex architecture or business code yourself, and DO NOT use Claude\'s internal `Agent` tool! Instead, act strictly as a fast Thin Dispatcher: 1) Spawn `role=architect` (`plan` model) and `role=pm` (`plan` model) via `paseo run --workspace "$PASEO_WORKSPACE_ID" --provider claude --mode bypassPermissions --label role=<architect|pm> --title "<Role Task>" "<Prompt>"` (preserving `PASEO_AGENT_ID` so they group cleanly in your Subagents Track pill) to define `design.md`, shared contracts, and `proposal.md`/`spec.md`; 2) Once contracts are ready, spawn `role=backend` (`flash`) and `role=ui` (`flash`) in parallel (`--no-wait` + `paseo wait`); 3) Spawn `role=review` (`review`) for dual-axis gate verification, run final `npm test`, and report the summary.',
+  orchestrator: ORCHESTRATOR_DISPATCHER_RULE,
   design:
     "- [Phase: Design & Planning] Rule: You are running on the high-reasoning plan model (phase=design). Present concise architectural proposals, trade-offs, and specs (for UI tasks, present concise visual concepts, layout wireframes, and UX trade-offs — DO NOT dump long HTML/React code blocks). Except for spec/contract docs (openspec/**/*.md, design.md, proposal.md, spec.md, tasks.md, GLOSSARY.md), DO NOT directly edit business source files in this plan session! Once the plan is confirmed, you or the user can exit plan mode via the `ExitPlanMode` permission or invoke the host tool `harness_handoff` (targetRole: ui, backend, qa, or review) to hand off execution to a fast flash specialist.",
   exec: "- [Phase: Fast Execution] Rule: You are running on the fast flash model (phase=exec). Implement minimal, targeted code changes per spec and verify with targeted tests (npx vitest run <file> --bail=1, NEVER full suite), npm run typecheck, and npm run lint. Review Gate: For non-trivial changes (>3 modified files or core state/protocol/security logic), once green, spawn or hand off via paseo-handoff to Reviewer (Gate) (--label role=review) for dual-axis review (Standards + Spec) and local ocr scan.",

@@ -1,10 +1,17 @@
+import { BUILTIN_BYPASS_MODELS } from "./presets.js";
 import type { AgentHarnessSettings } from "./settings.js";
 import type {
+  AgentTeamSummary,
   EffectiveHarnessConfig,
   HarnessSpecialistConfig,
   McpServerConfigEntry,
   RepoHarnessOverride,
 } from "./types.js";
+
+export interface WorkspaceAgentTeamContext {
+  summary: AgentTeamSummary;
+  specialists: HarnessSpecialistConfig[];
+}
 
 const regexCache = new Map<string, RegExp | null>();
 
@@ -67,18 +74,27 @@ export function expandHomeDir(filepath: string, homeDir?: string): string {
 }
 
 /**
- * Merges Host Settings with optional Repo-level overrides into an EffectiveHarnessConfig.
+ * Merges Host Settings with optional Repo-level overrides and workspace `.agents/agent-team.json`
+ * specialists into an EffectiveHarnessConfig.
  */
 export function resolveEffectiveHarnessConfig(
   hostSettings: AgentHarnessSettings,
   repoOverride?: RepoHarnessOverride | null,
   repoRoot?: string,
+  agentTeamContext?: WorkspaceAgentTeamContext | null,
 ): EffectiveHarnessConfig {
   const isEnabled =
     repoOverride?.enabled !== undefined ? repoOverride.enabled : hostSettings.enabled;
 
-  const defaultFallbackRole =
-    repoOverride?.defaultFallbackRole?.trim() || hostSettings.defaultFallbackRole;
+  const hasDynamicTeam = Boolean(agentTeamContext && agentTeamContext.specialists.length > 0);
+  const baseSpecialists = hasDynamicTeam ? agentTeamContext!.specialists : hostSettings.specialists;
+
+  const dynamicFallbackRole = hasDynamicTeam
+    ? (agentTeamContext!.specialists.find((s) => !s.readonly)?.id ??
+      agentTeamContext!.specialists[0].id)
+    : hostSettings.defaultFallbackRole;
+
+  const defaultFallbackRole = repoOverride?.defaultFallbackRole?.trim() || dynamicFallbackRole;
   const defaultFallbackTier =
     repoOverride?.defaultFallbackTier?.trim() || hostSettings.defaultFallbackTier;
 
@@ -87,7 +103,7 @@ export function resolveEffectiveHarnessConfig(
   const extraDocs = repoOverride?.extraDocsFocus ?? [];
   const extraGates = repoOverride?.extraQualityGates ?? [];
 
-  const mergedSpecialists = hostSettings.specialists.map((orig) => {
+  const mergedSpecialists = baseSpecialists.map((orig) => {
     const override = specialistOverrides[orig.id];
     if (!override && extraDocs.length === 0 && extraGates.length === 0) {
       return { ...orig };
@@ -111,9 +127,10 @@ export function resolveEffectiveHarnessConfig(
       primarySkills: mergedSkills,
       docsFocus: mergedDocs,
       qualityGates: mergedGates,
-      // For security, repoOverride cannot override built-in or profileFilename
+      // For security, repoOverride cannot override built-in, profileFilename, or weaken readonly
       builtIn: orig.builtIn,
       profileFilename: orig.profileFilename,
+      readonly: Boolean(orig.readonly || override?.readonly),
     };
   });
 
@@ -122,9 +139,11 @@ export function resolveEffectiveHarnessConfig(
     enabled: isEnabled,
     defaultFallbackRole,
     defaultFallbackTier,
+    bypassModels: hostSettings.bypassModels ?? BUILTIN_BYPASS_MODELS,
     specialists: mergedSpecialists,
     repoOverrideLoaded: Boolean(repoOverride),
     repoRoot,
+    agentTeam: agentTeamContext?.summary ?? null,
   };
 }
 
@@ -242,16 +261,62 @@ export function buildSystemPromptBanner(options: {
   tier: string;
   targetModel: string;
   roleMatchedRule: string;
-  tierMatchedRule: string;
+  tierMatchedRule?: string;
   homeDir?: string;
+  provider?: string;
+  isLeaf?: boolean;
+  isSpawnedSpecialist?: boolean;
 }): string {
-  const { config, specialist, tier, targetModel, roleMatchedRule, homeDir } = options;
+  const { config, specialist, tier, targetModel, roleMatchedRule, homeDir, provider } = options;
   if (!config.injectSystemPromptBanner) {
     return "";
   }
 
+  const isAntigravity = normalizeProviderName(provider) === "antigravity";
+
+  // Federated Antigravity root session: yield skills/MCP ownership to local `.agents/plugins/team-*`
+  // and emit only the concise 3-line Federation Bridge.
+  if (
+    isAntigravity &&
+    !options.isLeaf &&
+    !options.isSpawnedSpecialist &&
+    config.agentTeam?.hasLocalAntigravityPlugin
+  ) {
+    const availableHandoffs = config.specialists
+      .filter((s) => s.enabled && s.handoffEnabled)
+      .map((s) => {
+        const prov = s.preferredProvider?.trim() || "inherit";
+        const mod = s.modelOverride?.trim() || s.preferredTier || "flash";
+        return `${s.id} (${prov}·${mod}${s.readonly ? "·RO" : ""})`;
+      })
+      .join(", ");
+
+    const bridgeLines = [
+      "[Agent Harness — Federation Bridge]",
+      `- Matrix Tier: ${tier} (model: ${targetModel || "default"}); local agent-team plugin (team-${config.agentTeam.projectSlug}) owns repo skills & MCP.`,
+      ...(availableHandoffs
+        ? [
+            `- Cross-Client Handoff (\`harness_handoff\`): Available workspace specialists: ${availableHandoffs}.`,
+          ]
+        : []),
+    ];
+
+    if (config.enforceWorkspaceBoundaryGuardrail && config.workspaceBoundaryNotice) {
+      bridgeLines.push(
+        `- Workspace Boundary Guardrail (CRITICAL): ${config.workspaceBoundaryNotice}`,
+      );
+    }
+
+    return bridgeLines.join("\n");
+  }
+
   const { profilePath, lazyToolConfigPath } = resolveSpecialistPaths(config, specialist, homeDir);
-  const primarySkills = specialist.primarySkills.filter(Boolean);
+  const rawPrimarySkills = specialist.primarySkills.filter(Boolean);
+  const primarySkills = isAntigravity
+    ? rawPrimarySkills
+        .filter((s) => !s.startsWith("superpowers:"))
+        .map((s) => (s.startsWith("mattpocock-skills:") ? s.slice("mattpocock-skills:".length) : s))
+    : rawPrimarySkills;
   const allowedMcp = specialist.allowedMcpServers.filter(Boolean);
   const excludedMcp = specialist.excludedMcpServers.filter(Boolean);
   const qualityGates = specialist.qualityGates.filter(Boolean);
@@ -290,10 +355,28 @@ export function buildSystemPromptBanner(options: {
     lines.push(`- Workspace Boundary Guardrail (CRITICAL): ${config.workspaceBoundaryNotice}`);
   }
 
-  if (specialist.mandatorySkillActivation && primarySkills.length > 0) {
+  if (specialist.readonly) {
     lines.push(
-      `- Mandatory Skill Activation: Before authoring domain deliverables or code, you MUST invoke the \`Skill\` tool to load at least one of your Primary Skills (${primarySkills.map((s) => `\`${s}\``).join(", ")}) so its domain rules govern your implementation.`,
+      `- Read-Only Specialist Enforcement (CRITICAL): Role \`${specialist.id}\` is strictly READ-ONLY. NEVER create, edit, patch, or delete repository files via file tools, mutating Serena tools, or shell commands.`,
     );
+  }
+
+  if (options.isLeaf) {
+    lines.push(
+      `- Leaf Specialist Boundary: You were spawned as a leaf specialist (\`PASEO_HARNESS_LEAF=1\`). Complete your assigned scope directly and DO NOT trigger recursive multi-role orchestration or nested handoffs.`,
+    );
+  }
+
+  if (specialist.mandatorySkillActivation && primarySkills.length > 0) {
+    if (isAntigravity) {
+      lines.push(
+        `- Mandatory Skill Activation: Before authoring domain deliverables or code, you MUST read the \`SKILL.md\` file via \`read_file\` for at least one of your Primary Skills (${primarySkills.map((s) => `\`${s}\``).join(", ")}) from your skills root so its domain rules govern your implementation.`,
+      );
+    } else {
+      lines.push(
+        `- Mandatory Skill Activation: Before authoring domain deliverables or code, you MUST invoke the \`Skill\` tool to load at least one of your Primary Skills (${primarySkills.map((s) => `\`${s}\``).join(", ")}) so its domain rules govern your implementation.`,
+      );
+    }
   }
 
   if (phaseRule) {
@@ -354,6 +437,8 @@ export function resolveSpecialistEnvironment(options: {
   specialist: HarnessSpecialistConfig;
   existingEnv?: Readonly<Record<string, string>>;
   homeDir?: string;
+  provider?: string;
+  isLeaf?: boolean;
 }): Record<string, string> {
   const { config, specialist, existingEnv, homeDir } = options;
   const baseEnv: Record<string, string> = { ...existingEnv };
@@ -371,12 +456,22 @@ export function resolveSpecialistEnvironment(options: {
     delete baseEnv.PASEO_HARNESS_PROFILE;
   }
 
-  if (lazyToolConfigPath) {
-    if (!baseEnv.LAZY_TOOL_CONFIG || isRoleSwitch) {
-      baseEnv.LAZY_TOOL_CONFIG = lazyToolConfigPath;
+  const skipLazyToolForFederatedAntigravity =
+    normalizeProviderName(options.provider) === "antigravity" &&
+    Boolean(config.agentTeam?.hasLocalAntigravityPlugin);
+
+  if (!skipLazyToolForFederatedAntigravity) {
+    if (lazyToolConfigPath) {
+      if (!baseEnv.LAZY_TOOL_CONFIG || isRoleSwitch) {
+        baseEnv.LAZY_TOOL_CONFIG = lazyToolConfigPath;
+      }
+    } else if (isRoleSwitch) {
+      delete baseEnv.LAZY_TOOL_CONFIG;
     }
-  } else if (isRoleSwitch) {
-    delete baseEnv.LAZY_TOOL_CONFIG;
+  }
+
+  if (options.isLeaf) {
+    baseEnv.PASEO_HARNESS_LEAF = "1";
   }
 
   if (specialist.skillsRoot?.trim()) {

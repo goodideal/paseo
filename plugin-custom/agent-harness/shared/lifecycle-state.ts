@@ -612,3 +612,24 @@ export function evaluateTurnAfterTransition(
     canAutoDowngrade,
   };
 }
+
+export const HARNESS_BYPASSED_META_KEY = "agentHarnessBypassed" as const;
+export const HARNESS_LEAF_META_KEY = "agentHarnessLeaf" as const;
+export const HARNESS_LEAF_LABEL_KEY = "paseo.harness-leaf" as const;
+
+export function extractSnapshotModel(snapshot: unknown): string | null {
+  if (!snapshot || typeof snapshot !== "object") {
+    return null;
+  }
+  const candidate = snapshot as {
+    runtimeInfo?: { model?: unknown } | null;
+    model?: unknown;
+    options?: { model?: unknown } | null;
+  };
+  for (const val of [candidate.runtimeInfo?.model, candidate.model, candidate.options?.model]) {
+    if (typeof val === "string" && val.trim()) {
+      return val.trim();
+    }
+  }
+  return null;
+}

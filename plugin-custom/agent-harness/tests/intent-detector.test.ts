@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   classifyIntentWithLlm,
   detectDomainRole,
   detectDomainRoleHybrid,
   detectMatrixTier,
+  isModelBypassed,
   resolveHarnessEnv,
   resolveMatrixModel,
 } from "../shared/intent-detector.js";
@@ -155,14 +156,72 @@ describe("resolveMatrixModel", () => {
     expect(decision.matchedRule).toContain("exec_action");
   });
 
-  it("bypasses orchestration routing for antigravity safety-net provider", () => {
-    const decision = resolveMatrixModel({
+  it("bypasses orchestration routing for antigravity native orchestrator models only", () => {
+    for (const orchModel of [
+      "gemini-pro-orchestrator",
+      "gemini-pro-orchestrator-neon",
+      "gemini-pro-orchestrator-argon",
+    ]) {
+      const decision = resolveMatrixModel({
+        provider: "antigravity",
+        currentModel: orchModel,
+        text: "你作为CTO，设计一套全新的分布式架构方案",
+      });
+      expect(decision.targetModel).toBe(orchModel);
+      expect(decision.matchedRule).toBe("bypass_orchestrator_model");
+      expect(isModelBypassed(orchModel)).toBe(true);
+    }
+  });
+
+  it("logs invalid bypassModels regex patterns once without crashing", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const invalidPattern = "[unclosed-regex-test-pattern";
+      expect(
+        isModelBypassed("gemini-4-hydrogen-high", [invalidPattern, "^gemini-pro-orchestrator"]),
+      ).toBe(false);
+      expect(
+        isModelBypassed("gemini-pro-orchestrator", [invalidPattern, "^gemini-pro-orchestrator"]),
+      ).toBe(true);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("routes non-orchestrator antigravity models across Gemini 4 tiers and preserves user-locked models", () => {
+    const planDecision = resolveMatrixModel({
       provider: "antigravity",
       currentModel: "gemini-4-hydrogen-high",
       text: "你作为CTO，设计一套全新的分布式架构方案",
     });
-    expect(decision.targetModel).toBe("gemini-4-hydrogen-high");
-    expect(decision.matchedRule).toBe("bypass_safety_net");
+    expect(planDecision.tier).toBe("plan");
+    expect(planDecision.targetModel).toBe("gemini-4-carbon-high");
+
+    const reviewDecision = resolveMatrixModel({
+      provider: "antigravity",
+      currentModel: undefined,
+      text: "review: 代码审查与安全门禁审计",
+    });
+    expect(reviewDecision.tier).toBe("review");
+    expect(reviewDecision.targetModel).toBe("gemini-4-argon-high");
+
+    const execDecision = resolveMatrixModel({
+      provider: "antigravity",
+      currentModel: undefined,
+      text: "fix: 修复按钮对齐问题",
+    });
+    expect(execDecision.tier).toBe("flash");
+    expect(execDecision.targetModel).toBe("gemini-4-hydrogen-high");
+
+    const lockedDecision = resolveMatrixModel({
+      provider: "antigravity",
+      currentModel: "gemini-4-neon-high",
+      text: "你作为CTO，设计一套架构方案",
+      overrideIfDefaultOnly: true,
+    });
+    expect(lockedDecision.targetModel).toBe("gemini-4-neon-high");
+    expect(lockedDecision.matchedRule).toContain("preserve_user_choice");
   });
 });
 

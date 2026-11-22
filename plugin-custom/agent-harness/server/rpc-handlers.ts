@@ -1,6 +1,7 @@
 import type { PluginHandlerContext, PluginServerContext } from "@getpaseo/plugin/server";
 import {
   findSpecialist,
+  isNativePlanModeSupported,
   normalizeProviderName,
   resolveResumeExecutionMode,
   resolveTargetModelForTier,
@@ -12,9 +13,15 @@ import {
   harnessInspectEnvironmentRpc,
   harnessSwitchTierRpc,
   harnessSyncProfilesRpc,
+  supportsNativePlanMode,
 } from "../shared/contracts.js";
-import { DEFAULT_PROVIDER_MAPPINGS } from "../shared/intent-detector.js";
-import { parseHarnessMetadata, tierToPhase } from "../shared/lifecycle-state.js";
+import { DEFAULT_PROVIDER_MAPPINGS, isModelBypassed } from "../shared/intent-detector.js";
+import {
+  HARNESS_BYPASSED_META_KEY,
+  extractSnapshotModel,
+  parseHarnessMetadata,
+  tierToPhase,
+} from "../shared/lifecycle-state.js";
 import type {
   EffectiveHarnessConfig,
   HarnessAgentMetadata,
@@ -50,6 +57,7 @@ export interface RpcHandlerDependencies {
     params: Omit<EmitHarnessTransitionParams, "handle">,
   ) => Promise<void>;
   emitTimelineTransitionsEnabled?: () => boolean;
+  onPaseoAvailable?: (paseo: PluginHandlerContext["paseo"]) => void;
 }
 
 export function registerHarnessRpcHandlers(
@@ -62,6 +70,7 @@ export function registerHarnessRpcHandlers(
 
   // 1. harnessSwitchTierRpc
   server.handle(harnessSwitchTierRpc, async (input, context: PluginHandlerContext) => {
+    deps.onPaseoAvailable?.(context.paseo);
     const { agentId, targetTier, currentModeId, reason } = input;
     const handle = context.paseo.agents.ref(agentId);
 
@@ -76,6 +85,19 @@ export function registerHarnessRpcHandlers(
     }
 
     const effectiveConfig = deps.getConfig?.(agentSnapshot?.workspaceId, agentSnapshot?.cwd);
+    const snapshotModel = extractSnapshotModel(agentSnapshot);
+    const isBypassedSession =
+      Boolean(
+        (agentSnapshot?.metadata as Record<string, unknown> | undefined)?.[
+          HARNESS_BYPASSED_META_KEY
+        ],
+      ) || isModelBypassed(snapshotModel, effectiveConfig?.bypassModels);
+    if (isBypassedSession) {
+      throw new Error(
+        "Tier switching is disabled for sessions managed natively by Antigravity Orchestrator.",
+      );
+    }
+
     const provider = agentSnapshot?.provider ?? "claude";
     const normalizedProvider = normalizeProviderName(provider);
 
@@ -88,13 +110,21 @@ export function registerHarnessRpcHandlers(
     }
 
     const previousTier = meta?.currentTier ?? null;
-    const previousModel: string | null =
-      meta?.currentModel ??
-      (typeof agentSnapshot?.options?.model === "string" ? agentSnapshot.options.model : null);
+    const previousModel: string | null = meta?.currentModel ?? snapshotModel;
     const nextPhase = tierToPhase(targetTier, meta?.role, effectiveConfig);
+    const specialist =
+      meta?.role && effectiveConfig ? findSpecialist(effectiveConfig, meta.role) : undefined;
+    const isReadonlyPlanLocked = Boolean(
+      specialist?.readonly &&
+      (effectiveConfig
+        ? isNativePlanModeSupported(effectiveConfig, normalizedProvider)
+        : supportsNativePlanMode(normalizedProvider)),
+    );
 
     let recommendedModeId: string | null = null;
-    if ((previousTier === "plan" || currentModeId === "plan") && targetTier !== "plan") {
+    if (isReadonlyPlanLocked) {
+      recommendedModeId = "plan";
+    } else if ((previousTier === "plan" || currentModeId === "plan") && targetTier !== "plan") {
       recommendedModeId = effectiveConfig
         ? resolveResumeExecutionMode(
             effectiveConfig,
@@ -205,6 +235,7 @@ export function registerHarnessRpcHandlers(
 
   // 2. harnessHandoffRpc
   server.handle(harnessHandoffRpc, async (input, context: PluginHandlerContext) => {
+    deps.onPaseoAvailable?.(context.paseo);
     const { agentId, workspaceId, targetRole, summaryOverride } = input;
     const parentHandle = context.paseo.agents.ref(agentId);
     const parentSnapshot = parentHandle.current?.() ?? (await parentHandle.refresh?.())?.agent;
@@ -251,6 +282,7 @@ export function registerHarnessRpcHandlers(
 
   // 3. harnessInspectEnvironmentRpc
   server.handle(harnessInspectEnvironmentRpc, async (input, context: PluginHandlerContext) => {
+    deps.onPaseoAvailable?.(context.paseo);
     const effectiveConfig = deps.getConfig?.(input.workspaceId, input.cwd);
     const profilesDir = effectiveConfig?.profilesDir ?? "~/.agents/profiles";
     const sliceDir = effectiveConfig?.lazyToolProfilesDir ?? "~/.config/lazy-tool/profiles";
@@ -280,9 +312,9 @@ export function registerHarnessRpcHandlers(
     if (context.paseo.providers?.snapshot) {
       try {
         const snap = await context.paseo.providers.snapshot();
-        for (const [providerId, entry] of Object.entries(snap.providers ?? {})) {
+        for (const entry of snap.entries ?? []) {
           availableProviders.push({
-            provider: providerId,
+            provider: entry.provider,
             enabled: entry.enabled,
             models: (entry.models ?? []).map((m) => m.id),
           });
@@ -292,17 +324,29 @@ export function registerHarnessRpcHandlers(
       }
     }
 
+    const agentTeam = effectiveConfig?.agentTeam
+      ? {
+          projectSlug: effectiveConfig.agentTeam.projectSlug,
+          preset: effectiveConfig.agentTeam.preset,
+          rolesCount: effectiveConfig.agentTeam.roles.length,
+          manifestPath: effectiveConfig.agentTeam.manifestPath,
+          hasLocalAntigravityPlugin: effectiveConfig.agentTeam.hasLocalAntigravityPlugin,
+        }
+      : null;
+
     return {
       availableProviders,
       diskProfiles,
       lazyToolSlices,
       hasRepoOverride,
       repoOverridePath,
+      agentTeam,
     };
   });
 
   // 4. harnessSyncProfilesRpc
   server.handle(harnessSyncProfilesRpc, async (input, context: PluginHandlerContext) => {
+    deps.onPaseoAvailable?.(context.paseo);
     const { action } = input;
     const effectiveConfig = deps.getConfig?.();
     const profilesDir = effectiveConfig?.profilesDir ?? "~/.agents/profiles";
@@ -334,7 +378,11 @@ export function registerHarnessRpcHandlers(
     }
 
     if (action === "sync_daemon_profiles") {
-      const { syncedCount, errors } = await syncDaemonAgentProfiles(context.paseo, specialists);
+      const { syncedCount, errors } = await syncDaemonAgentProfiles(
+        context.paseo,
+        specialists,
+        effectiveConfig,
+      );
       return {
         success: errors.length === 0,
         message: `Synchronized ${syncedCount} specialist profiles to Paseo Agent Profiles`,

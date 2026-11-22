@@ -8,7 +8,9 @@ import {
   loadRepoHarnessOverride,
   scanDiskProfiles,
   syncDaemonAgentProfiles,
+  toKebabCaseIcon,
 } from "../server/profile-sync.js";
+import { resolveEffectiveHarnessConfig } from "../shared/config-resolver.js";
 import { DEFAULT_AGENT_HARNESS_SETTINGS } from "../shared/settings.js";
 
 describe("Agent Harness Profile Sync & Repo Override", () => {
@@ -150,5 +152,99 @@ describe("Agent Harness Profile Sync & Repo Override", () => {
     // Must contain new harness profiles
     expect(resultProfiles.some((p: any) => p.id === "harness-ui")).toBe(true);
     expect(resultProfiles.some((p: any) => p.id === "harness-backend")).toBe(true);
+  });
+
+  it("resolves canonical model IDs via providerMappings, normalizes kebab icons, and merges existing role profiles", async () => {
+    const existingAgentProfiles = [
+      {
+        id: "profile_ui_specialist",
+        name: "UI Specialist",
+        icon: "pencil",
+        provider: "claude",
+        modeId: "acceptEdits",
+        thinkingOptionId: "high",
+        model: "flash",
+        notes: "role: ui | existing user profile",
+      },
+      {
+        id: "pm",
+        name: "PM Specialist",
+        icon: "file-text",
+        provider: "claude",
+        modeId: "plan",
+        thinkingOptionId: "max",
+        model: "plan",
+        harnessManaged: true,
+        notes: "role: pm | managed by agent-harness",
+      },
+      {
+        id: "agent_profile_custom_user",
+        name: "My Custom Profile",
+        provider: "claude",
+        model: "sonnet",
+        notes: "Standalone profile without role tag",
+      },
+    ];
+
+    let patchedConfig: any = null;
+    const mockPaseo: any = {
+      config: {
+        get: async () => ({
+          requestId: "req-1",
+          config: { agentProfiles: existingAgentProfiles },
+        }),
+        patch: async (patch: any) => {
+          patchedConfig = patch;
+          return { requestId: "req-2", config: patch };
+        },
+      },
+    };
+
+    const effective = resolveEffectiveHarnessConfig(DEFAULT_AGENT_HARNESS_SETTINGS);
+    const uiSpec = {
+      ...DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "ui")!,
+      preferredProvider: "antigravity",
+      preferredTier: "flash",
+    };
+    const pmSpec = DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "pm")!;
+    const scoutSpec = DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "scout")!;
+    const qaSpec = DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "qa")!;
+
+    const { syncedCount, errors } = await syncDaemonAgentProfiles(
+      mockPaseo,
+      [uiSpec, pmSpec, scoutSpec, qaSpec],
+      effective,
+    );
+
+    expect(errors).toEqual([]);
+    expect(syncedCount).toBe(4);
+
+    const profiles = patchedConfig.agentProfiles as Array<Record<string, any>>;
+    // Should preserve standalone custom profile
+    expect(profiles.some((p) => p.id === "agent_profile_custom_user")).toBe(true);
+
+    // Should merge into existing profile_ui_specialist in-place without inheriting stale claude modeId/thinkingOptionId
+    const mergedUi = profiles.filter((p) => p.id === "profile_ui_specialist");
+    expect(mergedUi).toHaveLength(1);
+    expect(mergedUi[0]?.provider).toBe("antigravity");
+    expect(mergedUi[0]?.model).toBe("gemini-4-hydrogen-high");
+    expect(mergedUi[0]?.modeId).toBeUndefined();
+    expect(mergedUi[0]?.thinkingOptionId).toBeUndefined();
+    expect(profiles.some((p) => p.id === "harness-ui")).toBe(false);
+
+    // Should not resurrect stale harness-managed modeId="plan" when pm defaultModeId is ""
+    const syncedPm = profiles.find((p) => p.id === "pm");
+    expect(syncedPm?.modeId).toBeUndefined();
+    expect(syncedPm?.thinkingOptionId).toBeUndefined();
+
+    // Pi scout must carry headroom/ prefix
+    const scout = profiles.find((p) => p.id === "harness-scout");
+    expect(scout?.provider).toBe("pi");
+    expect(scout?.model).toBe("headroom/flash");
+
+    // QA icon CheckCircle must be normalized to check-circle
+    const qa = profiles.find((p) => p.id === "harness-qa");
+    expect(qa?.icon).toBe("check-circle");
+    expect(toKebabCaseIcon("ShieldCheck")).toBe("shield-check");
   });
 });

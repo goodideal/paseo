@@ -253,6 +253,16 @@ export const harnessInspectEnvironmentRpc = defineRpc({
     lazyToolSlices: z.array(z.string()),
     hasRepoOverride: z.boolean(),
     repoOverridePath: z.string().nullable(),
+    agentTeam: z
+      .object({
+        projectSlug: z.string(),
+        preset: z.string(),
+        rolesCount: z.number().int(),
+        manifestPath: z.string(),
+        hasLocalAntigravityPlugin: z.boolean(),
+      })
+      .nullable()
+      .optional(),
   }),
 });
 
@@ -305,7 +315,7 @@ export function supportsNativePlanMode(provider: string): boolean {
 /**
  * Resolves the execution mode to restore when exiting native `"plan"` mode:
  * - Uses `resumeModeId` if saved and not `"plan"`.
- * - Falls back to `"acceptEdits"` for Claude and `"build"` for OpenCode.
+ * - Falls back to `"acceptEdits"` for Claude, `"build"` for OpenCode, and `"full-access"` for Antigravity.
  */
 export function resolveResumeExecutionModeId(
   provider: string,
@@ -321,15 +331,32 @@ export function resolveResumeExecutionModeId(
   if (normalized === "opencode") {
     return "build";
   }
+  if (normalized === "antigravity") {
+    return "full-access";
+  }
   return null;
 }
 
 export function resolveSpecialistTargetTier(role: HandoffTargetRole): MatrixTier {
-  return role === "review" ? "review" : "flash";
+  const norm = role.toLowerCase().trim();
+  if (norm === "review" || norm === "be-reviewer" || norm === "ops-auditor") {
+    return "review";
+  }
+  if (
+    norm === "architect" ||
+    norm === "fe-architect" ||
+    norm === "be-architect" ||
+    norm === "pm" ||
+    norm === "fe-pm"
+  ) {
+    return "plan";
+  }
+  return "flash";
 }
 
 export function formatSpecialistRolePrefix(role: HandoffTargetRole | DomainRole): string {
-  const norm = role.toLowerCase().trim();
+  const trimmed = role.trim();
+  const norm = trimmed.toLowerCase();
   switch (norm) {
     case "ui":
       return "[UI]";
@@ -348,7 +375,7 @@ export function formatSpecialistRolePrefix(role: HandoffTargetRole | DomainRole)
     case "scout":
       return "[Scout]";
     default:
-      return `[${norm.charAt(0).toUpperCase() + norm.slice(1)}]`;
+      return `[${trimmed}]`;
   }
 }
 

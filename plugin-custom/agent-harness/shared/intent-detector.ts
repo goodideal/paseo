@@ -9,6 +9,7 @@ import {
   resolveTargetModelForTier,
 } from "./config-resolver.js";
 import {
+  BUILTIN_BYPASS_MODELS,
   BUILTIN_CONVENTIONAL_EXEC_PREFIX,
   BUILTIN_EXEC_ACTION_PATTERNS,
   BUILTIN_FULLSTACK_BACKEND_PATTERN,
@@ -28,8 +29,37 @@ import type {
   RouterDecision,
 } from "./types.js";
 
-// Antigravity is isolated as an offline safety-net fallback and excluded from orchestration routing
-export const SAFETY_NET_PROVIDER = "antigravity";
+const warnedInvalidBypassPatterns = new Set<string>();
+
+/**
+ * Checks whether a model ID matches any configured bypass regex pattern (e.g. `^gemini-pro-orchestrator`).
+ */
+export function isModelBypassed(
+  model: string | null | undefined,
+  bypassModels: readonly string[] = BUILTIN_BYPASS_MODELS,
+): boolean {
+  const trimmed = model?.trim();
+  if (!trimmed) {
+    return false;
+  }
+  for (const pattern of bypassModels) {
+    if (!pattern || !pattern.trim()) {
+      continue;
+    }
+    const regex = compileSafeRegex(pattern);
+    if (!regex) {
+      if (!warnedInvalidBypassPatterns.has(pattern)) {
+        warnedInvalidBypassPatterns.add(pattern);
+        console.warn(`[AgentHarness] Invalid bypassModels regex pattern skipped: "${pattern}"`);
+      }
+      continue;
+    }
+    if (regex.test(trimmed)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 export function normalizeProvider(provider?: string | null): string {
   return normalizeProviderName(provider);
@@ -176,17 +206,28 @@ export function resolveMatrixModel(options: {
   } = options;
   const normalizedProvider = normalizeProvider(provider);
 
-  // Bypass safety-net or configured bypass providers
-  const isBypassed = config
+  // Bypass configured bypass providers (default empty) or orchestrator models
+  const isProviderBypassed = config
     ? config.bypassProviders.some((p) => p.toLowerCase() === normalizedProvider)
-    : normalizedProvider === SAFETY_NET_PROVIDER;
+    : false;
 
-  if (isBypassed) {
+  if (isProviderBypassed) {
     return {
       tier: "flash",
       targetModel: currentModel ?? "",
       reason: `${provider} is excluded from orchestration routing`,
       matchedRule: "bypass_safety_net",
+      previousModel: currentModel ?? undefined,
+    };
+  }
+
+  const effectiveBypassModels = config?.bypassModels ?? BUILTIN_BYPASS_MODELS;
+  if (isModelBypassed(currentModel, effectiveBypassModels)) {
+    return {
+      tier: "flash",
+      targetModel: currentModel ?? "",
+      reason: `Model '${currentModel}' is excluded from harness routing`,
+      matchedRule: "bypass_orchestrator_model",
       previousModel: currentModel ?? undefined,
     };
   }
@@ -231,8 +272,7 @@ export function resolveMatrixModel(options: {
   );
   const isDefaultModel = !currentModel || routerManagedModels.has(currentModel);
 
-  const shouldOverride =
-    config !== undefined ? config.overrideIfDefaultOnly : overrideIfDefaultOnly;
+  const shouldOverride = config ? config.overrideIfDefaultOnly : overrideIfDefaultOnly;
 
   if (shouldOverride && !isDefaultModel) {
     return {
@@ -280,9 +320,10 @@ export function detectDomainRole(options: {
 
   const trimmed = text?.trim() ?? "";
   if (trimmed) {
-    // 2. Composite Full-Stack / Multi-Domain Collision Check:
+    // 2. Composite Full-Stack / Multi-Domain Collision Check (only when an orchestrator role exists):
     const enableFullstack = config?.enableFullstackOrchestratorCollision ?? true;
-    if (enableFullstack) {
+    const hasOrchestratorSpecialist = !config || Boolean(findSpecialist(config, "orchestrator"));
+    if (enableFullstack && hasOrchestratorSpecialist) {
       const uiPatternStr = config?.fullstackUiPattern ?? BUILTIN_FULLSTACK_UI_PATTERN;
       const backendPatternStr =
         config?.fullstackBackendPattern ?? BUILTIN_FULLSTACK_BACKEND_PATTERN;
@@ -321,8 +362,10 @@ export function resolveHarnessEnv(options: {
   existingEnv?: Readonly<Record<string, string>>;
   homeDir?: string;
   config?: EffectiveHarnessConfig | null;
+  provider?: string;
+  isLeaf?: boolean;
 }): Record<string, string> {
-  const { role, existingEnv, homeDir, config } = options;
+  const { role, existingEnv, homeDir, config, provider, isLeaf } = options;
   if (config) {
     const specialist = findSpecialist(config, role) ?? {
       id: role,
@@ -354,6 +397,8 @@ export function resolveHarnessEnv(options: {
       specialist,
       existingEnv,
       homeDir,
+      provider,
+      isLeaf,
     });
   }
 
@@ -366,6 +411,10 @@ export function resolveHarnessEnv(options: {
     baseEnv.PASEO_HARNESS_PROFILE = decision.profilePath;
   } else if (isRoleSwitch) {
     delete baseEnv.PASEO_HARNESS_PROFILE;
+  }
+
+  if (isLeaf) {
+    baseEnv.PASEO_HARNESS_LEAF = "1";
   }
 
   if (!baseEnv.LAZY_TOOL_CONFIG || isRoleSwitch) {

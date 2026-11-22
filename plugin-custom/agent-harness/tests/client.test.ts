@@ -3,12 +3,24 @@ import React from "react";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 
+const mockUseSettings = vi.fn(() => ({ status: "ready", values: DEFAULT_AGENT_HARNESS_SETTINGS }));
+const mockUseRpc = vi.fn((_contract?: any) => vi.fn().mockResolvedValue({}));
+const mockToast = { show: vi.fn(), error: vi.fn() };
+const mockUseAgent = vi.fn(() => ({
+  status: "idle",
+  provider: "claude",
+  model: "flash",
+  currentModeId: "acceptEdits",
+  metadata: {},
+}));
+
 vi.mock("@getpaseo/plugin/client", async (importOriginal) => {
   const actual: any = await importOriginal();
   return {
     ...actual,
-    useSettings: vi.fn(() => ({ status: "ready", values: DEFAULT_AGENT_HARNESS_SETTINGS })),
-    useRpc: vi.fn(() => vi.fn().mockResolvedValue({})),
+    useSettings: (...args: any[]) => (mockUseSettings as any)(...args),
+    useRpc: (...args: any[]) => (mockUseRpc as any)(...args),
+    useAgent: (...args: any[]) => (mockUseAgent as any)(...args),
   };
 });
 
@@ -63,6 +75,37 @@ vi.mock("@getpaseo/plugin/client/ui", () => ({
         ),
       ),
     ),
+  SettingsInput: React.forwardRef(function MockSettingsInput(
+    { label, hint, initialValue, onChangeText, placeholder, disabled, secureTextEntry }: any,
+    ref: any,
+  ) {
+    const inputRef = React.useRef<HTMLInputElement | null>(null);
+    React.useImperativeHandle(ref, () => ({
+      focus: () => inputRef.current?.focus(),
+      blur: () => inputRef.current?.blur(),
+      getText: () => inputRef.current?.value ?? "",
+      replaceText: (text: string) => {
+        if (inputRef.current) {
+          inputRef.current.value = text;
+        }
+      },
+    }));
+    return React.createElement(
+      "div",
+      { "data-testid": "settings-input" },
+      React.createElement("span", null, label),
+      hint ? React.createElement("small", null, hint) : null,
+      React.createElement("input", {
+        ref: inputRef,
+        type: secureTextEntry ? "password" : "text",
+        "aria-label": label,
+        defaultValue: initialValue ?? "",
+        placeholder,
+        disabled: Boolean(disabled),
+        onChange: (e: any) => onChangeText(e.target.value),
+      }),
+    );
+  }),
   SettingsAction: ({ label, hint, actionLabel, onPress, disabled }: any) =>
     React.createElement(
       "div",
@@ -81,7 +124,7 @@ vi.mock("@getpaseo/plugin/client/ui", () => ({
     ),
   Icon: ({ name }: any) => React.createElement("span", { "data-testid": `icon-${name}` }, name),
   ScrollView: ({ children }: any) => React.createElement("div", null, children),
-  useToast: () => ({ show: vi.fn(), error: vi.fn() }),
+  useToast: () => mockToast,
 }));
 
 import contribute from "../index.client.js";
@@ -104,6 +147,7 @@ import {
 } from "../client/metadata-utils.js";
 import { HarnessTransitionCard } from "../client/transition-card.js";
 import { HarnessSettingsScreen } from "../client/settings-screen.js";
+import { HarnessPopover } from "../client/harness-popover.js";
 import { DEFAULT_AGENT_HARNESS_SETTINGS } from "../shared/settings.js";
 import type {
   PluginButtonRegistration,
@@ -730,6 +774,287 @@ describe("HarnessSettingsScreen - Forms Gate & State Handling", () => {
     fireEvent.click(switchInput);
 
     expect(mockSave).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }), "rev-1");
+  });
+
+  it("edits Antigravity provider mappings and specialist preferredProvider in HarnessSettingsScreen", () => {
+    const mockSave = vi.fn().mockResolvedValue(true);
+
+    render(
+      React.createElement(HarnessSettingsScreen, {
+        ...mockSurfaceProps,
+        settingsOverride: {
+          status: "ready",
+          values: DEFAULT_AGENT_HARNESS_SETTINGS,
+          revision: "rev-matrix-1",
+          saving: false,
+          save: mockSave,
+        },
+      }),
+    );
+
+    expect(screen.getByText("Provider Tier Mappings & Bypass")).toBeDefined();
+    expect(screen.getByText("Specialist Roles Matrix")).toBeDefined();
+
+    // Verify antigravity target provider is selected by default and edit Flash preset
+    const targetProviderSelect = screen.getByLabelText("Target Provider") as HTMLSelectElement;
+    expect(targetProviderSelect.value).toBe("antigravity");
+
+    const flashPresetSelect = screen.getByLabelText("Flash Tier Preset") as HTMLSelectElement;
+    fireEvent.change(flashPresetSelect, { target: { value: "gemini-4-neon-high" } });
+    expect(mockSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerMappings: expect.objectContaining({
+          antigravity: expect.objectContaining({
+            flash: "gemini-4-neon-high",
+          }),
+        }),
+      }),
+      "rev-matrix-1",
+    );
+
+    // Edit UI specialist preferredProvider -> antigravity
+    const preferredProviderSelect = screen.getByLabelText(
+      "Preferred Provider",
+    ) as HTMLSelectElement;
+    fireEvent.change(preferredProviderSelect, { target: { value: "antigravity" } });
+
+    const lastCallValues = mockSave.mock.calls[mockSave.mock.calls.length - 1]?.[0];
+    const updatedUi = lastCallValues.specialists.find((s: any) => s.id === "ui");
+    expect(updatedUi?.preferredProvider).toBe("antigravity");
+    expect((screen.getByLabelText("Flash Model ID") as HTMLInputElement).value).toBe(
+      "gemini-4-neon-high",
+    );
+  });
+
+  it("debounces SettingsInput saves without disabling text inputs and shows toast on save failure", async () => {
+    vi.useFakeTimers();
+    const mockSave = vi.fn().mockResolvedValue(false);
+    try {
+      render(
+        React.createElement(HarnessSettingsScreen, {
+          ...mockSurfaceProps,
+          settingsOverride: {
+            status: "ready",
+            values: DEFAULT_AGENT_HARNESS_SETTINGS,
+            revision: "rev-debounce-1",
+            saving: true,
+            save: mockSave,
+          },
+        }),
+      );
+
+      const endpointInput = screen.getByLabelText("Classifier Endpoint URL") as HTMLInputElement;
+      expect(endpointInput.disabled).toBe(false);
+
+      fireEvent.change(endpointInput, {
+        target: { value: "https://custom.llm.example/v1/chat/completions" },
+      });
+      expect(mockSave).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(350);
+      expect(mockSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          llmFallbackEndpoint: "https://custom.llm.example/v1/chat/completions",
+        }),
+        "rev-debounce-1",
+      );
+      expect(mockToast.error).toHaveBeenCalledWith("Failed to save Agent Harness settings.");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not echo stored llmFallbackApiKey back into input and supports clearing stored key", () => {
+    const mockSave = vi.fn().mockResolvedValue(true);
+
+    render(
+      React.createElement(HarnessSettingsScreen, {
+        ...mockSurfaceProps,
+        settingsOverride: {
+          status: "ready",
+          values: {
+            ...DEFAULT_AGENT_HARNESS_SETTINGS,
+            llmFallbackApiKey: "secret-key-do-not-echo",
+          },
+          revision: "rev-secret-1",
+          saving: false,
+          save: mockSave,
+        },
+      }),
+    );
+
+    const apiKeyInput = screen.getByLabelText("Classifier API Key") as HTMLInputElement;
+    expect(apiKeyInput.value).toBe("");
+    expect(apiKeyInput.placeholder).toContain("Configured");
+
+    const clearBtn = screen.getByRole("button", { name: "Clear API Key" });
+    fireEvent.click(clearBtn);
+    expect(mockSave).toHaveBeenCalledWith(
+      expect.objectContaining({ llmFallbackApiKey: "" }),
+      "rev-secret-1",
+    );
+  });
+});
+
+describe("HarnessPopover - Native Orchestrator & Dynamic Specialists", () => {
+  const popoverTheme = {
+    colors: {
+      surface0: "#000",
+      surface1: "#111",
+      surface2: "#222",
+      border: "#333",
+      foreground: "#fff",
+      foregroundMuted: "#888",
+      accent: "#0af",
+      statusWarning: "#fa0",
+    },
+  } as any;
+
+  it("shows NATIVE ORCHESTRATOR badge, locks tier switches, and dynamically renders handoff specialists", () => {
+    const mockSwitchFn = vi.fn().mockResolvedValue({});
+    const mockOtherRpcFn = vi.fn().mockResolvedValue({});
+    mockUseRpc.mockImplementation((contract: any) =>
+      contract?.name === "agent_harness.tier.switch.request" ? mockSwitchFn : mockOtherRpcFn,
+    );
+    mockUseAgent.mockReturnValue({
+      status: "idle",
+      provider: "antigravity",
+      model: "gemini-pro-orchestrator",
+      currentModeId: "full-access",
+      metadata: {},
+    });
+    mockUseSettings.mockReturnValue({
+      status: "ready",
+      values: {
+        ...DEFAULT_AGENT_HARNESS_SETTINGS,
+        specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) =>
+          s.id === "architect"
+            ? { ...s, handoffEnabled: true, preferredProvider: "antigravity" }
+            : s,
+        ),
+      },
+    });
+
+    render(
+      React.createElement(HarnessPopover, {
+        workspaceId: "ws-1",
+        agentId: "agt-orch",
+        theme: popoverTheme,
+        layout: { compact: false, platform: "web" },
+        close: vi.fn(),
+      } as any),
+    );
+
+    expect(screen.getByText("NATIVE ORCHESTRATOR")).toBeDefined();
+    expect(screen.getByText("Native")).toBeDefined();
+    expect(
+      screen.getByText("Managed natively by Orchestrator — tier switching disabled."),
+    ).toBeDefined();
+    expect(screen.getByText("Architect Specialist")).toBeDefined();
+    expect(screen.getByText("antigravity · plan")).toBeDefined();
+
+    fireEvent.click(screen.getByLabelText("Switch to plan"));
+    expect(mockSwitchFn).not.toHaveBeenCalled();
+  });
+
+  it("loads N dynamic workspace agent-team specialists via harnessEffectiveConfigRpc with RO tags and bound providers", async () => {
+    const workspaceTeamRoles = [
+      {
+        ...DEFAULT_AGENT_HARNESS_SETTINGS.specialists[1],
+        id: "fe-uiux",
+        shortLabel: "fe-uiux",
+        builtIn: false,
+        readonly: false,
+        preferredProvider: "",
+        preferredTier: "flash",
+      },
+      {
+        ...DEFAULT_AGENT_HARNESS_SETTINGS.specialists[1],
+        id: "fe-architect",
+        shortLabel: "fe-architect",
+        builtIn: false,
+        readonly: true,
+        preferredProvider: "claude",
+        preferredTier: "plan",
+      },
+      {
+        ...DEFAULT_AGENT_HARNESS_SETTINGS.specialists[1],
+        id: "fe-developer",
+        shortLabel: "fe-developer",
+        builtIn: false,
+        readonly: false,
+        preferredProvider: "antigravity",
+        preferredTier: "flash",
+      },
+      {
+        ...DEFAULT_AGENT_HARNESS_SETTINGS.specialists[1],
+        id: "fe-qa",
+        shortLabel: "fe-qa",
+        builtIn: false,
+        readonly: true,
+        preferredProvider: "",
+        preferredTier: "flash",
+      },
+      {
+        ...DEFAULT_AGENT_HARNESS_SETTINGS.specialists[2],
+        id: "be-developer",
+        shortLabel: "be-developer",
+        builtIn: false,
+        readonly: false,
+        preferredProvider: "codex",
+        preferredTier: "flash",
+      },
+    ];
+
+    const effectiveRpcMock = vi.fn().mockResolvedValue({
+      config: {
+        specialists: workspaceTeamRoles,
+        agentTeam: {
+          projectSlug: "demo",
+          preset: "web-react",
+          manifestPath: "/repo/.agents/agent-team.json",
+          checkoutRoot: "/repo",
+          mainRepoRoot: "/repo",
+          hasLocalAntigravityPlugin: true,
+          roles: ["fe-uiux", "fe-architect", "fe-developer", "fe-qa", "be-developer"],
+        },
+      },
+    });
+    const noopRpc = vi.fn().mockResolvedValue({});
+    mockUseRpc.mockImplementation((contract: any) =>
+      contract?.name === "agent_harness.config.effective.request" ? effectiveRpcMock : noopRpc,
+    );
+    mockUseAgent.mockReturnValue({
+      status: "idle",
+      provider: "antigravity",
+      model: "gemini-4-hydrogen-high",
+      cwd: "/repo",
+      currentModeId: "full-access",
+      metadata: {},
+    } as any);
+    mockUseSettings.mockReturnValue({
+      status: "ready",
+      values: DEFAULT_AGENT_HARNESS_SETTINGS,
+    });
+
+    render(
+      React.createElement(HarnessPopover, {
+        workspaceId: "ws-team",
+        agentId: "agt-leaf",
+        theme: popoverTheme,
+        layout: { compact: false, platform: "web" },
+        close: vi.fn(),
+      } as any),
+    );
+
+    expect(await screen.findByText("fe-developer")).toBeDefined();
+    expect(screen.getByText("fe-uiux")).toBeDefined();
+    expect(screen.getByText("fe-architect")).toBeDefined();
+    expect(screen.getByText("fe-qa")).toBeDefined();
+    expect(screen.getByText("be-developer")).toBeDefined();
+    expect(screen.getByText("codex · flash")).toBeDefined();
+    expect(screen.getByText("antigravity · flash")).toBeDefined();
+    expect(screen.getAllByText("RO")).toHaveLength(2);
   });
 });
 
