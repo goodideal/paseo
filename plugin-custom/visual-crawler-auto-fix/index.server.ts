@@ -1,5 +1,5 @@
-import { dirname, join } from "node:path";
-import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
 import type { PluginServerContext, PluginHandlerContext } from "@getpaseo/plugin/server";
 import {
   approveDirectiveRpc,
@@ -24,9 +24,16 @@ import { TaskCompiler } from "./server/triage/task-compiler.js";
 import { ReviewTriageAgent } from "./server/triage/triage-agent.js";
 import { type WorktreeAdapter } from "./server/orchestrator/worktree-pool.js";
 
-export function createDefaultBrowserDriver(): BrowserDriver {
+export function resolveDefaultEvidenceDir(): string {
+  const paseoHome = process.env.PASEO_HOME?.trim() || join(homedir(), ".paseo");
+  return join(paseoHome, "plugins", "visual-crawler-auto-fix", "evidence");
+}
+
+export function createDefaultBrowserDriver(
+  evidenceDir = resolveDefaultEvidenceDir(),
+): BrowserDriver {
   return new PlaywrightBrowserDriver({
-    screenshotDir: join(process.cwd(), ".evidence", "visual-crawler", "screenshots"),
+    screenshotDir: join(evidenceDir, "screenshots"),
   });
 }
 
@@ -51,6 +58,7 @@ export function createDefaultWorktreeAdapter(): WorktreeAdapter {
 export interface VisualCrawlerPluginOptions {
   store?: TaskStore;
   storePath?: string;
+  evidenceDir?: string;
   driver?: BrowserDriver;
   adapter?: WorktreeAdapter;
   workflowRunner?: {
@@ -63,9 +71,10 @@ export default function contribute(
   server: PluginServerContext,
   options?: VisualCrawlerPluginOptions,
 ) {
+  const evidenceDir = options?.evidenceDir ?? resolveDefaultEvidenceDir();
   const storePath = options?.storePath ?? join(tmpdir(), "paseo-visual-crawler", "state.json");
   const store = options?.store ?? new TaskStore(storePath, 3);
-  const driver = options?.driver ?? createDefaultBrowserDriver();
+  const driver = options?.driver ?? createDefaultBrowserDriver(evidenceDir);
 
   const crawler = new VisualCrawlerEngine(store, driver);
   const triageAgent = new ReviewTriageAgent(store);
@@ -80,7 +89,6 @@ export default function contribute(
       await crawler.start(input, { abortSignal: abortController.signal });
       const tasks = taskCompiler.compile(store.getCurrentRunHops(), store.getTasks());
       for (const task of tasks) store.upsertTask(task);
-      const evidenceDir = join(process.cwd(), ".evidence", "visual-crawler");
       writeMarkdownReport(createReportPath(evidenceDir), {
         targetUrl: input.targetUrl,
         telemetry: store.getTelemetry(),

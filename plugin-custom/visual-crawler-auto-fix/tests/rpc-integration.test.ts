@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
-import contribute from "../index.server.js";
+import contribute, { resolveDefaultEvidenceDir } from "../index.server.js";
 import { TaskStore } from "../server/store/task-store.js";
 import {
   approveDirectiveRpc,
@@ -256,5 +257,33 @@ describe("VisualCrawlerAutoFix Plugin Server Integration (Task 4.3)", () => {
       tasks: Array<{ id: string; status: string }>;
     };
     expect(afterUpdate.tasks).toHaveLength(1);
+  });
+
+  it("stores default evidence under PASEO_HOME instead of process.cwd()", () => {
+    const prevHome = process.env.PASEO_HOME;
+    const tempPaseoHome = join(
+      tmpdir(),
+      `test-vc-paseo-home-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    );
+    process.env.PASEO_HOME = tempPaseoHome;
+    try {
+      const expectedEvidenceDir = join(
+        tempPaseoHome,
+        "plugins",
+        "visual-crawler-auto-fix",
+        "evidence",
+      );
+      expect(resolveDefaultEvidenceDir()).toBe(expectedEvidenceDir);
+
+      contribute(mockServerContext, { store });
+      expect(existsSync(join(expectedEvidenceDir, "screenshots"))).toBe(true);
+    } finally {
+      if (prevHome === undefined) {
+        delete process.env.PASEO_HOME;
+      } else {
+        process.env.PASEO_HOME = prevHome;
+      }
+      rmSync(tempPaseoHome, { recursive: true, force: true });
+    }
   });
 });
