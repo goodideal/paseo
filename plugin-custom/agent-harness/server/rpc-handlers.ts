@@ -331,6 +331,12 @@ export function registerHarnessRpcHandlers(
           rolesCount: effectiveConfig.agentTeam.roles.length,
           manifestPath: effectiveConfig.agentTeam.manifestPath,
           hasLocalAntigravityPlugin: effectiveConfig.agentTeam.hasLocalAntigravityPlugin,
+          ...(effectiveConfig.agentTeam.targets
+            ? { targets: effectiveConfig.agentTeam.targets }
+            : {}),
+          ...(effectiveConfig.agentTeam.localFederatedTargets
+            ? { localFederatedTargets: effectiveConfig.agentTeam.localFederatedTargets }
+            : {}),
         }
       : null;
 

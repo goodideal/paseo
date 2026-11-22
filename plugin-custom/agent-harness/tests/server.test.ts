@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import contribute from "../index.server.js";
 import {
+  detectLocalFederatedTargets,
   hasLocalAntigravityTeamPlugin,
   loadWorkspaceAgentTeam,
 } from "../server/agent-team-loader.js";
@@ -2995,6 +2996,126 @@ describe("agent-harness server contribute", () => {
         expect(backendCreated.metadata[HARNESS_METADATA_KEY].role).toBe("be-developer");
       } finally {
         fs.rmSync(tmpRepo, { recursive: true, force: true });
+      }
+    });
+
+    it("detects per-checkout localFederatedTargets for claude/codex and isolates worktrees without local artifacts", async () => {
+      const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), "harness-multi-target-wt-"));
+      try {
+        const mainRepo = path.join(tmpBase, "main-repo");
+        const worktreeDir = path.join(tmpBase, "wt-clean");
+        fs.mkdirSync(path.join(mainRepo, ".git", "worktrees", "wt-clean"), { recursive: true });
+        fs.mkdirSync(path.join(mainRepo, ".agents"), { recursive: true });
+        fs.mkdirSync(path.join(mainRepo, ".claude", "agents"), { recursive: true });
+        fs.mkdirSync(path.join(mainRepo, ".codex", "agents"), { recursive: true });
+        fs.mkdirSync(worktreeDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(worktreeDir, ".git"),
+          `gitdir: ${path.join(mainRepo, ".git", "worktrees", "wt-clean")}\n`,
+        );
+        fs.writeFileSync(
+          path.join(mainRepo, ".git", "worktrees", "wt-clean", "commondir"),
+          "../..\n",
+        );
+
+        fs.writeFileSync(
+          path.join(mainRepo, ".agents", "agent-team.json"),
+          JSON.stringify({
+            schema_version: "1.0.0",
+            project_slug: "fed-demo",
+            preset: "go-api",
+            targets: ["claude", "codex"],
+            roles: ["be-developer", "be-reviewer"],
+            bindings: {
+              "be-reviewer": { provider: "claude-code", tier: "review" },
+            },
+          }),
+        );
+        fs.writeFileSync(
+          path.join(mainRepo, ".claude", "agents", "be-developer.md"),
+          "---\nname: be-developer\nmodel: flash\n---\n<!-- generated_by: agent-team:fed-demo -->\nDev.\n",
+        );
+        fs.writeFileSync(
+          path.join(mainRepo, ".codex", "agents", "be-developer.toml"),
+          '# generated_by: agent-team:fed-demo\nmodel = "flash"\nsandbox_mode = "workspace-write"\ndeveloper_instructions = "Dev."\n',
+        );
+        // Foreign slug artifact must NOT mark opencode as federated for fed-demo
+        fs.mkdirSync(path.join(mainRepo, ".opencode", "agents"), { recursive: true });
+        fs.writeFileSync(
+          path.join(mainRepo, ".opencode", "agents", "legacy.md"),
+          "---\nmode: subagent\n---\n<!-- generated_by: agent-team:other-team -->\nForeign.\n",
+        );
+
+        expect(detectLocalFederatedTargets(mainRepo, "fed-demo")).toEqual(["claude", "codex"]);
+        expect(detectLocalFederatedTargets(worktreeDir, "fed-demo")).toEqual([]);
+
+        const loadedMain = loadWorkspaceAgentTeam(mainRepo);
+        expect(loadedMain?.summary.localFederatedTargets).toEqual(["claude", "codex"]);
+        expect(loadedMain?.summary.hasLocalAntigravityPlugin).toBe(false);
+        expect(loadedMain?.specialists.find((s) => s.id === "be-reviewer")?.preferredProvider).toBe(
+          "claude",
+        );
+
+        const loadedWt = loadWorkspaceAgentTeam(worktreeDir);
+        expect(loadedWt?.summary.localFederatedTargets).toEqual([]);
+
+        const { hooks } = createTestServer({ enforceSessionMcpFiltering: true });
+
+        // Main repo claude root skips LAZY_TOOL_CONFIG & mcpServers filtering, and gets Federation Bridge
+        const claudeCreated = await hooks["agent.create.before"]({
+          request: {
+            initialPrompt: "Implement Go endpoint",
+            config: { provider: "claude", cwd: mainRepo, title: "Main Claude" },
+          },
+        });
+        expect(claudeCreated.config.systemPrompt).toContain("[Agent Harness — Federation Bridge]");
+        expect(claudeCreated.config.systemPrompt).not.toContain(
+          "[Capability Harness Active Profile]",
+        );
+
+        const claudeOpened = await hooks["agent.open.before"]({
+          request: {
+            agentId: "agt_fed_claude_main",
+            reason: "create",
+            purpose: "interactive",
+            provider: "claude",
+            cwd: mainRepo,
+            title: "Main Claude",
+            metadata: claudeCreated.metadata,
+            env: { LAZY_TOOL_CONFIG: "/existing/user.yaml" },
+            mcpServers: { user_only: { command: "echo" }, dbx: { command: "dbx" } },
+          },
+        });
+        expect(claudeOpened.env.LAZY_TOOL_CONFIG).toBe("/existing/user.yaml");
+        expect(claudeOpened.mcpServers).toEqual({
+          user_only: { command: "echo" },
+          dbx: { command: "dbx" },
+        });
+
+        // Worktree without synthesized .claude/agents keeps Paseo LAZY_TOOL_CONFIG fallback
+        const wtCreated = await hooks["agent.create.before"]({
+          request: {
+            initialPrompt: "Implement Go endpoint",
+            config: { provider: "claude", cwd: worktreeDir, title: "WT Claude" },
+          },
+        });
+        expect(wtCreated.config.systemPrompt).toContain("[Capability Harness Active Profile]");
+
+        const wtOpened = await hooks["agent.open.before"]({
+          request: {
+            agentId: "agt_fed_claude_wt",
+            reason: "create",
+            purpose: "interactive",
+            provider: "claude",
+            cwd: worktreeDir,
+            title: "WT Claude",
+            metadata: wtCreated.metadata,
+            env: {},
+          },
+        });
+        expect(wtOpened.env.LAZY_TOOL_CONFIG).toContain("backend.yaml");
+      } finally {
+        fs.rmSync(tmpBase, { recursive: true, force: true });
       }
     });
   });

@@ -30,7 +30,31 @@ import {
   resolveTargetModelForTier,
   resolveEffectiveHarnessConfig,
 } from "../shared/config-resolver.js";
-import { harnessInspectEnvironmentRpc, harnessSyncProfilesRpc } from "../shared/contracts.js";
+import {
+  harnessInspectEnvironmentRpc,
+  harnessSyncProfilesRpc,
+  type HarnessInspectEnvironmentOutput,
+} from "../shared/contracts.js";
+
+type AgentTeamInspectInfo = NonNullable<HarnessInspectEnvironmentOutput["agentTeam"]>;
+
+function formatAgentTeamLabel(agentTeam: AgentTeamInspectInfo): string {
+  const parts = [`team-${agentTeam.projectSlug}`, `${agentTeam.rolesCount} roles`];
+  // `localFederatedTargets` is populated by the loader checkout probe; skip drift check if absent.
+  if (Array.isArray(agentTeam.localFederatedTargets)) {
+    const federated = agentTeam.localFederatedTargets;
+    if (federated.length === 0) {
+      parts.push("no-local-targets");
+    } else {
+      parts.push(`federated=${federated.join(",")}`);
+      const missing = (agentTeam.targets ?? []).filter((t) => !federated.includes(t));
+      if (missing.length > 0) {
+        parts.push(`missing-local=${missing.join(",")}`);
+      }
+    }
+  }
+  return `Active (${parts.join(", ")})`;
+}
 
 const KNOWN_PROVIDERS = ["antigravity", "claude", "codex", "opencode", "pi"] as const;
 
@@ -925,9 +949,7 @@ export function HarnessSettingsScreen({ theme, settingsOverride }: HarnessSettin
                 ? "Active (" + inspectInfo.repoOverridePath + ")"
                 : "None"}
               {"\n"}• Workspace Agent Team:{" "}
-              {inspectInfo.agentTeam
-                ? `Active (team-${inspectInfo.agentTeam.projectSlug}, ${inspectInfo.agentTeam.rolesCount} roles)`
-                : "None"}
+              {inspectInfo.agentTeam ? formatAgentTeamLabel(inspectInfo.agentTeam) : "None"}
             </Text>
           </SettingsCard>
         ) : null}

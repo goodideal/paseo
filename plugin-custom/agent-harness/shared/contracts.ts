@@ -260,6 +260,8 @@ export const harnessInspectEnvironmentRpc = defineRpc({
         rolesCount: z.number().int(),
         manifestPath: z.string(),
         hasLocalAntigravityPlugin: z.boolean(),
+        targets: z.array(z.string()).optional(),
+        localFederatedTargets: z.array(z.string()).optional(),
       })
       .nullable()
       .optional(),

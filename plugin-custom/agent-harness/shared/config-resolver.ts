@@ -45,6 +45,25 @@ export function normalizeProviderName(provider?: string | null): string {
   return provider?.trim().toLowerCase() ?? "";
 }
 
+export const FEDERATED_AGENT_PROBE_SPECS = [
+  { target: "claude", relDirParts: [".claude", "agents"], suffix: ".md" },
+  { target: "opencode", relDirParts: [".opencode", "agents"], suffix: ".md" },
+  { target: "codex", relDirParts: [".codex", "agents"], suffix: ".toml" },
+] as const;
+
+export const VALID_FEDERATED_TARGET_IDS: ReadonlySet<string> = new Set([
+  "antigravity",
+  ...FEDERATED_AGENT_PROBE_SPECS.map((spec) => spec.target),
+]);
+
+/**
+ * Canonicalizes provider identifiers across aliases (e.g. `claude-code` -> `claude`).
+ */
+export function canonicalizeProviderName(provider?: string | null): string {
+  const norm = normalizeProviderName(provider);
+  return norm === "claude-code" ? "claude" : norm;
+}
+
 /**
  * Normalizes posix path joining without duplicate slashes.
  */
@@ -272,15 +291,17 @@ export function buildSystemPromptBanner(options: {
     return "";
   }
 
-  const isAntigravity = normalizeProviderName(provider) === "antigravity";
+  const canonicalProvider = canonicalizeProviderName(provider);
+  const isAntigravity = canonicalProvider === "antigravity";
 
-  // Federated Antigravity root session: yield skills/MCP ownership to local `.agents/plugins/team-*`
+  // Federated root session: yield skills/MCP ownership to local synthesized target plugin/agents
   // and emit only the concise 3-line Federation Bridge.
+  const agentTeam = config.agentTeam;
   if (
-    isAntigravity &&
+    agentTeam &&
     !options.isLeaf &&
     !options.isSpawnedSpecialist &&
-    config.agentTeam?.hasLocalAntigravityPlugin
+    isFederatedLocalProvider(config, provider)
   ) {
     const availableHandoffs = config.specialists
       .filter((s) => s.enabled && s.handoffEnabled)
@@ -291,9 +312,13 @@ export function buildSystemPromptBanner(options: {
       })
       .join(", ");
 
+    const ownerLabel = isAntigravity
+      ? `local agent-team plugin (team-${agentTeam.projectSlug})`
+      : `local synthesized ${canonicalProvider} agents (team-${agentTeam.projectSlug})`;
+
     const bridgeLines = [
       "[Agent Harness — Federation Bridge]",
-      `- Matrix Tier: ${tier} (model: ${targetModel || "default"}); local agent-team plugin (team-${config.agentTeam.projectSlug}) owns repo skills & MCP.`,
+      `- Matrix Tier: ${tier} (model: ${targetModel || "default"}); ${ownerLabel} owns repo skills & MCP.`,
       ...(availableHandoffs
         ? [
             `- Cross-Client Handoff (\`harness_handoff\`): Available workspace specialists: ${availableHandoffs}.`,
@@ -430,6 +455,28 @@ export function resolveSessionMcpServers(options: {
 }
 
 /**
+ * Returns true when the active workspace checkout physically contains synthesized local
+ * agent-team artifacts for the caller's provider (Antigravity plugin or Claude/OpenCode/Codex targets).
+ */
+export function isFederatedLocalProvider(
+  config: EffectiveHarnessConfig,
+  provider?: string,
+): boolean {
+  if (!config.agentTeam) {
+    return false;
+  }
+  const canonical = canonicalizeProviderName(provider);
+  if (!canonical) {
+    return false;
+  }
+  const detected = config.agentTeam.localFederatedTargets;
+  if (Array.isArray(detected)) {
+    return detected.includes(canonical);
+  }
+  return canonical === "antigravity" && Boolean(config.agentTeam.hasLocalAntigravityPlugin);
+}
+
+/**
  * Resolves environment variables to inject for a specialist session.
  */
 export function resolveSpecialistEnvironment(options: {
@@ -456,11 +503,9 @@ export function resolveSpecialistEnvironment(options: {
     delete baseEnv.PASEO_HARNESS_PROFILE;
   }
 
-  const skipLazyToolForFederatedAntigravity =
-    normalizeProviderName(options.provider) === "antigravity" &&
-    Boolean(config.agentTeam?.hasLocalAntigravityPlugin);
+  const skipLazyToolForFederatedLocal = isFederatedLocalProvider(config, options.provider);
 
-  if (!skipLazyToolForFederatedAntigravity) {
+  if (!skipLazyToolForFederatedLocal) {
     if (lazyToolConfigPath) {
       if (!baseEnv.LAZY_TOOL_CONFIG || isRoleSwitch) {
         baseEnv.LAZY_TOOL_CONFIG = lazyToolConfigPath;

@@ -12,6 +12,7 @@ import {
   resolveResumeExecutionMode,
   resolveSessionMcpServers,
   resolveSpecialistEnvironment,
+  isFederatedLocalProvider,
   resolveTargetModelForTier,
 } from "./shared/config-resolver.js";
 import {
@@ -1184,9 +1185,7 @@ export default function contribute(server: PluginServerContext) {
       roleDecision.specialistConfig,
     );
 
-    const isFederatedLocalAntigravity =
-      normalizedProvider === "antigravity" &&
-      Boolean(effectiveConfig.agentTeam?.hasLocalAntigravityPlugin);
+    const isFederatedLocalSession = isFederatedLocalProvider(effectiveConfig, request.provider);
 
     const nextEnv = resolveHarnessEnv({
       role: roleDecision.role,
@@ -1198,7 +1197,7 @@ export default function contribute(server: PluginServerContext) {
     });
 
     let nextMcpServers = request.mcpServers;
-    if (specialist && effectiveConfig.enforceSessionMcpFiltering && !isFederatedLocalAntigravity) {
+    if (specialist && effectiveConfig.enforceSessionMcpFiltering && !isFederatedLocalSession) {
       nextMcpServers = resolveSessionMcpServers({
         config: effectiveConfig,
         specialist,

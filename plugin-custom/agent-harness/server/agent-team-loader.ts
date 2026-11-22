@@ -1,6 +1,11 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import {
+  FEDERATED_AGENT_PROBE_SPECS,
+  VALID_FEDERATED_TARGET_IDS,
+  canonicalizeProviderName,
+} from "../shared/config-resolver.js";
 import type { AgentTeamSummary, HarnessSpecialistConfig } from "../shared/types.js";
 
 export interface AgentTeamRoleBinding {
@@ -16,6 +21,7 @@ export interface RawAgentTeamManifest {
   project_slug?: string;
   preset?: string;
   roles?: unknown;
+  targets?: unknown;
   bindings?: unknown;
 }
 
@@ -106,6 +112,12 @@ const catalogCache = new Map<
   { mtimeMs: number; entries: Record<string, CatalogRoleEntry> }
 >();
 const markdownCache = new Map<string, { mtimeMs: number; body: string }>();
+const HEADER_PROBE_BYTES = 8192;
+const MANAGED_MARKER_PATTERN = /generated_by:\s*agent-team:([a-zA-Z0-9][a-zA-Z0-9_-]*)?/;
+const managedHeaderCache = new Map<
+  string,
+  { mtimeMs: number; size: number; hasMarker: boolean; slug: string | null }
+>();
 
 const SAFE_IDENTIFIER_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
 
@@ -243,6 +255,93 @@ export function hasLocalAntigravityTeamPlugin(
     return false;
   }
   return false;
+}
+
+function isMissingFsError(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | undefined)?.code;
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+
+function readManagedArtifactHeader(
+  fullPath: string,
+  stat: fs.Stats,
+): {
+  hasMarker: boolean;
+  slug: string | null;
+} {
+  const cached = managedHeaderCache.get(fullPath);
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+    return cached;
+  }
+  const fd = fs.openSync(fullPath, "r");
+  try {
+    const buf = Buffer.alloc(HEADER_PROBE_BYTES);
+    const bytesRead = fs.readSync(fd, buf, 0, HEADER_PROBE_BYTES, 0);
+    const headerText = buf.subarray(0, bytesRead).toString("utf8");
+    const match = MANAGED_MARKER_PATTERN.exec(headerText);
+    const parsed = {
+      mtimeMs: stat.mtimeMs,
+      size: stat.size,
+      hasMarker: Boolean(match),
+      slug: match?.[1] ? match[1] : null,
+    };
+    managedHeaderCache.set(fullPath, parsed);
+    return parsed;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function hasManagedAgentArtifacts(
+  dirPath: string,
+  suffix: string,
+  expectedSlug?: string | null,
+): boolean {
+  const trimmedSlug = expectedSlug?.trim();
+  const safeSlug = trimmedSlug && isSafePathIdentifier(trimmedSlug) ? trimmedSlug : "";
+  try {
+    if (!fs.existsSync(dirPath)) {
+      return false;
+    }
+    for (const entry of fs.readdirSync(dirPath)) {
+      if (!entry.endsWith(suffix)) continue;
+      const fullPath = path.join(dirPath, entry);
+      const stat = fs.statSync(fullPath);
+      if (!stat.isFile()) continue;
+      const parsed = readManagedArtifactHeader(fullPath, stat);
+      if (!parsed.hasMarker) continue;
+      if (!safeSlug || parsed.slug === safeSlug) {
+        return true;
+      }
+    }
+  } catch (err) {
+    if (!isMissingFsError(err)) {
+      console.warn(`[agent-harness] Failed probing federated artifacts in ${dirPath}:`, err);
+    }
+    return false;
+  }
+  return false;
+}
+
+/**
+ * Probes the active `checkoutRoot` (without falling back to `mainRepoRoot`) for synthesized
+ * native agent-team targets (`antigravity`, `claude`, `opencode`, `codex`).
+ */
+export function detectLocalFederatedTargets(
+  checkoutRoot: string,
+  projectSlug?: string | null,
+): string[] {
+  const detected: string[] = [];
+  if (hasLocalAntigravityTeamPlugin(checkoutRoot, projectSlug)) {
+    detected.push("antigravity");
+  }
+  for (const spec of FEDERATED_AGENT_PROBE_SPECS) {
+    const dirPath = path.join(checkoutRoot, ...spec.relDirParts);
+    if (hasManagedAgentArtifacts(dirPath, spec.suffix, projectSlug)) {
+      detected.push(spec.target);
+    }
+  }
+  return detected;
 }
 
 function loadAgentTeamCatalog(homeDir: string): Record<string, CatalogRoleEntry> {
@@ -584,7 +683,18 @@ export function loadWorkspaceAgentTeam(
 
   const catalog = loadAgentTeamCatalog(homeDir);
   const aliasesByRole = assignCoarseAliases(roles);
-  const hasLocalPlugin = hasLocalAntigravityTeamPlugin(checkoutRoot, projectSlug);
+  const localFederatedTargets = detectLocalFederatedTargets(checkoutRoot, projectSlug);
+  const hasLocalPlugin = localFederatedTargets.includes("antigravity");
+  const targets = Array.isArray(manifest.targets)
+    ? Array.from(
+        new Set(
+          manifest.targets
+            .filter((t): t is string => typeof t === "string")
+            .map(canonicalizeProviderName)
+            .filter((t) => VALID_FEDERATED_TARGET_IDS.has(t)),
+        ),
+      )
+    : undefined;
 
   const specialists: HarnessSpecialistConfig[] = roles.map((roleId, index) => {
     const cat = catalog[roleId];
@@ -594,7 +704,11 @@ export function loadWorkspaceAgentTeam(
     const defaultSlice = inferDefaultLazySlice(roleId, team);
     const binding = rawBindings[roleId];
 
-    const preferredProvider = typeof binding?.provider === "string" ? binding.provider.trim() : "";
+    const rawProvider = typeof binding?.provider === "string" ? binding.provider.trim() : "";
+    const normProvider = rawProvider ? canonicalizeProviderName(rawProvider) : "";
+    const preferredProvider = VALID_FEDERATED_TARGET_IDS.has(normProvider)
+      ? normProvider
+      : rawProvider;
     const preferredTier =
       typeof binding?.tier === "string" && binding.tier.trim() ? binding.tier.trim() : defaultTier;
     const modelOverride = typeof binding?.model === "string" ? binding.model.trim() : "";
@@ -659,6 +773,8 @@ export function loadWorkspaceAgentTeam(
       checkoutRoot,
       mainRepoRoot,
       hasLocalAntigravityPlugin: hasLocalPlugin,
+      ...(targets ? { targets } : {}),
+      localFederatedTargets,
       roles,
     },
     specialists,

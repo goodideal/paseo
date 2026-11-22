@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildSystemPromptBanner,
   findSpecialist,
+  isFederatedLocalProvider,
   resolveEffectiveHarnessConfig,
   resolveResumeExecutionMode,
   resolveSessionMcpServers,
@@ -452,5 +453,95 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
     expect(reviewerBanner).toContain("Strict read-only review.");
     expect(reviewerBanner).toContain("Read-Only Specialist Enforcement");
     expect(reviewerBanner).toContain("Leaf Specialist Boundary");
+  });
+
+  it("generalizes Federation Bridge & LAZY_TOOL_CONFIG avoidance to claude/opencode/codex when in localFederatedTargets", () => {
+    const multiTargetCfg = resolveEffectiveHarnessConfig(
+      DEFAULT_AGENT_HARNESS_SETTINGS,
+      null,
+      "/repo",
+      {
+        summary: {
+          projectSlug: "multi-demo",
+          preset: "go-api",
+          manifestPath: "/repo/.agents/agent-team.json",
+          checkoutRoot: "/repo",
+          mainRepoRoot: "/repo",
+          hasLocalAntigravityPlugin: false,
+          targets: ["claude", "codex"],
+          localFederatedTargets: ["claude", "codex"],
+          roles: ["be-developer"],
+        },
+        specialists: [
+          {
+            id: "be-developer",
+            name: "Backend Engineer",
+            shortLabel: "be-developer",
+            description: "Backend dev",
+            icon: "Server",
+            enabled: true,
+            builtIn: false,
+            preferredProvider: "claude",
+            preferredTier: "flash",
+            modelOverride: "",
+            lockTierOnLabel: false,
+            handoffEnabled: true,
+            handoffPriority: 10,
+            handoffTitlePrefix: "[be-developer]",
+            handoffDefaultPrompt: "Go backend",
+            syncToDaemonProfile: false,
+            primarySkills: [],
+            mandatorySkillActivation: false,
+            docsFocus: [],
+            qualityGates: [],
+            lazyToolSlice: "backend.yaml",
+            allowedMcpServers: [],
+            excludedMcpServers: [],
+            injectedMcpServers: [],
+            aliases: ["backend"],
+            matchPatterns: [],
+            profileFilename: "be-developer.json",
+          },
+        ],
+      },
+    );
+
+    expect(isFederatedLocalProvider(multiTargetCfg, "claude")).toBe(true);
+    expect(isFederatedLocalProvider(multiTargetCfg, "claude-code")).toBe(true);
+    expect(isFederatedLocalProvider(multiTargetCfg, "codex")).toBe(true);
+    expect(isFederatedLocalProvider(multiTargetCfg, "opencode")).toBe(false);
+    expect(isFederatedLocalProvider(multiTargetCfg, "antigravity")).toBe(false);
+
+    const claudeEnv = resolveSpecialistEnvironment({
+      config: multiTargetCfg,
+      specialist: multiTargetCfg.specialists[0],
+      existingEnv: {},
+      homeDir: "/tmp/mock-home",
+      provider: "claude",
+    });
+    expect(claudeEnv.LAZY_TOOL_CONFIG).toBeUndefined();
+
+    const opencodeEnv = resolveSpecialistEnvironment({
+      config: multiTargetCfg,
+      specialist: multiTargetCfg.specialists[0],
+      existingEnv: {},
+      homeDir: "/tmp/mock-home",
+      provider: "opencode",
+    });
+    expect(opencodeEnv.LAZY_TOOL_CONFIG).toBe(
+      "/tmp/mock-home/.config/lazy-tool/profiles/backend.yaml",
+    );
+
+    const claudeBridge = buildSystemPromptBanner({
+      config: multiTargetCfg,
+      specialist: multiTargetCfg.specialists[0],
+      tier: "flash",
+      targetModel: "flash",
+      roleMatchedRule: "default_general",
+      homeDir: "/tmp/mock-home",
+      provider: "claude",
+    });
+    expect(claudeBridge).toContain("[Agent Harness — Federation Bridge]");
+    expect(claudeBridge).toContain("local synthesized claude agents (team-multi-demo)");
   });
 });

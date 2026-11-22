@@ -154,6 +154,8 @@ export interface AgentTeamSummary {
   checkoutRoot: string;
   mainRepoRoot: string;
   hasLocalAntigravityPlugin: boolean;
+  targets?: string[];
+  localFederatedTargets?: string[];
   roles: string[];
 }
 
