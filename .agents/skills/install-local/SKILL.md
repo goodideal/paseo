@@ -12,7 +12,7 @@ user-invocable: true
 
 1. **自动化编译与本地部署 (Auto Build & Local Deploy)**：自动化按 Monorepo 依赖拓扑编译 Paseo 服务端组件、按需打包内置 Web UI（智能跳过无变更 UI 打包）、Electron 桌面端主进程，并将产物增量同步到本地全局运行时（如 Volta 或全局 npm），提供守护进程运行态漂移比对与重启预警。
 2. **官方更新无缝整合与上游版本显式输出 (Upstream Integration & Version Visibility)**：自动追踪官方上游仓库 (`getpaseo/paseo`)，显式提取并输出官方 upstream 最新版本（源码主干版本、Git Tag、npm 发布标签及提交动态），深度对比本地基线演进差距；提供一键拉取合并（或变基）、自动维护 `-custom` 自定义版本标识、秒级处理多包版本冲突、刷新第三方依赖及自动化编译安装的一站式流水线。
-3. **定制特性与质量门禁守护 (Custom Features & Quality Gates)**：深度沉淀五大定制特性（纯黑终端、中英双语 STT、中文字体与重测、`-custom` 全链路兼容、插件化 Usage Source 与 Workflow 引擎整合）的架构要点、编码规范（如 oxlint 圈复杂度、i18n 多语言类型约束与 Monorepo Workspace 依赖构建链）以及核心单测回归验证。
+3. **定制特性与质量门禁守护 (Custom Features & Quality Gates)**：深度沉淀五大定制特性（纯黑终端、中英双语 STT、终端中文字体回退、`-custom` 全链路兼容、插件化 Usage Source 与 Workflow 引擎整合）的架构要点、编码规范（如 oxlint 圈复杂度、i18n 多语言类型约束与 Monorepo Workspace 依赖构建链）以及核心单测回归验证。
 
 ---
 
@@ -146,14 +146,11 @@ git remote set-url origin https://github.com/goodideal/paseo.git
 
 ---
 
-### 特性 C：终端中文字体支持与动态字符尺寸重新测量 (`packages/app`)
+### 特性 C：终端中文字体回退 (`packages/app`)
 
-- **核心意图**：在终端默认等宽字体栈中加入 `'PingFang SC'`、`'Microsoft YaHei'` 等中文字体回退，解决终端中文显示缺失/字形异常问题；针对 Web 字体异步加载后字符包围盒变化导致的字符重叠错位，引入动态重测机制。
+- **核心意图**：在终端默认等宽字体栈中加入 `'PingFang SC'`、`'Microsoft YaHei'` 等中文字体回退，确保 Web/Electron 终端渲染中文字符时优先回退到苹方/雅黑。
 - **涉及核心文件**：
-  - `packages/app/src/terminal/runtime/terminal-font.ts`（默认字体族中补充常见中文字体）
-  - `packages/app/src/terminal/runtime/terminal-emulator-runtime.ts`（在字体加载就绪 `fontSet.load` 后调用 `_charSizeService.measure()` 触发重测并重新触发 `fitAndEmitResize`）
-  - `packages/app/src/terminal/runtime/terminal-emulator-runtime.test.ts`
-  - `packages/app/src/terminal/webview/terminal-emulator-webview-html.ts`
+  - `packages/app/src/terminal/runtime/terminal-font.ts`（默认字体族中补充常见中文字体；`terminal-emulator-runtime.ts` 保持与上游零差异，因 xterm.js `CharSizeService` 仅测量 ASCII `"W"` 且终端无 `@font-face` WebFont，无需 `remeasureCharSize` 补丁）
 
 ---
 
@@ -397,5 +394,4 @@ paseo restart
 | `oxlint: private async method has a complexity of 22 (Max 20)`                                                   | `transcribeAudioInternal` 分支过多                                                                            | 将多条件判断与 logprob 分析抽离为顶层纯函数（见特性 B）                                                                                          |
 | `oxfmt: Format issues found in above 1 files`                                                                    | 文件存在格式缩进/尾逗号不符合规范                                                                             | 严格运行 `npm run format` 自动修正，切勿手动硬改                                                                                                 |
 | `git push: deploy key permission denied`                                                                         | SSH 默认尝试了其他项目的 deploy key                                                                           | 运行 `gh auth setup-git`，改用已授权的个人 HTTPS 协议推送                                                                                        |
-| 终端中文字符重叠、光标对不准                                                                                     | 异步中文字体加载后未重算 cell 宽高                                                                            | 确保 `terminal-emulator-runtime.ts` 中在 `fontSet.load` 后调用了 `remeasureCharSize()`                                                           |
 | `git fetch upstream` 权限报错或失败                                                                              | 远端未配置或沙盒限制                                                                                          | 脚本已内置 `ensureUpstreamRemote()`，若网络受限可先在宿主终端执行一次 `git fetch upstream`                                                       |
