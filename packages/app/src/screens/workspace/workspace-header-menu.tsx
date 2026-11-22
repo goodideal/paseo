@@ -3,14 +3,7 @@ import React, { useCallback, useMemo } from "react";
 import { View } from "react-native";
 import { useRouter, type Href } from "expo-router";
 import { useTranslation } from "react-i18next";
-import {
-  Activity,
-  Copy,
-  Ellipsis,
-  Globe,
-  Import as ImportIcon,
-  Settings,
-} from "lucide-react-native";
+import { Copy, Ellipsis, Globe, Import as ImportIcon, Settings } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import {
@@ -46,11 +39,9 @@ const ThemedCopy = withUnistyles(Copy);
 const ThemedGlobe = withUnistyles(Globe);
 const ThemedImport = withUnistyles(ImportIcon);
 const ThemedSettings = withUnistyles(Settings);
-const ThemedActivity = withUnistyles(Activity);
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
-const MENU_WORKFLOW_RUNS_ICON = <ThemedActivity size={16} uniProps={mutedColorMapping} />;
 const MENU_NEW_BROWSER_ICON = <ThemedGlobe size={16} uniProps={mutedColorMapping} />;
 const MENU_IMPORT_ICON = <ThemedImport size={16} uniProps={mutedColorMapping} />;
 const MENU_COPY_ICON = <ThemedCopy size={16} uniProps={mutedColorMapping} />;
@@ -223,10 +214,8 @@ export interface WorkspaceHeaderMenuMobileProps extends WorkspaceHeaderWorkspace
   scripts: UseWorkspaceScriptsMenuPagesInput;
   showCreateBrowserTab: boolean;
   createTerminalDisabled: boolean;
-  showWorkflowRuns?: boolean;
   onCreateTerminalWithProfile: (profile: TerminalProfile, paneId?: string) => void;
   onCreateBrowser: (input?: { paneId?: string }) => void;
-  onOpenWorkflowRuns?: () => void;
 }
 
 /**
@@ -243,10 +232,8 @@ export function WorkspaceHeaderMenuMobile({
   scripts,
   showCreateBrowserTab,
   createTerminalDisabled,
-  showWorkflowRuns = false,
   onCreateTerminalWithProfile,
   onCreateBrowser,
-  onOpenWorkflowRuns,
   pane,
   onExitFocusMode,
   ...workspaceActions
@@ -332,15 +319,6 @@ export function WorkspaceHeaderMenuMobile({
         {scriptsMenu.trigger}
         {pluginMenu.rows}
         {pluginMenu.rows.length > 0 ? <DropdownMenuSeparator /> : null}
-        {showWorkflowRuns && onOpenWorkflowRuns ? (
-          <DropdownMenuItem
-            testID="workspace-header-workflow-runs"
-            leading={MENU_WORKFLOW_RUNS_ICON}
-            onSelect={onOpenWorkflowRuns}
-          >
-            {t("panels.workflowRuns.label", "Agent Radar")}
-          </DropdownMenuItem>
-        ) : null}
         {showCreateBrowserTab ? (
           <DropdownMenuItem
             testID="workspace-header-new-browser"

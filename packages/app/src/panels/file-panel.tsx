@@ -7,7 +7,6 @@ import { usePaneContext } from "@/panels/pane-context";
 import { definePanel } from "@/panels/panel-registry";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 import { createMaterialFileIcon } from "@/components/material-file-icon";
-import { getPathBasename } from "@/utils/path";
 
 const CENTERED_PADDED_STYLE = {
   flex: 1,
@@ -17,7 +16,7 @@ const CENTERED_PADDED_STYLE = {
 } as const;
 
 function useFilePanelDescriptor(target: { kind: "file"; path: string }) {
-  const fileName = getPathBasename(target.path);
+  const fileName = target.path.split("/").findLast(Boolean) ?? target.path;
   const icon = useMemo(() => createMaterialFileIcon(fileName), [fileName]);
   return {
     label: fileName,

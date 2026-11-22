@@ -118,7 +118,6 @@ interface DirectorySuggestionEntry {
 type AvailableCommand =
   | { source: "client"; command: ClientSlashCommand }
   | { source: "plugin"; command: PluginClientSlashCommand }
-  | { source: "provider"; command: AgentSlashCommand }
   | { source: "provider"; command: AgentSlashCommand };
 
 function resolveDraftQueryConfig(draft?: DraftCommandTarget): DraftCommandConfig | undefined {
@@ -242,7 +241,6 @@ function buildAutocompleteOptions(input: BuildAutocompleteOptionsInput): AgentAu
       source: "provider" as const,
       command,
     }));
-
     const rootCommands: AvailableCommand[] = mergeSlashCommandSources({
       builtIn: CLIENT_SLASH_COMMANDS,
       plugins: input.pluginCommands,
@@ -258,7 +256,6 @@ function buildAutocompleteOptions(input: BuildAutocompleteOptionsInput): AgentAu
         if (entry.source === "built-in") return { source: "client", command: entry.command };
         return entry;
       });
-
     const availableCommands: AvailableCommand[] =
       input.activeSlashCommand?.position === "inline"
         ? filterInlineSkillCommandEntries(providerCommands)

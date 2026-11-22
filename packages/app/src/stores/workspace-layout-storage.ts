@@ -20,7 +20,7 @@ const WorkspaceDraftTabSetupStorageSchema = z.preprocess(
     providerOptions: z.record(z.string(), z.json()),
   }),
 );
-export const WorkspaceTabTargetStorageSchema = z.discriminatedUnion("kind", [
+const WorkspaceTabTargetStorageSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("new_tab") }),
   z.strictObject({
     kind: z.literal("draft"),
@@ -55,7 +55,6 @@ export const WorkspaceTabTargetStorageSchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({ kind: z.literal("setup"), workspaceId: z.string() }),
   z.strictObject({ kind: z.literal("commit_diff"), sha: z.string() }),
-  z.strictObject({ kind: z.literal("workflow_runs"), workspaceId: z.string() }),
   z.discriminatedUnion("context", [
     z.strictObject({
       kind: z.literal("plugin"),

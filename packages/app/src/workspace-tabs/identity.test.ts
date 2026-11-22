@@ -1,4 +1,3 @@
-import type { WorkspaceTabTarget } from "./model";
 import { describe, expect, it, test } from "vitest";
 import {
   buildDeterministicWorkspaceTabId,
@@ -106,15 +105,6 @@ describe("workspace utility panel identity", () => {
   );
 });
 
-describe("workflow runs tab identity", () => {
-  it("normalizes and deterministically keys workflow_runs", () => {
-    const target = { kind: "workflow_runs" as const, workspaceId: "ws-1" };
-    expect(normalizeWorkspaceTabTarget(target)).toEqual(target);
-    expect(buildDeterministicWorkspaceTabId(target)).toBe("workflow_runs_ws-1");
-    expect(workspaceTabTargetsEqual(target, target)).toBe(true);
-  });
-});
-
 describe("commit diff tab identity", () => {
   it("keys a commit diff tab by its sha", () => {
     expect(buildDeterministicWorkspaceTabId({ kind: "commit_diff", sha: "abc123" })).toBe(
@@ -185,27 +175,6 @@ describe("plugin panel tab identity", () => {
       context: "agent",
       agentId: "agent-1",
     });
-  });
-
-  it("handles reader tab normalization, equality and stable id", () => {
-    const raw = { kind: "reader", workspaceId: " wks_123 " };
-    const normalized = normalizeWorkspaceTabTarget(raw as unknown as WorkspaceTabTarget);
-    expect(normalized).toEqual({ kind: "reader", workspaceId: "wks_123" });
-    expect(
-      workspaceTabTargetsEqual(
-        { kind: "reader", workspaceId: "wks_123" },
-        { kind: "reader", workspaceId: "wks_123" },
-      ),
-    ).toBe(true);
-    expect(
-      workspaceTabTargetsEqual(
-        { kind: "reader", workspaceId: "wks_123" },
-        { kind: "reader", workspaceId: "wks_456" },
-      ),
-    ).toBe(false);
-    expect(buildDeterministicWorkspaceTabId({ kind: "reader", workspaceId: "wks_123" })).toBe(
-      "reader_wks_123",
-    );
   });
 
   it("gives workspace and agent instances distinct stable ids", () => {

@@ -1,5 +1,4 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { getPathBasename } from "@/utils/path";
 import React, {
   Fragment,
   createContext,
@@ -625,7 +624,6 @@ function getFallbackTabLabel(
     changes: string;
     files: string;
     pullRequest: string;
-    workflowRuns: string;
   },
 ): string {
   if (tab.target.kind === "new_tab") {
@@ -641,7 +639,7 @@ function getFallbackTabLabel(
     return labels.terminal;
   }
   if (tab.target.kind === "file") {
-    return getPathBasename(tab.target.path);
+    return tab.target.path.split("/").findLast(Boolean) ?? tab.target.path;
   }
   if (tab.target.kind === "working_diff" || tab.target.kind === "changes_tree") {
     return labels.changes;
@@ -651,12 +649,6 @@ function getFallbackTabLabel(
   }
   if (tab.target.kind === "pull_request") {
     return labels.pullRequest;
-  }
-  if (tab.target.kind === "workflow_runs") {
-    return labels.workflowRuns;
-  }
-  if (tab.target.kind === "reader") {
-    return "Agent Reader";
   }
   return labels.agent;
 }
@@ -1171,7 +1163,6 @@ function ResolvedWorkspaceDesktopTabsRow({
       changes: t("panels.diff.changesLabel"),
       files: t("panels.files.label"),
       pullRequest: t("panels.pullRequest.label"),
-      workflowRuns: t("workspace.tabs.fallback.workflowRuns"),
     }),
     [t],
   );

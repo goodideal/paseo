@@ -2,11 +2,6 @@
 // oxlint-disable-next-line import/no-unassigned-import -- Polyfills install on import.
 import "./src/polyfills/install-early";
 
-// Polyfill ES2023 array methods (findLast, findLastIndex, toReversed, toSorted, etc.)
-// for web runtimes that lack the APIs.
-import { polyfillArray } from "./src/polyfills/array";
-polyfillArray();
-
 // Configure Unistyles before Expo Router pulls in any components using StyleSheet.
 import "./src/styles/unistyles";
 // oxlint-disable-next-line import/no-unassigned-import -- Preserve Expo's entry side effects.

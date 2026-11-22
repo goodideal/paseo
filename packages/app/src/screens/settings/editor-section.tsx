@@ -9,12 +9,10 @@ import { SettingsSection } from "@/components/settings/headings/settings-section
 export function EditorSection() {
   const { t } = useTranslation();
   const { settings, updateSettings } = useAppSettings();
-
   const handleChange = useCallback(
     (vimKeybindings: boolean) => void updateSettings({ vimKeybindings }),
     [updateSettings],
   );
-
   return (
     <SettingsSection title={t("settings.editor.title")}>
       <View style={settingsStyles.card}>

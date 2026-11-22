@@ -9,7 +9,4 @@ export {
   type WorkspaceScriptsMenuPages,
 } from "./workspace-scripts-menu-pages";
 
-export {
-  useWorkspaceScriptActions,
-  type WorkspaceScriptActions,
-} from "./use-workspace-script-actions";
+export { useWorkspaceScriptActions } from "./use-workspace-script-actions";

@@ -119,7 +119,6 @@ import {
   useKeyboardActionDispatcher,
 } from "@/keyboard/keyboard-action-dispatcher-context";
 import { polyfillCrypto } from "@/polyfills/crypto";
-import { polyfillArray } from "@/polyfills/array";
 import {
   getHostRuntimeStore,
   hasConfiguredLocalDaemonOverride,
@@ -152,7 +151,6 @@ import { NotificationOpenRouter } from "@/notification-open/react";
 import { ensureOsNotificationPermission } from "@/utils/os-notifications";
 
 polyfillCrypto();
-polyfillArray();
 
 export interface HostRuntimeBootstrapState {
   splashError: string | null;

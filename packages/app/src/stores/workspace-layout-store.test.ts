@@ -1,9 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.hoisted(() => {
-  (globalThis as unknown as { __DEV__: boolean }).__DEV__ = false;
-});
-
 vi.mock("@react-native-async-storage/async-storage", () => {
   const storage = new Map<string, string>();
   return {
@@ -50,10 +46,6 @@ import {
   type SplitNode,
   type SplitPane,
 } from "@/stores/workspace-layout-store";
-import {
-  WorkspaceLayoutPersistedStateSchema,
-  WorkspaceTabTargetStorageSchema,
-} from "./workspace-layout-storage";
 
 const SERVER_ID = "server-1";
 const WORKSPACE_ID = "ws-main";
@@ -875,32 +867,6 @@ describe("workspace-layout-store actions", () => {
         (tab) => tab.target.kind === "pull_request",
       ),
     ).toHaveLength(2);
-  });
-
-  it("opens and reveals workflow_runs tab instances", () => {
-    const workspaceKey = createWorkspaceKey();
-    const store = workspaceLayoutStore.getState();
-    const tabId = store.openTab({
-      workspaceKey,
-      target: { kind: "workflow_runs", workspaceId: "ws-1" },
-      intent: "new",
-    });
-    expect(tabId).toBeTruthy();
-
-    const tabs = collectAllTabs(
-      workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey].root,
-    );
-    const workflowTab = tabs.find((tab) => tab.target.kind === "workflow_runs");
-    expect(workflowTab).toBeDefined();
-    expect(workflowTab?.tabId).toBe(tabId);
-
-    // Reveal should reuse the existing tab
-    const revealed = store.openTab({
-      workspaceKey,
-      target: { kind: "workflow_runs", workspaceId: "ws-1" },
-      intent: "reveal",
-    });
-    expect(revealed).toBe(tabId);
   });
 
   it("preserves same-kind state, clears cross-kind state, and accepts an explicit override", () => {
@@ -4666,100 +4632,6 @@ it("persists the once-only PR add after closing, and clears it when purging the 
   restored.getState().purgeWorkspace(workspaceKey);
   expect(restored.getState().pullRequestTabAutoOpenedByWorkspace[workspaceKey]).toBeUndefined();
   expect(restored.getState().autoOpenPullRequestTab(workspaceKey, placement)).toBe("pull_request");
-});
-
-describe("workflow_runs persistence", () => {
-  it("parses workflow_runs tab target using WorkspaceTabTargetStorageSchema", () => {
-    const valid = WorkspaceTabTargetStorageSchema.safeParse({
-      kind: "workflow_runs",
-      workspaceId: "ws-1",
-    });
-    expect(valid.success).toBe(true);
-    if (valid.success) {
-      expect(valid.data).toEqual({
-        kind: "workflow_runs",
-        workspaceId: "ws-1",
-      });
-    }
-
-    const invalidExtra = WorkspaceTabTargetStorageSchema.safeParse({
-      kind: "workflow_runs",
-      workspaceId: "ws-1",
-      extra: true,
-    });
-    expect(invalidExtra.success).toBe(false);
-
-    const invalidMissing = WorkspaceTabTargetStorageSchema.safeParse({
-      kind: "workflow_runs",
-    });
-    expect(invalidMissing.success).toBe(false);
-  });
-
-  it("parses persisted layout containing workflow_runs tab using WorkspaceLayoutPersistedStateSchema", () => {
-    const workspaceKey = "server-1:ws-1";
-    const persistedState = {
-      layoutByWorkspace: {
-        [workspaceKey]: {
-          root: {
-            kind: "pane" as const,
-            pane: {
-              id: "main",
-              tabIds: ["workflow_runs_ws-1"],
-              focusedTabId: "workflow_runs_ws-1",
-              tabs: [
-                {
-                  tabId: "workflow_runs_ws-1",
-                  target: { kind: "workflow_runs" as const, workspaceId: "ws-1" },
-                  createdAt: 1000,
-                },
-              ],
-            },
-          },
-          focusedPaneId: "main",
-        },
-      },
-    };
-
-    const parsed = WorkspaceLayoutPersistedStateSchema.safeParse(persistedState);
-    expect(parsed.success).toBe(true);
-    if (parsed.success) {
-      const root = parsed.data.layoutByWorkspace[workspaceKey].root;
-      expect(root.kind).toBe("pane");
-    }
-  });
-
-  it("persists and rehydrates layout with workflow_runs tab without resetting layout", async () => {
-    await AsyncStorage.removeItem("workspace-layout-state");
-    const workspaceKey = createWorkspaceKey();
-    const source = createWorkspaceLayoutStore(createDeterministicWorkspaceLayoutIds());
-    await source.persist.rehydrate();
-
-    const tabId = source.getState().openTab({
-      workspaceKey,
-      target: { kind: "workflow_runs", workspaceId: "ws-1" },
-      intent: "reveal",
-    });
-    expect(tabId).toBeTruthy();
-
-    await vi.waitFor(async () => {
-      const persisted = await AsyncStorage.getItem("workspace-layout-state");
-      expect(persisted).not.toBeNull();
-      const state = JSON.parse(persisted ?? "{}").state;
-      const parsed = WorkspaceLayoutPersistedStateSchema.safeParse(state);
-      expect(parsed.success).toBe(true);
-    });
-
-    const restored = createWorkspaceLayoutStore(createDeterministicWorkspaceLayoutIds());
-    await restored.persist.rehydrate();
-    const tabs = collectAllTabs(restored.getState().layoutByWorkspace[workspaceKey].root);
-    const restoredTab = tabs.find((tab) => tab.target.kind === "workflow_runs");
-    expect(restoredTab).toBeDefined();
-    expect(restoredTab?.tabId).toBe(tabId);
-    expect(restoredTab?.target).toEqual({
-      kind: "workflow_runs",
-      workspaceId: "ws-1",
-    });
-  });
 });
 
 describe("compact workspace sheet", () => {

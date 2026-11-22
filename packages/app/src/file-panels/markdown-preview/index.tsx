@@ -10,21 +10,19 @@ import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { parseMarkdownPreviewDocument } from "./document";
 
-export interface FileMarkdownPreviewProps {
-  source: string;
-  filePath: string;
-  workspaceRoot?: string;
-  client?: DaemonClient | null;
-  serverId?: string;
-}
-
 export function FileMarkdownPreview({
   source,
   filePath,
   workspaceRoot,
   client,
   serverId,
-}: FileMarkdownPreviewProps) {
+}: {
+  source: string;
+  filePath: string;
+  workspaceRoot?: string;
+  client?: DaemonClient | null;
+  serverId?: string;
+}) {
   const document = useMemo(() => parseMarkdownPreviewDocument(source), [source]);
   const environment = useAssistantFileLinkEnvironment();
   const relativePathBase = resolveMarkdownFileDirectory({ markdownPath: filePath, workspaceRoot });

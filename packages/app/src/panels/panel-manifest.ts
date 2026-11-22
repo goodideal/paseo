@@ -158,22 +158,6 @@ const manifests = {
     compactSheet: null,
     resourceKey: (target) => target.sha,
   },
-  workflow_runs: {
-    kind: "workflow_runs",
-    supportedHosts: ["main"],
-    showCloseButton: true,
-    singleton: false,
-    compactSheet: null,
-    resourceKey: (target) => target.workspaceId,
-  },
-  reader: {
-    kind: "reader",
-    supportedHosts: ["main", "explorer"],
-    showCloseButton: true,
-    singleton: false,
-    compactSheet: null,
-    resourceKey: (target) => target.workspaceId,
-  },
 } satisfies PanelManifestByKind;
 
 export function getPanelManifest<K extends WorkspaceTabTarget["kind"]>(kind: K): PanelManifest<K> {
