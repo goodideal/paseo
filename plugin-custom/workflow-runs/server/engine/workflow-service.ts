@@ -449,7 +449,7 @@ export class WorkflowService {
   async executeAttempt(input: {
     run: WorkflowRunInput;
     attemptId: string;
-    principalPermissions: Set<import("../authorization/index.js").DaemonPermission>;
+    principalPermissions: Set<string>;
     executor: import("./step-executors.js").StepExecutor;
   }): Promise<WorkflowRun> {
     const current = this.requireRun(input.run);

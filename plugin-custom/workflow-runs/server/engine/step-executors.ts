@@ -118,7 +118,7 @@ export interface StepExecutionInput {
   stepId: string;
   attemptId: string;
   input: Record<string, unknown>;
-  principalPermissions: Set<import("../authorization/index.js").DaemonPermission>;
+  principalPermissions: Set<string>;
   now: number;
   findingSeverity?: "P0" | "P1" | "P2" | "P3";
 }
