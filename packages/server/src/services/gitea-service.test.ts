@@ -3332,10 +3332,10 @@ describe("detectGiteaFamilySoftware", () => {
         return {
           stdout: JSON.stringify([
             {
-              name: "luna_ai",
-              url: "https://git.codevai.cc",
-              ssh_host: "data.birman-blenny.ts.net:222",
-              user: "luna_ai",
+              name: "example-user",
+              url: "https://git.example.com",
+              ssh_host: "ssh.example.internal:222",
+              user: "example-user",
             },
           ]),
           stderr: "",
@@ -3343,7 +3343,7 @@ describe("detectGiteaFamilySoftware", () => {
       }
       return { stdout: "Not found.", stderr: "HTTP/1.1 404 Not Found\nServer: Caddy\n" };
     };
-    const software = await detectGiteaFamilySoftware("data.birman-blenny.ts.net", {
+    const software = await detectGiteaFamilySoftware("ssh.example.internal", {
       runTea,
     });
     expect(software).toBe("gitea");
@@ -3352,11 +3352,9 @@ describe("detectGiteaFamilySoftware", () => {
 
 describe("findTeaLoginNameForHost & extractCandidateHost", () => {
   it("extracts hostname from candidate strings with ports, users, or protocols", () => {
-    expect(extractCandidateHost("data.birman-blenny.ts.net:222")).toBe("data.birman-blenny.ts.net");
-    expect(extractCandidateHost("git@data.birman-blenny.ts.net:222")).toBe(
-      "data.birman-blenny.ts.net",
-    );
-    expect(extractCandidateHost("https://git.codevai.cc:8443")).toBe("git.codevai.cc");
+    expect(extractCandidateHost("ssh.example.internal:222")).toBe("ssh.example.internal");
+    expect(extractCandidateHost("git@ssh.example.internal:222")).toBe("ssh.example.internal");
+    expect(extractCandidateHost("https://git.example.com:8443")).toBe("git.example.com");
     expect(extractCandidateHost("[::1]:222")).toBe("::1");
     expect(extractCandidateHost("plain-host")).toBe("plain-host");
     expect(extractCandidateHost(undefined)).toBeNull();
@@ -3366,16 +3364,16 @@ describe("findTeaLoginNameForHost & extractCandidateHost", () => {
   it("matches tea login entries when ssh_host has a port suffix", () => {
     const stdout = JSON.stringify([
       {
-        name: "luna_ai",
-        url: "https://git.codevai.cc",
-        ssh_host: "data.birman-blenny.ts.net:222",
-        user: "luna_ai",
+        name: "example-user",
+        url: "https://git.example.com",
+        ssh_host: "ssh.example.internal:222",
+        user: "example-user",
         default: "true",
       },
     ]);
 
-    expect(findTeaLoginNameForHost(stdout, "data.birman-blenny.ts.net")).toBe("luna_ai");
-    expect(findTeaLoginNameForHost(stdout, "git.codevai.cc")).toBe("luna_ai");
+    expect(findTeaLoginNameForHost(stdout, "ssh.example.internal")).toBe("example-user");
+    expect(findTeaLoginNameForHost(stdout, "git.example.com")).toBe("example-user");
     expect(findTeaLoginNameForHost(stdout, "other.host.com")).toBeNull();
   });
 
@@ -3406,7 +3404,7 @@ describe("merged pull request head resolution", () => {
       updated_at: "2026-09-23T13:14:52Z",
       labels: [],
       head: {
-        label: "agent/issue-78-bug-sb-s-p1-google-antigravity",
+        label: "feat/fix-issue-78",
         ref: "refs/pull/79/head",
         sha: "12c46a31dcbe9ecd0274fb6e0687fc200fd74649",
         repo: {
@@ -3438,7 +3436,7 @@ describe("merged pull request head resolution", () => {
 
     const status = await service.getCurrentPullRequestStatus({
       cwd: "/repo",
-      headRef: "agent/issue-78-bug-sb-s-p1-google-antigravity",
+      headRef: "feat/fix-issue-78",
     });
 
     expect(status).not.toBeNull();
@@ -3447,7 +3445,7 @@ describe("merged pull request head resolution", () => {
       title: "Fix issue 78",
       state: "merged",
       isMerged: true,
-      headRefName: "agent/issue-78-bug-sb-s-p1-google-antigravity",
+      headRefName: "feat/fix-issue-78",
       baseRefName: "develop",
     });
   });
@@ -3456,14 +3454,14 @@ describe("merged pull request head resolution", () => {
     const customPr = {
       ...OPEN_PR,
       index: "156",
-      url: "https://git.ezcloud.cc/CoDevAI/codevai-hub/pulls/156",
-      head: "view-modelcv-model-library",
+      url: "https://git.example.com/example-org/sample-repo/pulls/156",
+      head: "feat/sample-branch",
     };
     const customView = {
       ...STATUS_PR_VIEW,
       number: 156,
       headSha: "60d3c50baeb4b78c9d4b1a43a6d482591605ec10",
-      headRef: "view-modelcv-model-library",
+      headRef: "feat/sample-branch",
     };
     const { service, calls } = makeService(
       (args) => {
@@ -3476,25 +3474,25 @@ describe("merged pull request head resolution", () => {
       },
       {
         resolveRemoteUrl: async () =>
-          "https://luna_ai:df580562693677c590bd7bcd26f1fe048b5ac93e@git.ezcloud.cc/CoDevAI/codevai-hub.git",
+          "https://example-user:example-token-placeholder@git.example.com/example-org/sample-repo.git",
       },
     );
 
     const status = await service.getCurrentPullRequestStatus({
       cwd: "/repo",
-      headRef: "view-modelcv-model-library",
+      headRef: "feat/sample-branch",
     });
 
     expect(status).toMatchObject({
       number: 156,
-      repoOwner: "CoDevAI",
-      repoName: "codevai-hub",
-      projectPath: "CoDevAI/codevai-hub",
-      headRefName: "view-modelcv-model-library",
+      repoOwner: "example-org",
+      repoName: "sample-repo",
+      projectPath: "example-org/sample-repo",
+      headRefName: "feat/sample-branch",
     });
     expect(calls[0]).toContain("--repo");
-    expect(argValue(calls[0], "--repo")).toBe("CoDevAI/codevai-hub");
-    expect(calls[1]).toEqual(["pr", "156", "-o", "json", "--repo", "CoDevAI/codevai-hub"]);
+    expect(argValue(calls[0], "--repo")).toBe("example-org/sample-repo");
+    expect(calls[1]).toEqual(["pr", "156", "-o", "json", "--repo", "example-org/sample-repo"]);
   });
 
   it("omits --repo flag when origin remote URL cannot be resolved", async () => {
