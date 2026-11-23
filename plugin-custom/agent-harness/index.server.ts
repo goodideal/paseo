@@ -59,7 +59,10 @@ import {
   type MatrixTier,
   type RouterDecision,
 } from "./shared/types.js";
-import { loadWorkspaceAgentTeam } from "./server/agent-team-loader.js";
+import {
+  invalidateWorkspaceAgentTeamCache,
+  loadWorkspaceAgentTeam,
+} from "./server/agent-team-loader.js";
 import { createHarnessHandoffTool } from "./server/handoff-tool.js";
 import {
   exportSpecialistsToDisk,
@@ -1780,6 +1783,11 @@ export default function contribute(server: PluginServerContext) {
     },
     emitTimelineTransitionsEnabled: () => cachedSettings.emitTimelineTransitions,
     onPaseoAvailable: (paseo) => capturePaseoApi(paseo),
+    onTeamUpdated: async (checkoutRoot) => {
+      invalidateWorkspaceAgentTeamCache(checkoutRoot);
+      lastSyncedDaemonProfileSignature = "";
+      await syncDaemonProfilesIfNeeded(cachedSettings);
+    },
   });
 
   return () => {

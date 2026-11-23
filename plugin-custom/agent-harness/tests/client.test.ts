@@ -14,6 +14,10 @@ const mockUseAgent = vi.fn(() => ({
   metadata: {},
 }));
 
+const mockUseWorkspaces = vi.fn((): any[] => []);
+const mockUsePaseo = vi.fn((): any => ({ workspaces: { ref: vi.fn() } }));
+const mockUseFileText = vi.fn((): any => ({ status: "loading" }));
+
 vi.mock("@getpaseo/plugin/client", async (importOriginal) => {
   const actual: any = await importOriginal();
   return {
@@ -21,6 +25,9 @@ vi.mock("@getpaseo/plugin/client", async (importOriginal) => {
     useSettings: (...args: any[]) => (mockUseSettings as any)(...args),
     useRpc: (...args: any[]) => (mockUseRpc as any)(...args),
     useAgent: (...args: any[]) => (mockUseAgent as any)(...args),
+    useWorkspaces: (...args: any[]) => (mockUseWorkspaces as any)(...args),
+    usePaseo: (...args: any[]) => (mockUsePaseo as any)(...args),
+    useFileText: (...args: any[]) => (mockUseFileText as any)(...args),
   };
 });
 
@@ -123,6 +130,21 @@ vi.mock("@getpaseo/plugin/client/ui", () => ({
       ),
     ),
   Icon: ({ name }: any) => React.createElement("span", { "data-testid": `icon-${name}` }, name),
+  Loading: () => React.createElement("div", { "data-testid": "loading" }, "Loading..."),
+  Modal: Object.assign(
+    ({ open, title, children }: any) =>
+      open
+        ? React.createElement(
+            "div",
+            { "data-testid": "modal", role: "dialog", "aria-label": title },
+            React.createElement("h2", null, title),
+            children,
+          )
+        : null,
+    {
+      Content: ({ children }: any) => React.createElement("div", null, children),
+    },
+  ),
   ScrollView: ({ children }: any) => React.createElement("div", null, children),
   useToast: () => mockToast,
 }));
@@ -146,8 +168,10 @@ import {
   resolveHarnessPillIcon,
 } from "../client/metadata-utils.js";
 import { HarnessTransitionCard } from "../client/transition-card.js";
-import { HarnessSettingsScreen } from "../client/settings-screen.js";
 import { HarnessPopover } from "../client/harness-popover.js";
+import { HarnessSettingsScreen } from "../client/settings-screen.js";
+import { AgentTeamFilePanelHost, WorkspaceTeamEditor } from "../client/team-editor-panel.js";
+import { notifyWorkspaceTeamUpdated } from "../client/team-events.js";
 import { DEFAULT_AGENT_HARNESS_SETTINGS } from "../shared/settings.js";
 import type {
   PluginButtonRegistration,
@@ -531,9 +555,12 @@ describe("Agent Harness Client - Extension Contributions", () => {
     expect(settingsScreens[0]?.id).toBe("agent-harness-settings");
     expect(settingsScreens[0]?.title).toBe("Agent Harness");
 
-    // Verify command center item registration
-    expect(commandCenterItems).toHaveLength(1);
-    expect(commandCenterItems[0]?.id).toBe("agent-harness-settings-command");
+    // Verify command center item registrations (global settings + workspace team editor)
+    expect(commandCenterItems).toHaveLength(2);
+    expect(commandCenterItems.map((c) => c.id)).toEqual([
+      "agent-harness-settings-command",
+      "agent-harness-workspace-team-command",
+    ]);
 
     // Allow async agent subscription promise to resolve
     await Promise.resolve();
@@ -1158,5 +1185,552 @@ describe("HarnessTransitionCard - Navigation & Specialist Handoff", () => {
     expect(mockOpenAgent).toHaveBeenCalledWith({
       agentId: "child-agent-999",
     });
+  });
+});
+
+describe("Agent Harness Phase 3 - WorkspaceTeamEditor & Entry Points", () => {
+  const editorTheme = {
+    colors: {
+      surface0: "#000000",
+      surface1: "#111111",
+      surface2: "#222222",
+      border: "#333333",
+      foreground: "#ffffff",
+      foregroundMuted: "#888888",
+      accent: "#0066cc",
+      accentForeground: "#ffffff",
+      statusSuccess: "#00aa44",
+      statusWarning: "#ffaa00",
+      statusDanger: "#cc2222",
+    },
+  } as any;
+
+  const baseInspectResponse = {
+    workspaceId: "ws-team-1",
+    workspaceName: "Demo Repo",
+    checkoutRoot: "/repos/demo",
+    mainRepoRoot: "/repos/demo",
+    isWorktree: false,
+    manifestState: "present" as const,
+    manifestPath: "/repos/demo/.agents/agent-team.json",
+    manifest: {
+      schema_version: "1.0.0",
+      project_slug: "demo",
+      preset: "lean-solo",
+      targets: ["antigravity"],
+      roles: ["be-developer"],
+      capabilities: [],
+      mcp_sources: ["serena"],
+      guards: ["guard-serena-nomem"],
+      tracker: "local",
+      git_mode: "tracked-manifest",
+      flow: { openspec: false, contracts: false, workflows: false, scaffold_docs: false },
+      bindings: {},
+    },
+    localFederatedTargets: [],
+    compilerAvailable: true,
+    compilerMessage: null,
+    catalog: {
+      roles: [
+        {
+          id: "fe-architect",
+          team: "fe",
+          title: "Frontend Architect",
+          readonly: true,
+          recommended_model: "pro",
+          requires_mcp: ["serena"],
+          requires_guards: ["guard-git-safety"],
+        },
+        {
+          id: "be-developer",
+          team: "be",
+          title: "Backend Developer",
+          readonly: false,
+          recommended_model: "inherit",
+          requires_mcp: ["serena"],
+          requires_guards: ["guard-serena-nomem"],
+        },
+      ],
+      capabilities: [
+        {
+          id: "matt-sdd",
+          title: "Matt SDD",
+          description: "Spec workflow",
+          requires_mcp: [],
+          requires_guards: [],
+          enables_flow: { openspec: true, contracts: true, workflows: false, scaffold_docs: false },
+        },
+      ],
+      mcp_sources: [
+        { id: "serena", description: "Serena", implies_guards: ["guard-serena-nomem"] },
+      ],
+      guards: [
+        { id: "guard-serena-nomem", description: "Disable Serena memory" },
+        { id: "guard-git-safety", description: "Git safety guard" },
+      ],
+    },
+    presets: {
+      "lean-solo": {
+        id: "lean-solo",
+        title: "Lean Solo",
+        description: "Minimal",
+        roles: ["be-developer"],
+        capabilities: [],
+        mcp_sources: ["serena"],
+        guards: ["guard-serena-nomem"],
+        flow: { openspec: false, contracts: false, workflows: false, scaffold_docs: false },
+      },
+    },
+    availableProviders: [{ provider: "claude", enabled: true, models: ["claude-sonnet-4"] }],
+    lazyToolSlices: ["backend.yaml", "ui.yaml"],
+  };
+
+  it("registers workspace panel, file panel, and workspace command without registering a header button", () => {
+    const workspacePanels: any[] = [];
+    const filePanels: any[] = [];
+    const commandItems: any[] = [];
+    const addHeaderButton = vi.fn();
+    const openPanel = vi.fn();
+
+    const mockClient: any = {
+      addTimelineRenderer: vi.fn(() => () => {}),
+      addSettingsScreen: vi.fn(() => () => {}),
+      addCommandCenterItem: vi.fn((c) => {
+        commandItems.push(c);
+        return () => {};
+      }),
+      addWorkspacePanel: vi.fn((p) => {
+        workspacePanels.push(p);
+        return () => {};
+      }),
+      addFilePanel: vi.fn((p) => {
+        filePanels.push(p);
+        return () => {};
+      }),
+      addHeaderButton,
+      addComposerPill: vi.fn(),
+      openPanel,
+      openSettings: vi.fn(),
+    };
+
+    const cleanup = contribute(mockClient as PluginClientContext);
+
+    expect(addHeaderButton).not.toHaveBeenCalled();
+    expect(workspacePanels).toHaveLength(1);
+    expect(workspacePanels[0]).toMatchObject({
+      id: "agent-team-panel",
+      title: "Agent team",
+      icon: "Users",
+      locations: ["workspace", "explorer"],
+    });
+    expect(filePanels).toHaveLength(1);
+    expect(filePanels[0]).toMatchObject({
+      id: "agent-team-file-panel",
+      files: { extensions: [], filenames: ["agent-team.json"] },
+    });
+
+    const wsCmd = commandItems.find((c) => c.id === "agent-harness-workspace-team-command");
+    expect(wsCmd?.context).toBe("workspace");
+    const cmdOpenPanel = vi.fn();
+    wsCmd.onSelect({ openPanel: cmdOpenPanel });
+    expect(cmdOpenPanel).toHaveBeenCalledWith("agent-team-panel");
+
+    cleanup();
+  });
+
+  it("handles empty repo Detect & initialize, dirty tab tracking, and Discard reset", async () => {
+    const setModified = vi.fn();
+    const inspectMock = vi.fn().mockResolvedValue({
+      ...baseInspectResponse,
+      manifestState: "absent",
+      manifest: null,
+    });
+    const detectMock = vi.fn().mockResolvedValue({
+      workspaceId: "ws-team-1",
+      checkoutRoot: "/repos/demo",
+      recommendedPreset: "lean-solo",
+      manifest: baseInspectResponse.manifest,
+      notes: ["Defaulted to lean-solo"],
+      usedCompiler: false,
+    });
+
+    mockUseRpc.mockImplementation((contract: any) => {
+      if (contract?.name === "agent_harness.team.inspect.request") return inspectMock;
+      if (contract?.name === "agent_harness.team.detect.request") return detectMock;
+      return vi.fn().mockResolvedValue({});
+    });
+
+    render(
+      React.createElement(WorkspaceTeamEditor, {
+        workspaceId: "ws-team-1",
+        theme: editorTheme,
+        layout: { compact: false, platform: "web" },
+        tab: { setModified, state: undefined, setState: vi.fn() },
+      }),
+    );
+
+    const detectBtn = await screen.findByRole("button", { name: "Detect and initialize" });
+    fireEvent.click(detectBtn);
+
+    expect(await screen.findByText("Detection notes")).toBeDefined();
+    expect(setModified).toHaveBeenLastCalledWith(true);
+
+    const discardBtn = screen.getByRole("button", { name: "Discard" });
+    fireEvent.click(discardBtn);
+    expect(setModified).toHaveBeenLastCalledWith(false);
+    expect(await screen.findByText("No agent team manifest found")).toBeDefined();
+  });
+
+  it("applies role auto-deps, preserves manual guard uncheck, edits bindings, and preserves draft on save error", async () => {
+    const setModified = vi.fn();
+    const inspectMock = vi.fn().mockResolvedValue(baseInspectResponse);
+    const saveMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        success: false,
+        compiled: false,
+        checkoutRoot: "/repos/demo",
+        manifestPath: "/repos/demo/.agents/agent-team.json",
+        manifest: baseInspectResponse.manifest,
+        localFederatedTargets: [],
+        warnings: [],
+        message: "Synthesis syntax error",
+        error: "Synthesis syntax error",
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        compiled: true,
+        checkoutRoot: "/repos/demo",
+        manifestPath: "/repos/demo/.agents/agent-team.json",
+        manifest: {
+          ...baseInspectResponse.manifest,
+          roles: ["be-developer", "fe-architect"],
+          guards: ["guard-serena-nomem"],
+          bindings: {
+            "fe-architect": { provider: "claude", tier: "plan", model: "claude-opus-4" },
+          },
+        },
+        localFederatedTargets: ["claude"],
+        warnings: [],
+        message: "Saved & compiled",
+        error: null,
+      });
+
+    mockUseRpc.mockImplementation((contract: any) => {
+      if (contract?.name === "agent_harness.team.inspect.request") return inspectMock;
+      if (contract?.name === "agent_harness.team.save.request") return saveMock;
+      return vi.fn().mockResolvedValue({});
+    });
+
+    render(
+      React.createElement(WorkspaceTeamEditor, {
+        workspaceId: "ws-team-1",
+        theme: editorTheme,
+        layout: { compact: true, platform: "web" },
+        tab: { setModified, state: undefined, setState: vi.fn() },
+      }),
+    );
+
+    const roleBtn = await screen.findByRole("button", { name: "Toggle role fe-architect" });
+    fireEvent.click(roleBtn);
+    expect(await screen.findByText(/Auto-selected recommended dependencies/)).toBeDefined();
+
+    // Manually uncheck guard-git-safety -> surfaces non-blocking advisory
+    const guardBtn = screen.getByRole("button", { name: "Toggle guard guard-git-safety" });
+    fireEvent.click(guardBtn);
+    expect(await screen.findByText("Missing recommended dependencies")).toBeDefined();
+
+    // Edit fe-architect binding
+    fireEvent.change(screen.getByLabelText("fe-architect provider"), {
+      target: { value: "claude" },
+    });
+    fireEvent.change(screen.getByLabelText("fe-architect tier"), {
+      target: { value: "plan" },
+    });
+    fireEvent.change(screen.getByLabelText("fe-architect model override"), {
+      target: { value: "claude-opus-4" },
+    });
+
+    // First Save fails -> banner visible AND draft/dirty preserved
+    const saveBtn = screen.getByRole("button", { name: "Save & compile" });
+    fireEvent.click(saveBtn);
+    expect(await screen.findByText("Synthesis syntax error")).toBeDefined();
+    expect(setModified).toHaveBeenLastCalledWith(true);
+
+    // Second Save succeeds with unforced guards & bindings
+    fireEvent.click(saveBtn);
+    await screen.findByText("Saved & compiled").catch(() => {});
+    expect(saveMock).toHaveBeenCalledTimes(2);
+    expect(saveMock.mock.calls[1][0].manifest.guards).toEqual(["guard-serena-nomem"]);
+    expect(saveMock.mock.calls[1][0].manifest.bindings["fe-architect"]).toEqual({
+      provider: "claude",
+      tier: "plan",
+      model: "claude-opus-4",
+    });
+    expect(setModified).toHaveBeenLastCalledWith(false);
+  });
+
+  it("runs doctor, opens Clean confirmation Modal, and displays worktree inheritance + raw JSON in file panel", async () => {
+    const inspectMock = vi.fn().mockResolvedValue({
+      ...baseInspectResponse,
+      isWorktree: true,
+      manifestState: "inherited_from_main",
+    });
+    const doctorMock = vi.fn().mockResolvedValue({
+      passed: true,
+      exitCode: 0,
+      passCount: 4,
+      warnCount: 1,
+      failCount: 0,
+      output: "[PASS] manifest\n[WARN] minor note",
+      compilerAvailable: true,
+    });
+    const cleanMock = vi.fn().mockResolvedValue({
+      success: true,
+      removedCount: 2,
+      removed: [".agents/plugins", ".agents/agent-team.json"],
+      localFederatedTargets: [],
+      message: "Cleaned 2 generated item(s)",
+      error: null,
+    });
+
+    mockUseRpc.mockImplementation((contract: any) => {
+      if (contract?.name === "agent_harness.team.inspect.request") return inspectMock;
+      if (contract?.name === "agent_harness.team.doctor.request") return doctorMock;
+      if (contract?.name === "agent_harness.team.clean.request") return cleanMock;
+      return vi.fn().mockResolvedValue({});
+    });
+    mockUseFileText.mockReturnValue({
+      status: "ready",
+      text: '{"project_slug":"demo"}',
+    });
+
+    render(
+      React.createElement(AgentTeamFilePanelHost, {
+        workspaceId: "ws-team-1",
+        file: {
+          path: "/repos/demo/.agents/agent-team.json",
+          name: "agent-team.json",
+          extension: "json",
+        } as any,
+        params: { path: "/repos/demo/.agents/agent-team.json" },
+        revision: 1,
+        theme: editorTheme,
+        host: { id: "h1", label: "Local" },
+        layout: { compact: false, platform: "web" },
+        tab: { setModified: vi.fn(), state: undefined, setState: vi.fn() },
+      }),
+    );
+
+    expect(await screen.findByText("Inherited from main project")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Materialize & compile in worktree" })).toBeDefined();
+
+    // Expand raw JSON preview
+    fireEvent.click(screen.getByRole("button", { name: "Show raw JSON" }));
+    expect(screen.getByText('{"project_slug":"demo"}')).toBeDefined();
+
+    // Run doctor
+    fireEvent.click(screen.getByRole("button", { name: "Run doctor" }));
+    expect(await screen.findByText(/PASS 4 · WARN 1 · FAIL 0/)).toBeDefined();
+
+    // Open Clean modal, check delete manifest, Cancel -> verify reopening resets deleteManifest to false
+    fireEvent.click(screen.getByRole("button", { name: "Clean artifacts" }));
+    expect(screen.getByRole("dialog", { name: "Clean generated team artifacts" })).toBeDefined();
+    const deleteToggleFirst = screen.getByLabelText(
+      "Also delete .agents/agent-team.json",
+    ) as HTMLInputElement;
+    fireEvent.click(deleteToggleFirst);
+    expect(deleteToggleFirst.checked).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel clean" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Clean artifacts" }));
+    const deleteToggleReopened = screen.getByLabelText(
+      "Also delete .agents/agent-team.json",
+    ) as HTMLInputElement;
+    expect(deleteToggleReopened.checked).toBe(false);
+    fireEvent.click(deleteToggleReopened);
+    fireEvent.click(screen.getByRole("button", { name: "Confirm clean" }));
+
+    await vi.waitFor(() => {
+      expect(cleanMock).toHaveBeenCalledWith({
+        workspaceId: "ws-team-1",
+        deleteManifest: true,
+      });
+    });
+  });
+
+  it("displays external path mismatch warning in AgentTeamFilePanelHost and live-refreshes Settings on team update", async () => {
+    const inspectTeamMock = vi.fn().mockResolvedValue(baseInspectResponse);
+    mockUseRpc.mockImplementation((contract: any) => {
+      if (contract?.name === "agent_harness.team.inspect.request") {
+        return inspectTeamMock;
+      }
+      return vi.fn().mockResolvedValue({});
+    });
+    mockUseFileText.mockReturnValue({
+      status: "ready",
+      text: '{"project_slug":"other"}',
+    });
+
+    render(
+      React.createElement(AgentTeamFilePanelHost, {
+        workspaceId: "ws-team-1",
+        file: {
+          path: "/repos/main-parent/.agents/agent-team.json",
+          name: "agent-team.json",
+          extension: "json",
+        } as any,
+        params: { path: "/repos/main-parent/.agents/agent-team.json" },
+        revision: 1,
+        theme: editorTheme,
+        host: { id: "h1", label: "Local" },
+        layout: { compact: false, platform: "web" },
+        tab: { setModified: vi.fn(), state: undefined, setState: vi.fn() },
+      }),
+    );
+
+    expect(await screen.findByText("Viewing external manifest file path")).toBeDefined();
+    cleanup();
+
+    const inspectEnvMock = vi.fn().mockResolvedValue({
+      availableProviders: [],
+      diskProfiles: [],
+      lazyToolSlices: [],
+      hasRepoOverride: false,
+      repoOverridePath: null,
+      agentTeam: null,
+      workspaces: [
+        { id: "ws-live", name: "LiveWS", title: "Live WS", cwd: "/repos/live", branch: "main" },
+      ],
+    });
+    mockUseRpc.mockImplementation((contract: any) => {
+      if (contract?.name === "agent_harness.environment.inspect.request") return inspectEnvMock;
+      return vi.fn().mockResolvedValue({});
+    });
+
+    const failingOpen = vi.fn(() => {
+      throw new Error("Plugin panel context is unavailable");
+    });
+
+    render(
+      React.createElement(HarnessSettingsScreen, {
+        theme: editorTheme,
+        host: { id: "h1", label: "Local" },
+        layout: { compact: false, platform: "web" },
+        onOpenWorkspaceTeam: failingOpen,
+        settingsOverride: {
+          status: "ready",
+          values: DEFAULT_AGENT_HARNESS_SETTINGS,
+          revision: "rev-1",
+          saving: false,
+          save: vi.fn(),
+        },
+      }),
+    );
+
+    const openBtn = await screen.findByRole("button", { name: "Open workspace team editor" });
+    await vi.waitFor(() => {
+      expect((openBtn as HTMLButtonElement).disabled).toBe(false);
+    });
+    const callsBeforeNotify = inspectEnvMock.mock.calls.length;
+    notifyWorkspaceTeamUpdated("ws-live");
+    await vi.waitFor(() => {
+      expect(inspectEnvMock.mock.calls.length).toBeGreaterThan(callsBeforeNotify);
+    });
+
+    fireEvent.click(openBtn);
+    expect(mockToast.error).toHaveBeenCalledWith(
+      expect.stringContaining("Plugin panel context is unavailable"),
+    );
+  });
+
+  it("refreshes HarnessPopover on notifyWorkspaceTeamUpdated and opens team editor from Popover & Settings", async () => {
+    const effectiveRpcMock = vi.fn().mockResolvedValue({
+      config: {
+        specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists,
+        agentTeam: null,
+      },
+    });
+    const inspectEnvMock = vi.fn().mockResolvedValue({
+      availableProviders: [],
+      diskProfiles: [],
+      lazyToolSlices: [],
+      hasRepoOverride: false,
+      repoOverridePath: null,
+      agentTeam: null,
+      workspaces: [
+        { id: "ws-open", name: "OpenWS", title: "Open WS", cwd: "/repos/open", branch: "main" },
+      ],
+    });
+    mockUseRpc.mockImplementation((contract: any) => {
+      if (contract?.name === "agent_harness.config.effective.request") return effectiveRpcMock;
+      if (contract?.name === "agent_harness.environment.inspect.request") return inspectEnvMock;
+      return vi.fn().mockResolvedValue({});
+    });
+    mockUseAgent.mockReturnValue({
+      status: "idle",
+      provider: "antigravity",
+      model: "gemini-4-hydrogen-high",
+      cwd: "/repos/open",
+      currentModeId: "full-access",
+      metadata: {},
+    } as any);
+    mockUseSettings.mockReturnValue({
+      status: "ready",
+      values: DEFAULT_AGENT_HARNESS_SETTINGS,
+    });
+
+    const onOpenTeamEditor = vi.fn();
+    const onClose = vi.fn();
+    render(
+      React.createElement(HarnessPopover, {
+        context: "agent" as const,
+        host: { id: "h1", label: "Local" },
+        workspaceId: "ws-open",
+        agentId: "agt-pop",
+        theme: editorTheme,
+        layout: { compact: false, platform: "web" },
+        close: onClose,
+        onOpenTeamEditor,
+      }),
+    );
+
+    const cfgTeamBtn = await screen.findByRole("button", { name: "Configure workspace team" });
+    expect(effectiveRpcMock).toHaveBeenCalledTimes(1);
+
+    notifyWorkspaceTeamUpdated("ws-open");
+    await vi.waitFor(() => {
+      expect(effectiveRpcMock).toHaveBeenCalledTimes(2);
+    });
+
+    fireEvent.click(cfgTeamBtn);
+    expect(onOpenTeamEditor).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    cleanup();
+
+    const onOpenWorkspaceTeam = vi.fn();
+    render(
+      React.createElement(HarnessSettingsScreen, {
+        theme: editorTheme,
+        host: { id: "h1", label: "Local" },
+        layout: { compact: false, platform: "web" },
+        onOpenWorkspaceTeam,
+        settingsOverride: {
+          status: "ready",
+          values: DEFAULT_AGENT_HARNESS_SETTINGS,
+          revision: "rev-1",
+          saving: false,
+          save: vi.fn(),
+        },
+      }),
+    );
+
+    const openEditorBtn = await screen.findByRole("button", { name: "Open workspace team editor" });
+    await vi.waitFor(() => {
+      expect((openEditorBtn as HTMLButtonElement).disabled).toBe(false);
+    });
+    fireEvent.click(openEditorBtn);
+    expect(onOpenWorkspaceTeam).toHaveBeenCalledWith("ws-open");
   });
 });

@@ -21,6 +21,12 @@ export interface RawAgentTeamManifest {
   project_slug?: string;
   preset?: string;
   roles?: unknown;
+  capabilities?: unknown;
+  mcp_sources?: unknown;
+  guards?: unknown;
+  tracker?: unknown;
+  git_mode?: unknown;
+  flow?: unknown;
   targets?: unknown;
   bindings?: unknown;
 }
@@ -121,8 +127,41 @@ const managedHeaderCache = new Map<
 
 const SAFE_IDENTIFIER_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
 
-function isSafePathIdentifier(value: string): boolean {
+export function isSafePathIdentifier(value: string): boolean {
   return SAFE_IDENTIFIER_PATTERN.test(value);
+}
+
+/**
+ * Invalidates cached workspace manifests and local federated artifact headers after edits.
+ */
+export function invalidateWorkspaceAgentTeamCache(checkoutRoot?: string): void {
+  if (!checkoutRoot) {
+    manifestCache.clear();
+    managedHeaderCache.clear();
+    markdownCache.clear();
+    return;
+  }
+  const normalizedRoot = path.resolve(checkoutRoot);
+  const prefix = normalizedRoot.endsWith(path.sep)
+    ? normalizedRoot
+    : `${normalizedRoot}${path.sep}`;
+  for (const key of Array.from(manifestCache.keys())) {
+    if (key === normalizedRoot || key.startsWith(prefix)) {
+      manifestCache.delete(key);
+    }
+  }
+  for (const key of Array.from(managedHeaderCache.keys())) {
+    if (key === normalizedRoot || key.startsWith(prefix)) {
+      managedHeaderCache.delete(key);
+    }
+  }
+  // markdownCache keys are composite "${homeDir}\0${filePath}" (see extractRoleMarkdownBody),
+  // so substring matching is required to invalidate all entries under checkoutRoot.
+  for (const key of Array.from(markdownCache.keys())) {
+    if (key.includes(prefix)) {
+      markdownCache.delete(key);
+    }
+  }
 }
 
 function resolveOcrBinPath(homeDir: string): string {

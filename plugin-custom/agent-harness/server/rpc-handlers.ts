@@ -13,6 +13,11 @@ import {
   harnessInspectEnvironmentRpc,
   harnessSwitchTierRpc,
   harnessSyncProfilesRpc,
+  harnessTeamCleanRpc,
+  harnessTeamDetectRpc,
+  harnessTeamDoctorRpc,
+  harnessTeamInspectRpc,
+  harnessTeamSaveRpc,
   supportsNativePlanMode,
 } from "../shared/contracts.js";
 import { DEFAULT_PROVIDER_MAPPINGS, isModelBypassed } from "../shared/intent-detector.js";
@@ -42,6 +47,17 @@ import {
   emitHarnessTimelineTransition,
   type EmitHarnessTransitionParams,
 } from "./timeline-emitter.js";
+import {
+  cleanWorkspaceTeam,
+  detectWorkspaceTeam,
+  doctorWorkspaceTeam,
+  inspectWorkspaceTeam,
+  resolveHostCompiler,
+  resolveRegisteredWorkspace,
+  saveWorkspaceTeam,
+  type CompilerRunner,
+  type WorkspaceDirResolver,
+} from "./team-editor-service.js";
 
 export interface RpcHandlerDependencies {
   readLatestMetadata: (agentId: string) => Promise<HarnessAgentMetadata | null>;
@@ -58,6 +74,61 @@ export interface RpcHandlerDependencies {
   ) => Promise<void>;
   emitTimelineTransitionsEnabled?: () => boolean;
   onPaseoAvailable?: (paseo: PluginHandlerContext["paseo"]) => void;
+  onTeamUpdated?: (checkoutRoot?: string) => Promise<void> | void;
+  resolveWorkspaceDir?: WorkspaceDirResolver;
+  resolveCompiler?: typeof resolveHostCompiler;
+  runTeamCompiler?: CompilerRunner;
+}
+
+function pickWorkspaceDirectory(entry: Record<string, unknown>): string {
+  for (const key of ["workspaceDirectory", "directory", "projectRootPath"] as const) {
+    const val = entry[key];
+    if (typeof val === "string" && val) {
+      return val;
+    }
+  }
+  return "";
+}
+
+function pickWorkspaceBranch(entry: Record<string, unknown>): string | null {
+  if (typeof entry.branch === "string") {
+    return entry.branch;
+  }
+  const gitRuntime = entry.gitRuntime;
+  if (gitRuntime && typeof gitRuntime === "object") {
+    const branch = (gitRuntime as Record<string, unknown>).currentBranch;
+    if (typeof branch === "string") {
+      return branch;
+    }
+  }
+  return null;
+}
+
+async function resolveWorkspaceCwd(
+  paseo: PluginHandlerContext["paseo"] | undefined,
+  input: { cwd?: string | null; workspaceId?: string | null },
+  listedWorkspaces: ReadonlyArray<{ id: string; cwd: string }>,
+  overrideResolver?: WorkspaceDirResolver,
+): Promise<string | null> {
+  if (input.cwd) {
+    return input.cwd;
+  }
+  if (!input.workspaceId) {
+    return null;
+  }
+  const match = listedWorkspaces.find((w) => w.id === input.workspaceId);
+  if (match) {
+    return match.cwd;
+  }
+  if (!paseo) {
+    return null;
+  }
+  try {
+    return (await resolveRegisteredWorkspace(paseo, input.workspaceId, overrideResolver))
+      .checkoutRoot;
+  } catch {
+    return null;
+  }
 }
 
 export function registerHarnessRpcHandlers(
@@ -283,7 +354,43 @@ export function registerHarnessRpcHandlers(
   // 3. harnessInspectEnvironmentRpc
   server.handle(harnessInspectEnvironmentRpc, async (input, context: PluginHandlerContext) => {
     deps.onPaseoAvailable?.(context.paseo);
-    const effectiveConfig = deps.getConfig?.(input.workspaceId, input.cwd);
+
+    const listedWorkspaces: Array<{
+      id: string;
+      name: string;
+      title: string | null;
+      cwd: string;
+      branch: string | null;
+    }> = [];
+    if (typeof context.paseo.workspaces?.list === "function") {
+      try {
+        const listed = await context.paseo.workspaces.list({ includeBackground: false });
+        const entries = (listed as { entries?: Array<Record<string, unknown>> })?.entries ?? [];
+        for (const entry of entries) {
+          const id = typeof entry.id === "string" ? entry.id : "";
+          const cwdVal = pickWorkspaceDirectory(entry);
+          if (!id || !cwdVal) continue;
+          listedWorkspaces.push({
+            id,
+            name: typeof entry.name === "string" && entry.name.trim() ? entry.name : id,
+            title: typeof entry.title === "string" ? entry.title : null,
+            cwd: cwdVal,
+            branch: pickWorkspaceBranch(entry),
+          });
+        }
+      } catch {
+        // Optional workspace discovery
+      }
+    }
+
+    const resolvedCwd = await resolveWorkspaceCwd(
+      context.paseo,
+      input,
+      listedWorkspaces,
+      deps.resolveWorkspaceDir,
+    );
+
+    const effectiveConfig = deps.getConfig?.(input.workspaceId, resolvedCwd);
     const profilesDir = effectiveConfig?.profilesDir ?? "~/.agents/profiles";
     const sliceDir = effectiveConfig?.lazyToolProfilesDir ?? "~/.config/lazy-tool/profiles";
 
@@ -299,12 +406,12 @@ export function registerHarnessRpcHandlers(
     let hasRepoOverride = false;
     let repoOverridePath: string | null = null;
 
-    if (input.cwd) {
+    if (resolvedCwd) {
       const relPath = effectiveConfig?.repoConfigRelativePath ?? ".paseo/agent-harness.json";
-      const override = loadRepoHarnessOverride(input.cwd, relPath);
+      const override = loadRepoHarnessOverride(resolvedCwd, relPath);
       if (override) {
         hasRepoOverride = true;
-        repoOverridePath = `${input.cwd}/${relPath}`;
+        repoOverridePath = `${resolvedCwd}/${relPath}`;
       }
     }
 
@@ -347,6 +454,7 @@ export function registerHarnessRpcHandlers(
       hasRepoOverride,
       repoOverridePath,
       agentTeam,
+      ...(listedWorkspaces.length > 0 ? { workspaces: listedWorkspaces } : {}),
     };
   });
 
@@ -404,10 +512,89 @@ export function registerHarnessRpcHandlers(
   });
 
   // 5. harnessEffectiveConfigRpc
-  server.handle(harnessEffectiveConfigRpc, async (input) => {
-    const effectiveConfig = deps.getConfig?.(input.workspaceId, input.cwd);
+  server.handle(harnessEffectiveConfigRpc, async (input, context: PluginHandlerContext) => {
+    deps.onPaseoAvailable?.(context?.paseo);
+    const resolvedCwd = await resolveWorkspaceCwd(
+      context?.paseo,
+      input,
+      [],
+      deps.resolveWorkspaceDir,
+    );
+    const effectiveConfig = deps.getConfig?.(input.workspaceId, resolvedCwd);
     return {
       config: (effectiveConfig ?? {}) as Record<string, unknown>,
     };
+  });
+
+  // 6. harnessTeamInspectRpc
+  server.handle(harnessTeamInspectRpc, async (input, context: PluginHandlerContext) => {
+    deps.onPaseoAvailable?.(context.paseo);
+    const effective = deps.getConfig?.(input.workspaceId, null);
+    return inspectWorkspaceTeam({
+      paseo: context.paseo,
+      workspaceId: input.workspaceId,
+      lazyToolSlicesDir: effective?.lazyToolProfilesDir,
+      resolveWorkspaceDir: deps.resolveWorkspaceDir,
+      resolveCompiler: deps.resolveCompiler,
+    });
+  });
+
+  // 7. harnessTeamDetectRpc
+  server.handle(harnessTeamDetectRpc, async (input, context: PluginHandlerContext) => {
+    deps.onPaseoAvailable?.(context.paseo);
+    return detectWorkspaceTeam({
+      paseo: context.paseo,
+      workspaceId: input.workspaceId,
+      resolveWorkspaceDir: deps.resolveWorkspaceDir,
+      resolveCompiler: deps.resolveCompiler,
+      runCompiler: deps.runTeamCompiler,
+    });
+  });
+
+  // 8. harnessTeamSaveRpc
+  server.handle(harnessTeamSaveRpc, async (input, context: PluginHandlerContext) => {
+    deps.onPaseoAvailable?.(context.paseo);
+    const result = await saveWorkspaceTeam({
+      paseo: context.paseo,
+      workspaceId: input.workspaceId,
+      manifest: input.manifest,
+      reindex: input.reindex,
+      resolveWorkspaceDir: deps.resolveWorkspaceDir,
+      resolveCompiler: deps.resolveCompiler,
+      runCompiler: deps.runTeamCompiler,
+    });
+    if (result.success) {
+      await deps.onTeamUpdated?.(result.checkoutRoot);
+    }
+    return result;
+  });
+
+  // 9. harnessTeamDoctorRpc
+  server.handle(harnessTeamDoctorRpc, async (input, context: PluginHandlerContext) => {
+    deps.onPaseoAvailable?.(context.paseo);
+    return doctorWorkspaceTeam({
+      paseo: context.paseo,
+      workspaceId: input.workspaceId,
+      resolveWorkspaceDir: deps.resolveWorkspaceDir,
+      resolveCompiler: deps.resolveCompiler,
+      runCompiler: deps.runTeamCompiler,
+    });
+  });
+
+  // 10. harnessTeamCleanRpc
+  server.handle(harnessTeamCleanRpc, async (input, context: PluginHandlerContext) => {
+    deps.onPaseoAvailable?.(context.paseo);
+    const result = await cleanWorkspaceTeam({
+      paseo: context.paseo,
+      workspaceId: input.workspaceId,
+      deleteManifest: input.deleteManifest,
+      resolveWorkspaceDir: deps.resolveWorkspaceDir,
+      resolveCompiler: deps.resolveCompiler,
+      runCompiler: deps.runTeamCompiler,
+    });
+    if (result.success) {
+      await deps.onTeamUpdated?.(result.checkoutRoot);
+    }
+    return result;
   });
 }

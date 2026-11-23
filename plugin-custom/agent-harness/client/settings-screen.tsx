@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Text, View, StyleSheet } from "react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
-import { useSettings, useRpc } from "@getpaseo/plugin/client";
+import { usePaseo, useRpc, useSettings, useWorkspaces } from "@getpaseo/plugin/client";
 import {
   ScrollView,
   SettingsAction,
@@ -35,8 +35,10 @@ import {
   harnessSyncProfilesRpc,
   type HarnessInspectEnvironmentOutput,
 } from "../shared/contracts.js";
+import { subscribeWorkspaceTeamUpdated } from "./team-events.js";
 
 type AgentTeamInspectInfo = NonNullable<HarnessInspectEnvironmentOutput["agentTeam"]>;
+type InspectWorkspaceEntry = NonNullable<HarnessInspectEnvironmentOutput["workspaces"]>[number];
 
 function formatAgentTeamLabel(agentTeam: AgentTeamInspectInfo): string {
   const parts = [`team-${agentTeam.projectSlug}`, `${agentTeam.rolesCount} roles`];
@@ -140,27 +142,66 @@ function parseCommaList(raw: string): string[] {
 
 export interface HarnessSettingsScreenProps extends PluginSurfaceProps {
   settingsOverride?: any;
+  onOpenWorkspaceTeam?: (workspaceId: string) => void;
 }
 
-export function HarnessSettingsScreen({ theme, settingsOverride }: HarnessSettingsScreenProps) {
+export function HarnessSettingsScreen({
+  theme,
+  settingsOverride,
+  onOpenWorkspaceTeam,
+}: HarnessSettingsScreenProps) {
   const defaultSettings = useSettings(agentHarnessSettings);
   const settings = settingsOverride ?? defaultSettings;
   const toast = useToast();
   const inspectRpc = useRpc(harnessInspectEnvironmentRpc);
   const syncProfilesRpc = useRpc(harnessSyncProfilesRpc);
+  const workspaceRefs = useWorkspaces();
+  const paseo = usePaseo();
 
   const [inspectInfo, setInspectInfo] = useState<any>(null);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("");
   const [isSyncing, setIsSyncing] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState<string>("antigravity");
   const [selectedSpecialistId, setSelectedSpecialistId] = useState<string>("ui");
 
   const latestSettingsRef = useRef(settings);
-  latestSettingsRef.current = settings;
   const toastRef = useRef(toast);
-  toastRef.current = toast;
   const pendingPatchRef = useRef<Partial<AgentHarnessSettings>>({});
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRefs = useRef<Record<string, SettingsInputHandle | null>>({});
+  const inspectRpcRef = useRef(inspectRpc);
+  useEffect(() => {
+    latestSettingsRef.current = settings;
+    toastRef.current = toast;
+    inspectRpcRef.current = inspectRpc;
+  }, [inspectRpc, settings, toast]);
+  const inspectSeqRef = useRef(0);
+
+  const runInspect = useCallback(
+    (params: { workspaceId?: string; cwd?: string }, options?: { throwOnError?: boolean }) => {
+      const seq = ++inspectSeqRef.current;
+      return inspectRpcRef
+        .current(params)
+        .then((res) => {
+          if (seq === inspectSeqRef.current) {
+            setInspectInfo(res);
+          }
+          return res;
+        })
+        .catch((err) => {
+          if (options?.throwOnError) {
+            throw err;
+          }
+          if (seq === inspectSeqRef.current) {
+            toastRef.current.error(
+              `Environment inspect failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+          return null;
+        });
+    },
+    [],
+  );
 
   const setInputRef = useCallback(
     (id: string) => (handle: SettingsInputHandle | null) => {
@@ -179,10 +220,77 @@ export function HarnessSettingsScreen({ theme, settingsOverride }: HarnessSettin
   }, []);
 
   React.useEffect(() => {
-    inspectRpc({})
-      .then((res) => setInspectInfo(res))
-      .catch(() => {});
-  }, [inspectRpc]);
+    void runInspect({});
+  }, [runInspect]);
+
+  const workspaceOptions = useMemo(() => {
+    const byId = new Map<string, { label: string; value: string; cwd?: string }>();
+    const serverWorkspaces = Array.isArray(inspectInfo?.workspaces)
+      ? (inspectInfo.workspaces as InspectWorkspaceEntry[])
+      : [];
+    for (const ws of serverWorkspaces) {
+      if (!ws?.id) continue;
+      const display = ws.title?.trim() || ws.name?.trim() || ws.id;
+      byId.set(ws.id, {
+        value: ws.id,
+        label: ws.cwd ? `${display} (${ws.cwd})` : display,
+        cwd: ws.cwd,
+      });
+    }
+    for (const ref of workspaceRefs ?? []) {
+      if (!ref?.id || byId.has(ref.id)) continue;
+      const snap = paseo?.workspaces?.ref?.(ref)?.current?.();
+      const display = snap?.title?.trim() || snap?.name?.trim() || ref.id;
+      const cwd = snap?.workspaceDirectory;
+      byId.set(ref.id, {
+        value: ref.id,
+        label: cwd ? `${display} (${cwd})` : display,
+        cwd,
+      });
+    }
+    return Array.from(byId.values());
+  }, [inspectInfo?.workspaces, paseo?.workspaces, workspaceRefs]);
+
+  const workspaceOptionsRef = useRef(workspaceOptions);
+  useEffect(() => {
+    workspaceOptionsRef.current = workspaceOptions;
+  }, [workspaceOptions]);
+
+  const inspectSelectedWorkspace = useCallback(
+    (options?: { throwOnError?: boolean }) => {
+      if (!selectedWorkspaceId) {
+        return runInspect({}, options);
+      }
+      const match = workspaceOptionsRef.current.find((o) => o.value === selectedWorkspaceId);
+      return runInspect(
+        { workspaceId: selectedWorkspaceId, ...(match?.cwd ? { cwd: match.cwd } : {}) },
+        options,
+      );
+    },
+    [runInspect, selectedWorkspaceId],
+  );
+
+  useEffect(() => {
+    if (!selectedWorkspaceId && workspaceOptions.length > 0) {
+      setSelectedWorkspaceId(workspaceOptions[0].value);
+    }
+  }, [selectedWorkspaceId, workspaceOptions]);
+
+  const inspectedWorkspaceRef = useRef<string>("");
+  useEffect(() => {
+    if (!selectedWorkspaceId || inspectedWorkspaceRef.current === selectedWorkspaceId) {
+      return;
+    }
+    inspectedWorkspaceRef.current = selectedWorkspaceId;
+    void inspectSelectedWorkspace();
+  }, [inspectSelectedWorkspace, selectedWorkspaceId]);
+
+  useEffect(() => {
+    if (!selectedWorkspaceId) return;
+    return subscribeWorkspaceTeamUpdated(selectedWorkspaceId, () => {
+      void inspectSelectedWorkspace();
+    });
+  }, [inspectSelectedWorkspace, selectedWorkspaceId]);
 
   const handleSync = useCallback(
     async (action: "import_from_disk" | "export_to_disk" | "sync_daemon_profiles") => {
@@ -190,16 +298,15 @@ export function HarnessSettingsScreen({ theme, settingsOverride }: HarnessSettin
       setIsSyncing(true);
       try {
         const res = await syncProfilesRpc({ action });
+        await inspectSelectedWorkspace({ throwOnError: true });
         toast.show(res.message, { variant: res.success ? "success" : "error" });
-        const refreshed = await inspectRpc({});
-        setInspectInfo(refreshed);
       } catch (err) {
         toast.error(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
       } finally {
         setIsSyncing(false);
       }
     },
-    [inspectRpc, isSyncing, syncProfilesRpc, toast],
+    [inspectSelectedWorkspace, isSyncing, syncProfilesRpc, toast],
   );
 
   const styles = useMemo(
@@ -936,6 +1043,41 @@ export function HarnessSettingsScreen({ theme, settingsOverride }: HarnessSettin
             actionLabel="Sync Profiles"
             disabled={isSyncing}
             onPress={() => handleSync("sync_daemon_profiles")}
+          />
+        </SettingsCard>
+        <SettingsCard>
+          <SettingsSelect
+            label="Workspace"
+            hint={
+              workspaceOptions.length > 0
+                ? "Select a workspace to inspect status and edit its agent team"
+                : "No registered workspaces available on this host"
+            }
+            value={selectedWorkspaceId}
+            options={
+              workspaceOptions.length > 0
+                ? workspaceOptions.map(({ label, value }) => ({ label, value }))
+                : [{ label: "No workspace selected", value: "" }]
+            }
+            disabled={workspaceOptions.length === 0}
+            onValueChange={(nextId) => setSelectedWorkspaceId(nextId)}
+          />
+          <SettingsAction
+            label="Workspace Agent Team"
+            hint="Edit roles, native targets, safety guards, and role bindings for this workspace"
+            actionLabel="Open workspace team editor"
+            disabled={!selectedWorkspaceId || !onOpenWorkspaceTeam}
+            onPress={() => {
+              if (selectedWorkspaceId && onOpenWorkspaceTeam) {
+                try {
+                  onOpenWorkspaceTeam(selectedWorkspaceId);
+                } catch (err) {
+                  toast.error(
+                    `Unable to open workspace team editor: ${err instanceof Error ? err.message : String(err)}`,
+                  );
+                }
+              }
+            }}
           />
         </SettingsCard>
         {inspectInfo ? (

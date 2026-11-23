@@ -10,6 +10,16 @@ import {
 } from "../server/agent-team-loader.js";
 import { createInitialHarnessMetadata, HARNESS_LEAF_META_KEY } from "../shared/lifecycle-state.js";
 import { HARNESS_METADATA_KEY, type HarnessAgentMetadata } from "../shared/types.js";
+import {
+  harnessInspectEnvironmentRpc,
+  harnessTeamCleanRpc,
+  harnessTeamDetectRpc,
+  harnessTeamDoctorRpc,
+  harnessTeamInspectRpc,
+  harnessTeamSaveRpc,
+} from "../shared/contracts.js";
+import { registerHarnessRpcHandlers } from "../server/rpc-handlers.js";
+import { getActiveCheckoutLockCount, withCheckoutLock } from "../server/team-editor-service.js";
 
 function createTestServer(settingsOverride?: Record<string, unknown>) {
   const hooks: Record<string, any> = {};
@@ -3116,6 +3126,502 @@ describe("agent-harness server contribute", () => {
         expect(wtOpened.env.LAZY_TOOL_CONFIG).toContain("backend.yaml");
       } finally {
         fs.rmSync(tmpBase, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe("Agent Harness Phase 3 - Workspace Agent Team Editor RPCs", () => {
+    function setupTeamRpcHarness(options: {
+      workspaces: Record<string, { directory: string; name?: string }>;
+      resolveCompiler?: () => {
+        available: boolean;
+        pythonBin: string | null;
+        scriptsDir: string | null;
+        agentTeamPy: string | null;
+        message: string | null;
+      };
+      runTeamCompiler?: (
+        cmd: string,
+        args: string[],
+        opts: { cwd: string; timeoutMs: number },
+      ) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
+    }) {
+      const handlers: Record<string, any> = {};
+      const onTeamUpdated = vi.fn();
+      const mockServer: any = {
+        handle: vi.fn().mockImplementation((contract: any, handler: any) => {
+          handlers[contract.name] = handler;
+        }),
+      };
+
+      registerHarnessRpcHandlers(mockServer, {
+        readLatestMetadata: async () => null,
+        setLatestMetadata: async () => {},
+        onTeamUpdated,
+        resolveWorkspaceDir: async (wsId) => options.workspaces[wsId] ?? null,
+        resolveCompiler: options.resolveCompiler,
+        runTeamCompiler: options.runTeamCompiler,
+        getConfig: (_wsId, cwd) =>
+          ({
+            agentTeam: cwd ? loadWorkspaceAgentTeam(cwd)?.summary : null,
+          }) as any,
+      });
+
+      const mockContext: any = {
+        paseo: {
+          providers: {
+            snapshot: vi.fn().mockResolvedValue({
+              entries: [
+                {
+                  provider: "antigravity",
+                  enabled: true,
+                  models: [{ id: "gemini-4-hydrogen-high" }],
+                },
+                {
+                  provider: "claude",
+                  enabled: true,
+                  models: [{ id: "claude-sonnet-4" }],
+                },
+              ],
+            }),
+          },
+          workspaces: {
+            list: vi.fn().mockResolvedValue({
+              entries: Object.entries(options.workspaces).map(([id, w]) => ({
+                id,
+                name: w.name ?? id,
+                title: w.name ?? null,
+                workspaceDirectory: w.directory,
+                projectRootPath: w.directory,
+              })),
+            }),
+            ref: vi.fn((id: string) => ({
+              directory: options.workspaces[id]?.directory ?? null,
+              name: options.workspaces[id]?.name ?? id,
+              current: () =>
+                options.workspaces[id]
+                  ? {
+                      workspaceDirectory: options.workspaces[id].directory,
+                      name: options.workspaces[id].name ?? id,
+                    }
+                  : null,
+            })),
+          },
+        },
+      };
+
+      return { handlers, mockContext, onTeamUpdated };
+    }
+
+    it("rejects unregistered workspaceId across all 5 agent_harness.team RPCs", async () => {
+      const { handlers, mockContext } = setupTeamRpcHarness({ workspaces: {} });
+
+      await expect(
+        handlers[harnessTeamInspectRpc.name]({ workspaceId: "missing-ws" }, mockContext),
+      ).rejects.toThrow(/Unknown or unavailable registered workspace/);
+      await expect(
+        handlers[harnessTeamDetectRpc.name]({ workspaceId: "missing-ws" }, mockContext),
+      ).rejects.toThrow(/Unknown or unavailable registered workspace/);
+      await expect(
+        handlers[harnessTeamSaveRpc.name](
+          {
+            workspaceId: "missing-ws",
+            manifest: {
+              schema_version: "1.0.0",
+              project_slug: "demo",
+              preset: "lean-solo",
+              targets: ["antigravity"],
+              roles: ["be-developer"],
+              capabilities: [],
+              mcp_sources: [],
+              guards: [],
+              tracker: "local",
+              git_mode: "tracked-manifest",
+              flow: {
+                openspec: false,
+                contracts: false,
+                workflows: false,
+                scaffold_docs: false,
+              },
+              bindings: {},
+            },
+          },
+          mockContext,
+        ),
+      ).rejects.toThrow(/Unknown or unavailable registered workspace/);
+      await expect(
+        handlers[harnessTeamDoctorRpc.name]({ workspaceId: "missing-ws" }, mockContext),
+      ).rejects.toThrow(/Unknown or unavailable registered workspace/);
+      await expect(
+        handlers[harnessTeamCleanRpc.name]({ workspaceId: "missing-ws" }, mockContext),
+      ).rejects.toThrow(/Unknown or unavailable registered workspace/);
+    });
+
+    it("reports inherited_from_main in linked worktree and materializes only in worktree without touching mainRepo", async () => {
+      const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), "harness-phase3-wt-"));
+      try {
+        const mainRepo = path.join(tmpBase, "main-repo");
+        const worktreeDir = path.join(tmpBase, "wt-feature");
+        fs.mkdirSync(path.join(mainRepo, ".git", "worktrees", "wt-feature"), { recursive: true });
+        fs.mkdirSync(path.join(mainRepo, ".agents"), { recursive: true });
+        fs.mkdirSync(worktreeDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(worktreeDir, ".git"),
+          `gitdir: ${path.join(mainRepo, ".git", "worktrees", "wt-feature")}\n`,
+        );
+        fs.writeFileSync(
+          path.join(mainRepo, ".git", "worktrees", "wt-feature", "commondir"),
+          "../..\n",
+        );
+
+        const originalMainManifest = JSON.stringify(
+          {
+            schema_version: "1.0.0",
+            project_slug: "main-proj",
+            preset: "lean-solo",
+            targets: ["antigravity"],
+            roles: ["be-developer", "be-reviewer"],
+            capabilities: [],
+            mcp_sources: ["serena"],
+            guards: ["guard-serena-nomem"],
+            tracker: "local",
+            git_mode: "tracked-manifest",
+            flow: { openspec: false, contracts: false, workflows: false, scaffold_docs: false },
+            bindings: {},
+          },
+          null,
+          2,
+        );
+        fs.writeFileSync(path.join(mainRepo, ".agents", "agent-team.json"), originalMainManifest);
+
+        const { handlers, mockContext, onTeamUpdated } = setupTeamRpcHarness({
+          workspaces: {
+            "ws-main": { directory: mainRepo, name: "Main Repo" },
+            "ws-wt": { directory: worktreeDir, name: "Feature WT" },
+          },
+          resolveCompiler: () => ({
+            available: false,
+            pythonBin: null,
+            scriptsDir: null,
+            agentTeamPy: null,
+            message: "No Python compiler in test",
+          }),
+        });
+
+        // Worktree sees inherited_from_main pointing to mainRepo manifest
+        const inspectedWt = await handlers[harnessTeamInspectRpc.name](
+          { workspaceId: "ws-wt" },
+          mockContext,
+        );
+        expect(inspectedWt.isWorktree).toBe(true);
+        expect(inspectedWt.manifestState).toBe("inherited_from_main");
+        expect(inspectedWt.checkoutRoot).toBe(path.resolve(worktreeDir));
+        expect(inspectedWt.mainRepoRoot).toBe(path.resolve(mainRepo));
+        expect(inspectedWt.compilerAvailable).toBe(false);
+
+        // Save materializes worktree manifest with fallback atomic JSON write
+        const savedWt = await handlers[harnessTeamSaveRpc.name](
+          {
+            workspaceId: "ws-wt",
+            manifest: {
+              ...inspectedWt.manifest!,
+              targets: ["antigravity", "codex"],
+              guards: [], // verify manual guard uncheck is persisted without re-forcing
+              bindings: {
+                "be-reviewer": {
+                  provider: "claude-code",
+                  tier: "review",
+                  model: "claude-sonnet-4",
+                },
+              },
+            },
+          },
+          mockContext,
+        );
+
+        expect(savedWt.success).toBe(true);
+        expect(savedWt.compiled).toBe(false);
+        expect(savedWt.warnings.length).toBeGreaterThan(0);
+        expect(savedWt.manifestPath).toBe(
+          path.join(path.resolve(worktreeDir), ".agents", "agent-team.json"),
+        );
+        expect(onTeamUpdated).toHaveBeenCalledTimes(1);
+
+        // Main repo manifest stayed completely untouched
+        expect(fs.readFileSync(path.join(mainRepo, ".agents", "agent-team.json"), "utf8")).toBe(
+          originalMainManifest,
+        );
+        const writtenWt = JSON.parse(
+          fs.readFileSync(path.join(worktreeDir, ".agents", "agent-team.json"), "utf8"),
+        );
+        expect(writtenWt.guards).toEqual([]);
+        expect(writtenWt.bindings["be-reviewer"].provider).toBe("claude");
+
+        // Re-inspecting worktree now shows present
+        const reinspectedWt = await handlers[harnessTeamInspectRpc.name](
+          { workspaceId: "ws-wt" },
+          mockContext,
+        );
+        expect(reinspectedWt.manifestState).toBe("present");
+
+        // harnessInspectEnvironmentRpc discovers workspaces and resolves agentTeam by workspaceId
+        const envInspect = await handlers[harnessInspectEnvironmentRpc.name](
+          { workspaceId: "ws-wt" },
+          mockContext,
+        );
+        expect(envInspect.workspaces?.map((w: any) => w.id)).toEqual(["ws-main", "ws-wt"]);
+        expect(envInspect.agentTeam?.projectSlug).toBe("main-proj");
+      } finally {
+        fs.rmSync(tmpBase, { recursive: true, force: true });
+      }
+    });
+
+    it("invokes synthesizer detect/save/doctor/clean and preserves failure draft state", async () => {
+      const tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), "harness-phase3-compiler-"));
+      try {
+        fs.mkdirSync(path.join(tmpRepo, ".git"), { recursive: true });
+        fs.writeFileSync(
+          path.join(tmpRepo, "package.json"),
+          JSON.stringify({ dependencies: { react: "^19.0.0" } }),
+        );
+
+        const compilerCalls: Array<{ cmd: string; args: string[] }> = [];
+        let failSave = false;
+
+        const { handlers, mockContext, onTeamUpdated } = setupTeamRpcHarness({
+          workspaces: { "ws-comp": { directory: tmpRepo, name: "React App" } },
+          resolveCompiler: () => ({
+            available: true,
+            pythonBin: "/usr/bin/python3",
+            scriptsDir: "/mock/scripts",
+            agentTeamPy: "/mock/scripts/agent_team.py",
+            message: null,
+          }),
+          runTeamCompiler: async (cmd, args) => {
+            compilerCalls.push({ cmd, args });
+            // detect <checkoutRoot> --json
+            if (args[0] === "/mock/scripts/agent_team.py" && args[1] === "detect") {
+              return {
+                exitCode: 0,
+                stderr: "",
+                stdout: JSON.stringify({
+                  recommended_preset: "web-react",
+                  resolution_notes: ["Detected React dependency"],
+                  recommended_manifest: {
+                    schema_version: "1.0.0",
+                    project_slug: "react-app",
+                    preset: "web-react",
+                    targets: ["antigravity", "claude"],
+                    roles: ["fe-uiux", "fe-developer"],
+                    capabilities: ["ui-unslop"],
+                    mcp_sources: ["serena"],
+                    guards: ["guard-serena-nomem"],
+                    tracker: "local",
+                    git_mode: "tracked-manifest",
+                    flow: {
+                      openspec: false,
+                      contracts: false,
+                      workflows: false,
+                      scaffold_docs: true,
+                    },
+                  },
+                }),
+              };
+            }
+            // doctor <checkoutRoot>
+            if (args[0] === "/mock/scripts/agent_team.py" && args[1] === "doctor") {
+              return {
+                exitCode: 0,
+                stderr: "",
+                stdout:
+                  "\x1b[32m[PASS]\x1b[0m manifest valid\n\x1b[33m[WARN]\x1b[0m codex disabled\n[PASS] antigravity plugin synced\n",
+              };
+            }
+            // synthesize_project or clean_project inline -c script
+            if (args[0] === "-c") {
+              const targetDir = args[3];
+              if (failSave) {
+                return { exitCode: 2, stdout: "", stderr: "Synthesizer syntax failure" };
+              }
+              if (args.length >= 6) {
+                const parsed = JSON.parse(args[4]);
+                const agDir = path.join(
+                  targetDir,
+                  ".agents",
+                  "plugins",
+                  `team-${parsed.project_slug}`,
+                );
+                fs.mkdirSync(agDir, { recursive: true });
+                fs.writeFileSync(path.join(agDir, "mcp_config.json"), "{}");
+                fs.writeFileSync(
+                  path.join(targetDir, ".agents", "agent-team.json"),
+                  JSON.stringify(parsed, null, 2),
+                );
+                if (parsed.targets.includes("claude")) {
+                  const claudeDir = path.join(targetDir, ".claude", "agents");
+                  fs.mkdirSync(claudeDir, { recursive: true });
+                  fs.writeFileSync(
+                    path.join(claudeDir, "fe-developer.md"),
+                    `---\ngenerated_by: agent-team:${parsed.project_slug}\n---\n`,
+                  );
+                }
+                return { exitCode: 0, stdout: JSON.stringify({ warnings: [] }), stderr: "" };
+              }
+              // clean script (args[4] is remove_all_flag)
+              const removeAll = args[4] === "1";
+              const removed: string[] = [];
+              const pluginDir = path.join(targetDir, ".agents", "plugins");
+              if (fs.existsSync(pluginDir)) {
+                fs.rmSync(pluginDir, { recursive: true, force: true });
+                removed.push(".agents/plugins");
+              }
+              if (removeAll) {
+                const mPath = path.join(targetDir, ".agents", "agent-team.json");
+                if (fs.existsSync(mPath)) {
+                  fs.unlinkSync(mPath);
+                  removed.push(".agents/agent-team.json");
+                }
+              }
+              return { exitCode: 0, stdout: JSON.stringify({ removed }), stderr: "" };
+            }
+            return { exitCode: 1, stdout: "", stderr: "Unexpected compiler args" };
+          },
+        });
+
+        const detected = await handlers[harnessTeamDetectRpc.name](
+          { workspaceId: "ws-comp" },
+          mockContext,
+        );
+        expect(detected.usedCompiler).toBe(true);
+        expect(detected.recommendedPreset).toBe("web-react");
+
+        // Verify failure response when compiler exits non-zero
+        failSave = true;
+        const failedSave = await handlers[harnessTeamSaveRpc.name](
+          { workspaceId: "ws-comp", manifest: detected.manifest },
+          mockContext,
+        );
+        expect(failedSave.success).toBe(false);
+        expect(failedSave.error).toContain("Synthesizer syntax failure");
+        expect(onTeamUpdated).not.toHaveBeenCalled();
+
+        // Successful save & compilation
+        failSave = false;
+        const saved = await handlers[harnessTeamSaveRpc.name](
+          { workspaceId: "ws-comp", manifest: detected.manifest },
+          mockContext,
+        );
+        expect(saved.success).toBe(true);
+        expect(saved.compiled).toBe(true);
+        expect(saved.localFederatedTargets).toEqual(["antigravity", "claude"]);
+        expect(onTeamUpdated).toHaveBeenCalledTimes(1);
+
+        // Doctor ANSI parsing
+        const doctorRes = await handlers[harnessTeamDoctorRpc.name](
+          { workspaceId: "ws-comp" },
+          mockContext,
+        );
+        expect(doctorRes.passed).toBe(true);
+        expect(doctorRes.passCount).toBe(2);
+        expect(doctorRes.warnCount).toBe(1);
+        expect(doctorRes.failCount).toBe(0);
+        expect(doctorRes.output).not.toContain("\x1b[");
+
+        // Clean artifacts while keeping manifest
+        const cleanKeep = await handlers[harnessTeamCleanRpc.name](
+          { workspaceId: "ws-comp", deleteManifest: false },
+          mockContext,
+        );
+        expect(cleanKeep.success).toBe(true);
+        expect(cleanKeep.removed).toContain(".agents/plugins");
+        expect(fs.existsSync(path.join(tmpRepo, ".agents", "agent-team.json"))).toBe(true);
+
+        // Clean artifacts AND delete manifest
+        const cleanAll = await handlers[harnessTeamCleanRpc.name](
+          { workspaceId: "ws-comp", deleteManifest: true },
+          mockContext,
+        );
+        expect(cleanAll.success).toBe(true);
+        expect(fs.existsSync(path.join(tmpRepo, ".agents", "agent-team.json"))).toBe(false);
+        expect(onTeamUpdated).toHaveBeenCalledTimes(3);
+      } finally {
+        fs.rmSync(tmpRepo, { recursive: true, force: true });
+      }
+    });
+
+    it("serializes concurrent operations on the same checkoutRoot via withCheckoutLock in FIFO order", async () => {
+      const order: string[] = [];
+      let releaseFirst!: () => void;
+      const firstGate = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+
+      const p1 = withCheckoutLock("/tmp/fifo-lock-repo", async () => {
+        order.push("1-start");
+        await firstGate;
+        order.push("1-end");
+        return 1;
+      });
+      const p2 = withCheckoutLock("/tmp/fifo-lock-repo", async () => {
+        order.push("2-start");
+        order.push("2-end");
+        return 2;
+      });
+      const p3 = withCheckoutLock("/tmp/fifo-lock-repo", async () => {
+        order.push("3-start");
+        order.push("3-end");
+        return 3;
+      });
+
+      await Promise.resolve();
+      expect(order).toEqual(["1-start"]);
+      releaseFirst();
+      await Promise.all([p1, p2, p3]);
+      expect(order).toEqual(["1-start", "1-end", "2-start", "2-end", "3-start", "3-end"]);
+      expect(getActiveCheckoutLockCount()).toBe(0);
+    });
+
+    it("surfaces manifestError on malformed JSON and refuses silent clean when compiler is missing with live artifacts", async () => {
+      const tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), "harness-phase3-safety-"));
+      try {
+        fs.mkdirSync(path.join(tmpRepo, ".git"), { recursive: true });
+        fs.mkdirSync(path.join(tmpRepo, ".agents"), { recursive: true });
+        fs.writeFileSync(path.join(tmpRepo, ".agents", "agent-team.json"), "{ invalid json");
+        fs.mkdirSync(path.join(tmpRepo, ".claude", "agents"), { recursive: true });
+        fs.writeFileSync(
+          path.join(tmpRepo, ".claude", "agents", "fe-developer.md"),
+          "---\ngenerated_by: agent-team:demo\n---\n",
+        );
+
+        const { handlers, mockContext } = setupTeamRpcHarness({
+          workspaces: { "ws-err": { directory: tmpRepo, name: "Broken JSON" } },
+          resolveCompiler: () => ({
+            available: false,
+            pythonBin: null,
+            scriptsDir: null,
+            agentTeamPy: null,
+            message: "No Python compiler",
+          }),
+        });
+
+        const inspected = await handlers[harnessTeamInspectRpc.name](
+          { workspaceId: "ws-err" },
+          mockContext,
+        );
+        expect(inspected.manifestState).toBe("present");
+        expect(inspected.manifest).toBeNull();
+        expect(inspected.manifestError).toContain("Invalid JSON");
+
+        // Compiler unavailable while compiled target artifacts still exist -> refuse clean even with deleteManifest
+        const refusedClean = await handlers[harnessTeamCleanRpc.name](
+          { workspaceId: "ws-err", deleteManifest: true },
+          mockContext,
+        );
+        expect(refusedClean.success).toBe(false);
+        expect(refusedClean.error).toContain("compiled artifacts remain");
+        expect(fs.existsSync(path.join(tmpRepo, ".agents", "agent-team.json"))).toBe(true);
+      } finally {
+        fs.rmSync(tmpRepo, { recursive: true, force: true });
       }
     });
   });

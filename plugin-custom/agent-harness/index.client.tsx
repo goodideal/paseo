@@ -12,6 +12,9 @@ import {
 import { HarnessTransitionCard } from "./client/transition-card.js";
 import { HarnessPopover } from "./client/harness-popover.js";
 import { HarnessSettingsScreen } from "./client/settings-screen.js";
+import { AgentTeamFilePanelHost, WorkspaceTeamPanelHost } from "./client/team-editor-panel.js";
+
+const AGENT_TEAM_PANEL_ID = "agent-team-panel";
 
 export default function contribute(client: PluginClientContext) {
   const cleanups: Array<() => void> = [];
@@ -35,12 +38,48 @@ export default function contribute(client: PluginClientContext) {
         id: "agent-harness-settings",
         title: "Agent Harness",
         icon: "Compass",
-        Component: HarnessSettingsScreen,
+        Component: (props) => (
+          <HarnessSettingsScreen
+            {...props}
+            onOpenWorkspaceTeam={(workspaceId) =>
+              client.openPanel?.(AGENT_TEAM_PANEL_ID, { workspaceId })
+            }
+          />
+        ),
       }),
     );
   }
 
-  // 3. Command Center Item
+  // 2b. Workspace Team Visual Editor Panel & .agents/agent-team.json File Panel
+  if (typeof client.addWorkspacePanel === "function") {
+    cleanups.push(
+      client.addWorkspacePanel({
+        id: AGENT_TEAM_PANEL_ID,
+        title: "Agent team",
+        icon: "Users",
+        locations: ["workspace", "explorer"],
+        Component: WorkspaceTeamPanelHost,
+      }),
+    );
+  }
+
+  if (typeof client.addFilePanel === "function") {
+    cleanups.push(
+      client.addFilePanel({
+        id: "agent-team-file-panel",
+        title: "Agent team",
+        icon: "Users",
+        files: {
+          // Intentionally empty: Paseo ORs extensions with filenames, so [] matches agent-team.json only.
+          extensions: [],
+          filenames: ["agent-team.json"],
+        },
+        Component: AgentTeamFilePanelHost,
+      }),
+    );
+  }
+
+  // 3. Command Center Items
   if (typeof client.addCommandCenterItem === "function") {
     cleanups.push(
       client.addCommandCenterItem({
@@ -50,6 +89,18 @@ export default function contribute(client: PluginClientContext) {
         context: "global",
         onSelect({ openSettings }) {
           openSettings("agent-harness-settings");
+        },
+      }),
+    );
+    cleanups.push(
+      client.addCommandCenterItem({
+        id: "agent-harness-workspace-team-command",
+        title: "Configure workspace agent team",
+        icon: "Users",
+        context: "workspace",
+        keywords: ["agent-team", "team", "roles", "bindings"],
+        onSelect({ openPanel }) {
+          openPanel?.(AGENT_TEAM_PANEL_ID);
         },
       }),
     );
@@ -104,6 +155,7 @@ export default function contribute(client: PluginClientContext) {
                 workspaceId={workspaceId}
                 agentId={agentId}
                 onOpenSettings={() => client.openSettings?.("agent-harness-settings")}
+                onOpenTeamEditor={() => client.openPanel?.(AGENT_TEAM_PANEL_ID, { workspaceId })}
               />
             ),
           },

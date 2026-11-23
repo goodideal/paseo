@@ -265,6 +265,17 @@ export const harnessInspectEnvironmentRpc = defineRpc({
       })
       .nullable()
       .optional(),
+    workspaces: z
+      .array(
+        z.object({
+          id: z.string(),
+          name: z.string(),
+          title: z.string().nullable(),
+          cwd: z.string(),
+          branch: z.string().nullable(),
+        }),
+      )
+      .optional(),
   }),
 });
 
@@ -302,6 +313,202 @@ export const harnessEffectiveConfigRpc = defineRpc({
 
 export type HarnessEffectiveConfigInput = z.infer<typeof harnessEffectiveConfigRpc.input>;
 export type HarnessEffectiveConfigOutput = z.infer<typeof harnessEffectiveConfigRpc.output>;
+
+// ============================================================================
+// Workspace Agent-Team Visual Editor RPC Contracts
+// ============================================================================
+
+export const AgentTeamRoleBindingSchema = z.object({
+  provider: z.string().optional(),
+  tier: z.string().optional(),
+  model: z.string().optional(),
+  modeId: z.string().optional(),
+  lazyToolSlice: z.string().optional(),
+});
+
+export const AgentTeamFlowSchema = z.object({
+  openspec: z.boolean(),
+  contracts: z.boolean(),
+  workflows: z.boolean(),
+  scaffold_docs: z.boolean(),
+});
+
+export const AgentTeamEditableManifestSchema = z.object({
+  schema_version: z.string(),
+  project_slug: z.string().min(1),
+  preset: z.string(),
+  targets: z.array(z.string()).min(1),
+  roles: z.array(z.string()),
+  capabilities: z.array(z.string()),
+  mcp_sources: z.array(z.string()),
+  guards: z.array(z.string()),
+  tracker: z.string(),
+  git_mode: z.string(),
+  flow: AgentTeamFlowSchema,
+  bindings: z.record(z.string(), AgentTeamRoleBindingSchema),
+});
+
+export const AgentTeamCatalogRoleSchema = z.object({
+  id: z.string(),
+  team: z.enum(["fe", "be", "ops"]),
+  title: z.string(),
+  readonly: z.boolean(),
+  recommended_model: z.string(),
+  requires_mcp: z.array(z.string()),
+  requires_guards: z.array(z.string()),
+});
+
+export const AgentTeamCatalogCapabilitySchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  description: z.string(),
+  requires_mcp: z.array(z.string()),
+  requires_guards: z.array(z.string()),
+  enables_flow: AgentTeamFlowSchema.partial(),
+});
+
+export const AgentTeamCatalogMcpSourceSchema = z.object({
+  id: z.string(),
+  description: z.string(),
+  implies_guards: z.array(z.string()),
+});
+
+export const AgentTeamCatalogGuardSchema = z.object({
+  id: z.string(),
+  description: z.string(),
+});
+
+export const AgentTeamCatalogSchema = z.object({
+  roles: z.array(AgentTeamCatalogRoleSchema),
+  capabilities: z.array(AgentTeamCatalogCapabilitySchema),
+  mcp_sources: z.array(AgentTeamCatalogMcpSourceSchema),
+  guards: z.array(AgentTeamCatalogGuardSchema),
+});
+
+export const AgentTeamPresetSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  description: z.string(),
+  roles: z.array(z.string()),
+  capabilities: z.array(z.string()),
+  mcp_sources: z.array(z.string()),
+  guards: z.array(z.string()),
+  flow: AgentTeamFlowSchema,
+});
+
+export const harnessTeamInspectRpc = defineRpc({
+  name: "agent_harness.team.inspect.request",
+  input: z.object({
+    workspaceId: z.string().min(1),
+  }),
+  output: z.object({
+    workspaceId: z.string(),
+    workspaceName: z.string(),
+    checkoutRoot: z.string(),
+    mainRepoRoot: z.string(),
+    isWorktree: z.boolean(),
+    manifestState: z.enum(["present", "inherited_from_main", "absent"]),
+    manifestPath: z.string(),
+    manifest: AgentTeamEditableManifestSchema.nullable(),
+    manifestError: z.string().nullable().optional(),
+    localFederatedTargets: z.array(z.string()),
+    compilerAvailable: z.boolean(),
+    compilerMessage: z.string().nullable(),
+    catalog: AgentTeamCatalogSchema,
+    presets: z.record(z.string(), AgentTeamPresetSchema),
+    availableProviders: z.array(
+      z.object({
+        provider: z.string(),
+        enabled: z.boolean(),
+        models: z.array(z.string()),
+      }),
+    ),
+    lazyToolSlices: z.array(z.string()),
+  }),
+});
+
+export type HarnessTeamInspectInput = z.infer<typeof harnessTeamInspectRpc.input>;
+export type HarnessTeamInspectOutput = z.infer<typeof harnessTeamInspectRpc.output>;
+
+export const harnessTeamDetectRpc = defineRpc({
+  name: "agent_harness.team.detect.request",
+  input: z.object({
+    workspaceId: z.string().min(1),
+  }),
+  output: z.object({
+    workspaceId: z.string(),
+    checkoutRoot: z.string(),
+    recommendedPreset: z.string(),
+    manifest: AgentTeamEditableManifestSchema,
+    notes: z.array(z.string()),
+    usedCompiler: z.boolean(),
+  }),
+});
+
+export type HarnessTeamDetectInput = z.infer<typeof harnessTeamDetectRpc.input>;
+export type HarnessTeamDetectOutput = z.infer<typeof harnessTeamDetectRpc.output>;
+
+export const harnessTeamSaveRpc = defineRpc({
+  name: "agent_harness.team.save.request",
+  input: z.object({
+    workspaceId: z.string().min(1),
+    manifest: AgentTeamEditableManifestSchema,
+    reindex: z.boolean().optional(),
+  }),
+  output: z.object({
+    success: z.boolean(),
+    compiled: z.boolean(),
+    checkoutRoot: z.string(),
+    manifestPath: z.string(),
+    manifest: AgentTeamEditableManifestSchema,
+    localFederatedTargets: z.array(z.string()),
+    warnings: z.array(z.string()),
+    message: z.string(),
+    error: z.string().nullable().optional(),
+  }),
+});
+
+export type HarnessTeamSaveInput = z.infer<typeof harnessTeamSaveRpc.input>;
+export type HarnessTeamSaveOutput = z.infer<typeof harnessTeamSaveRpc.output>;
+
+export const harnessTeamDoctorRpc = defineRpc({
+  name: "agent_harness.team.doctor.request",
+  input: z.object({
+    workspaceId: z.string().min(1),
+  }),
+  output: z.object({
+    passed: z.boolean(),
+    exitCode: z.number().int(),
+    passCount: z.number().int(),
+    warnCount: z.number().int(),
+    failCount: z.number().int(),
+    output: z.string(),
+    compilerAvailable: z.boolean(),
+  }),
+});
+
+export type HarnessTeamDoctorInput = z.infer<typeof harnessTeamDoctorRpc.input>;
+export type HarnessTeamDoctorOutput = z.infer<typeof harnessTeamDoctorRpc.output>;
+
+export const harnessTeamCleanRpc = defineRpc({
+  name: "agent_harness.team.clean.request",
+  input: z.object({
+    workspaceId: z.string().min(1),
+    deleteManifest: z.boolean().optional(),
+  }),
+  output: z.object({
+    success: z.boolean(),
+    checkoutRoot: z.string().optional(),
+    removedCount: z.number().int(),
+    removed: z.array(z.string()),
+    localFederatedTargets: z.array(z.string()),
+    message: z.string(),
+    error: z.string().nullable().optional(),
+  }),
+});
+
+export type HarnessTeamCleanInput = z.infer<typeof harnessTeamCleanRpc.input>;
+export type HarnessTeamCleanOutput = z.infer<typeof harnessTeamCleanRpc.output>;
 
 // ============================================================================
 // Shared Pure Helpers (Provider Plan Mode & Specialist Tier Mapping)

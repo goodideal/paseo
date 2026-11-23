@@ -3,6 +3,6 @@
   "name": "Agent Harness",
   "description": "Automatically injects domain capability harness profiles and routes agent creation to appropriate model tiers (plan / review / flash)",
   "requirements": {
-    "paseo": ">=0.8.0"
+    "paseo": ">=0.16.0"
   }
 }

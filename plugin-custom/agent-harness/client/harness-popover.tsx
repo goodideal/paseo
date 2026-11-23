@@ -24,11 +24,13 @@ import {
   formatRoleDisplayName,
   resolveHarnessPillIcon,
 } from "./metadata-utils.js";
+import { subscribeWorkspaceTeamUpdated } from "./team-events.js";
 
 export type HarnessPopoverProps = PluginButtonContentProps & {
   workspaceId: string;
   agentId: string;
   onOpenSettings?: () => void;
+  onOpenTeamEditor?: () => void;
 };
 
 export const HarnessPopover = memo(function HarnessPopover({
@@ -38,6 +40,7 @@ export const HarnessPopover = memo(function HarnessPopover({
   layout,
   close,
   onOpenSettings,
+  onOpenTeamEditor,
 }: HarnessPopoverProps) {
   const toast = useToast();
   const switchTierRpc = useRpc(harnessSwitchTierRpc);
@@ -58,6 +61,13 @@ export const HarnessPopover = memo(function HarnessPopover({
     HarnessSpecialistConfig[] | null
   >(null);
   const [workspaceAgentTeam, setWorkspaceAgentTeam] = useState<AgentTeamSummary | null>(null);
+  const [teamRefreshTick, setTeamRefreshTick] = useState(0);
+
+  useEffect(() => {
+    return subscribeWorkspaceTeamUpdated(workspaceId, () => {
+      setTeamRefreshTick((prev) => prev + 1);
+    });
+  }, [workspaceId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -81,7 +91,7 @@ export const HarnessPopover = memo(function HarnessPopover({
     return () => {
       cancelled = true;
     };
-  }, [agent?.cwd, effectiveConfigRpc, workspaceId]);
+  }, [agent?.cwd, effectiveConfigRpc, teamRefreshTick, workspaceId]);
 
   const meta = useMemo(() => extractAgentHarnessMetadata(agent?.metadata), [agent?.metadata]);
   const isBypassedSession = useMemo(() => {
@@ -645,24 +655,54 @@ export const HarnessPopover = memo(function HarnessPopover({
         </View>
       </ScrollView>
 
-      {/* Open Settings Footer */}
-      {onOpenSettings ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Open Harness Settings"
-          onPress={() => {
-            onOpenSettings();
-            close();
-          }}
-          style={({ pressed }) => [
-            styles.settingsLink,
-            pressed && { opacity: 0.7, backgroundColor: theme.colors.surface2 },
-          ]}
-        >
-          <Icon name="Settings" size={12} color={theme.colors.foregroundMuted} />
-          <Text style={styles.settingsLinkText}>Configure Harness Settings</Text>
-        </Pressable>
-      ) : null}
+      {/* Open Workspace Team & Settings Footer */}
+      {[
+        onOpenTeamEditor
+          ? {
+              key: "workspace-team",
+              label: "Configure workspace team",
+              accessibilityLabel: "Configure workspace team",
+              icon: "Users",
+              iconColor: theme.colors.accent,
+              onPress: onOpenTeamEditor,
+            }
+          : null,
+        onOpenSettings
+          ? {
+              key: "harness-settings",
+              label: "Configure Harness Settings",
+              accessibilityLabel: "Open Harness Settings",
+              icon: "Settings",
+              iconColor: theme.colors.foregroundMuted,
+              onPress: onOpenSettings,
+            }
+          : null,
+      ]
+        .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+        .map((entry) => (
+          <Pressable
+            key={entry.key}
+            accessibilityRole="button"
+            accessibilityLabel={entry.accessibilityLabel}
+            onPress={() => {
+              try {
+                entry.onPress();
+                close();
+              } catch (err) {
+                toast.error(
+                  `Unable to open view: ${err instanceof Error ? err.message : String(err)}`,
+                );
+              }
+            }}
+            style={({ pressed }) => [
+              styles.settingsLink,
+              pressed && { opacity: 0.7, backgroundColor: theme.colors.surface2 },
+            ]}
+          >
+            <Icon name={entry.icon} size={12} color={entry.iconColor} />
+            <Text style={styles.settingsLinkText}>{entry.label}</Text>
+          </Pressable>
+        ))}
     </View>
   );
 });

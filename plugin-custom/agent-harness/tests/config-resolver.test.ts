@@ -15,6 +15,19 @@ import {
   agentHarnessSettings,
 } from "../shared/settings.js";
 import type { RepoHarnessOverride } from "../shared/types.js";
+import {
+  areManifestsEqual,
+  computeMissingRecommendedDeps,
+  createManifestFromPreset,
+  normalizeEditableManifest,
+  toggleCapabilityWithAutoDeps,
+  toggleGuardItem,
+  toggleMcpWithAutoDeps,
+  toggleRoleWithAutoDeps,
+  toggleTargetItem,
+  type AgentTeamCatalogData,
+  type AgentTeamPresetData,
+} from "../shared/team-editor-utils.js";
 
 describe("Agent Harness Config Resolver & Settings v2", () => {
   it("DEFAULT_AGENT_HARNESS_SETTINGS has all 9 builtin specialists and 3 tiers", () => {
@@ -543,5 +556,152 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
     });
     expect(claudeBridge).toContain("[Agent Harness — Federation Bridge]");
     expect(claudeBridge).toContain("local synthesized claude agents (team-multi-demo)");
+  });
+});
+
+describe("Agent Team Visual Editor Utils", () => {
+  const sampleCatalog: AgentTeamCatalogData = {
+    roles: [
+      {
+        id: "fe-uiux",
+        team: "fe",
+        title: "UI/UX Lead",
+        readonly: false,
+        recommended_model: "inherit",
+        requires_mcp: ["serena"],
+        requires_guards: ["guard-serena-nomem"],
+      },
+      {
+        id: "be-reviewer",
+        team: "be",
+        title: "Backend Reviewer (Read-Only)",
+        readonly: true,
+        recommended_model: "pro",
+        requires_mcp: ["serena", "postgres-ro"],
+        requires_guards: ["guard-sql-ro"],
+      },
+    ],
+    capabilities: [
+      {
+        id: "matt-sdd",
+        title: "Spec-Driven Dev",
+        description: "OpenSpec + contracts",
+        requires_mcp: ["serena"],
+        requires_guards: ["guard-git-safety"],
+        enables_flow: { openspec: true, contracts: true },
+      },
+    ],
+    mcp_sources: [
+      {
+        id: "serena",
+        description: "Symbol intelligence",
+        implies_guards: ["guard-serena-nomem"],
+      },
+      {
+        id: "postgres-ro",
+        description: "Read-only Postgres",
+        implies_guards: ["guard-sql-ro"],
+      },
+    ],
+    guards: [
+      { id: "guard-serena-nomem", description: "Disable Serena memory" },
+      { id: "guard-sql-ro", description: "Read-only SQL" },
+      { id: "guard-git-safety", description: "No force push" },
+    ],
+  };
+
+  const samplePreset: AgentTeamPresetData = {
+    id: "go-api",
+    title: "Go API",
+    description: "Go backend",
+    roles: ["be-reviewer"],
+    capabilities: [],
+    mcp_sources: ["serena"],
+    guards: ["guard-serena-nomem"],
+    flow: { openspec: false, contracts: true, workflows: false, scaffold_docs: true },
+  };
+
+  it("normalizes bindings, defaults targets to antigravity, and preserves compatible bindings on preset switch", () => {
+    const initialized = createManifestFromPreset("go-api", samplePreset, "My_Demo Repo", {
+      targets: ["claude-code", "codex"],
+      existingBindings: {
+        "be-reviewer": { provider: "claude-code", tier: "review", model: "claude-sonnet-4" },
+        "unused-role": { provider: "codex", tier: "flash" },
+      },
+    });
+
+    expect(initialized.project_slug).toBe("my-demo-repo");
+    expect(initialized.targets).toEqual(["claude", "codex"]);
+    expect(initialized.bindings["be-reviewer"]).toEqual({
+      provider: "claude",
+      tier: "review",
+      model: "claude-sonnet-4",
+    });
+    expect(initialized.bindings["unused-role"]).toBeUndefined();
+
+    const emptyTargets = normalizeEditableManifest({
+      project_slug: "!!!",
+      targets: [],
+      roles: ["fe-uiux", "../escape", "bad role"],
+      capabilities: ["matt-sdd", "../bad-cap"],
+      mcp_sources: ["serena", "/etc/passwd"],
+      guards: ["guard-git-safety", "a/b"],
+      bindings: {
+        "fe-uiux": { provider: "OpenCode", tier: "flash" },
+      },
+    });
+    expect(emptyTargets.targets).toEqual(["antigravity"]);
+    expect(emptyTargets.project_slug).toBe("project");
+    expect(emptyTargets.roles).toEqual(["fe-uiux"]);
+    expect(emptyTargets.capabilities).toEqual(["matt-sdd"]);
+    expect(emptyTargets.mcp_sources).toEqual(["serena"]);
+    expect(emptyTargets.guards).toEqual(["guard-git-safety"]);
+    expect(emptyTargets.bindings["fe-uiux"]?.provider).toBe("opencode");
+  });
+
+  it("auto-adds recommended deps on toggle while preserving manual guard uncheck and missing advisory", () => {
+    let manifest = createManifestFromPreset("go-api", samplePreset, "demo");
+
+    const roleAdded = toggleRoleWithAutoDeps(manifest, "fe-uiux", sampleCatalog);
+    manifest = roleAdded.manifest;
+    expect(manifest.roles).toContain("fe-uiux");
+
+    const capAdded = toggleCapabilityWithAutoDeps(manifest, "matt-sdd", sampleCatalog);
+    manifest = capAdded.manifest;
+    expect(manifest.capabilities).toContain("matt-sdd");
+    expect(manifest.flow.openspec).toBe(true);
+    expect(manifest.guards).toContain("guard-git-safety");
+    expect(capAdded.autoAdded).toContain("Guard: guard-git-safety");
+
+    const mcpAdded = toggleMcpWithAutoDeps(manifest, "postgres-ro", sampleCatalog);
+    manifest = mcpAdded.manifest;
+    expect(manifest.guards).toContain("guard-sql-ro");
+
+    manifest = toggleGuardItem(manifest, "guard-sql-ro");
+    expect(manifest.guards).not.toContain("guard-sql-ro");
+    const missing = computeMissingRecommendedDeps(manifest, sampleCatalog);
+    expect(missing.missingGuards).toContain("guard-sql-ro");
+  });
+
+  it("prevents disabling the last target and detects equality accurately", () => {
+    const manifest = createManifestFromPreset("go-api", samplePreset, "demo");
+    const blocked = toggleTargetItem(manifest, "antigravity");
+    expect(blocked.blockedLastTarget).toBe(true);
+    expect(blocked.manifest.targets).toEqual(["antigravity"]);
+
+    const addedCodex = toggleTargetItem(manifest, "codex");
+    expect(addedCodex.blockedLastTarget).toBe(false);
+    expect(areManifestsEqual(manifest, addedCodex.manifest)).toBe(false);
+
+    const sameCopy = normalizeEditableManifest({
+      ...manifest,
+      bindings: { "be-reviewer": { provider: "claude" } },
+    });
+    const modifiedBinding = normalizeEditableManifest({
+      ...manifest,
+      bindings: { "be-reviewer": { provider: "codex" } },
+    });
+    expect(areManifestsEqual(sameCopy, modifiedBinding)).toBe(false);
+    expect(areManifestsEqual(manifest, { ...manifest })).toBe(true);
   });
 });
