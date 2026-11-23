@@ -139,7 +139,7 @@ export const DEFAULT_QUICK_PROMPT_ITEMS: readonly QuickPromptItem[] = [
 ];
 
 export const quickPromptsGlobalGetRpc = defineRpc({
-  name: "quick_prompts.global.get.request",
+  name: "quick_tools.prompts.global.get.request",
   input: z.object({}).optional().default({}),
   output: z.object({
     items: z.array(QuickPromptItemSchema),
@@ -147,7 +147,7 @@ export const quickPromptsGlobalGetRpc = defineRpc({
 });
 
 export const quickPromptsGlobalSetRpc = defineRpc({
-  name: "quick_prompts.global.set.request",
+  name: "quick_tools.prompts.global.set.request",
   input: z.object({
     items: z.array(QuickPromptItemSchema),
   }),
@@ -158,7 +158,7 @@ export const quickPromptsGlobalSetRpc = defineRpc({
 });
 
 export const quickPromptsProjectGetRpc = defineRpc({
-  name: "quick_prompts.project.get.request",
+  name: "quick_tools.prompts.project.get.request",
   input: z.object({
     projectId: z.string(),
   }),
@@ -171,7 +171,7 @@ export const quickPromptsProjectGetRpc = defineRpc({
 });
 
 export const quickPromptsProjectSetRpc = defineRpc({
-  name: "quick_prompts.project.set.request",
+  name: "quick_tools.prompts.project.set.request",
   input: z.object({
     projectId: z.string(),
     items: z.array(QuickPromptItemSchema).optional(),
@@ -187,6 +187,20 @@ export const quickPromptsProjectSetRpc = defineRpc({
   }),
 });
 
+export const quickPromptsWorkspaceLabelsSyncRpc = defineRpc({
+  name: "quick_tools.workspace_labels.sync.request",
+  input: z
+    .object({
+      force: z.boolean().optional(),
+    })
+    .optional()
+    .default({}),
+  output: z.object({
+    tagged: z.number().int().nonnegative(),
+    skipped: z.number().int().nonnegative(),
+  }),
+});
+
 export type QuickPromptsGlobalGetInput = z.infer<typeof quickPromptsGlobalGetRpc.input>;
 export type QuickPromptsGlobalGetOutput = z.infer<typeof quickPromptsGlobalGetRpc.output>;
 export type QuickPromptsGlobalSetInput = z.infer<typeof quickPromptsGlobalSetRpc.input>;
@@ -195,12 +209,19 @@ export type QuickPromptsProjectGetInput = z.infer<typeof quickPromptsProjectGetR
 export type QuickPromptsProjectGetOutput = z.infer<typeof quickPromptsProjectGetRpc.output>;
 export type QuickPromptsProjectSetInput = z.infer<typeof quickPromptsProjectSetRpc.input>;
 export type QuickPromptsProjectSetOutput = z.infer<typeof quickPromptsProjectSetRpc.output>;
+export type QuickPromptsWorkspaceLabelsSyncInput = z.infer<
+  typeof quickPromptsWorkspaceLabelsSyncRpc.input
+>;
+export type QuickPromptsWorkspaceLabelsSyncOutput = z.infer<
+  typeof quickPromptsWorkspaceLabelsSyncRpc.output
+>;
 
 export const quickPromptsSettings = defineSettings({
-  id: "quick-prompts",
+  id: "quick-tools",
   scope: "host",
   version: 1,
   schema: z.object({
     aiSuggestions: z.boolean().default(true),
+    autoLabelWorkspaces: z.boolean().default(true),
   }),
 });

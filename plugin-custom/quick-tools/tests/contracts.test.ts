@@ -4,16 +4,43 @@ import {
   quickPromptsGlobalSetRpc,
   quickPromptsProjectGetRpc,
   quickPromptsProjectSetRpc,
+  quickPromptsSettings,
+  quickPromptsWorkspaceLabelsSyncRpc,
   DEFAULT_QUICK_PROMPT_ITEMS,
   QuickPromptItemSchema,
 } from "../shared/contracts.js";
 
-describe("quick-prompts contracts", () => {
+describe("quick-tools contracts", () => {
   it("defines correct RPC names", () => {
-    expect(quickPromptsGlobalGetRpc.name).toBe("quick_prompts.global.get.request");
-    expect(quickPromptsGlobalSetRpc.name).toBe("quick_prompts.global.set.request");
-    expect(quickPromptsProjectGetRpc.name).toBe("quick_prompts.project.get.request");
-    expect(quickPromptsProjectSetRpc.name).toBe("quick_prompts.project.set.request");
+    expect(quickPromptsGlobalGetRpc.name).toBe("quick_tools.prompts.global.get.request");
+    expect(quickPromptsGlobalSetRpc.name).toBe("quick_tools.prompts.global.set.request");
+    expect(quickPromptsProjectGetRpc.name).toBe("quick_tools.prompts.project.get.request");
+    expect(quickPromptsProjectSetRpc.name).toBe("quick_tools.prompts.project.set.request");
+    expect(quickPromptsWorkspaceLabelsSyncRpc.name).toBe(
+      "quick_tools.workspace_labels.sync.request",
+    );
+  });
+
+  it("defaults autoLabelWorkspaces to true in settings schema", () => {
+    expect(quickPromptsSettings.schema.parse({})).toEqual({
+      aiSuggestions: true,
+      autoLabelWorkspaces: true,
+    });
+    expect(quickPromptsSettings.schema.parse({ aiSuggestions: false })).toEqual({
+      aiSuggestions: false,
+      autoLabelWorkspaces: true,
+    });
+  });
+
+  it("validates workspace labels sync RPC payloads", () => {
+    expect(quickPromptsWorkspaceLabelsSyncRpc.input.parse(undefined)).toEqual({});
+    expect(quickPromptsWorkspaceLabelsSyncRpc.input.parse({ force: true })).toEqual({
+      force: true,
+    });
+    expect(quickPromptsWorkspaceLabelsSyncRpc.output.parse({ tagged: 2, skipped: 1 })).toEqual({
+      tagged: 2,
+      skipped: 1,
+    });
   });
 
   it("validates default quick prompt items", () => {

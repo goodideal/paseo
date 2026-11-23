@@ -99,14 +99,18 @@ describe("Quick Prompts Client Entrypoint", () => {
 
         expect(client.addSettingsScreen).toHaveBeenCalledTimes(1);
         expect(settingsScreens).toHaveLength(1);
-        expect(settingsScreens[0].id).toBe("quick-prompts");
+        expect(settingsScreens[0].id).toBe("quick-tools");
 
         expect(client.addCommandCenterItem).toHaveBeenCalledTimes(1);
         expect(commandCenterItems).toHaveLength(1);
-        expect(commandCenterItems[0].id).toBe("quick-prompts-settings");
+        expect(commandCenterItems[0].id).toBe("quick-tools-settings");
 
         expect(client.addSlashCommand).toHaveBeenCalled();
         expect(slashCommands.length).toBeGreaterThan(0);
+        expect(client.rpc).toHaveBeenCalledWith(
+          expect.objectContaining({ name: "quick_tools.workspace_labels.sync.request" }),
+          {},
+        );
 
         cleanup();
         expect(pills).toHaveLength(0);

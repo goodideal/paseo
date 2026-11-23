@@ -1,0 +1,7 @@
+{
+  "id": "quick-tools",
+  "description": "Quick prompts, shortcuts, quick inspections, and automated workspace labeling",
+  "requirements": {
+    "paseo": ">=0.8.0"
+  }
+}

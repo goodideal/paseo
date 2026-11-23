@@ -2,7 +2,11 @@ import type { PluginClientContext, PluginButtonRegistration } from "@getpaseo/pl
 import { QuickPromptsSettingsScreen } from "./client/settings-screen.js";
 import { QuickPromptsPopover } from "./client/popover.js";
 import { QuickPromptsComposerItem } from "./client/composer-item.js";
-import { quickPromptsGlobalGetRpc, type QuickPromptItem } from "./shared/contracts.js";
+import {
+  quickPromptsGlobalGetRpc,
+  quickPromptsWorkspaceLabelsSyncRpc,
+  type QuickPromptItem,
+} from "./shared/contracts.js";
 import { setCachedGlobalItems } from "./client/use-quick-prompts.js";
 
 export default function contribute(client: PluginClientContext) {
@@ -33,7 +37,7 @@ export default function contribute(client: PluginClientContext) {
               {...props}
               workspaceId={workspaceId}
               agentId={agentId}
-              onOpenSettings={() => client.openSettings("quick-prompts")}
+              onOpenSettings={() => client.openSettings("quick-tools")}
             />
           ),
         },
@@ -67,7 +71,7 @@ export default function contribute(client: PluginClientContext) {
         return undefined;
       })
       .catch((error) => {
-        if (!stopped) console.error("[QuickPrompts] Agent observation failed", error);
+        if (!stopped) console.error("[QuickTools] Agent observation failed", error);
       });
   }
 
@@ -91,22 +95,22 @@ export default function contribute(client: PluginClientContext) {
   // 4. Register settings screen
   cleanups.push(
     client.addSettingsScreen({
-      id: "quick-prompts",
-      title: "Quick Prompts",
+      id: "quick-tools",
+      title: "Quick Tools",
       icon: "Sparkles",
       Component: QuickPromptsSettingsScreen,
     }),
   );
 
-  // 4. Register Command Center item to easily open settings
+  // 5. Register Command Center item to easily open settings
   cleanups.push(
     client.addCommandCenterItem({
-      id: "quick-prompts-settings",
-      title: "Configure Quick Prompts",
+      id: "quick-tools-settings",
+      title: "Configure Quick Tools",
       icon: "Sparkles",
       context: "global",
       onSelect({ openSettings }) {
-        openSettings("quick-prompts");
+        openSettings("quick-tools");
       },
     }),
   );
@@ -147,6 +151,13 @@ export default function contribute(client: PluginClientContext) {
     .catch(() => {
       // Ignored
     });
+
+  // Backfill Local / WT labels for existing workspaces when auto-labeling is enabled
+  void client.rpc(quickPromptsWorkspaceLabelsSyncRpc, {}).catch((error) => {
+    if (!stopped) {
+      console.warn("[QuickTools] Initial workspace label sync failed:", error);
+    }
+  });
 
   return () => {
     for (const cleanup of cleanups) {

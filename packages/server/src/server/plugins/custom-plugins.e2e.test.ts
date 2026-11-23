@@ -31,8 +31,8 @@ describe("all custom plugins end-to-end daemon verification", () => {
       input: {},
     },
     {
-      name: "quick-prompts",
-      rpc: "quick_prompts.global.get.request",
+      name: "quick-tools",
+      rpc: "quick_tools.prompts.global.get.request",
       input: {},
     },
     {
@@ -46,7 +46,7 @@ describe("all custom plugins end-to-end daemon verification", () => {
     "installs, verifies running status, and executes RPC for [$name]",
     async ({ name, rpc, input }) => {
       daemon = await createTestPaseoDaemon({
-        daemonVersion: "0.9.2-custom.252348",
+        daemonVersion: "0.17.3-custom.test",
         pluginsEnabled: true,
       });
       process.env.PASEO_HOME = daemon.paseoHome;

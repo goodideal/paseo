@@ -63,14 +63,28 @@ export class QuickPromptsStore {
   readonly pluginDataDir: string;
   readonly globalPath: string;
   readonly projectPath: string;
+  readonly legacyPluginGlobalPath: string;
+  readonly legacyPluginProjectPath: string;
   readonly legacyGlobalPath: string;
   readonly legacyProjectPath: string;
 
   constructor(paseoHome?: string) {
     const home = paseoHome || process.env.PASEO_HOME || path.join(os.homedir(), ".paseo");
-    this.pluginDataDir = path.join(home, "plugin-data", "quick-prompts");
+    this.pluginDataDir = path.join(home, "plugin-data", "quick-tools");
     this.globalPath = path.join(this.pluginDataDir, "quick-prompts.json");
     this.projectPath = path.join(this.pluginDataDir, "project-quick-prompts.json");
+    this.legacyPluginGlobalPath = path.join(
+      home,
+      "plugin-data",
+      "quick-prompts",
+      "quick-prompts.json",
+    );
+    this.legacyPluginProjectPath = path.join(
+      home,
+      "plugin-data",
+      "quick-prompts",
+      "project-quick-prompts.json",
+    );
     this.legacyGlobalPath = path.join(home, "quick-prompts.json");
     this.legacyProjectPath = path.join(home, "projects", "project-quick-prompts.json");
 
@@ -79,54 +93,68 @@ export class QuickPromptsStore {
   }
 
   private migrateLegacyDataIfNeeded(): void {
-    // 1. Global prompts migration
-    if (!existsSync(this.globalPath) && existsSync(this.legacyGlobalPath)) {
-      try {
-        const raw = readFileSync(this.legacyGlobalPath, "utf-8");
-        const parsed = JSON.parse(raw);
-        const items = Array.isArray(parsed) ? parsed : parsed?.items;
-        const result = z.array(QuickPromptItemSchema).safeParse(items);
-        if (result.success) {
-          writePrivateFileAtomicSync(this.globalPath, `${JSON.stringify(result.data, null, 2)}\n`);
-          console.info(
-            `[QuickPromptsStore] Successfully migrated legacy global prompts from ${this.legacyGlobalPath} to ${this.globalPath}`,
-          );
-        } else {
+    // 1. Global prompts migration (prefer previous quick-prompts plugin dir, then root legacy path)
+    if (!existsSync(this.globalPath)) {
+      const legacyGlobalCandidates = [this.legacyPluginGlobalPath, this.legacyGlobalPath];
+      for (const sourcePath of legacyGlobalCandidates) {
+        if (!existsSync(sourcePath)) continue;
+        try {
+          const raw = readFileSync(sourcePath, "utf-8");
+          const parsed = JSON.parse(raw);
+          const items = Array.isArray(parsed) ? parsed : parsed?.items;
+          const result = z.array(QuickPromptItemSchema).safeParse(items);
+          if (result.success) {
+            writePrivateFileAtomicSync(
+              this.globalPath,
+              `${JSON.stringify(result.data, null, 2)}\n`,
+            );
+            console.info(
+              `[QuickPromptsStore] Successfully migrated legacy global prompts from ${sourcePath} to ${this.globalPath}`,
+            );
+            break;
+          }
           console.warn(
-            `[QuickPromptsStore] Failed to migrate legacy global prompts from ${this.legacyGlobalPath}: schema validation failed`,
+            `[QuickPromptsStore] Failed to migrate legacy global prompts from ${sourcePath}: schema validation failed`,
             result.error,
           );
+        } catch (err) {
+          console.warn(
+            `[QuickPromptsStore] Error reading legacy global prompts from ${sourcePath}:`,
+            err,
+          );
         }
-      } catch (err) {
-        console.warn(
-          `[QuickPromptsStore] Error reading legacy global prompts from ${this.legacyGlobalPath}:`,
-          err,
-        );
       }
     }
 
-    // 2. Project prompts migration
-    if (!existsSync(this.projectPath) && existsSync(this.legacyProjectPath)) {
-      try {
-        const raw = readFileSync(this.legacyProjectPath, "utf-8");
-        const parsed = JSON.parse(raw);
-        const result = ProjectsStoreSchema.safeParse(parsed);
-        if (result.success) {
-          writePrivateFileAtomicSync(this.projectPath, `${JSON.stringify(result.data, null, 2)}\n`);
-          console.info(
-            `[QuickPromptsStore] Successfully migrated legacy project prompts from ${this.legacyProjectPath} to ${this.projectPath}`,
-          );
-        } else {
+    // 2. Project prompts migration (prefer previous quick-prompts plugin dir, then projects legacy path)
+    if (!existsSync(this.projectPath)) {
+      const legacyProjectCandidates = [this.legacyPluginProjectPath, this.legacyProjectPath];
+      for (const sourcePath of legacyProjectCandidates) {
+        if (!existsSync(sourcePath)) continue;
+        try {
+          const raw = readFileSync(sourcePath, "utf-8");
+          const parsed = JSON.parse(raw);
+          const result = ProjectsStoreSchema.safeParse(parsed);
+          if (result.success) {
+            writePrivateFileAtomicSync(
+              this.projectPath,
+              `${JSON.stringify(result.data, null, 2)}\n`,
+            );
+            console.info(
+              `[QuickPromptsStore] Successfully migrated legacy project prompts from ${sourcePath} to ${this.projectPath}`,
+            );
+            break;
+          }
           console.warn(
-            `[QuickPromptsStore] Failed to migrate legacy project prompts from ${this.legacyProjectPath}: schema validation failed`,
+            `[QuickPromptsStore] Failed to migrate legacy project prompts from ${sourcePath}: schema validation failed`,
             result.error,
           );
+        } catch (err) {
+          console.warn(
+            `[QuickPromptsStore] Error reading legacy project prompts from ${sourcePath}:`,
+            err,
+          );
         }
-      } catch (err) {
-        console.warn(
-          `[QuickPromptsStore] Error reading legacy project prompts from ${this.legacyProjectPath}:`,
-          err,
-        );
       }
     }
   }
