@@ -18,13 +18,15 @@ describe("Quick Prompts Client Entrypoint", () => {
     const settingsScreens: PluginSettingsScreenContribution[] = [];
     const commandCenterItems: PluginCommandCenterItemContribution[] = [];
     const slashCommands: PluginClientSlashCommandContribution[] = [];
+    let onAgentUpdate: ((message: any) => void) | null = null;
 
     const client: Partial<PluginClientContext> = {
       paseo: {
         agents: {
           list: vi.fn().mockResolvedValue({
             subscription: {
-              subscribe: vi.fn(({ snapshot }) => {
+              subscribe: vi.fn(({ snapshot, update }) => {
+                onAgentUpdate = update;
                 snapshot({
                   entries: [{ agent: { id: "agent-1", workspaceId: "ws-1" } }],
                 });
@@ -88,10 +90,42 @@ describe("Quick Prompts Client Entrypoint", () => {
 
     return new Promise<void>((resolve) => {
       setTimeout(() => {
-        expect(client.addComposerPill).toHaveBeenCalled();
-        expect(pills.length).toBeGreaterThan(0);
+        expect(client.addComposerPill).toHaveBeenCalledTimes(1);
+        expect(pills.length).toBe(1);
         expect(pills[0].id).toBe("quick-prompts");
         expect(pills[0].button.behavior.kind).toBe("popover");
+
+        // Subsequent upsert for the same workspace keeps the pill pinned in place (no remove + re-add)
+        onAgentUpdate?.({
+          type: "agent_update",
+          payload: {
+            kind: "upsert",
+            agent: { id: "agent-1", workspaceId: "ws-1" },
+          },
+        });
+        expect(client.addComposerPill).toHaveBeenCalledTimes(1);
+        expect(pills).toHaveLength(1);
+
+        // Clearing workspaceId removes the pill
+        onAgentUpdate?.({
+          type: "agent_update",
+          payload: {
+            kind: "upsert",
+            agent: { id: "agent-1", workspaceId: null },
+          },
+        });
+        expect(pills).toHaveLength(0);
+
+        // Re-assigning workspaceId re-registers the pill
+        onAgentUpdate?.({
+          type: "agent_update",
+          payload: {
+            kind: "upsert",
+            agent: { id: "agent-1", workspaceId: "ws-1" },
+          },
+        });
+        expect(client.addComposerPill).toHaveBeenCalledTimes(2);
+        expect(pills).toHaveLength(1);
 
         expect(client.addComposerItem).toHaveBeenCalledTimes(1);
         expect(composerItems).toHaveLength(1);

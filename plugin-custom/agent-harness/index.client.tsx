@@ -15,6 +15,9 @@ import { HarnessSettingsScreen } from "./client/settings-screen.js";
 import { AgentTeamFilePanelHost, WorkspaceTeamPanelHost } from "./client/team-editor-panel.js";
 
 const AGENT_TEAM_PANEL_ID = "agent-team-panel";
+// Defer initial pill mount slightly so quick-tools registers ahead of agent-harness
+// in Paseo's registration-ordered PluginComposerPills row.
+const PILL_REGISTRATION_DELAY_MS = 120;
 
 export default function contribute(client: PluginClientContext) {
   const cleanups: Array<() => void> = [];
@@ -107,21 +110,38 @@ export default function contribute(client: PluginClientContext) {
   }
 
   // 4. Composer Pill observation & dynamic dual-state label updates
+  type ObservedAgent = { id: string; workspaceId?: string | null; metadata?: unknown };
   const pills = new Map<string, PluginButtonRegistration>();
+  const pendingPills = new Map<
+    string,
+    { timer: ReturnType<typeof setTimeout>; agent: ObservedAgent }
+  >();
   let stopped = false;
   const lifetime = new AbortController();
 
+  const cancelPendingPill = (agentId: string) => {
+    const pending = pendingPills.get(agentId);
+    if (pending) {
+      clearTimeout(pending.timer);
+      pendingPills.delete(agentId);
+    }
+  };
+
+  const cancelAllPendingPills = () => {
+    for (const { timer } of pendingPills.values()) {
+      clearTimeout(timer);
+    }
+    pendingPills.clear();
+  };
+
   const removePill = (agentId: string) => {
+    cancelPendingPill(agentId);
     pills.get(agentId)?.remove();
     pills.delete(agentId);
   };
 
-  const registerPill = (agent: { id: string; workspaceId?: string | null; metadata?: unknown }) => {
-    if (stopped) return;
-    if (!agent.workspaceId) {
-      removePill(agent.id);
-      return;
-    }
+  const mountPill = (agent: ObservedAgent) => {
+    if (stopped || !agent.workspaceId) return;
 
     const workspaceId = agent.workspaceId;
     const agentId = agent.id;
@@ -165,7 +185,38 @@ export default function contribute(client: PluginClientContext) {
     }
   };
 
-  const syncPill = registerPill;
+  const registerPill = (agent: ObservedAgent) => {
+    if (stopped) return;
+    if (!agent.workspaceId) {
+      removePill(agent.id);
+      return;
+    }
+
+    const existingPill = pills.get(agent.id);
+    if (existingPill) {
+      const meta = extractAgentHarnessMetadata(agent.metadata);
+      existingPill.update({
+        label: formatHarnessPillLabel(meta),
+        icon: resolveHarnessPillIcon(meta),
+      });
+      return;
+    }
+
+    const existingPending = pendingPills.get(agent.id);
+    if (existingPending) {
+      existingPending.agent = agent;
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      const current = pendingPills.get(agent.id);
+      pendingPills.delete(agent.id);
+      if (current) {
+        mountPill(current.agent);
+      }
+    }, PILL_REGISTRATION_DELAY_MS);
+    pendingPills.set(agent.id, { timer, agent });
+  };
 
   let activeSubscription: { close?: () => void; release?: () => void } | null = null;
   let activeUnsub: (() => void) | undefined;
@@ -185,6 +236,7 @@ export default function contribute(client: PluginClientContext) {
         if (typeof subscription.subscribe === "function") {
           activeUnsub = subscription.subscribe({
             snapshot: ({ entries }) => {
+              cancelAllPendingPills();
               for (const pill of pills.values()) pill.remove();
               pills.clear();
               for (const { agent } of entries) registerPill(agent);
@@ -213,6 +265,7 @@ export default function contribute(client: PluginClientContext) {
   cleanups.push(() => {
     stopped = true;
     lifetime.abort();
+    cancelAllPendingPills();
     activeUnsub?.();
     activeSubscription?.close?.() ?? void activeSubscription?.release?.();
     for (const pill of pills.values()) {

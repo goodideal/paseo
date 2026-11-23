@@ -13,16 +13,30 @@ export default function contribute(client: PluginClientContext) {
   const cleanups: Array<() => void> = [];
 
   // 1. Register Composer Pill using native Paseo API
-  const pills = new Map<string, PluginButtonRegistration>();
+  const pills = new Map<string, { workspaceId: string; registration: PluginButtonRegistration }>();
   let stopped = false;
   const lifetime = new AbortController();
 
+  const removePill = (agentId: string) => {
+    pills.get(agentId)?.registration.remove();
+    pills.delete(agentId);
+  };
+
   const registerPill = (agent: { id: string; workspaceId?: string | null }) => {
-    if (stopped || !agent.workspaceId) return;
-    pills.get(agent.id)?.remove();
+    if (stopped) return;
+    if (!agent.workspaceId) {
+      removePill(agent.id);
+      return;
+    }
     const workspaceId = agent.workspaceId;
     const agentId = agent.id;
-    const pill = client.addComposerPill({
+    const existing = pills.get(agentId);
+    if (existing) {
+      if (existing.workspaceId === workspaceId) return;
+      existing.registration.remove();
+      pills.delete(agentId);
+    }
+    const registration = client.addComposerPill({
       id: "quick-prompts",
       workspaceId,
       agentId,
@@ -43,12 +57,7 @@ export default function contribute(client: PluginClientContext) {
         },
       },
     });
-    pills.set(agent.id, pill);
-  };
-
-  const removePill = (agentId: string) => {
-    pills.get(agentId)?.remove();
-    pills.delete(agentId);
+    pills.set(agentId, { workspaceId, registration });
   };
 
   if (client.paseo?.agents) {
@@ -57,7 +66,7 @@ export default function contribute(client: PluginClientContext) {
       .then(({ subscription }) => {
         subscription.subscribe({
           snapshot: ({ entries }) => {
-            for (const pill of pills.values()) pill.remove();
+            for (const { registration } of pills.values()) registration.remove();
             pills.clear();
             for (const { agent } of entries) registerPill(agent);
           },
@@ -78,7 +87,7 @@ export default function contribute(client: PluginClientContext) {
   cleanups.push(() => {
     stopped = true;
     lifetime.abort();
-    for (const pill of pills.values()) pill.remove();
+    for (const { registration } of pills.values()) registration.remove();
     pills.clear();
   });
 

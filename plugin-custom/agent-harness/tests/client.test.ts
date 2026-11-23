@@ -467,194 +467,219 @@ describe("Agent Harness Client - Metadata Utils", () => {
 
 describe("Agent Harness Client - Extension Contributions", () => {
   it("registers timeline renderer, settings screen, command center item, and composer pills", async () => {
-    const timelineRenderers: PluginTimelineRendererContribution[] = [];
-    const settingsScreens: PluginSettingsScreenContribution[] = [];
-    const commandCenterItems: PluginCommandCenterItemContribution[] = [];
-    const pills: PluginComposerPillContribution[] = [];
+    vi.useFakeTimers();
+    try {
+      const timelineRenderers: PluginTimelineRendererContribution[] = [];
+      const settingsScreens: PluginSettingsScreenContribution[] = [];
+      const commandCenterItems: PluginCommandCenterItemContribution[] = [];
+      const pills: PluginComposerPillContribution[] = [];
 
-    const mockPillUpdates: Array<Record<string, unknown>> = [];
-    const mockPillRemoves: string[] = [];
+      const mockPillUpdates: Array<Record<string, unknown>> = [];
+      const mockPillRemoves: string[] = [];
 
-    let agentUpdateCallback: ((msg: any) => void) | null = null;
-    const mockUnsub = vi.fn();
-    const mockClose = vi.fn();
+      let agentUpdateCallback: ((msg: any) => void) | null = null;
+      const mockUnsub = vi.fn();
+      const mockClose = vi.fn();
 
-    const mockClient: Partial<PluginClientContext> = {
-      addTimelineRenderer: vi.fn((contrib: PluginTimelineRendererContribution) => {
-        timelineRenderers.push(contrib);
-        return () => {
-          const idx = timelineRenderers.indexOf(contrib);
-          if (idx >= 0) timelineRenderers.splice(idx, 1);
-        };
-      }),
-      addSettingsScreen: vi.fn((contrib: PluginSettingsScreenContribution) => {
-        settingsScreens.push(contrib);
-        return () => {
-          const idx = settingsScreens.indexOf(contrib);
-          if (idx >= 0) settingsScreens.splice(idx, 1);
-        };
-      }),
-      addCommandCenterItem: vi.fn((contrib: PluginCommandCenterItemContribution) => {
-        commandCenterItems.push(contrib);
-        return () => {
-          const idx = commandCenterItems.indexOf(contrib);
-          if (idx >= 0) commandCenterItems.splice(idx, 1);
-        };
-      }),
-      addComposerPill: vi.fn(
-        (contrib: PluginComposerPillContribution): PluginButtonRegistration => {
-          pills.push(contrib);
-          return {
-            update: vi.fn((patch) => {
-              mockPillUpdates.push(patch);
-            }),
-            remove: vi.fn(() => {
-              mockPillRemoves.push(contrib.agentId);
-              const idx = pills.indexOf(contrib);
-              if (idx >= 0) pills.splice(idx, 1);
-            }),
+      const mockClient: Partial<PluginClientContext> = {
+        addTimelineRenderer: vi.fn((contrib: PluginTimelineRendererContribution) => {
+          timelineRenderers.push(contrib);
+          return () => {
+            const idx = timelineRenderers.indexOf(contrib);
+            if (idx >= 0) timelineRenderers.splice(idx, 1);
           };
-        },
-      ),
-      openSettings: vi.fn(),
-      paseo: {
-        agents: {
-          list: vi.fn().mockResolvedValue({
-            subscription: {
-              subscribe: vi.fn(({ snapshot, update }) => {
-                agentUpdateCallback = update;
-                snapshot({
-                  entries: [
-                    {
-                      agent: {
-                        id: "agent-1",
-                        workspaceId: "ws-1",
-                        metadata: {
-                          [HARNESS_METADATA_KEY]: createSampleMetadata({
-                            currentTier: "plan",
-                            role: "ui",
-                          }),
+        }),
+        addSettingsScreen: vi.fn((contrib: PluginSettingsScreenContribution) => {
+          settingsScreens.push(contrib);
+          return () => {
+            const idx = settingsScreens.indexOf(contrib);
+            if (idx >= 0) settingsScreens.splice(idx, 1);
+          };
+        }),
+        addCommandCenterItem: vi.fn((contrib: PluginCommandCenterItemContribution) => {
+          commandCenterItems.push(contrib);
+          return () => {
+            const idx = commandCenterItems.indexOf(contrib);
+            if (idx >= 0) commandCenterItems.splice(idx, 1);
+          };
+        }),
+        addComposerPill: vi.fn(
+          (contrib: PluginComposerPillContribution): PluginButtonRegistration => {
+            pills.push(contrib);
+            return {
+              update: vi.fn((patch) => {
+                mockPillUpdates.push(patch);
+              }),
+              remove: vi.fn(() => {
+                mockPillRemoves.push(contrib.agentId);
+                const idx = pills.indexOf(contrib);
+                if (idx >= 0) pills.splice(idx, 1);
+              }),
+            };
+          },
+        ),
+        openSettings: vi.fn(),
+        paseo: {
+          agents: {
+            list: vi.fn().mockResolvedValue({
+              subscription: {
+                subscribe: vi.fn(({ snapshot, update }) => {
+                  agentUpdateCallback = update;
+                  snapshot({
+                    entries: [
+                      {
+                        agent: {
+                          id: "agent-1",
+                          workspaceId: "ws-1",
+                          metadata: {
+                            [HARNESS_METADATA_KEY]: createSampleMetadata({
+                              currentTier: "plan",
+                              role: "ui",
+                            }),
+                          },
                         },
                       },
-                    },
-                    {
-                      agent: {
-                        id: "agent-no-ws",
-                        workspaceId: null,
+                      {
+                        agent: {
+                          id: "agent-no-ws",
+                          workspaceId: null,
+                        },
                       },
-                    },
-                  ],
-                });
-                return mockUnsub;
-              }),
-              close: mockClose,
-            },
-          }),
-        },
-      } as any,
-    };
-
-    const cleanup = contribute(mockClient as PluginClientContext);
-
-    // Verify timeline renderer registration
-    expect(timelineRenderers).toHaveLength(1);
-    expect(timelineRenderers[0]?.kind).toBe(HARNESS_TRANSITION_TIMELINE_KIND);
-    expect(timelineRenderers[0]?.version).toBe(HARNESS_TRANSITION_TIMELINE_VERSION);
-
-    // Verify settings screen registration
-    expect(settingsScreens).toHaveLength(1);
-    expect(settingsScreens[0]?.id).toBe("agent-harness-settings");
-    expect(settingsScreens[0]?.title).toBe("Agent Harness");
-
-    // Verify command center item registrations (global settings + workspace team editor)
-    expect(commandCenterItems).toHaveLength(2);
-    expect(commandCenterItems.map((c) => c.id)).toEqual([
-      "agent-harness-settings-command",
-      "agent-harness-workspace-team-command",
-    ]);
-
-    // Allow async agent subscription promise to resolve
-    await Promise.resolve();
-
-    // Verify composer pill registered for agent with workspaceId
-    expect(pills).toHaveLength(1);
-    expect(pills[0]?.agentId).toBe("agent-1");
-    expect(pills[0]?.button.label).toBe("Plan · UI");
-    expect(pills[0]?.button.icon).toBe("Compass");
-
-    // Test agent_update: update existing pill with dual-state separation
-    expect(agentUpdateCallback).not.toBeNull();
-    agentUpdateCallback!({
-      type: "agent_update",
-      payload: {
-        kind: "upsert",
-        agent: {
-          id: "agent-1",
-          workspaceId: "ws-1",
-          metadata: {
-            [HARNESS_METADATA_KEY]: createSampleMetadata({
-              currentTier: "flash",
-              lastBilledTier: "plan",
-              role: "ui",
+                    ],
+                  });
+                  return mockUnsub;
+                }),
+                close: mockClose,
+              },
             }),
           },
+        } as any,
+      };
+
+      const cleanup = contribute(mockClient as PluginClientContext);
+
+      // Verify timeline renderer registration
+      expect(timelineRenderers).toHaveLength(1);
+      expect(timelineRenderers[0]?.kind).toBe(HARNESS_TRANSITION_TIMELINE_KIND);
+      expect(timelineRenderers[0]?.version).toBe(HARNESS_TRANSITION_TIMELINE_VERSION);
+
+      // Verify settings screen registration
+      expect(settingsScreens).toHaveLength(1);
+      expect(settingsScreens[0]?.id).toBe("agent-harness-settings");
+      expect(settingsScreens[0]?.title).toBe("Agent Harness");
+
+      // Verify command center item registrations (global settings + workspace team editor)
+      expect(commandCenterItems).toHaveLength(2);
+      expect(commandCenterItems.map((c) => c.id)).toEqual([
+        "agent-harness-settings-command",
+        "agent-harness-workspace-team-command",
+      ]);
+
+      // Allow async agent subscription promise to resolve
+      await Promise.resolve();
+
+      // Initial mount yields briefly so quick-tools registers ahead of agent-harness
+      expect(pills).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(150);
+
+      // Verify composer pill registered for agent with workspaceId
+      expect(pills).toHaveLength(1);
+      expect(pills[0]?.agentId).toBe("agent-1");
+      expect(pills[0]?.button.label).toBe("Plan · UI");
+      expect(pills[0]?.button.icon).toBe("Compass");
+
+      // Test agent_update: update existing pill with dual-state separation
+      expect(agentUpdateCallback).not.toBeNull();
+      agentUpdateCallback!({
+        type: "agent_update",
+        payload: {
+          kind: "upsert",
+          agent: {
+            id: "agent-1",
+            workspaceId: "ws-1",
+            metadata: {
+              [HARNESS_METADATA_KEY]: createSampleMetadata({
+                currentTier: "flash",
+                lastBilledTier: "plan",
+                role: "ui",
+              }),
+            },
+          },
         },
-      },
-    });
+      });
 
-    expect(mockPillUpdates).toHaveLength(1);
-    expect(mockPillUpdates[0]?.label).toBe("Next: Flash · Billed: Plan");
-    expect(mockPillUpdates[0]?.icon).toBe("Zap");
+      expect(mockPillUpdates).toHaveLength(1);
+      expect(mockPillUpdates[0]?.label).toBe("Next: Flash · Billed: Plan");
+      expect(mockPillUpdates[0]?.icon).toBe("Zap");
 
-    // Test agent_update with cleared workspaceId (zombie pill removal)
-    agentUpdateCallback!({
-      type: "agent_update",
-      payload: {
-        kind: "upsert",
-        agent: {
-          id: "agent-1",
-          workspaceId: null,
-          metadata: {},
+      // Test agent_update with cleared workspaceId (zombie pill removal)
+      agentUpdateCallback!({
+        type: "agent_update",
+        payload: {
+          kind: "upsert",
+          agent: {
+            id: "agent-1",
+            workspaceId: null,
+            metadata: {},
+          },
         },
-      },
-    });
+      });
 
-    expect(mockPillRemoves).toContain("agent-1");
-    expect(pills).toHaveLength(0);
+      expect(mockPillRemoves).toContain("agent-1");
+      expect(pills).toHaveLength(0);
 
-    // Re-add agent-1 for remove test
-    agentUpdateCallback!({
-      type: "agent_update",
-      payload: {
-        kind: "upsert",
-        agent: {
-          id: "agent-1",
-          workspaceId: "ws-1",
-          metadata: {},
+      // Re-add agent-1 for remove test
+      agentUpdateCallback!({
+        type: "agent_update",
+        payload: {
+          kind: "upsert",
+          agent: {
+            id: "agent-1",
+            workspaceId: "ws-1",
+            metadata: {},
+          },
         },
-      },
-    });
-    expect(pills).toHaveLength(1);
+      });
+      await vi.advanceTimersByTimeAsync(150);
+      expect(pills).toHaveLength(1);
 
-    // Test agent_update: remove agent
-    agentUpdateCallback!({
-      type: "agent_update",
-      payload: {
-        kind: "remove",
-        agentId: "agent-1",
-      },
-    });
+      // Test agent_update: remove agent
+      agentUpdateCallback!({
+        type: "agent_update",
+        payload: {
+          kind: "remove",
+          agentId: "agent-1",
+        },
+      });
 
-    expect(mockPillRemoves.filter((id) => id === "agent-1").length).toBe(2);
-    expect(pills).toHaveLength(0);
+      expect(mockPillRemoves.filter((id) => id === "agent-1").length).toBe(2);
+      expect(pills).toHaveLength(0);
 
-    // Test cleanup unsubscribes and closes subscription
-    cleanup();
-    expect(timelineRenderers).toHaveLength(0);
-    expect(settingsScreens).toHaveLength(0);
-    expect(commandCenterItems).toHaveLength(0);
-    expect(mockUnsub).toHaveBeenCalled();
-    expect(mockClose).toHaveBeenCalled();
+      // Pending mount is cancelled cleanly if removed before delay elapses
+      agentUpdateCallback!({
+        type: "agent_update",
+        payload: {
+          kind: "upsert",
+          agent: { id: "agent-ephemeral", workspaceId: "ws-1", metadata: {} },
+        },
+      });
+      agentUpdateCallback!({
+        type: "agent_update",
+        payload: { kind: "remove", agentId: "agent-ephemeral" },
+      });
+      await vi.advanceTimersByTimeAsync(150);
+      expect(pills).toHaveLength(0);
+
+      // Test cleanup unsubscribes and closes subscription
+      cleanup();
+      expect(timelineRenderers).toHaveLength(0);
+      expect(settingsScreens).toHaveLength(0);
+      expect(commandCenterItems).toHaveLength(0);
+      expect(mockUnsub).toHaveBeenCalled();
+      expect(mockClose).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("closes subscription immediately if cleanup was invoked before list promise resolved", async () => {
