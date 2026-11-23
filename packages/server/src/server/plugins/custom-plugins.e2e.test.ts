@@ -26,14 +26,9 @@ describe("all custom plugins end-to-end daemon verification", () => {
 
   const customPluginCases = [
     {
-      name: "agent-radar",
-      rpc: "radar.get_snapshot",
-      input: { agentId: "test-agent" },
-    },
-    {
-      name: "audio-brief",
-      rpc: "audio_brief.synthesize.request",
-      input: { agentId: "test-agent", turnId: "t-1", text: "Task completed successfully." },
+      name: "agent-harness",
+      rpc: "agent_harness.environment.inspect.request",
+      input: {},
     },
     {
       name: "quick-prompts",
@@ -44,21 +39,6 @@ describe("all custom plugins end-to-end daemon verification", () => {
       name: "gitea-workflow",
       rpc: "gitea.tasks.list",
       input: {},
-    },
-    {
-      name: "visual-crawler-auto-fix",
-      rpc: "visual_crawler.crawl.status",
-      input: {},
-    },
-    {
-      name: "web-inspector",
-      rpc: "web_inspector.attachment.search",
-      input: { query: "not-http" },
-    },
-    {
-      name: "workspace-reader",
-      rpc: "workspace_reader.digest.get.request",
-      input: { workspaceId: "wks-test" },
     },
   ];
 

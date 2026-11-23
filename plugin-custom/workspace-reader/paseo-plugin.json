@@ -1,6 +1,0 @@
-{
-  "id": "workspace-reader",
-  "name": "Workspace Reader",
-  "description": "Workspace evolution digest, milestone timeline, and subagent tracker",
-  "requirements": { "paseo": ">=0.13.0" }
-}

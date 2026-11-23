@@ -1,5 +1,5 @@
 import type { EvidenceManager } from "./evidence-manager.js";
-import type { PaseoWorkflowActions } from "@getpaseo/client";
+import type { WorkflowRunsClient } from "../shared/workflow-types.js";
 import type { SettingsManager } from "./settings-manager.js";
 
 export interface PruneResult {
@@ -10,7 +10,7 @@ export interface PruneResult {
 export class EvidencePruner {
   constructor(
     private readonly evidenceManager: typeof EvidenceManager,
-    private readonly workflows: PaseoWorkflowActions,
+    private readonly workflows: Pick<WorkflowRunsClient, "runInspect">,
     private readonly settings: SettingsManager,
   ) {}
 

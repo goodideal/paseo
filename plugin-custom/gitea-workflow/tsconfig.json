@@ -6,6 +6,7 @@
     "jsx": "react-jsx",
     "strict": true,
     "skipLibCheck": true,
+    "noEmit": true,
     "lib": ["ESNext"]
   },
   "include": ["**/*.ts", "**/*.tsx"]

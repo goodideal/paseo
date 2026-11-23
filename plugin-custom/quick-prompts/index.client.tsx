@@ -2,7 +2,6 @@ import type { PluginClientContext, PluginButtonRegistration } from "@getpaseo/pl
 import { QuickPromptsSettingsScreen } from "./client/settings-screen.js";
 import { QuickPromptsPopover } from "./client/popover.js";
 import { QuickPromptsComposerItem } from "./client/composer-item.js";
-import { WorkspaceKindPopover } from "./client/workspace-kind-popover.js";
 import { quickPromptsGlobalGetRpc, type QuickPromptItem } from "./shared/contracts.js";
 import { setCachedGlobalItems } from "./client/use-quick-prompts.js";
 
@@ -79,83 +78,7 @@ export default function contribute(client: PluginClientContext) {
     pills.clear();
   });
 
-  // 2. Register Workspace Kind Header Button (Worktree vs Local) using native Paseo API
-  const workspaceButtons = new Map<string, PluginButtonRegistration>();
-
-  const registerWorkspaceButton = (workspace: {
-    id: string;
-    workspaceKind?: string;
-    name?: string;
-    currentBranch?: string | null;
-    workspaceDirectory?: string;
-    projectDisplayName?: string;
-  }) => {
-    if (stopped) return;
-    workspaceButtons.get(workspace.id)?.remove();
-
-    const isWorktree = workspace.workspaceKind === "worktree";
-    const isLocal =
-      workspace.workspaceKind === "local_checkout" || workspace.workspaceKind === "checkout";
-
-    if (!isWorktree && !isLocal) return;
-
-    const title = isWorktree ? "Git Worktree" : "Local Checkout";
-    const label = isWorktree ? "Worktree" : "Local";
-    const icon = isWorktree ? "FolderGit2" : "Monitor";
-
-    const button = client.addHeaderButton({
-      id: "workspace-kind",
-      workspaceId: workspace.id,
-      button: {
-        title,
-        label,
-        icon,
-        behavior: {
-          kind: "popover",
-          Content: (props) => (
-            <WorkspaceKindPopover {...props} workspace={workspace} isWorktree={isWorktree} />
-          ),
-        },
-      },
-    });
-    workspaceButtons.set(workspace.id, button);
-  };
-
-  const removeWorkspaceButton = (workspaceId: string) => {
-    workspaceButtons.get(workspaceId)?.remove();
-    workspaceButtons.delete(workspaceId);
-  };
-
-  if (client.paseo?.workspaces) {
-    void client.paseo.workspaces
-      .list({ subscribe: {} })
-      .then(({ subscription }) => {
-        subscription.subscribe({
-          snapshot: ({ entries }) => {
-            for (const btn of workspaceButtons.values()) btn.remove();
-            workspaceButtons.clear();
-            for (const ws of entries) registerWorkspaceButton(ws);
-          },
-          update: (message) => {
-            if (message.type !== "workspace_update") return;
-            const update = message.payload;
-            if (update.kind === "remove") removeWorkspaceButton(update.id);
-            else if (update.kind === "upsert") registerWorkspaceButton(update.workspace);
-          },
-        });
-        return undefined;
-      })
-      .catch((error) => {
-        if (!stopped) console.error("[QuickPrompts] Workspace observation failed", error);
-      });
-  }
-
-  cleanups.push(() => {
-    for (const btn of workspaceButtons.values()) btn.remove();
-    workspaceButtons.clear();
-  });
-
-  // 3. Register composer item for Draft and New Workspace composers (non-intrusive SDK seam)
+  // 2. Register composer item for Draft and New Workspace composers (non-intrusive SDK seam)
   if (typeof client.addComposerItem === "function") {
     cleanups.push(
       client.addComposerItem({

@@ -1,6 +1,0 @@
-{
-  "id": "desktop-pet",
-  "requirements": {
-    "paseo": ">=0.8.0"
-  }
-}

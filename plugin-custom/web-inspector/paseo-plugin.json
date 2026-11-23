@@ -1,6 +1,0 @@
-{
-  "id": "web-inspector",
-  "requirements": {
-    "paseo": ">=0.8.0"
-  }
-}

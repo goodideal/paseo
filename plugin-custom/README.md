@@ -1,61 +1,17 @@
 # Paseo Custom Plugins 兼容性与运行指南
 
-本目录包含定制与解耦的 Paseo 本地插件。本文档记录各插件在 **Paseo 官方标准版（Official Baseline）** 与 **Custom 特性版（Custom-Features）** 客户端上的兼容支持矩阵与降级行为。
+本目录仅保留 3 个正交的本地定制插件，避免功能重叠与后台子进程开销。
 
-## 客户端兼容性矩阵 (Client Compatibility Matrix)
+## 插件清单与扩展点 (Active Custom Plugins)
 
-| 插件目录 (`id`)               | 官方标准版客户端 (Baseline) | Custom 特性版客户端 (Custom) | 核心扩展点 (Extension Points)                                                                 | 降级行为与机制说明                                                                                                                                                               |
-| :---------------------------- | :-------------------------: | :--------------------------: | :-------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`agent-radar`**             |       ✅ **完全可用**       |       ✅ **完全可用**        | `addWorkspacePanel`<br>`addTimelineRenderer`<br>`addSettingsScreen`<br>`addCommandCenterItem` | 基于官方标准 API。提供工作区执行雷达、时间线决策卡片及图形化设置界面（配置自动推进、安全权限自动审批、连续轮数上限与心跳探测）。Custom 客户端额外提供移动端和顶层 Tab 快捷入口。 |
-| **`gitea-workflow`**          |       ✅ **完全可用**       |       ✅ **完全可用**        | `addWorkspacePanel`                                                                           | 基于官方标准 API，在工作区与资源管理器（Explorer）面板中均完全一致。                                                                                                             |
-| **`visual-crawler-auto-fix`** |       ✅ **完全可用**       |       ✅ **完全可用**        | `addWorkspacePanel`                                                                           | 基于官方标准 API，工作区面板操作两端完全一致。                                                                                                                                   |
-| **`web-inspector`**           |       ✅ **完全可用**       |       ✅ **完全可用**        | `addWorkspacePanel`<br>`addSlashCommand`<br>`addAttachmentSource`<br>`addSettingsScreen`      | 基于官方标准 API，诊断面板、附件源和认证设置页两端完全一致。                                                                                                                     |
-| **`quick-prompts`**           |       ✅ **完全可用**       |       ✅ **完全可用**        | `addComposerPill`<br>`addSettingsScreen`<br>`addCommandCenterItem`<br>`addSlashCommand`       | 纯官方原生扩展：通过输入框胶囊轨道（Composer Track）上的 `✨ Quick Prompts` Pill 呼出快捷提示词面板，支持实时搜索、AI推荐、规则匹配与一键发送，100% 兼容官方标准环境。           |
-| **`audio-brief`**             |       ✅ **完全可用**       |       ✅ **完全可用**        | `addComposerPill`<br>`addSettingsScreen`<br>`addCommandCenterItem`                            | 纯官方原生扩展：通过输入框胶囊轨道上的 `🔊 Audio Brief` 按钮呼出语音摘要面板，支持一键播报最新助手轮次与自定义发音配置，100% 兼容官方标准环境。                                  |
-
----
-
-## 插件详细扩展与特性说明 (Plugin Details)
-
-### 1. `agent-radar` (Agent 拓扑与执行雷达及 Watchdog 守护)
-
-- **标准版**：
-  - 通过面板菜单或命令中心打开工作区面板（`agent-radar-panel`），查看多 Agent 拓扑与 SDD 执行计划。
-  - 时间线中正常渲染 `watchdog-blocker` 与 `radar-blocker` 决策卡片（提供 Retry/Pause 等一键操作）。
-  - 支持在设置（Settings -> Agent Radar）中图形化配置 Watchdog 守护引擎：开关“自动推进执行（Auto Continue）”、开关“安全只读权限自动审批”、调整“最大连续自动轮数（Max Auto Turns）”与“工具调用心跳探测阈值（Heartbeat Threshold）”。
-  - 支持通过命令中心（Command Center，Cmd/Ctrl+K）快速打开配置界面。
-- **Custom 版**：享受移动端与侧边栏的专属入口及快捷状态指示。
-
-### 2. `gitea-workflow` (Gitea 任务与双阶段审核)
-
-- **标准版 / Custom 版**：完全一致。工作区面板集成 Gitea PR 检查、分支状态同步与交互式截图画廊。
-
-### 3. `visual-crawler-auto-fix` (UI 视觉爬虫与多 Worktree 自愈)
-
-- **标准版 / Custom 版**：完全一致。工作区面板提供 50~100 步深度的自主爬取、视觉差异检视与跨分支修复看板。
-
-### 4. `web-inspector` (Web 诊断与 CDP 检查器)
-
-- **标准版 / Custom 版**：完全一致。支持 `/inspect` 快捷命令、消息输入框中的网页诊断附件源拾取、以及独立认证配置页。
-
-### 5. `quick-prompts` (层级化快捷提示词引擎)
-
-- **标准版**：
-  - 支持在设置（Settings -> Quick Prompts）中配置全局提示词规则。
-  - 支持在命令中心（Command Center）检索并打开配置。
-  - 支持在输入框中通过全局斜杠命令（如 `/c`、`/test`）快速提交。
-- **Custom 版**：
-  - 完整呈现输入框上方的实时快捷建议栏（`QuickPromptBar`），支持动态条件匹配（按 Agent 角色、上下文状态高频推荐）与快捷弹窗。
-
-### 6. `audio-brief` (智能回合语音摘要)
-
-- **能力定位**：通过官方原生的 `client.addComposerPill` 在输入框轨道注册 `🔊 Audio Brief` 快捷胶囊，点击唤出语音播报面板，一键总结并朗读最近一轮 Assistant 回复，支持配置 TTS 服务商、Prompt 摘要长度及发音人。
-
----
+| 插件目录 (`id`)      | 核心职责                                                | 核心扩展点 (Extension Points)                                                                                                                                                                                                                              | 说明                                                                                                                                |
+| :------------------- | :------------------------------------------------------ | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------- |
+| **`agent-harness`**  | 角色路由、模型矩阵、Team 编排与只读命令自动审批         | `addWorkspacePanel`<br>`addFilePanel`<br>`addTimelineRenderer`<br>`addComposerPill`<br>`addSettingsScreen`<br>`addCommandCenterItem`<br>`addHook` (`workspace.create.before`, `agent.create.*`, `agent.open.before`, `agent.permission.*`, `agent.turn.*`) | 动态按任务领域切换模型档位与 `LAZY_TOOL_CONFIG` 切片，并提供 `.agents/agent-team.json` 可视化配置与角色交接工具 `harness_handoff`。 |
+| **`quick-prompts`**  | 输入框快捷提示词引擎与全局 Slash 命令                   | `addComposerPill`<br>`addComposerItem`<br>`addSettingsScreen`<br>`addCommandCenterItem`<br>`addSlashCommand`                                                                                                                                               | 在运行中 Agent 输入框胶囊栏与草稿输入框中提供快捷提示词搜索、AI 推荐与 `/shortcut` 快速下发。                                       |
+| **`gitea-workflow`** | Gitea Issue 自动接单、进程内 DAG 编排与双阶段审批工作台 | `addWorkspacePanel`<br>`addCommandCenterItem`<br>`addSettingsScreen`<br>内嵌 `workflow-engine` 运行时                                                                                                                                                      | 集成原 `workflow-runs` 的 DAG 调度与状态机至单进程内，提供统一工作台面板切换「DAG 工作流」与「审查卡片」。                          |
 
 ## 开发与维护规则 (Development Rules)
 
-1. **组件传递函数化包装 (Component Wrapping)**：
-   插件导出给 Paseo 扩展槽的组件（`Component`）应统一使用标准函数包裹（如 `(props) => <MyComponent {...props} />`），避免旧版本客户端因类型仅允许 `function` 而将 `React.memo` / `React.forwardRef` 误判为非组件。
-2. **渐进增强守卫 (Progressive Enhancement)**：
-   若使用非官方扩展槽，必须添加 `typeof client.<method> === "function"` 判断，确保插件在标准版客户端上优雅降级而不崩溃。
+1. **组件传递函数化包装 (Component Wrapping)**：插件导出给 Paseo 扩展槽的组件（`Component`）统一使用函数包裹（如 `(props) => <MyComponent {...props} />`），避免部分客户端将 `React.memo` / `React.forwardRef` 误判为非组件。
+2. **移动端与运行时边界**：客户端代码仅使用 React Native 原语与 `theme.colors.*`，严禁导入 `server/` 或 Node 内置模块；服务端与共享契约保持纯正边界。
+3. **热重载生效**：修改本地插件后运行 `npm run typecheck` 并执行 `paseo plugin reload <id>`，禁止直接重启 `6767` 端口主 Daemon。

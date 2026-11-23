@@ -22,14 +22,9 @@ import { createGiteaStepAdapters } from "./server/adapters/index.js";
 import { giteaWorkflowPresets } from "./server/presets/issue-to-pr.js";
 import { EvidenceManager } from "./server/evidence-manager.js";
 import { EvidencePruner } from "./server/cleanup.js";
+import { createEmbeddedWorkflowRuntime } from "./server/embedded-workflow-runtime.js";
 import { WorkflowStepJobRunner } from "./server/step-job-runner.js";
-import {
-  WORKFLOW_RUNS_PLUGIN_ID,
-  createWorkflowRunsClient,
-  toStepAdapterManifest,
-  workflowStepDispatchRpc,
-  workflowStepPollRpc,
-} from "./shared/workflow-types.js";
+import { workflowStepDispatchRpc, workflowStepPollRpc } from "./shared/workflow-types.js";
 
 function getPaseoHome(): string {
   return process.env.PASEO_HOME || join(homedir(), ".paseo");
@@ -94,36 +89,17 @@ export default function contribute(server: PluginServerContext) {
 
   const stepAdapters = createGiteaStepAdapters(clientPool, indexStore, settingsManager);
   const stepJobRunner = new WorkflowStepJobRunner(stepAdapters);
-  let registrySynced = false;
+  const workflowRuntime = createEmbeddedWorkflowRuntime({
+    paseoHome: getPaseoHome(),
+    getPaseo: () => paseoClient ?? activePaseo,
+    stepAdapters,
+    initialPresets: giteaWorkflowPresets,
+  });
+  workflowRuntime.registerRpcHandlers(server, (api) => {
+    activePaseo = api;
+  });
 
-  const ensureRegistryRegistered = async (api: PaseoApi): Promise<void> => {
-    if (registrySynced || !api.plugins?.invoke) return;
-    await api.plugins.invoke(WORKFLOW_RUNS_PLUGIN_ID, "workflow.registry.register", {
-      pluginId: "gitea-workflow",
-      stepAdapters: stepAdapters.map(toStepAdapterManifest),
-      presets: giteaWorkflowPresets.map((preset) => ({
-        workflowId: preset.workflowId,
-        name: preset.name,
-        sourcePreset: preset.sourcePreset ?? "gitea-workflow",
-        definition: preset.definition,
-      })),
-    });
-    registrySynced = true;
-  };
-
-  const workflowsClient = createWorkflowRunsClient(
-    () => paseoClient ?? activePaseo,
-    ensureRegistryRegistered,
-  );
-
-  const pruner = new EvidencePruner(
-    EvidenceManager,
-    {
-      runInspect: (opts: { projectId: string; workspaceId: string; runId: string }) =>
-        workflowsClient.runInspect(opts),
-    } as any,
-    settingsManager,
-  );
+  const pruner = new EvidencePruner(EvidenceManager, workflowRuntime.client, settingsManager);
 
   server.handle(workflowStepDispatchRpc, (input, context) => {
     activePaseo = context.paseo;
@@ -151,12 +127,6 @@ export default function contribute(server: PluginServerContext) {
         });
       }
       await paseoClient.connect();
-      await ensureRegistryRegistered(paseoClient).catch((err) => {
-        console.warn(
-          "[gitea-workflow] Deferred workflow registry sync:",
-          (err as Error)?.message ?? String(err),
-        );
-      });
 
       if (!poller && !isDisposed) {
         poller = new MultiProjectPoller({
@@ -164,7 +134,7 @@ export default function contribute(server: PluginServerContext) {
           resolver,
           clientPool,
           indexStore,
-          getWorkflows: () => (paseoClient || activePaseo ? workflowsClient : undefined),
+          getWorkflows: () => (paseoClient || activePaseo ? workflowRuntime.client : undefined),
           getProjects: async () => {
             const api = paseoClient ?? activePaseo;
             if (!api) return [];
@@ -221,7 +191,7 @@ export default function contribute(server: PluginServerContext) {
         resolver,
         clientPool,
         indexStore,
-        getWorkflows: () => createWorkflowRunsClient(() => context.paseo, ensureRegistryRegistered),
+        getWorkflows: () => workflowRuntime.client,
         getProjects: async () => {
           const list = await context.paseo.projects.list();
           return list.projects;
@@ -245,22 +215,18 @@ export default function contribute(server: PluginServerContext) {
 
   server.handle(approveTaskRpc, async ({ taskId }, context) => {
     activePaseo = context.paseo;
-    if (!context.paseo.plugins?.invoke) {
-      return { ok: false, error: "Workflow service is unavailable" };
-    }
-    const workflows = createWorkflowRunsClient(() => context.paseo, ensureRegistryRegistered);
     try {
       const task = await store.getTask(taskId);
       const projectId = task?.projectId ?? "default";
       const workspaceId = task?.workspaceId ?? "default";
-      const list = await workflows.approvalList({
+      const list = await workflowRuntime.client.approvalList({
         projectId,
         workspaceId,
         runId: taskId,
       });
       const pending = list.approvals.find((a) => a.status === "pending");
       if (pending) {
-        await workflows.approvalApprove({
+        await workflowRuntime.client.approvalApprove({
           projectId,
           workspaceId,
           runId: taskId,
@@ -276,22 +242,18 @@ export default function contribute(server: PluginServerContext) {
 
   server.handle(rejectTaskRpc, async ({ taskId, feedback }, context) => {
     activePaseo = context.paseo;
-    if (!context.paseo.plugins?.invoke) {
-      return { ok: false, error: "Workflow service is unavailable" };
-    }
-    const workflows = createWorkflowRunsClient(() => context.paseo, ensureRegistryRegistered);
     try {
       const task = await store.getTask(taskId);
       const projectId = task?.projectId ?? "default";
       const workspaceId = task?.workspaceId ?? "default";
-      const list = await workflows.approvalList({
+      const list = await workflowRuntime.client.approvalList({
         projectId,
         workspaceId,
         runId: taskId,
       });
       const pending = list.approvals.find((a) => a.status === "pending");
       if (pending) {
-        await workflows.approvalDeny({
+        await workflowRuntime.client.approvalDeny({
           projectId,
           workspaceId,
           runId: taskId,
@@ -341,6 +303,7 @@ export default function contribute(server: PluginServerContext) {
     clearInterval(cleanupTimer);
     settingsManager.dispose();
     poller?.stop();
+    workflowRuntime.dispose();
     if (paseoClient) {
       void paseoClient.close().catch(() => {});
     }

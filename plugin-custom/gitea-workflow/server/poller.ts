@@ -2,7 +2,8 @@ import type { ProjectGiteaResolver } from "./resolver.js";
 import type { GiteaClientPool } from "./client-pool.js";
 import type { SettingsManager } from "./settings-manager.js";
 import type { IssueRunIndexStore } from "./store.js";
-import type { PaseoWorkflowActions, PaseoWorkspaceActions } from "@getpaseo/client";
+import type { PaseoWorkspaceActions } from "@getpaseo/client";
+import type { WorkflowRunsClient } from "../shared/workflow-types.js";
 import { resolveIssueWorkflowPreset } from "./preset-resolver.js";
 import { isApprovalComment } from "./adapters/dual-approval-gate.js";
 import { LIFECYCLE_LABELS } from "../shared/types.js";
@@ -20,7 +21,7 @@ export interface MultiProjectPollerOptions {
   resolver: ProjectGiteaResolver;
   clientPool: GiteaClientPool;
   indexStore: IssueRunIndexStore;
-  getWorkflows: () => PaseoWorkflowActions | undefined;
+  getWorkflows: () => WorkflowRunsClient | undefined;
   getProjects: () => Promise<PaseoProjectItem[]>;
   getWorkspaces?: () => PaseoWorkspaceActions | undefined;
   resolveWorkspace?: (project: PaseoProjectItem) => Promise<string | null>;
