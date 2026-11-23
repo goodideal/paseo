@@ -116,6 +116,7 @@ export const HarnessTransitionCard = memo(function HarnessTransitionCard(
           fontWeight: "500",
           color: theme.colors.foreground,
           fontFamily: layout.platform === "ios" ? "Menlo" : "monospace",
+          flexShrink: 1,
         },
         reasonText: {
           fontSize: 11,
@@ -142,6 +143,7 @@ export const HarnessTransitionCard = memo(function HarnessTransitionCard(
           fontSize: 11,
           fontWeight: "500",
           color: theme.colors.foreground,
+          flexShrink: 1,
         },
         openButton: {
           flexDirection: "row",

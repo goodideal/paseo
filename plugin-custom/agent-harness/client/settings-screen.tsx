@@ -3,7 +3,6 @@ import { Text, View, StyleSheet } from "react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { usePaseo, useRpc, useSettings, useWorkspaces } from "@getpaseo/plugin/client";
 import {
-  ScrollView,
   SettingsAction,
   SettingsCard,
   SettingsSection,
@@ -312,12 +311,7 @@ export function HarnessSettingsScreen({
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        container: {
-          flex: 1,
-          backgroundColor: theme.colors.surface0,
-        },
         content: {
-          padding: 16,
           gap: 16,
         },
         loadingContainer: {
@@ -576,7 +570,7 @@ export function HarnessSettingsScreen({
       (isInvalid ? "Settings configuration is invalid." : "Failed to load settings.");
 
     return (
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <View style={styles.content}>
         <SettingsSection
           title="Configuration Status"
           info={isInvalid ? "Invalid Configuration" : "Load Error"}
@@ -598,7 +592,7 @@ export function HarnessSettingsScreen({
             />
           </SettingsCard>
         </SettingsSection>
-      </ScrollView>
+      </View>
     );
   }
 
@@ -690,7 +684,7 @@ export function HarnessSettingsScreen({
       : "Not inspected";
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <View style={styles.content}>
       <SettingsSection title="Core Orchestration">
         <SettingsCard>
           <SettingsSwitch
@@ -1096,6 +1090,6 @@ export function HarnessSettingsScreen({
           </SettingsCard>
         ) : null}
       </SettingsSection>
-    </ScrollView>
+    </View>
   );
 }

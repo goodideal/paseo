@@ -145,7 +145,8 @@ vi.mock("@getpaseo/plugin/client/ui", () => ({
       Content: ({ children }: any) => React.createElement("div", null, children),
     },
   ),
-  ScrollView: ({ children }: any) => React.createElement("div", null, children),
+  ScrollView: ({ children }: any) =>
+    React.createElement("div", { "data-testid": "plugin-scroll-view" }, children),
   useToast: () => mockToast,
 }));
 
@@ -796,6 +797,7 @@ describe("HarnessSettingsScreen - Forms Gate & State Handling", () => {
     expect(screen.getByText("Phase Lifecycle & Gates")).toBeDefined();
     expect(screen.getByText("Enable Agent Harness")).toBeDefined();
     expect(screen.getByText("Override Default Model Only")).toBeDefined();
+    expect(screen.queryByTestId("plugin-scroll-view")).toBeNull();
 
     const switchInput = screen.getByLabelText("Enable Agent Harness");
     fireEvent.click(switchInput);
@@ -1054,7 +1056,7 @@ describe("HarnessPopover - Native Orchestrator & Dynamic Specialists", () => {
     mockUseAgent.mockReturnValue({
       status: "idle",
       provider: "antigravity",
-      model: "gemini-4-hydrogen-high",
+      model: "gemini-pro-orchestrator",
       cwd: "/repo",
       currentModeId: "full-access",
       metadata: {},
@@ -1082,6 +1084,121 @@ describe("HarnessPopover - Native Orchestrator & Dynamic Specialists", () => {
     expect(screen.getByText("codex · flash")).toBeDefined();
     expect(screen.getByText("antigravity · flash")).toBeDefined();
     expect(screen.getAllByText("RO")).toHaveLength(2);
+  });
+
+  it("renders HarnessPopover on mobile compact iOS without nested ScrollView or duplicate title and defers navigation past sheet close", async () => {
+    const workspaceTeamRoles = [
+      {
+        ...DEFAULT_AGENT_HARNESS_SETTINGS.specialists[1],
+        id: "fe-uiux",
+        shortLabel: "fe-uiux",
+        builtIn: false,
+        readonly: false,
+        preferredProvider: "antigravity",
+        preferredTier: "flash",
+      },
+      {
+        ...DEFAULT_AGENT_HARNESS_SETTINGS.specialists[1],
+        id: "fe-architect",
+        shortLabel: "fe-architect",
+        builtIn: false,
+        readonly: true,
+        preferredProvider: "claude",
+        preferredTier: "plan",
+      },
+      {
+        ...DEFAULT_AGENT_HARNESS_SETTINGS.specialists[2],
+        id: "be-developer",
+        shortLabel: "be-developer",
+        builtIn: false,
+        readonly: false,
+        preferredProvider: "codex",
+        preferredTier: "flash",
+      },
+    ];
+
+    const effectiveRpcMock = vi.fn().mockResolvedValue({
+      config: {
+        specialists: workspaceTeamRoles,
+        agentTeam: {
+          projectSlug: "demo",
+          preset: "web-react",
+          manifestPath: "/repo/.agents/agent-team.json",
+          checkoutRoot: "/repo",
+          mainRepoRoot: "/repo",
+          hasLocalAntigravityPlugin: true,
+          roles: ["fe-uiux", "fe-architect", "be-developer"],
+        },
+      },
+    });
+    const noopRpc = vi.fn().mockResolvedValue({});
+    mockUseRpc.mockImplementation((contract: any) =>
+      contract?.name === "agent_harness.config.effective.request" ? effectiveRpcMock : noopRpc,
+    );
+    mockUseAgent.mockReturnValue({
+      status: "idle",
+      provider: "antigravity",
+      model: "gemini-pro-orchestrator",
+      cwd: "/repo",
+      currentModeId: "full-access",
+      metadata: {},
+    } as any);
+    mockUseSettings.mockReturnValue({
+      status: "ready",
+      values: DEFAULT_AGENT_HARNESS_SETTINGS,
+    });
+
+    const close = vi.fn();
+    const onOpenTeamEditor = vi.fn();
+    const onOpenSettings = vi.fn();
+
+    render(
+      React.createElement(HarnessPopover, {
+        workspaceId: "ws-mobile",
+        agentId: "agt-mobile",
+        theme: popoverTheme,
+        layout: { compact: true, platform: "ios" },
+        close,
+        onOpenTeamEditor,
+        onOpenSettings,
+      } as any),
+    );
+
+    expect(await screen.findByText("be-developer")).toBeDefined();
+
+    // Must NOT nest a ScrollView inside the host bottom sheet
+    expect(screen.queryByTestId("plugin-scroll-view")).toBeNull();
+    // Sheet header already draws "Agent Harness" on compact layouts
+    expect(screen.queryByText("Agent Harness")).toBeNull();
+
+    expect(screen.getByText("NATIVE ORCHESTRATOR")).toBeDefined();
+    expect(screen.getByText("Next Turn")).toBeDefined();
+    expect(screen.getByText("Last Billed")).toBeDefined();
+    expect(screen.getByText("fe-uiux")).toBeDefined();
+    expect(screen.getByText("fe-architect")).toBeDefined();
+    expect(screen.getByText("be-developer")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Configure workspace team" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Open Harness Settings" })).toBeDefined();
+
+    vi.useFakeTimers();
+    try {
+      // Tapping navigation footer on iOS closes sheet first, then invokes callback after teardown delay
+      fireEvent.click(screen.getByRole("button", { name: "Configure workspace team" }));
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(onOpenTeamEditor).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(250);
+      expect(onOpenTeamEditor).toHaveBeenCalledTimes(1);
+
+      fireEvent.click(screen.getByRole("button", { name: "Open Harness Settings" }));
+      expect(close).toHaveBeenCalledTimes(2);
+      expect(onOpenSettings).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(250);
+      expect(onOpenSettings).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

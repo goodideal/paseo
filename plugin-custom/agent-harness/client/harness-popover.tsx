@@ -2,7 +2,7 @@ import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { View, Text, Pressable, StyleSheet } from "react-native";
 import type { PluginButtonContentProps } from "@getpaseo/plugin/client";
 import { useAgent, useRpc, useSettings } from "@getpaseo/plugin/client";
-import { Icon, ScrollView, useToast } from "@getpaseo/plugin/client/ui";
+import { Icon, useToast } from "@getpaseo/plugin/client/ui";
 import {
   harnessEffectiveConfigRpc,
   harnessHandoffRpc,
@@ -25,6 +25,16 @@ import {
   resolveHarnessPillIcon,
 } from "./metadata-utils.js";
 import { subscribeWorkspaceTeamUpdated } from "./team-events.js";
+
+const IOS_SHEET_CLOSE_DELAY_MS = 250;
+
+function chunkIntoPairs<T>(items: readonly T[]): Array<readonly [T, T | null]> {
+  const pairs: Array<readonly [T, T | null]> = [];
+  for (let i = 0; i < items.length; i += 2) {
+    pairs.push([items[i]!, items[i + 1] ?? null]);
+  }
+  return pairs;
+}
 
 export type HarnessPopoverProps = PluginButtonContentProps & {
   workspaceId: string;
@@ -207,26 +217,52 @@ export const HarnessPopover = memo(function HarnessPopover({
   );
 
   const pillIcon = useMemo(() => resolveHarnessPillIcon(meta), [meta]);
+  const specialistRows = useMemo(() => chunkIntoPairs(handoffSpecialists), [handoffSpecialists]);
+
+  const runAfterClose = useCallback(
+    (action: () => void) => {
+      const invoke = () => {
+        try {
+          action();
+        } catch (err) {
+          toast.error(`Unable to open view: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      };
+      close();
+      if (layout.platform === "ios") {
+        // Defer native navigation past iOS sheet teardown without clearing on unmount (close unmounts this surface).
+        setTimeout(invoke, IOS_SHEET_CLOSE_DELAY_MS);
+        return;
+      }
+      invoke();
+    },
+    [close, layout.platform, toast],
+  );
 
   const styles = useMemo(
     () =>
       StyleSheet.create({
         container: {
           width: layout.compact ? "100%" : 320,
-          backgroundColor: layout.compact ? "transparent" : theme.colors.surface0,
-          padding: 10,
+          backgroundColor: "transparent",
+          paddingHorizontal: layout.compact ? 0 : 2,
+          paddingTop: layout.compact ? 0 : 2,
+          paddingBottom: layout.compact ? 4 : 2,
           gap: 10,
         },
         header: {
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "space-between",
+          gap: 8,
           paddingBottom: 2,
         },
         headerLeft: {
           flexDirection: "row",
           alignItems: "center",
           gap: 6,
+          flexShrink: 1,
+          minWidth: 0,
         },
         headerTitle: {
           fontSize: 11,
@@ -242,6 +278,7 @@ export const HarnessPopover = memo(function HarnessPopover({
           borderRadius: 4,
           borderWidth: StyleSheet.hairlineWidth,
           borderColor: theme.colors.border,
+          flexShrink: 1,
         },
         phaseBadgeText: {
           fontSize: 9,
@@ -250,9 +287,9 @@ export const HarnessPopover = memo(function HarnessPopover({
           textTransform: "uppercase",
         },
         iconButton: {
-          width: 22,
-          height: 22,
-          borderRadius: 4,
+          width: layout.compact ? 32 : 24,
+          height: layout.compact ? 32 : 24,
+          borderRadius: 6,
           alignItems: "center",
           justifyContent: "center",
           backgroundColor: "transparent",
@@ -271,6 +308,7 @@ export const HarnessPopover = memo(function HarnessPopover({
         },
         metricCol: {
           flex: 1,
+          minWidth: 0,
           backgroundColor: theme.colors.surface0,
           borderRadius: 6,
           padding: 6,
@@ -319,10 +357,12 @@ export const HarnessPopover = memo(function HarnessPopover({
           paddingTop: 4,
           borderTopWidth: StyleSheet.hairlineWidth,
           borderTopColor: theme.colors.border,
+          gap: 8,
         },
         telemetryText: {
           fontSize: 10,
           color: theme.colors.foregroundMuted,
+          flexShrink: 1,
         },
         dualStateBanner: {
           backgroundColor: theme.colors.surface2,
@@ -352,7 +392,7 @@ export const HarnessPopover = memo(function HarnessPopover({
         },
         tierButton: {
           flex: 1,
-          height: 32,
+          minHeight: layout.compact ? 38 : 32,
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "center",
@@ -389,20 +429,25 @@ export const HarnessPopover = memo(function HarnessPopover({
           fontSize: 10,
           fontWeight: "600",
           color: theme.colors.foreground,
-        },
-        specialistScroll: {
-          maxHeight: 210,
+          flexShrink: 1,
         },
         specialistGrid: {
-          flexDirection: "row",
-          flexWrap: "wrap",
+          flexDirection: "column",
           gap: 6,
+        },
+        specialistRow: {
+          flexDirection: "row",
+          gap: 6,
+        },
+        specialistSpacer: {
+          flex: 1,
         },
         specialistNameRow: {
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "space-between",
           flex: 1,
+          minWidth: 0,
           gap: 4,
         },
         readonlyTag: {
@@ -419,14 +464,17 @@ export const HarnessPopover = memo(function HarnessPopover({
           color: theme.colors.statusWarning,
         },
         specialistCard: {
-          width: "48.9%",
+          flex: 1,
+          minWidth: 0,
+          minHeight: layout.compact ? 46 : undefined,
           backgroundColor: theme.colors.surface1,
           borderWidth: 1,
           borderColor: theme.colors.border,
           borderRadius: 6,
           paddingHorizontal: 8,
-          paddingVertical: 6,
+          paddingVertical: layout.compact ? 8 : 6,
           gap: 2,
+          justifyContent: "center",
         },
         specialistCardDesignHint: {
           borderColor: theme.colors.accent,
@@ -451,7 +499,8 @@ export const HarnessPopover = memo(function HarnessPopover({
           alignItems: "center",
           justifyContent: "center",
           gap: 5,
-          paddingVertical: 6,
+          minHeight: layout.compact ? 40 : 32,
+          paddingVertical: layout.compact ? 9 : 6,
           borderRadius: 6,
           backgroundColor: theme.colors.surface1,
           borderWidth: 1,
@@ -476,13 +525,15 @@ export const HarnessPopover = memo(function HarnessPopover({
 
   return (
     <View style={styles.container}>
-      {/* Header */}
+      {/* Header (menu sheet header already owns the title on compact layouts) */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <Icon name={pillIcon} size={13} color={theme.colors.accent} />
-          <Text style={styles.headerTitle}>Agent Harness</Text>
+          {!layout.compact ? <Text style={styles.headerTitle}>Agent Harness</Text> : null}
           <View style={styles.phaseBadge}>
-            <Text style={styles.phaseBadgeText}>{phaseBadgeText}</Text>
+            <Text style={styles.phaseBadgeText} numberOfLines={1}>
+              {phaseBadgeText}
+            </Text>
           </View>
         </View>
 
@@ -490,16 +541,18 @@ export const HarnessPopover = memo(function HarnessPopover({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Harness Settings"
-            onPress={() => {
-              onOpenSettings();
-              close();
-            }}
+            hitSlop={8}
+            onPress={() => runAfterClose(onOpenSettings)}
             style={({ pressed }) => [
               styles.iconButton,
               pressed && { opacity: 0.6, backgroundColor: theme.colors.surface2 },
             ]}
           >
-            <Icon name="Settings" size={12} color={theme.colors.foregroundMuted} />
+            <Icon
+              name="Settings"
+              size={layout.compact ? 15 : 12}
+              color={theme.colors.foregroundMuted}
+            />
           </Pressable>
         ) : null}
       </View>
@@ -554,7 +607,9 @@ export const HarnessPopover = memo(function HarnessPopover({
           <Text style={styles.telemetryText}>
             Turns: {meta?.turnCount ?? 0} · Plan Turns: {meta?.planTurnCount ?? 0}
           </Text>
-          <Text style={styles.telemetryText}>Mode: {agent?.currentModeId ?? "default"}</Text>
+          <Text style={styles.telemetryText} numberOfLines={1}>
+            Mode: {agent?.currentModeId ?? "default"}
+          </Text>
         </View>
       </View>
 
@@ -611,49 +666,54 @@ export const HarnessPopover = memo(function HarnessPopover({
         </View>
       ) : null}
 
-      <ScrollView style={styles.specialistScroll}>
-        <View style={styles.specialistGrid}>
-          {handoffSpecialists.map((spec) => {
-            const isHighlight = isDesignPhase && (spec.role === "ui" || spec.role === "backend");
+      <View style={styles.specialistGrid}>
+        {specialistRows.map(([left, right]) => (
+          <View key={`${left.role}-${right ? right.role : "empty"}`} style={styles.specialistRow}>
+            {[left, right].map((spec, colIdx) => {
+              if (!spec) {
+                return <View key={`spacer-${colIdx}`} style={styles.specialistSpacer} />;
+              }
+              const isHighlight = isDesignPhase && (spec.role === "ui" || spec.role === "backend");
 
-            return (
-              <Pressable
-                key={spec.role}
-                disabled={isHandoffRunning}
-                accessibilityRole="button"
-                accessibilityLabel={spec.name}
-                onPress={() => handleHandoff(spec.role)}
-                style={({ pressed }) => [
-                  styles.specialistCard,
-                  isHighlight && styles.specialistCardDesignHint,
-                  pressed && { opacity: 0.7, transform: [{ scale: 0.98 }] },
-                ]}
-              >
-                <View style={styles.specialistHeader}>
-                  <Icon
-                    name={spec.icon}
-                    size={12}
-                    color={isHighlight ? theme.colors.accent : theme.colors.foreground}
-                  />
-                  <View style={styles.specialistNameRow}>
-                    <Text style={styles.specialistName} numberOfLines={1}>
-                      {spec.name}
-                    </Text>
-                    {spec.readonly ? (
-                      <View style={styles.readonlyTag}>
-                        <Text style={styles.readonlyTagText}>RO</Text>
-                      </View>
-                    ) : null}
+              return (
+                <Pressable
+                  key={spec.role}
+                  disabled={isHandoffRunning}
+                  accessibilityRole="button"
+                  accessibilityLabel={spec.name}
+                  onPress={() => handleHandoff(spec.role)}
+                  style={({ pressed }) => [
+                    styles.specialistCard,
+                    isHighlight && styles.specialistCardDesignHint,
+                    pressed && { opacity: 0.7, transform: [{ scale: 0.98 }] },
+                  ]}
+                >
+                  <View style={styles.specialistHeader}>
+                    <Icon
+                      name={spec.icon}
+                      size={12}
+                      color={isHighlight ? theme.colors.accent : theme.colors.foreground}
+                    />
+                    <View style={styles.specialistNameRow}>
+                      <Text style={styles.specialistName} numberOfLines={1}>
+                        {spec.name}
+                      </Text>
+                      {spec.readonly ? (
+                        <View style={styles.readonlyTag}>
+                          <Text style={styles.readonlyTagText}>RO</Text>
+                        </View>
+                      ) : null}
+                    </View>
                   </View>
-                </View>
-                <Text style={styles.specialistDesc} numberOfLines={1}>
-                  {spec.desc}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      </ScrollView>
+                  <Text style={styles.specialistDesc} numberOfLines={1}>
+                    {spec.desc}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        ))}
+      </View>
 
       {/* Open Workspace Team & Settings Footer */}
       {[
@@ -684,16 +744,7 @@ export const HarnessPopover = memo(function HarnessPopover({
             key={entry.key}
             accessibilityRole="button"
             accessibilityLabel={entry.accessibilityLabel}
-            onPress={() => {
-              try {
-                entry.onPress();
-                close();
-              } catch (err) {
-                toast.error(
-                  `Unable to open view: ${err instanceof Error ? err.message : String(err)}`,
-                );
-              }
-            }}
+            onPress={() => runAfterClose(entry.onPress)}
             style={({ pressed }) => [
               styles.settingsLink,
               pressed && { opacity: 0.7, backgroundColor: theme.colors.surface2 },
