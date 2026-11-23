@@ -3,7 +3,13 @@
   "options": {
     "typeAware": false
   },
-  "ignorePatterns": [".dev/**", "plugin-examples/**", "plugin-custom/**", "plugins/**"],
+  "ignorePatterns": [
+    ".dev/**",
+    "packages/react-native-enriched-markdown/**",
+    "plugin-examples/**",
+    "plugin-custom/**",
+    "plugins/**"
+  ],
   "plugins": ["react", "react-perf", "unicorn", "typescript", "oxc", "import", "promise"],
   "jsPlugins": ["./scripts/oxlint/paseo-plugin.mjs"],
   "categories": {
