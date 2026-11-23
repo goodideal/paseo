@@ -3,8 +3,9 @@ import {
   findSpecialist,
   isNativePlanModeSupported,
   normalizeProviderName,
+  resolveEffectiveHarnessConfig,
   resolveResumeExecutionMode,
-  resolveTargetModelForTier,
+  resolveTierTarget,
 } from "../shared/config-resolver.js";
 import {
   formatSpecialistRolePrefix,
@@ -25,15 +26,16 @@ import {
   HARNESS_BYPASSED_META_KEY,
   extractSnapshotModel,
   parseHarnessMetadata,
-  tierToPhase,
 } from "../shared/lifecycle-state.js";
+import { BUILTIN_PROVIDER_THINKING_MAPPINGS } from "../shared/presets.js";
 import type {
   EffectiveHarnessConfig,
   HarnessAgentMetadata,
+  HarnessPhase,
   HarnessSpecialistConfig,
-  HarnessTransitionKind,
   MatrixTier,
 } from "../shared/types.js";
+import { applyAgentModeOption, applyAgentThinkingOption } from "./agent-controls.js";
 import { spawnHarnessSpecialist } from "./handoff-tool.js";
 import {
   exportSpecialistsToDisk,
@@ -142,7 +144,7 @@ export function registerHarnessRpcHandlers(
   // 1. harnessSwitchTierRpc
   server.handle(harnessSwitchTierRpc, async (input, context: PluginHandlerContext) => {
     deps.onPaseoAvailable?.(context.paseo);
-    const { agentId, targetTier, currentModeId, reason } = input;
+    const { agentId, targetTier, targetPhase, currentModeId, reason } = input;
     const handle = context.paseo.agents.ref(agentId);
 
     let meta = await deps.readLatestMetadata(agentId);
@@ -172,30 +174,49 @@ export function registerHarnessRpcHandlers(
     const provider = agentSnapshot?.provider ?? "claude";
     const normalizedProvider = normalizeProviderName(provider);
 
-    let targetModel = "";
-    if (effectiveConfig) {
-      targetModel = resolveTargetModelForTier(effectiveConfig, normalizedProvider, targetTier);
-    } else {
-      const mapping = DEFAULT_PROVIDER_MAPPINGS[normalizedProvider];
-      targetModel = mapping?.[targetTier] ?? targetTier;
-    }
+    const resolvedTarget = resolveTierTarget(
+      effectiveConfig ?? {
+        providerMappings: DEFAULT_PROVIDER_MAPPINGS,
+        providerThinkingMappings: BUILTIN_PROVIDER_THINKING_MAPPINGS,
+      },
+      normalizedProvider,
+      targetTier,
+    );
+    const canonicalTier = resolvedTarget.canonicalTier;
+    const targetModel = resolvedTarget.model;
+    const targetThinking = resolvedTarget.thinkingOptionId;
 
     const previousTier = meta?.currentTier ?? null;
     const previousModel: string | null = meta?.currentModel ?? snapshotModel;
-    const nextPhase = tierToPhase(targetTier, meta?.role, effectiveConfig);
+    const previousThinking: string | null = meta?.currentThinking ?? null;
     const specialist =
       meta?.role && effectiveConfig ? findSpecialist(effectiveConfig, meta.role) : undefined;
-    const isReadonlyPlanLocked = Boolean(
-      specialist?.readonly &&
-      (effectiveConfig
-        ? isNativePlanModeSupported(effectiveConfig, normalizedProvider)
-        : supportsNativePlanMode(normalizedProvider)),
-    );
+    const planModeSupported = effectiveConfig
+      ? isNativePlanModeSupported(effectiveConfig, normalizedProvider)
+      : supportsNativePlanMode(normalizedProvider);
+    const isReadonlyPlanLocked = Boolean(specialist?.readonly && planModeSupported);
+
+    // Manual tier switches default to writable "exec" phase unless the role is readonly
+    // or the caller explicitly passed targetPhase ("design" | "review").
+    let nextPhase: HarnessPhase = "exec";
+    if (specialist?.readonly) {
+      nextPhase =
+        meta?.role === "architect" || meta?.role?.includes("architect") ? "design" : "review";
+    } else if (targetPhase) {
+      nextPhase = targetPhase;
+    }
 
     let recommendedModeId: string | null = null;
     if (isReadonlyPlanLocked) {
       recommendedModeId = "plan";
-    } else if ((previousTier === "plan" || currentModeId === "plan") && targetTier !== "plan") {
+    } else if ((nextPhase === "design" || nextPhase === "review") && planModeSupported) {
+      recommendedModeId = "plan";
+    } else if (
+      currentModeId === "plan" ||
+      meta?.phase === "design" ||
+      meta?.phase === "review" ||
+      previousTier === "plan"
+    ) {
       recommendedModeId = effectiveConfig
         ? resolveResumeExecutionMode(
             effectiveConfig,
@@ -203,33 +224,21 @@ export function registerHarnessRpcHandlers(
             meta?.resumeModeId ?? currentModeId,
           )
         : (meta?.resumeModeId ?? currentModeId ?? null);
-    } else if (targetTier === "plan") {
-      recommendedModeId = "plan";
     }
 
     await handle.setModel(targetModel);
-
-    if (recommendedModeId) {
-      try {
-        const daemonClient = (
-          context.paseo as unknown as {
-            daemonClient?: { setAgentMode?: (id: string, mode: string) => Promise<unknown> };
-          }
-        ).daemonClient;
-        if (daemonClient?.setAgentMode) {
-          await daemonClient.setAgentMode(agentId, recommendedModeId);
-        }
-      } catch {
-        // Ignore setAgentMode fallback error
-      }
-    }
+    await applyAgentThinkingOption(context.paseo, agentId, targetThinking);
+    await applyAgentModeOption(context.paseo, agentId, recommendedModeId);
 
     const nowTurn = meta ? meta.turnCount : 0;
+    const isManualStepDown =
+      (meta?.phase === "design" || previousTier === "plan") &&
+      (canonicalTier === "fast" || canonicalTier === "standard");
     const nextMeta: HarnessAgentMetadata = {
       version: 1,
       role: meta?.role ?? "general",
-      initialTier: meta?.initialTier ?? targetTier,
-      currentTier: targetTier,
+      initialTier: meta?.initialTier ?? canonicalTier,
+      currentTier: canonicalTier,
       currentModel: targetModel,
       phase: nextPhase,
       roleMatchedRule: meta?.roleMatchedRule ?? "rpc",
@@ -240,21 +249,17 @@ export function registerHarnessRpcHandlers(
       planTurnCount: meta?.planTurnCount ?? 0,
       writeToolDetectedInPlan: meta?.writeToolDetectedInPlan ?? false,
       handoffSuggestedAtTurn: meta?.handoffSuggestedAtTurn ?? null,
-      autoDowngradedAtTurn:
-        targetTier === "flash" && previousTier === "plan"
-          ? nowTurn
-          : (meta?.autoDowngradedAtTurn ?? null),
-      downgradeReason:
-        targetTier === "flash" && previousTier === "plan"
-          ? "manual_switch"
-          : (meta?.downgradeReason ?? null),
+      autoDowngradedAtTurn: isManualStepDown ? nowTurn : (meta?.autoDowngradedAtTurn ?? null),
+      downgradeReason: isManualStepDown ? "manual_switch" : (meta?.downgradeReason ?? null),
       lastProcessedTurnId: meta?.lastProcessedTurnId ?? null,
       resumeModeId:
-        targetTier === "plan" && currentModeId && currentModeId !== "plan"
+        recommendedModeId === "plan" && currentModeId && currentModeId !== "plan"
           ? currentModeId
           : (meta?.resumeModeId ?? null),
       lastBilledTier: meta?.lastBilledTier ?? previousTier,
       lastBilledModel: meta?.lastBilledModel ?? previousModel,
+      currentThinking: targetThinking,
+      lastBilledThinking: meta?.lastBilledThinking ?? previousThinking,
     };
 
     await deps.setLatestMetadata(agentId, nextMeta, handle);
@@ -267,12 +272,12 @@ export function registerHarnessRpcHandlers(
         transitionKind: "manual_switch",
         role: nextMeta.role,
         fromTier: previousTier,
-        toTier: targetTier,
+        toTier: canonicalTier,
         fromModel: previousModel,
         toModel: targetModel,
         phase: nextPhase,
         reason:
-          reason ?? `Manual tier switch via RPC: ${previousTier ?? "unknown"} -> ${targetTier}`,
+          reason ?? `Manual tier switch via RPC: ${previousTier ?? "unknown"} -> ${canonicalTier}`,
         turnNumber: nowTurn,
       });
     }
@@ -282,12 +287,12 @@ export function registerHarnessRpcHandlers(
         transitionKind: "manual_switch",
         role: nextMeta.role,
         fromTier: previousTier,
-        toTier: targetTier,
+        toTier: canonicalTier,
         fromModel: previousModel,
         toModel: targetModel,
         phase: nextPhase,
         reason:
-          reason ?? `Manual tier switch via RPC: ${previousTier ?? "unknown"} -> ${targetTier}`,
+          reason ?? `Manual tier switch via RPC: ${previousTier ?? "unknown"} -> ${canonicalTier}`,
         turnNumber: nowTurn,
       });
     }
@@ -295,11 +300,13 @@ export function registerHarnessRpcHandlers(
     return {
       agentId,
       previousTier,
-      currentTier: targetTier,
+      currentTier: canonicalTier,
       previousModel,
       currentModel: targetModel,
+      currentThinking: targetThinking,
       phase: nextPhase,
       recommendedModeId,
+      recommendedThinkingOptionId: targetThinking,
       metadata: nextMeta,
     };
   });

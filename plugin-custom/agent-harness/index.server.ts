@@ -8,21 +8,24 @@ import {
   findSpecialist,
   isNativePlanModeSupported,
   normalizeProviderName,
+  normalizeTierAlias,
   resolveEffectiveHarnessConfig,
   resolveResumeExecutionMode,
   resolveSessionMcpServers,
   resolveSpecialistEnvironment,
   isFederatedLocalProvider,
-  resolveTargetModelForTier,
+  resolveTierTarget,
 } from "./shared/config-resolver.js";
 import {
   classifyIntentWithLlm,
+  coerceAutoRoutingTier,
   detectDomainRole,
   detectDomainRoleHybrid,
   isModelBypassed,
   resolveHarnessEnv,
   resolveMatrixModel,
 } from "./shared/intent-detector.js";
+import { resolveSpecialistTargetTier } from "./shared/contracts.js";
 import {
   createInitialHarnessMetadata,
   extractSnapshotModel,
@@ -59,6 +62,7 @@ import {
   type MatrixTier,
   type RouterDecision,
 } from "./shared/types.js";
+import { applyAgentModeOption, applyAgentThinkingOption } from "./server/agent-controls.js";
 import {
   invalidateWorkspaceAgentTeamCache,
   loadWorkspaceAgentTeam,
@@ -155,6 +159,7 @@ export default function contribute(server: PluginServerContext) {
             s.icon,
             s.color,
             effective.providerMappings[provider],
+            effective.providerThinkingMappings?.[provider],
           ];
         }),
     );
@@ -527,10 +532,61 @@ export default function contribute(server: PluginServerContext) {
     return false;
   }
 
+  async function applyStandardStepDown(options: {
+    paseo: PaseoApi;
+    agentId: string;
+    provider: string;
+    meta: HarnessAgentMetadata;
+    effectiveConfig: EffectiveHarnessConfig;
+    handle: ReturnType<PaseoApi["agents"]["ref"]>;
+    transitionKind: "plan_approved" | "auto_downgrade";
+    reasonText: string;
+    turnNumber: number;
+  }): Promise<{ targetModel: string; targetThinking: string | null }> {
+    const normalizedProvider = normalizeProviderName(options.provider);
+    const resolvedStandard = resolveTierTarget(
+      options.effectiveConfig,
+      normalizedProvider,
+      "standard",
+    );
+    await options.handle.setModel(resolvedStandard.model);
+    await applyAgentThinkingOption(
+      options.paseo,
+      options.agentId,
+      resolvedStandard.thinkingOptionId,
+    );
+    const recommendedModeId = resolveResumeExecutionMode(
+      options.effectiveConfig,
+      options.provider,
+      options.meta.resumeModeId,
+    );
+    await applyAgentModeOption(options.paseo, options.agentId, recommendedModeId);
+
+    if (options.effectiveConfig.emitTimelineTransitions) {
+      await emitHarnessTimelineTransition(options.handle, {
+        transitionKind: options.transitionKind,
+        role: options.meta.role,
+        fromTier: options.meta.currentTier,
+        toTier: "standard",
+        fromModel: options.meta.currentModel,
+        toModel: resolvedStandard.model,
+        phase: "exec",
+        reason: options.reasonText,
+        turnNumber: options.turnNumber,
+      });
+    }
+
+    return {
+      targetModel: resolvedStandard.model,
+      targetThinking: resolvedStandard.thinkingOptionId,
+    };
+  }
+
   async function routeAgentConfig<
     T extends {
       provider: string;
       model?: string | null;
+      thinkingOptionId?: string | null;
       title?: string | null;
       systemPrompt?: string;
       modeId?: string;
@@ -619,17 +675,22 @@ export default function contribute(server: PluginServerContext) {
             };
           }
         }
-        if (llmResult.tier !== "flash") {
-          const targetModel = resolveTargetModelForTier(
+        const llmTier = coerceAutoRoutingTier(llmResult.tier);
+        if (llmTier !== "standard") {
+          const resolvedLlm = resolveTierTarget(effectiveConfig, normalizedProvider, llmTier);
+          const llmPhase = tierToPhase(
+            llmTier,
+            roleDecision.role,
             effectiveConfig,
-            normalizedProvider,
-            llmResult.tier,
+            llmTier === "deep" ? "design" : "exec",
           );
           decision = {
-            tier: llmResult.tier,
-            targetModel,
-            reason: `Routed to ${llmResult.tier} model '${targetModel}' via L2 LLM fallback`,
-            matchedRule: `llm_fallback:${llmResult.tier}`,
+            tier: resolvedLlm.canonicalTier,
+            targetModel: resolvedLlm.model,
+            targetThinking: resolvedLlm.thinkingOptionId,
+            phase: llmPhase,
+            reason: `Routed to ${resolvedLlm.canonicalTier} model '${resolvedLlm.model}' via L2 LLM fallback`,
+            matchedRule: `llm_fallback:${resolvedLlm.canonicalTier}`,
             previousModel: config.model ?? undefined,
           };
         }
@@ -642,29 +703,36 @@ export default function contribute(server: PluginServerContext) {
       !isBypassed &&
       !decision.matchedRule.startsWith("preserve_user_choice")
     ) {
-      const preferredTier =
-        specialist?.preferredTier ??
-        (roleDecision.role === "pm" || roleDecision.role === "architect"
-          ? "plan"
-          : roleDecision.role === "review"
-            ? "review"
-            : "flash");
-      const targetModel =
-        specialist?.modelOverride?.trim() ||
-        resolveTargetModelForTier(effectiveConfig, normalizedProvider, preferredTier);
+      const preferredTier = normalizeTierAlias(
+        specialist?.preferredTier ?? resolveSpecialistTargetTier(roleDecision.role),
+      );
+      const tierResolved = resolveTierTarget(effectiveConfig, normalizedProvider, preferredTier);
+      const targetModel = specialist?.modelOverride?.trim() || tierResolved.model;
+      const targetThinking = specialist?.thinkingOptionId?.trim() || tierResolved.thinkingOptionId;
 
-      const shouldKeepTextTier =
-        decision.matchedRule.startsWith("review:") && roleDecision.role === "qa";
+      const shouldKeepTextTier = decision.phase === "review" && roleDecision.role === "qa";
 
       if (preferredTier && targetModel && !shouldKeepTextTier) {
         decision = {
           tier: preferredTier,
           targetModel,
+          targetThinking,
+          phase: tierToPhase(preferredTier, roleDecision.role, effectiveConfig),
           reason: `Routed to ${preferredTier} model '${targetModel}' by role '${roleDecision.role}'`,
           matchedRule: `role_tier:${roleDecision.role}`,
           previousModel: config.model ?? undefined,
         };
       }
+    }
+
+    const resolvedPhase = tierToPhase(
+      decision.tier,
+      roleDecision.role,
+      effectiveConfig,
+      decision.matchedRule.startsWith("role_tier:") ? undefined : decision.phase,
+    );
+    if (decision.phase !== resolvedPhase) {
+      decision = { ...decision, phase: resolvedPhase };
     }
 
     const hasTitle = Boolean(config.title?.trim());
@@ -677,17 +745,27 @@ export default function contribute(server: PluginServerContext) {
         ? decision.targetModel
         : config.model;
 
-    // Enforce native plan mode if applicable
-    let nextModeId = config.modeId;
     const userModelLocked = decision.matchedRule.startsWith("preserve_user_choice");
     const roleLockedByLabel =
       roleDecision.matchedRule.startsWith("label:") || Boolean(mergedLabels?.role);
     const hasParentAgent = Boolean(parentAgentCheck);
 
+    const existingThinking =
+      typeof config.thinkingOptionId === "string" && config.thinkingOptionId.trim()
+        ? config.thinkingOptionId.trim()
+        : undefined;
+    const nextThinkingOptionId =
+      !existingThinking && (!userModelLocked || decision.tier === "max") && decision.targetThinking
+        ? decision.targetThinking
+        : config.thinkingOptionId;
+
+    // Enforce native plan mode if applicable (driven orthogonally by phase === "design" or readonly role)
+    let nextModeId = config.modeId;
     const mustEnforcePlanMode = shouldEnforceNativePlanMode({
       phaseLifecycleEnabled: effectiveConfig.phaseLifecycleEnabled,
       enforceNativePlanMode: effectiveConfig.enforceNativePlanMode,
       tier: decision.tier,
+      phase: resolvedPhase,
       role: roleDecision.role,
       userModelLocked,
       roleLockedByLabel,
@@ -721,6 +799,8 @@ export default function contribute(server: PluginServerContext) {
         specialist,
         tier: decision.tier,
         targetModel: nextModel ?? "default",
+        phase: resolvedPhase,
+        thinkingOptionId: nextThinkingOptionId ?? decision.targetThinking ?? null,
         roleMatchedRule: roleDecision.matchedRule,
         tierMatchedRule: decision.matchedRule,
         homeDir: os.homedir(),
@@ -743,12 +823,16 @@ export default function contribute(server: PluginServerContext) {
 
     const nextConfig =
       nextModel !== config.model ||
+      nextThinkingOptionId !== config.thinkingOptionId ||
       nextTitle !== config.title ||
       nextModeId !== config.modeId ||
       nextSystemPrompt !== config.systemPrompt
         ? {
             ...config,
             model: nextModel,
+            ...(nextThinkingOptionId !== undefined
+              ? { thinkingOptionId: nextThinkingOptionId }
+              : {}),
             title: nextTitle,
             ...(nextModeId !== undefined ? { modeId: nextModeId } : {}),
             ...(nextSystemPrompt !== undefined ? { systemPrompt: nextSystemPrompt } : {}),
@@ -758,7 +842,7 @@ export default function contribute(server: PluginServerContext) {
     if (cachedSettings.debugLogs && nextModel !== config.model) {
       console.log(
         `[AgentHarness] (${hookStage}) Routed agent (${config.provider}, len=${text.length}): ` +
-          `'${config.model ?? "(default)"}' -> '${nextModel}' [tier: ${decision.tier}, rule: ${decision.matchedRule}]`,
+          `'${config.model ?? "(default)"}' -> '${nextModel}' [tier: ${decision.tier}, phase: ${resolvedPhase}, rule: ${decision.matchedRule}]`,
       );
     }
 
@@ -958,7 +1042,9 @@ export default function contribute(server: PluginServerContext) {
       const initialMetadata = createInitialHarnessMetadata({
         role: roleDecision.role,
         tier: routerDecision.tier,
+        phase: routerDecision.phase,
         model: nextConfig.model ?? config.model ?? null,
+        thinkingOptionId: nextConfig.thinkingOptionId ?? routerDecision.targetThinking ?? null,
         roleMatchedRule: roleDecision.matchedRule,
         tierMatchedRule: routerDecision.matchedRule,
         userModelLocked,
@@ -1021,7 +1107,7 @@ export default function contribute(server: PluginServerContext) {
       }
       latestMetadataByAgent.set(agent.id, meta);
 
-      if (meta.currentTier !== "flash" || meta.currentModel) {
+      if (meta.currentTier !== "standard" || meta.currentModel) {
         if (context?.paseo?.agents) {
           try {
             const handle = context.paseo.agents.ref(agent.id);
@@ -1151,36 +1237,39 @@ export default function contribute(server: PluginServerContext) {
       effectiveConfig.llmFallbackEndpoint?.trim() ||
       (typeof process !== "undefined" ? process.env?.HARNESS_LLM_ENDPOINT?.trim() : "");
 
-    const roleDecision = existingMeta
-      ? {
-          role: existingMeta.role,
-          matchedRule: existingMeta.roleMatchedRule,
-          profilePath: "",
-          lazyToolConfigPath: "",
-          specialistConfig: findSpecialist(effectiveConfig, existingMeta.role),
-        }
-      : consumedContext.resolvedRole && effectiveConfig.llmFallbackApplyRole
-        ? {
-            role: consumedContext.resolvedRole,
-            matchedRule:
-              consumedContext.resolvedRoleRule ?? `llm_fallback:${consumedContext.resolvedRole}`,
-            profilePath: "",
-            lazyToolConfigPath: "",
-            specialistConfig: findSpecialist(effectiveConfig, consumedContext.resolvedRole),
-          }
-        : await detectDomainRoleHybrid({
-            text: textContext,
-            labels: labelsContext,
-            homeDir: os.homedir(),
-            config: effectiveConfig,
-            llmFallback: {
-              enabled: effectiveConfig.llmFallbackEnabled && Boolean(llmEndpoint),
-              endpoint: effectiveConfig.llmFallbackEndpoint,
-              apiKey: effectiveConfig.llmFallbackApiKey,
-              model: effectiveConfig.llmFallbackModel,
-              timeoutMs: effectiveConfig.llmFallbackTimeoutMs,
-            },
-          });
+    let roleDecision;
+    if (existingMeta) {
+      roleDecision = {
+        role: existingMeta.role,
+        matchedRule: existingMeta.roleMatchedRule,
+        profilePath: "",
+        lazyToolConfigPath: "",
+        specialistConfig: findSpecialist(effectiveConfig, existingMeta.role),
+      };
+    } else if (consumedContext.resolvedRole && effectiveConfig.llmFallbackApplyRole) {
+      roleDecision = {
+        role: consumedContext.resolvedRole,
+        matchedRule:
+          consumedContext.resolvedRoleRule ?? `llm_fallback:${consumedContext.resolvedRole}`,
+        profilePath: "",
+        lazyToolConfigPath: "",
+        specialistConfig: findSpecialist(effectiveConfig, consumedContext.resolvedRole),
+      };
+    } else {
+      roleDecision = await detectDomainRoleHybrid({
+        text: textContext,
+        labels: labelsContext,
+        homeDir: os.homedir(),
+        config: effectiveConfig,
+        llmFallback: {
+          enabled: effectiveConfig.llmFallbackEnabled && Boolean(llmEndpoint),
+          endpoint: effectiveConfig.llmFallbackEndpoint,
+          apiKey: effectiveConfig.llmFallbackApiKey,
+          model: effectiveConfig.llmFallbackModel,
+          timeoutMs: effectiveConfig.llmFallbackTimeoutMs,
+        },
+      });
+    }
 
     const specialist = resolveSpecialistWithFallback(
       effectiveConfig,
@@ -1272,12 +1361,12 @@ export default function contribute(server: PluginServerContext) {
         const meta = readLatestMetadata(agent);
         const isPlanOrDesign = meta?.phase === "design" || meta?.currentTier === "plan";
         if (isPlanOrDesign) {
-          const rawCommand =
-            typeof request.input?.command === "string"
-              ? request.input.command
-              : typeof request.input?.cmd === "string"
-                ? request.input.cmd
-                : null;
+          let rawCommand: string | null = null;
+          if (typeof request.input?.command === "string") {
+            rawCommand = request.input.command;
+          } else if (typeof request.input?.cmd === "string") {
+            rawCommand = request.input.cmd;
+          }
 
           if (rawCommand && isReadOnlyShellCommand(rawCommand)) {
             try {
@@ -1340,46 +1429,42 @@ export default function contribute(server: PluginServerContext) {
         if (
           meta &&
           effectiveConfig &&
-          meta.currentTier === "plan" &&
+          (meta.phase === "design" || meta.currentTier === "plan") &&
           !meta.userModelLocked &&
           !specialist?.readonly &&
           context.paseo?.agents
         ) {
-          const flashModel = resolveTargetModelForTier(
-            effectiveConfig,
-            normalizeProviderName(agent.provider),
-            "flash",
-          );
           const handle = context.paseo.agents.ref(agent.id);
 
           try {
-            await handle.setModel(flashModel);
+            const { targetModel: standardModel, targetThinking: standardThinking } =
+              await applyStandardStepDown({
+                paseo: context.paseo,
+                agentId: agent.id,
+                provider: agent.provider,
+                meta,
+                effectiveConfig,
+                handle,
+                transitionKind: "plan_approved",
+                reasonText:
+                  "Plan mode approved by user (ExitPlanMode) -> stepped down to standard tier",
+                turnNumber: meta.turnCount,
+              });
+
             const nextMeta: HarnessAgentMetadata = {
               ...meta,
-              lastBilledTier: meta.lastBilledTier ?? "plan",
+              lastBilledTier: meta.lastBilledTier ?? meta.currentTier,
               lastBilledModel: meta.lastBilledModel ?? meta.currentModel,
-              currentTier: "flash",
-              currentModel: flashModel,
+              lastBilledThinking: meta.lastBilledThinking ?? meta.currentThinking ?? null,
+              currentTier: "standard",
+              currentModel: standardModel,
+              currentThinking: standardThinking,
               phase: "exec",
               autoDowngradedAtTurn: Math.max(1, meta.turnCount),
               downgradeReason: "plan_approved",
             };
 
             await updateAgentMetadata(agent.id, nextMeta, handle);
-
-            if (effectiveConfig.emitTimelineTransitions) {
-              await emitHarnessTimelineTransition(handle, {
-                transitionKind: "plan_approved",
-                role: meta.role,
-                fromTier: "plan",
-                toTier: "flash",
-                fromModel: meta.currentModel,
-                toModel: flashModel,
-                phase: "exec",
-                reason: "Plan mode approved by user (ExitPlanMode) -> switched to flash tier",
-                turnNumber: meta.turnCount,
-              });
-            }
           } catch (error) {
             if (cachedSettings.debugLogs) {
               console.error(
@@ -1419,10 +1504,9 @@ export default function contribute(server: PluginServerContext) {
       (specialist?.lockTierOnLabel ?? (meta?.role === "pm" || meta?.role === "architect")),
     );
 
-    // Pre-turn proactive downgrade on short affirmative confirmation
+    // Pre-turn proactive step-down on short affirmative confirmation while in design phase
     if (
       meta &&
-      meta.currentTier === "plan" &&
       meta.phase === "design" &&
       meta.planTurnCount >= 1 &&
       effectiveConfig.autoDowngradePlanOnExec &&
@@ -1450,59 +1534,33 @@ export default function contribute(server: PluginServerContext) {
             ));
 
         if (hasAffirmative) {
-          const flashModel = resolveTargetModelForTier(
-            effectiveConfig,
-            normalizedProvider,
-            "flash",
-          );
-          await handle.setModel(flashModel);
+          const { targetModel: standardModel, targetThinking: standardThinking } =
+            await applyStandardStepDown({
+              paseo: context.paseo,
+              agentId: agent.id,
+              provider: agent.provider,
+              meta,
+              effectiveConfig,
+              handle,
+              transitionKind: "auto_downgrade",
+              reasonText: `Pre-turn step-down on affirmative execution confirmation: '${latestUserText}'`,
+              turnNumber: meta.turnCount,
+            });
 
           const nextMeta: HarnessAgentMetadata = {
             ...meta,
             lastBilledTier: meta.currentTier,
             lastBilledModel: meta.currentModel,
-            currentTier: "flash",
-            currentModel: flashModel,
+            lastBilledThinking: meta.currentThinking ?? null,
+            currentTier: "standard",
+            currentModel: standardModel,
+            currentThinking: standardThinking,
             phase: "exec",
             autoDowngradedAtTurn: meta.turnCount + 1,
             downgradeReason: "explicit_exec_intent",
           };
 
-          const recommendedModeId = resolveResumeExecutionMode(
-            effectiveConfig,
-            agent.provider,
-            meta.resumeModeId,
-          );
-          if (recommendedModeId) {
-            try {
-              const daemonClient = (
-                context.paseo as unknown as {
-                  daemonClient?: { setAgentMode?: (id: string, mode: string) => Promise<unknown> };
-                }
-              ).daemonClient;
-              if (daemonClient?.setAgentMode) {
-                await daemonClient.setAgentMode(agent.id, recommendedModeId);
-              }
-            } catch {
-              // Ignore setAgentMode fallback error
-            }
-          }
-
           await updateAgentMetadata(agent.id, nextMeta, handle);
-
-          if (effectiveConfig.emitTimelineTransitions) {
-            await emitHarnessTimelineTransition(handle, {
-              transitionKind: "auto_downgrade",
-              role: meta.role,
-              fromTier: "plan",
-              toTier: "flash",
-              fromModel: meta.currentModel,
-              toModel: flashModel,
-              phase: "exec",
-              reason: `Pre-turn auto-downgrade on affirmative execution confirmation: '${latestUserText}'`,
-              turnNumber: meta.turnCount,
-            });
-          }
           return;
         }
       } catch {
@@ -1510,7 +1568,7 @@ export default function contribute(server: PluginServerContext) {
       }
     }
 
-    // Dynamic first-turn model upgrade when agent was created with empty prompt
+    // Dynamic first-turn model routing when agent was created with empty prompt
     if (!switchedFirstTurnAgents.has(agent.id)) {
       switchedFirstTurnAgents.add(agent.id);
       if (!meta && normalizedProvider === "antigravity") {
@@ -1532,13 +1590,14 @@ export default function contribute(server: PluginServerContext) {
         config: effectiveConfig,
       });
 
-      if (decision.tier !== "flash" && decision.targetModel) {
+      if (decision.tier !== "standard" && decision.targetModel) {
         try {
           const handle = context.paseo.agents.ref(agent.id);
           await handle.setModel(decision.targetModel);
+          await applyAgentThinkingOption(context.paseo, agent.id, decision.targetThinking);
           if (effectiveConfig.debugLogs) {
             console.log(
-              `[AgentHarness] (agent.turn.before) Upgraded first-turn model for ${agent.id} (${agent.provider}) -> '${decision.targetModel}' [tier: ${decision.tier}, rule: ${decision.matchedRule}]`,
+              `[AgentHarness] (agent.turn.before) Routed first-turn model for ${agent.id} (${agent.provider}) -> '${decision.targetModel}' [tier: ${decision.tier}, rule: ${decision.matchedRule}]`,
             );
           }
           if (effectiveConfig.phaseLifecycleEnabled && meta) {
@@ -1546,7 +1605,8 @@ export default function contribute(server: PluginServerContext) {
               ...meta,
               currentTier: decision.tier,
               currentModel: decision.targetModel,
-              phase: tierToPhase(decision.tier, meta.role, effectiveConfig),
+              currentThinking: decision.targetThinking ?? null,
+              phase: tierToPhase(decision.tier, meta.role, effectiveConfig, decision.phase),
               tierMatchedRule: decision.matchedRule,
             };
             await updateAgentMetadata(agent.id, updatedMeta, handle);
@@ -1567,7 +1627,6 @@ export default function contribute(server: PluginServerContext) {
     if (!agent) return;
 
     const effectiveConfig = getEffectiveConfig(agent.cwd);
-    const normalizedProvider = normalizeProviderName(agent.provider);
 
     if (
       !effectiveConfig.enabled ||
@@ -1585,7 +1644,7 @@ export default function contribute(server: PluginServerContext) {
     }
 
     const handle = context.paseo.agents.ref(agent.id);
-    const isPlanDesign = meta.currentTier === "plan" && meta.phase === "design";
+    const isPlanDesign = meta.phase === "design";
     const nextTurnCount = meta.turnCount + 1;
     const nextPlanTurnCount = isPlanDesign ? meta.planTurnCount + 1 : meta.planTurnCount;
 
@@ -1597,6 +1656,7 @@ export default function contribute(server: PluginServerContext) {
         lastProcessedTurnId: turnId,
         lastBilledTier: meta.currentTier,
         lastBilledModel: meta.currentModel,
+        lastBilledThinking: meta.currentThinking ?? null,
       };
       await updateAgentMetadata(agent.id, nextMeta, handle);
       return;
@@ -1650,63 +1710,42 @@ export default function contribute(server: PluginServerContext) {
 
     const billedTier = meta.currentTier;
     const billedModel = meta.currentModel;
+    const billedThinking = meta.currentThinking ?? null;
     let currentTier: MatrixTier = meta.currentTier;
     let currentModel: string | null = meta.currentModel;
+    let currentThinking: string | null = meta.currentThinking ?? null;
     let phase: HarnessPhase = meta.phase;
     let autoDowngradedAtTurn: number | null = meta.autoDowngradedAtTurn;
     let downgradeReason: HarnessDowngradeReason | null = meta.downgradeReason;
 
     if (shouldDowngrade) {
-      const flashModel = resolveTargetModelForTier(effectiveConfig, normalizedProvider, "flash");
       const reason: HarnessDowngradeReason = timelineInspection.detectedCodeWrite
         ? "write_tool_in_plan"
         : "explicit_exec_intent";
 
       try {
-        await handle.setModel(flashModel);
-        currentTier = "flash";
-        currentModel = flashModel;
+        const { targetModel: standardModel, targetThinking: standardThinking } =
+          await applyStandardStepDown({
+            paseo: context.paseo,
+            agentId: agent.id,
+            provider: agent.provider,
+            meta,
+            effectiveConfig,
+            handle,
+            transitionKind: "auto_downgrade",
+            reasonText: `Auto stepped down ${meta.currentTier} -> standard (reason: ${reason})`,
+            turnNumber: nextTurnCount,
+          });
+        currentTier = "standard";
+        currentModel = standardModel;
+        currentThinking = standardThinking;
         phase = "exec";
         autoDowngradedAtTurn = nextTurnCount;
         downgradeReason = reason;
 
-        const recommendedModeId = resolveResumeExecutionMode(
-          effectiveConfig,
-          agent.provider,
-          meta.resumeModeId,
-        );
-        if (recommendedModeId) {
-          try {
-            const daemonClient = (
-              context.paseo as unknown as {
-                daemonClient?: { setAgentMode?: (id: string, mode: string) => Promise<unknown> };
-              }
-            ).daemonClient;
-            if (daemonClient?.setAgentMode) {
-              await daemonClient.setAgentMode(agent.id, recommendedModeId);
-            }
-          } catch {
-            // Ignore setAgentMode fallback error
-          }
-        }
-
-        if (effectiveConfig.emitTimelineTransitions) {
-          await emitHarnessTimelineTransition(handle, {
-            transitionKind: "auto_downgrade",
-            role: meta.role,
-            fromTier: "plan",
-            toTier: "flash",
-            fromModel: meta.currentModel,
-            toModel: flashModel,
-            phase: "exec",
-            reason: `Auto-downgraded plan -> flash (reason: ${reason})`,
-            turnNumber: nextTurnCount,
-          });
-        }
-
         if (effectiveConfig.debugLogs) {
           console.log(
-            `[AgentHarness] (agent.turn.after) Auto-downgraded ${agent.id} from plan -> flash (${flashModel}) [reason: ${reason}]`,
+            `[AgentHarness] (agent.turn.after) Stepped down ${agent.id} from ${meta.currentTier} -> standard (${standardModel}) [reason: ${reason}]`,
           );
         }
       } catch (error) {
@@ -1727,12 +1766,14 @@ export default function contribute(server: PluginServerContext) {
       handoffSuggestedAtTurn,
       currentTier,
       currentModel,
+      currentThinking,
       phase,
       autoDowngradedAtTurn,
       downgradeReason,
       lastProcessedTurnId: turnId,
       lastBilledTier: billedTier,
       lastBilledModel: billedModel,
+      lastBilledThinking: billedThinking,
     };
 
     await updateAgentMetadata(agent.id, nextMeta, handle);

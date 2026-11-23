@@ -3,11 +3,13 @@ import {
   buildSystemPromptBanner,
   findSpecialist,
   isFederatedLocalProvider,
+  normalizeTierAlias,
   resolveEffectiveHarnessConfig,
   resolveResumeExecutionMode,
   resolveSessionMcpServers,
   resolveSpecialistEnvironment,
   resolveTargetModelForTier,
+  resolveTierTarget,
 } from "../shared/config-resolver.js";
 import {
   AgentHarnessSettingsSchema,
@@ -30,15 +32,21 @@ import {
 } from "../shared/team-editor-utils.js";
 
 describe("Agent Harness Config Resolver & Settings v2", () => {
-  it("DEFAULT_AGENT_HARNESS_SETTINGS has all 9 builtin specialists and 3 tiers", () => {
+  it("DEFAULT_AGENT_HARNESS_SETTINGS has all 9 builtin specialists and 4 tiers", () => {
     expect(DEFAULT_AGENT_HARNESS_SETTINGS.specialists.length).toBe(9);
-    expect(DEFAULT_AGENT_HARNESS_SETTINGS.tiers.length).toBe(3);
+    expect(DEFAULT_AGENT_HARNESS_SETTINGS.tiers.length).toBe(4);
+    expect(DEFAULT_AGENT_HARNESS_SETTINGS.tiers.map((t) => t.id)).toEqual([
+      "fast",
+      "standard",
+      "deep",
+      "max",
+    ]);
     expect(DEFAULT_AGENT_HARNESS_SETTINGS.enabled).toBe(true);
     expect(DEFAULT_AGENT_HARNESS_SETTINGS.profilesDir).toBe("~/.agents/profiles");
     expect(DEFAULT_AGENT_HARNESS_SETTINGS.autoSyncDiskProfiles).toBe(true);
   });
 
-  it("migrates v1 settings cleanly to v2", () => {
+  it("migrates v1 settings cleanly to latest schema", () => {
     const v1Values = {
       enabled: true,
       overrideIfDefaultOnly: false,
@@ -63,9 +71,9 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
     expect(migrated.llmFallbackEndpoint).toBe("https://api.myllm.com/v1");
     expect(migrated.llmFallbackApiKey).toBe("sk-secret-123");
     expect(migrated.planTurnSoftLimit).toBe(5);
-    // V2 defaults populated
+    // Schema defaults populated
     expect(migrated.specialists.length).toBe(9);
-    expect(migrated.tiers.length).toBe(3);
+    expect(migrated.tiers.length).toBe(4);
     expect(migrated.autoSyncDiskProfiles).toBe(true);
   });
 
@@ -113,9 +121,63 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
 
   it("resolveTargetModelForTier respects provider mappings and modelOverride", () => {
     const config = resolveEffectiveHarnessConfig(DEFAULT_AGENT_HARNESS_SETTINGS);
-    expect(resolveTargetModelForTier(config, "opencode", "plan")).toBe("custom/plan");
+    expect(resolveTargetModelForTier(config, "opencode", "deep")).toBe("custom/pro");
+    expect(resolveTargetModelForTier(config, "opencode", "plan")).toBe("custom/pro");
+    expect(resolveTargetModelForTier(config, "opencode", "max")).toBe("custom/plan");
+    expect(resolveTargetModelForTier(config, "claude", "standard")).toBe("flash");
     expect(resolveTargetModelForTier(config, "claude", "flash")).toBe("flash");
-    expect(resolveTargetModelForTier(config, "pi", "review")).toBe("headroom/review");
+    expect(resolveTargetModelForTier(config, "pi", "review")).toBe("headroom/pro");
+    expect(resolveTargetModelForTier(config, "pi", "fast")).toBe("headroom/lite");
+  });
+
+  it("normalizes legacy tier aliases and resolves target thinking with omitted-max fallback", () => {
+    expect(normalizeTierAlias("lite")).toBe("fast");
+    expect(normalizeTierAlias("flash")).toBe("standard");
+    expect(normalizeTierAlias("plan")).toBe("deep");
+    expect(normalizeTierAlias("review")).toBe("deep");
+    expect(normalizeTierAlias("max")).toBe("max");
+    expect(normalizeTierAlias("custom-tier")).toBe("custom-tier");
+
+    const effective = resolveEffectiveHarnessConfig(DEFAULT_AGENT_HARNESS_SETTINGS);
+    expect(resolveTierTarget(effective, "antigravity", "fast")).toEqual({
+      canonicalTier: "fast",
+      model: "gemini-4-hydrogen",
+      thinkingOptionId: "medium",
+    });
+    expect(resolveTierTarget(effective, "antigravity", "standard")).toEqual({
+      canonicalTier: "standard",
+      model: "gemini-4-argon",
+      thinkingOptionId: "high",
+    });
+    expect(resolveTierTarget(effective, "antigravity", "deep")).toEqual({
+      canonicalTier: "deep",
+      model: "gemini-4-carbon",
+      thinkingOptionId: "high",
+    });
+    expect(resolveTierTarget(effective, "antigravity", "max")).toEqual({
+      canonicalTier: "max",
+      model: "gemini-4-neon",
+      thinkingOptionId: "xhigh",
+    });
+
+    // Custom 3-model provider omitting max falls back to deep model + xhigh thinking
+    const customTarget = resolveTierTarget(
+      {
+        providerMappings: {
+          mycustom: { fast: "small", standard: "medium", deep: "large" },
+        },
+        providerThinkingMappings: {
+          mycustom: { fast: "low", standard: "medium", deep: "high" },
+        },
+      },
+      "mycustom",
+      "max",
+    );
+    expect(customTarget).toEqual({
+      canonicalTier: "max",
+      model: "large",
+      thinkingOptionId: "xhigh",
+    });
   });
 
   it("resolveResumeExecutionMode resolves correct modes for claude and opencode", () => {
@@ -255,9 +317,16 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
     expect(migrated.bypassProviders).toEqual(["custom-bypass"]);
     expect(migrated.bypassModels).toEqual(["^gemini-pro-orchestrator"]);
     expect(migrated.providerMappings.antigravity).toEqual({
-      plan: "gemini-4-carbon-high",
-      review: "gemini-4-argon-high",
-      flash: "gemini-4-hydrogen-high",
+      fast: "gemini-4-hydrogen",
+      standard: "gemini-4-argon",
+      deep: "gemini-4-carbon",
+      max: "gemini-4-neon",
+    });
+    expect(migrated.providerThinkingMappings.antigravity).toEqual({
+      fast: "medium",
+      standard: "high",
+      deep: "high",
+      max: "xhigh",
     });
     expect(migrated.providerModes.antigravity).toEqual({
       supportsNativePlanMode: false,
@@ -277,15 +346,173 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
 
     const orchestrator = migrated.specialists.find((s) => s.id === "orchestrator")!;
     expect(orchestrator.rolePromptTemplate).not.toContain("--provider claude");
+    expect(orchestrator.preferredTier).toBe("fast");
+  });
+
+  it("migrates v4 settings cleanly to v5 while preserving user-customized mappings and custom tiers", () => {
+    const customTier = {
+      id: "ultra",
+      name: "Ultra Custom",
+      icon: "Flame",
+      defaultPhase: "exec",
+      description: "Custom user tier",
+    };
+    const v4Values = {
+      ...DEFAULT_AGENT_HARNESS_SETTINGS,
+      defaultFallbackTier: "flash",
+      tiers: [
+        { id: "plan", name: "Plan", icon: "Compass", defaultPhase: "design", description: "old" },
+        { id: "flash", name: "Flash", icon: "Zap", defaultPhase: "exec", description: "old" },
+        {
+          id: "review",
+          name: "Review",
+          icon: "ShieldCheck",
+          defaultPhase: "review",
+          description: "old",
+        },
+        customTier,
+      ],
+      providerMappings: {
+        // User customized claude.flash; untouched codex should upgrade to v5 defaults
+        claude: {
+          plan: "claude-opus-custom",
+          flash: "claude-sonnet-custom",
+          review: "claude-sonnet-custom",
+        },
+        codex: { plan: "plan", review: "review", flash: "flash" },
+      },
+      specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) => {
+        if (s.id === "orchestrator") return { ...s, preferredTier: "flash" };
+        if (s.id === "ui") return { ...s, preferredTier: "flash" };
+        if (s.id === "architect") return { ...s, preferredTier: "plan" };
+        if (s.id === "review") return { ...s, preferredTier: "review" };
+        return s;
+      }),
+    };
+
+    const migrated = agentHarnessSettings.migrate!(
+      v4Values,
+      4,
+    ) as typeof DEFAULT_AGENT_HARNESS_SETTINGS;
+
+    expect(migrated.tiers.map((t) => t.id)).toEqual(["fast", "standard", "deep", "max", "ultra"]);
+    expect(migrated.defaultFallbackTier).toBe("standard");
+    expect(migrated.providerMappings.claude.standard).toBe("claude-sonnet-custom");
+    expect(migrated.providerMappings.claude.deep).toBe("claude-opus-custom");
+    expect(migrated.providerMappings.codex).toEqual({
+      fast: "lite",
+      standard: "flash",
+      deep: "pro",
+      max: "plan",
+    });
+    expect(migrated.providerThinkingMappings.codex).toEqual({
+      fast: "low",
+      standard: "medium",
+      deep: "high",
+      max: "xhigh",
+    });
+    expect(migrated.specialists.find((s) => s.id === "orchestrator")?.preferredTier).toBe("fast");
+    expect(migrated.specialists.find((s) => s.id === "ui")?.preferredTier).toBe("standard");
+    expect(migrated.specialists.find((s) => s.id === "architect")?.preferredTier).toBe("deep");
+    expect(migrated.specialists.find((s) => s.id === "review")?.preferredTier).toBe("deep");
+    expect(migrated.providerMappings.claude.max).toBeUndefined();
+    expect(
+      resolveTierTarget(
+        migrated as unknown as ReturnType<typeof resolveEffectiveHarnessConfig>,
+        "claude",
+        "max",
+      ),
+    ).toEqual({
+      canonicalTier: "max",
+      model: "claude-opus-custom",
+      thinkingOptionId: "high",
+    });
+  });
+
+  it("preserves custom antigravity v2 overrides, omitted-max custom providers, and claude-code alias compatibility", () => {
+    const migrate = agentHarnessSettings.migrate!;
+
+    // 1. Custom v2 Antigravity overrides must not be shadowed by fromVersion < 3 pre-fill
+    const customAgV2 = {
+      ...DEFAULT_AGENT_HARNESS_SETTINGS,
+      providerMappings: {
+        antigravity: {
+          flash: "custom-ag-standard",
+          plan: "custom-ag-deep",
+        },
+        custom3: {
+          fast: "c-fast",
+          standard: "c-std",
+          deep: "c-deep",
+        },
+      },
+    };
+    const migratedAg = migrate(customAgV2, 2) as typeof DEFAULT_AGENT_HARNESS_SETTINGS;
+    expect(migratedAg.providerMappings.antigravity).toEqual({
+      fast: "gemini-4-hydrogen",
+      standard: "custom-ag-standard",
+      deep: "custom-ag-deep",
+    });
+    expect(migratedAg.providerMappings.custom3).toEqual({
+      fast: "c-fast",
+      standard: "c-std",
+      deep: "c-deep",
+    });
+
+    const agConfig = resolveEffectiveHarnessConfig(migratedAg);
+    expect(resolveTierTarget(agConfig, "antigravity", "max")).toEqual({
+      canonicalTier: "max",
+      model: "custom-ag-deep",
+      thinkingOptionId: "xhigh",
+    });
+    expect(resolveTierTarget(agConfig, "custom3", "max")).toEqual({
+      canonicalTier: "max",
+      model: "c-deep",
+      thinkingOptionId: "xhigh",
+    });
+
+    // 2. Legacy v3 review specialist with preferredProvider: "claude-code" migrates cleanly to antigravity
+    const v3ClaudeCode = {
+      ...DEFAULT_AGENT_HARNESS_SETTINGS,
+      specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) =>
+        s.id === "review" ? { ...s, preferredProvider: "claude-code" } : s,
+      ),
+    };
+    const migratedV3 = migrate(v3ClaudeCode, 3) as typeof DEFAULT_AGENT_HARNESS_SETTINGS;
+    expect(migratedV3.specialists.find((s) => s.id === "review")?.preferredProvider).toBe(
+      "antigravity",
+    );
+
+    // 3. resolveTierTarget("claude-code", ...) falls back to "claude" and honors explicit "claude-code" overrides
+    const defaultCfg = resolveEffectiveHarnessConfig(DEFAULT_AGENT_HARNESS_SETTINGS);
+    expect(resolveTierTarget(defaultCfg, "claude-code", "deep")).toEqual({
+      canonicalTier: "deep",
+      model: "pro",
+      thinkingOptionId: "high",
+    });
+    const customClaudeCodeCfg = resolveEffectiveHarnessConfig({
+      ...DEFAULT_AGENT_HARNESS_SETTINGS,
+      providerMappings: {
+        ...DEFAULT_AGENT_HARNESS_SETTINGS.providerMappings,
+        "claude-code": {
+          fast: "claude-haiku-custom",
+          standard: "claude-sonnet-custom",
+          deep: "claude-opus-custom",
+        },
+      },
+    });
+    expect(resolveTierTarget(customClaudeCodeCfg, "claude-code", "deep").model).toBe(
+      "claude-opus-custom",
+    );
   });
 
   it("clones schema defaults independently and repairs empty/gemini-3 antigravity configs while preserving custom orchestrator prompts", () => {
     const sampleA = agentHarnessSettings.schema.parse({});
     const sampleB = agentHarnessSettings.schema.parse({});
     sampleA.bypassProviders.push("mutated-provider");
-    sampleA.providerMappings.antigravity.flash = "mutated-model";
+    sampleA.providerMappings.antigravity.standard = "mutated-model";
     expect(sampleB.bypassProviders).toEqual([]);
-    expect(sampleB.providerMappings.antigravity.flash).toBe("gemini-4-hydrogen-high");
+    expect(sampleB.providerMappings.antigravity.standard).toBe("gemini-4-argon");
 
     const customOrchestratorPrompt = "Custom company orchestrator protocol — keep verbatim.";
     const v2Values = {
@@ -314,9 +541,10 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
       2,
     ) as typeof DEFAULT_AGENT_HARNESS_SETTINGS;
     expect(migrated.providerMappings.antigravity).toEqual({
-      plan: "gemini-4-carbon-high",
-      review: "gemini-4-argon-high",
-      flash: "gemini-4-hydrogen-high",
+      fast: "gemini-4-hydrogen",
+      standard: "gemini-4-argon",
+      deep: "gemini-4-carbon",
+      max: "gemini-4-neon",
     });
 
     const ui = migrated.specialists.find((s) => s.id === "ui")!;

@@ -1,8 +1,9 @@
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { View, Text, Pressable, StyleSheet } from "react-native";
 import type { PluginButtonContentProps } from "@getpaseo/plugin/client";
-import { useAgent, useRpc, useSettings } from "@getpaseo/plugin/client";
+import { useAgent, useComposers, useRpc, useSettings } from "@getpaseo/plugin/client";
 import { Icon, useToast } from "@getpaseo/plugin/client/ui";
+import { normalizeTierAlias } from "../shared/config-resolver.js";
 import {
   harnessEffectiveConfigRpc,
   harnessHandoffRpc,
@@ -27,6 +28,56 @@ import {
 import { subscribeWorkspaceTeamUpdated } from "./team-events.js";
 
 const IOS_SHEET_CLOSE_DELAY_MS = 250;
+
+function resolveSpecialistDisplayName(
+  specialist: HarnessSpecialistConfig,
+  isDynamicWorkspaceTeam: boolean,
+): string {
+  if (isDynamicWorkspaceTeam || (!specialist.builtIn && specialist.shortLabel === specialist.id)) {
+    return specialist.id;
+  }
+  if (specialist.shortLabel) {
+    return `${specialist.shortLabel} Specialist`;
+  }
+  return specialist.name;
+}
+
+function resolveSourceSpecialists(
+  workspaceSpecialists: HarnessSpecialistConfig[] | null,
+  settings: { status: string; values?: { specialists?: HarnessSpecialistConfig[] } },
+): readonly HarnessSpecialistConfig[] {
+  if (workspaceSpecialists && workspaceSpecialists.length > 0) {
+    return workspaceSpecialists;
+  }
+  if (settings.status === "ready" && Array.isArray(settings.values?.specialists)) {
+    return settings.values.specialists;
+  }
+  return BUILTIN_SPECIALISTS;
+}
+
+function resolvePhaseBadgeText(
+  meta: ReturnType<typeof extractAgentHarnessMetadata>,
+  isBypassedSession: boolean,
+): string {
+  if (meta) {
+    return `${formatRoleDisplayName(meta.role)} · ${meta.phase}`;
+  }
+  return isBypassedSession ? "NATIVE ORCHESTRATOR" : "UNTRACKED";
+}
+
+function resolveModeGateBadgeLabel(
+  isPlanMode: boolean,
+  isBypassedSession: boolean,
+  currentTier: MatrixTier,
+): string | null {
+  if (isPlanMode) {
+    return "Read-only Plan (steps down to Standard)";
+  }
+  if (!isBypassedSession && currentTier === "max") {
+    return "Manual Max · High quota usage";
+  }
+  return null;
+}
 
 function chunkIntoPairs<T>(items: readonly T[]): Array<readonly [T, T | null]> {
   const pairs: Array<readonly [T, T | null]> = [];
@@ -53,6 +104,7 @@ export const HarnessPopover = memo(function HarnessPopover({
   onOpenTeamEditor,
 }: HarnessPopoverProps) {
   const toast = useToast();
+  const composers = useComposers({ agentId });
   const switchTierRpc = useRpc(harnessSwitchTierRpc);
   const handoffRpc = useRpc(harnessHandoffRpc);
   const effectiveConfigRpc = useRpc(harnessEffectiveConfigRpc);
@@ -120,15 +172,12 @@ export const HarnessPopover = memo(function HarnessPopover({
   const handoffSpecialists = useMemo(() => {
     const isDynamicWorkspaceTeam = Boolean(workspaceAgentTeam);
     const mapSpecialist = (s: HarnessSpecialistConfig) => {
-      const displayName =
-        isDynamicWorkspaceTeam || (!s.builtIn && s.shortLabel === s.id)
-          ? s.id
-          : s.shortLabel
-            ? `${s.shortLabel} Specialist`
-            : s.name;
+      const displayName = resolveSpecialistDisplayName(s, isDynamicWorkspaceTeam);
       const targetProvider =
         s.preferredProvider?.trim() || (isDynamicWorkspaceTeam ? "inherit" : "");
-      const targetModel = s.modelOverride?.trim() || s.preferredTier || "flash";
+      const targetModel =
+        s.modelOverride?.trim() ||
+        (s.preferredTier ? normalizeTierAlias(s.preferredTier) : "standard");
       return {
         role: s.id as HandoffTargetRole,
         name: displayName,
@@ -140,12 +189,7 @@ export const HarnessPopover = memo(function HarnessPopover({
       };
     };
 
-    const sourceSpecialists =
-      workspaceSpecialists && workspaceSpecialists.length > 0
-        ? workspaceSpecialists
-        : settings.status === "ready" && Array.isArray(settings.values.specialists)
-          ? settings.values.specialists
-          : BUILTIN_SPECIALISTS;
+    const sourceSpecialists = resolveSourceSpecialists(workspaceSpecialists, settings);
 
     const configured = sourceSpecialists
       .filter((s) => s.enabled && s.handoffEnabled)
@@ -164,8 +208,11 @@ export const HarnessPopover = memo(function HarnessPopover({
   const [isSwitching, setIsSwitching] = useState(false);
   const [isHandoffRunning, setIsHandoffRunning] = useState(false);
 
-  const currentTier: MatrixTier = meta?.currentTier ?? "flash";
-  const lastBilledTier: MatrixTier | null = meta?.lastBilledTier ?? null;
+  const rawTier: MatrixTier = meta?.currentTier ?? "standard";
+  const currentTier: MatrixTier = normalizeTierAlias(rawTier);
+  const lastBilledTier: MatrixTier | null = meta?.lastBilledTier
+    ? normalizeTierAlias(meta.lastBilledTier)
+    : null;
   const isDualStateMismatched = lastBilledTier !== null && lastBilledTier !== currentTier;
 
   // Handle manual model tier switch
@@ -181,6 +228,16 @@ export const HarnessPopover = memo(function HarnessPopover({
           reason: "Manual switch from Harness popover",
         });
 
+        const activeComposer = composers[0];
+        if (activeComposer) {
+          if (res.recommendedModeId && typeof activeComposer.setMode === "function") {
+            await activeComposer.setMode(res.recommendedModeId).catch(() => {});
+          }
+          if (res.recommendedThinkingOptionId && typeof activeComposer.setThinking === "function") {
+            await activeComposer.setThinking(res.recommendedThinkingOptionId).catch(() => {});
+          }
+        }
+
         toast.show(`Switched to ${capitalize(targetTier)} (${res.currentModel})`, {
           variant: "success",
         });
@@ -190,7 +247,15 @@ export const HarnessPopover = memo(function HarnessPopover({
         setIsSwitching(false);
       }
     },
-    [agent?.currentModeId, agentId, isBypassedSession, isSwitching, switchTierRpc, toast],
+    [
+      agent?.currentModeId,
+      agentId,
+      composers,
+      isBypassedSession,
+      isSwitching,
+      switchTierRpc,
+      toast,
+    ],
   );
 
   // Handle specialist handoff
@@ -388,15 +453,17 @@ export const HarnessPopover = memo(function HarnessPopover({
         },
         tierGrid: {
           flexDirection: "row",
-          gap: 6,
+          gap: 5,
         },
         tierButton: {
           flex: 1,
+          minWidth: 0,
           minHeight: layout.compact ? 38 : 32,
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "center",
-          gap: 5,
+          gap: 3,
+          paddingHorizontal: 4,
           backgroundColor: theme.colors.surface1,
           borderWidth: 1,
           borderColor: theme.colors.border,
@@ -407,7 +474,7 @@ export const HarnessPopover = memo(function HarnessPopover({
           backgroundColor: theme.colors.surface2,
         },
         tierButtonText: {
-          fontSize: 12,
+          fontSize: 11,
           fontWeight: "600",
           color: theme.colors.foreground,
         },
@@ -517,11 +584,8 @@ export const HarnessPopover = memo(function HarnessPopover({
 
   const isPlanMode = agent?.currentModeId === "plan";
   const isDesignPhase = meta?.phase === "design";
-  const phaseBadgeText = meta
-    ? `${formatRoleDisplayName(meta.role)} · ${meta.phase}`
-    : isBypassedSession
-      ? "NATIVE ORCHESTRATOR"
-      : "UNTRACKED";
+  const phaseBadgeText = resolvePhaseBadgeText(meta, isBypassedSession);
+  const modeGateLabel = resolveModeGateBadgeLabel(isPlanMode, isBypassedSession, currentTier);
 
   return (
     <View style={styles.container}>
@@ -565,15 +629,17 @@ export const HarnessPopover = memo(function HarnessPopover({
             <Text style={styles.metricLabel}>Next Turn</Text>
             <View style={styles.metricTierRow}>
               <Text style={styles.metricTier}>
-                {isBypassedSession ? "Native" : capitalize(currentTier)}
+                {isBypassedSession
+                  ? "Native"
+                  : `${capitalize(currentTier)}${meta?.currentThinking ? ` · ${meta.currentThinking}` : ""}`}
               </Text>
             </View>
             <Text style={styles.metricModel} numberOfLines={1}>
               {meta?.currentModel ?? agent?.model ?? "—"}
             </Text>
-            {isPlanMode ? (
+            {modeGateLabel ? (
               <View style={styles.modeGateBadge}>
-                <Text style={styles.modeGateText}>Read-only Plan Gate</Text>
+                <Text style={styles.modeGateText}>{modeGateLabel}</Text>
               </View>
             ) : null}
           </View>
@@ -583,7 +649,9 @@ export const HarnessPopover = memo(function HarnessPopover({
             <Text style={styles.metricLabel}>Last Billed</Text>
             <View style={styles.metricTierRow}>
               <Text style={styles.metricTier}>
-                {lastBilledTier ? capitalize(lastBilledTier) : "—"}
+                {lastBilledTier
+                  ? `${capitalize(lastBilledTier)}${meta?.lastBilledThinking ? ` · ${meta.lastBilledThinking}` : ""}`
+                  : "—"}
               </Text>
             </View>
             <Text style={styles.metricModel} numberOfLines={1}>
@@ -623,9 +691,15 @@ export const HarnessPopover = memo(function HarnessPopover({
         </View>
       ) : null}
       <View style={styles.tierGrid}>
-        {(["plan", "flash", "review"] as const).map((tier) => {
+        {(
+          [
+            { id: "fast", label: "Fast", icon: "Zap" },
+            { id: "standard", label: "Standard", icon: "Cpu" },
+            { id: "deep", label: "Deep", icon: "Compass" },
+            { id: "max", label: "Max", icon: "Flame" },
+          ] as const
+        ).map(({ id: tier, label, icon: tierIcon }) => {
           const isActive = !isBypassedSession && currentTier === tier;
-          const tierIcon = tier === "plan" ? "Compass" : tier === "review" ? "ShieldCheck" : "Zap";
 
           return (
             <Pressable
@@ -643,11 +717,14 @@ export const HarnessPopover = memo(function HarnessPopover({
             >
               <Icon
                 name={tierIcon}
-                size={12}
+                size={11}
                 color={isActive ? theme.colors.accent : theme.colors.foregroundMuted}
               />
-              <Text style={[styles.tierButtonText, isActive && styles.tierButtonTextActive]}>
-                {capitalize(tier)}
+              <Text
+                style={[styles.tierButtonText, isActive && styles.tierButtonTextActive]}
+                numberOfLines={1}
+              >
+                {label}
               </Text>
             </Pressable>
           );
@@ -661,7 +738,7 @@ export const HarnessPopover = memo(function HarnessPopover({
         <View style={styles.handoffRecommendation}>
           <Icon name="Sparkles" size={11} color={theme.colors.accent} />
           <Text style={styles.handoffRecommendationText}>
-            Design ready: Handoff to Flash Specialist recommended
+            Design ready: Handoff to Standard Specialist recommended
           </Text>
         </View>
       ) : null}

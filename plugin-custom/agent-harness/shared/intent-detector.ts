@@ -1,28 +1,34 @@
 import {
+  canonicalizeProviderName,
   compileSafeRegex,
   expandHomeDir,
   findSpecialist,
   joinPosixPath,
   normalizeProviderName,
+  normalizeTierAlias,
   resolveSpecialistEnvironment,
   resolveSpecialistPaths,
-  resolveTargetModelForTier,
+  resolveTierTarget,
 } from "./config-resolver.js";
 import {
   BUILTIN_BYPASS_MODELS,
   BUILTIN_CONVENTIONAL_EXEC_PREFIX,
   BUILTIN_EXEC_ACTION_PATTERNS,
+  BUILTIN_FAST_ACTION_PATTERNS,
   BUILTIN_FULLSTACK_BACKEND_PATTERN,
   BUILTIN_FULLSTACK_UI_PATTERN,
   BUILTIN_PLAN_PATTERNS,
   BUILTIN_PROVIDER_MAPPINGS,
+  BUILTIN_PROVIDER_THINKING_MAPPINGS,
   BUILTIN_REVIEW_PATTERNS,
   BUILTIN_SPECIALISTS,
+  LEGACY_V4_PROVIDER_MAPPINGS,
 } from "./presets.js";
 import type {
   DomainRole,
   DomainRoleDecision,
   EffectiveHarnessConfig,
+  HarnessPhase,
   HarnessSpecialistConfig,
   MatrixTier,
   ProviderModelMapping,
@@ -66,16 +72,23 @@ export function normalizeProvider(provider?: string | null): string {
 }
 
 const IDENTITY_MAPPING: ProviderModelMapping = {
-  plan: "plan",
-  review: "review",
-  flash: "flash",
+  fast: "lite",
+  standard: "flash",
+  deep: "pro",
+  max: "plan",
 };
 
 export const DEFAULT_PROVIDER_MAPPINGS: Record<string, ProviderModelMapping> = {
   ...BUILTIN_PROVIDER_MAPPINGS,
-  codex: IDENTITY_MAPPING,
-  claude: IDENTITY_MAPPING,
 };
+
+const FAST_CONVENTIONAL_PREFIX = /^\s*(?:chore|docs|style)\s*[:：]/i;
+
+/** Ensures auto-routing tiers never select manual-only `"max"`. */
+export function coerceAutoRoutingTier(tier?: string | null): MatrixTier {
+  const normalized = normalizeTierAlias(tier);
+  return normalized === "max" ? "deep" : normalized;
+}
 
 // Anchored Conventional Commit or explicit execution slash command prefixes
 export const CONVENTIONAL_EXEC_PREFIX: RegExp = compileSafeRegex(BUILTIN_CONVENTIONAL_EXEC_PREFIX)!;
@@ -136,34 +149,40 @@ function buildRoleDecision(
   };
 }
 
-export function detectMatrixTier(
+export function detectIntentRoute(
   text: string | null | undefined,
   config?: EffectiveHarnessConfig | null,
 ): {
   tier: MatrixTier;
+  phase: HarnessPhase;
   matchedRule: string;
 } {
-  const fallbackTier = config?.defaultFallbackTier ?? "flash";
+  const fallbackTier = coerceAutoRoutingTier(config?.defaultFallbackTier ?? "standard");
   if (!text || !text.trim()) {
-    return { tier: fallbackTier, matchedRule: "default_empty" };
+    return { tier: fallbackTier, phase: "exec", matchedRule: "default_empty" };
   }
 
   const trimmed = text.trim();
 
-  // 1. Anchored conventional commit or execution command prefix always stays on flash execution track
+  // 1. Anchored conventional commit or execution command prefix always stays in exec phase
   const conventionalPatternStr =
     config?.tierPatterns.conventionalExecPrefix ?? BUILTIN_CONVENTIONAL_EXEC_PREFIX;
   const conventionalRegex = compileSafeRegex(conventionalPatternStr);
   if (conventionalRegex?.test(trimmed)) {
-    return { tier: "flash", matchedRule: `exec_override:${conventionalPatternStr}` };
+    const autoTier: MatrixTier = FAST_CONVENTIONAL_PREFIX.test(trimmed) ? "fast" : "standard";
+    return {
+      tier: autoTier,
+      phase: "exec",
+      matchedRule: `exec_override:${conventionalPatternStr}`,
+    };
   }
 
-  // 2. Explicit Code Review & Quality Gate Check
+  // 2. Explicit Code Review & Quality Gate Check -> deep complexity + read-only review phase
   const reviewPatterns = config?.tierPatterns.review ?? BUILTIN_REVIEW_PATTERNS;
   for (const patternStr of reviewPatterns) {
     const regex = compileSafeRegex(patternStr);
     if (regex?.test(trimmed)) {
-      return { tier: "review", matchedRule: `review:${patternStr}` };
+      return { tier: "deep", phase: "review", matchedRule: `review:${patternStr}` };
     }
   }
 
@@ -172,20 +191,40 @@ export function detectMatrixTier(
   for (const patternStr of execPatterns) {
     const regex = compileSafeRegex(patternStr);
     if (regex?.test(trimmed)) {
-      return { tier: "flash", matchedRule: `exec_action:${patternStr}` };
+      return { tier: "standard", phase: "exec", matchedRule: `exec_action:${patternStr}` };
     }
   }
 
-  // 4. Plan & Architecture Exploration when strategic keywords are present
+  // 4. Plan & Architecture Exploration -> deep complexity + read-only design phase
   const planPatterns = config?.tierPatterns.plan ?? BUILTIN_PLAN_PATTERNS;
   for (const patternStr of planPatterns) {
     const regex = compileSafeRegex(patternStr);
     if (regex?.test(trimmed)) {
-      return { tier: "plan", matchedRule: `plan:${patternStr}` };
+      return { tier: "deep", phase: "design", matchedRule: `plan:${patternStr}` };
     }
   }
 
-  return { tier: fallbackTier, matchedRule: "default_fallback" };
+  // 5. Lightweight lookup, status check, and trivial formatting edits -> fast complexity in exec phase
+  const fastPatterns = config?.tierPatterns.fastAction ?? BUILTIN_FAST_ACTION_PATTERNS;
+  for (const patternStr of fastPatterns) {
+    const regex = compileSafeRegex(patternStr);
+    if (regex?.test(trimmed)) {
+      return { tier: "fast", phase: "exec", matchedRule: `fast_action:${patternStr}` };
+    }
+  }
+
+  return { tier: fallbackTier, phase: "exec", matchedRule: "default_fallback" };
+}
+
+export function detectMatrixTier(
+  text: string | null | undefined,
+  config?: EffectiveHarnessConfig | null,
+): {
+  tier: MatrixTier;
+  phase: HarnessPhase;
+  matchedRule: string;
+} {
+  return detectIntentRoute(text, config);
 }
 
 export function resolveMatrixModel(options: {
@@ -213,8 +252,10 @@ export function resolveMatrixModel(options: {
 
   if (isProviderBypassed) {
     return {
-      tier: "flash",
+      tier: "standard",
       targetModel: currentModel ?? "",
+      targetThinking: null,
+      phase: "exec",
       reason: `${provider} is excluded from orchestration routing`,
       matchedRule: "bypass_safety_net",
       previousModel: currentModel ?? undefined,
@@ -224,27 +265,44 @@ export function resolveMatrixModel(options: {
   const effectiveBypassModels = config?.bypassModels ?? BUILTIN_BYPASS_MODELS;
   if (isModelBypassed(currentModel, effectiveBypassModels)) {
     return {
-      tier: "flash",
+      tier: "standard",
       targetModel: currentModel ?? "",
+      targetThinking: null,
+      phase: "exec",
       reason: `Model '${currentModel}' is excluded from harness routing`,
       matchedRule: "bypass_orchestrator_model",
       previousModel: currentModel ?? undefined,
     };
   }
 
-  const { tier, matchedRule } = detectMatrixTier(text, config);
+  const canonicalProvider = canonicalizeProviderName(provider);
+  const { tier, phase, matchedRule } = detectIntentRoute(text, config);
 
-  let targetModel = "";
+  let resolvedTarget;
+  let customMaxModel: string | undefined;
+  let resolvedProviderMapping: ProviderModelMapping | undefined;
   if (config) {
-    targetModel = resolveTargetModelForTier(config, normalizedProvider, tier);
+    resolvedTarget = resolveTierTarget(config, normalizedProvider, tier);
+    customMaxModel =
+      config.providerMappings?.[normalizedProvider]?.max?.trim() ??
+      (canonicalProvider !== normalizedProvider
+        ? config.providerMappings?.[canonicalProvider]?.max?.trim()
+        : undefined);
   } else {
-    const defaultMapping = Object.hasOwn(DEFAULT_PROVIDER_MAPPINGS, normalizedProvider)
-      ? DEFAULT_PROVIDER_MAPPINGS[normalizedProvider]
-      : IDENTITY_MAPPING;
+    let defaultMapping = IDENTITY_MAPPING;
+    if (Object.hasOwn(DEFAULT_PROVIDER_MAPPINGS, normalizedProvider)) {
+      defaultMapping = DEFAULT_PROVIDER_MAPPINGS[normalizedProvider]!;
+    } else if (Object.hasOwn(DEFAULT_PROVIDER_MAPPINGS, canonicalProvider)) {
+      defaultMapping = DEFAULT_PROVIDER_MAPPINGS[canonicalProvider]!;
+    }
     const customOverride =
       customMappings &&
-      (Object.hasOwn(customMappings, normalizedProvider) || Object.hasOwn(customMappings, provider))
-        ? (customMappings[normalizedProvider] ?? customMappings[provider])
+      (Object.hasOwn(customMappings, normalizedProvider) ||
+        Object.hasOwn(customMappings, canonicalProvider) ||
+        Object.hasOwn(customMappings, provider))
+        ? (customMappings[normalizedProvider] ??
+          customMappings[canonicalProvider] ??
+          customMappings[provider])
         : undefined;
 
     const providerMapping: ProviderModelMapping = { ...defaultMapping };
@@ -254,31 +312,97 @@ export function resolveMatrixModel(options: {
           providerMapping[k] = v.trim();
         }
       }
+      if (customOverride.flash?.trim() && !customOverride.standard?.trim()) {
+        providerMapping.standard = customOverride.flash.trim();
+      }
+      if (customOverride.plan?.trim() && !customOverride.deep?.trim()) {
+        providerMapping.deep = customOverride.plan.trim();
+      }
     }
-    targetModel = providerMapping[tier] || defaultMapping[tier] || currentModel || "";
+    resolvedProviderMapping = providerMapping;
+    resolvedTarget = resolveTierTarget(
+      {
+        providerMappings: { [normalizedProvider]: providerMapping },
+        providerThinkingMappings: BUILTIN_PROVIDER_THINKING_MAPPINGS,
+      },
+      normalizedProvider,
+      tier,
+    );
+    customMaxModel = providerMapping.max?.trim();
   }
 
-  // Treat unset or router-managed tier models as routable defaults; preserve custom user models
+  const targetModel = resolvedTarget.model;
+  const targetThinking = resolvedTarget.thinkingOptionId;
+
+  // Treat unset or auto-routable tier models (excluding dedicated manual `max` models) as defaults;
+  // preserve custom user models or manual `max` model selections.
+  const configuredMap = config
+    ? (config.providerMappings[normalizedProvider] ?? config.providerMappings[canonicalProvider])
+    : undefined;
+  const nonMaxConfiguredModels = configuredMap
+    ? Object.entries(configuredMap)
+        .filter(([k]) => k !== "max")
+        .map(([, v]) => v)
+    : [];
+  const defaultMap =
+    DEFAULT_PROVIDER_MAPPINGS[normalizedProvider] ?? DEFAULT_PROVIDER_MAPPINGS[canonicalProvider];
+  const autoBuiltinModels = Object.entries(defaultMap ?? {})
+    .filter(([k]) => k !== "max")
+    .map(([, v]) => v);
+  const legacyMap =
+    LEGACY_V4_PROVIDER_MAPPINGS[normalizedProvider] ??
+    LEGACY_V4_PROVIDER_MAPPINGS[canonicalProvider];
+  const legacyBuiltinModels = Object.entries(legacyMap ?? {})
+    .filter(([, v]) => v !== customMaxModel && v !== defaultMap?.max)
+    .map(([, v]) => v);
+
+  const maxOnlyModel = customMaxModel ?? defaultMap?.max;
+  const tierLabels = ["fast", "standard", "deep", "review", "flash", "lite", "pro"];
+  if (maxOnlyModel !== "plan") {
+    tierLabels.push("plan");
+  }
+
   const routerManagedModels = new Set<string>(
-    [
-      "plan",
-      "review",
-      "flash",
-      ...(config ? Object.values(config.providerMappings[normalizedProvider] ?? {}) : []),
-      DEFAULT_PROVIDER_MAPPINGS[normalizedProvider]?.plan,
-      DEFAULT_PROVIDER_MAPPINGS[normalizedProvider]?.review,
-      DEFAULT_PROVIDER_MAPPINGS[normalizedProvider]?.flash,
-    ].filter((m): m is string => Boolean(m?.trim())),
+    [...tierLabels, ...nonMaxConfiguredModels, ...autoBuiltinModels, ...legacyBuiltinModels].filter(
+      (m): m is string => Boolean(m?.trim()),
+    ),
   );
   const isDefaultModel = !currentModel || routerManagedModels.has(currentModel);
 
   const shouldOverride = config ? config.overrideIfDefaultOnly : overrideIfDefaultOnly;
 
   if (shouldOverride && !isDefaultModel) {
+    const isDedicatedMaxModel = Boolean(maxOnlyModel && currentModel === maxOnlyModel);
+    if (isDedicatedMaxModel) {
+      const maxTarget = config
+        ? resolveTierTarget(config, normalizedProvider, "max")
+        : resolveTierTarget(
+            {
+              providerMappings: {
+                [normalizedProvider]: resolvedProviderMapping ?? defaultMap ?? IDENTITY_MAPPING,
+              },
+              providerThinkingMappings: BUILTIN_PROVIDER_THINKING_MAPPINGS,
+            },
+            normalizedProvider,
+            "max",
+          );
+      return {
+        tier: "max",
+        targetModel: currentModel,
+        targetThinking: maxTarget.thinkingOptionId,
+        phase,
+        reason: `Preserving user-selected dedicated max model '${currentModel}' (phase: ${phase})`,
+        matchedRule: `preserve_user_choice (${matchedRule})`,
+        previousModel: currentModel,
+      };
+    }
+
     return {
       tier,
       targetModel: currentModel,
-      reason: `Preserving user-selected model '${currentModel}' (detected tier: ${tier})`,
+      targetThinking: null,
+      phase,
+      reason: `Preserving user-selected model '${currentModel}' (detected tier: ${tier}, phase: ${phase})`,
       matchedRule: `preserve_user_choice (${matchedRule})`,
       previousModel: currentModel,
     };
@@ -287,7 +411,9 @@ export function resolveMatrixModel(options: {
   return {
     tier,
     targetModel: targetModel || currentModel || "",
-    reason: `Routed to ${tier} model '${targetModel}' based on intent`,
+    targetThinking,
+    phase,
+    reason: `Routed to ${tier} model '${targetModel}' (phase: ${phase}) based on intent`,
     matchedRule,
     previousModel: currentModel ?? undefined,
   };
@@ -485,7 +611,7 @@ export async function classifyIntentWithLlm(
           {
             role: "system",
             content:
-              'Classify coding task into JSON {"role":"ui"|"backend"|"pm"|"architect"|"qa"|"review"|"scout"|"general","tier":"flash"|"plan"|"review"}. Output raw JSON only.',
+              'Classify coding task into JSON {"role":"ui"|"backend"|"pm"|"architect"|"qa"|"review"|"scout"|"general","tier":"fast"|"standard"|"deep"}. Output raw JSON only.',
           },
           {
             role: "user",
@@ -516,8 +642,9 @@ export async function classifyIntentWithLlm(
     const parsed = JSON.parse(jsonMatch[0]) as { role?: unknown; tier?: unknown };
     const role =
       typeof parsed.role === "string" && parsed.role.trim() ? parsed.role.trim() : "general";
-    const tier =
-      typeof parsed.tier === "string" && parsed.tier.trim() ? parsed.tier.trim() : "flash";
+    const tier = coerceAutoRoutingTier(
+      typeof parsed.tier === "string" && parsed.tier.trim() ? parsed.tier.trim() : "standard",
+    );
 
     return { role, tier };
   } catch {

@@ -5,6 +5,7 @@ import {
   FEDERATED_AGENT_PROBE_SPECS,
   VALID_FEDERATED_TARGET_IDS,
   canonicalizeProviderName,
+  normalizeTierAlias,
 } from "../shared/config-resolver.js";
 import type { AgentTeamSummary, HarnessSpecialistConfig } from "../shared/types.js";
 
@@ -452,7 +453,13 @@ function inferRoleIcon(roleId: string): string {
     case "ops-sre":
       return "Terminal";
     default:
-      return roleId.startsWith("be-") ? "Server" : roleId.startsWith("ops-") ? "Terminal" : "Bot";
+      if (roleId.startsWith("be-")) {
+        return "Server";
+      }
+      if (roleId.startsWith("ops-")) {
+        return "Terminal";
+      }
+      return "Bot";
   }
 }
 
@@ -469,13 +476,17 @@ function inferRoleColor(team: "fe" | "be" | "ops", readonly: boolean): string {
 }
 
 function inferDefaultTier(roleId: string, cat?: CatalogRoleEntry): string {
-  if (roleId.includes("reviewer") || roleId.includes("auditor")) {
-    return "review";
+  if (
+    roleId.includes("reviewer") ||
+    roleId.includes("auditor") ||
+    roleId.includes("architect") ||
+    roleId.endsWith("-pm") ||
+    roleId === "pm" ||
+    cat?.recommended_model === "pro"
+  ) {
+    return "deep";
   }
-  if (cat?.recommended_model === "pro" || roleId.includes("architect")) {
-    return "plan";
-  }
-  return "flash";
+  return "standard";
 }
 
 function inferDefaultLazySlice(roleId: string, team: "fe" | "be" | "ops"): string {
@@ -749,7 +760,9 @@ export function loadWorkspaceAgentTeam(
       ? normProvider
       : rawProvider;
     const preferredTier =
-      typeof binding?.tier === "string" && binding.tier.trim() ? binding.tier.trim() : defaultTier;
+      typeof binding?.tier === "string" && binding.tier.trim()
+        ? normalizeTierAlias(binding.tier)
+        : defaultTier;
     const modelOverride = typeof binding?.model === "string" ? binding.model.trim() : "";
     const defaultModeId = typeof binding?.modeId === "string" ? binding.modeId.trim() : "";
     const lazyToolSlice =
@@ -780,7 +793,7 @@ export function loadWorkspaceAgentTeam(
       preferredTier,
       modelOverride,
       defaultModeId,
-      lockTierOnLabel: readonly || defaultTier !== "flash",
+      lockTierOnLabel: readonly || preferredTier === "deep",
       handoffEnabled: true,
       handoffPriority: index * 10 + 10,
       handoffTitlePrefix: `[${roleId}]`,

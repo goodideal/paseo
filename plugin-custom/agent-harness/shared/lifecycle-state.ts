@@ -1,4 +1,8 @@
-import { compileSafeRegex, isNativePlanModeSupported } from "./config-resolver.js";
+import {
+  compileSafeRegex,
+  isNativePlanModeSupported,
+  normalizeTierAlias,
+} from "./config-resolver.js";
 import { supportsNativePlanMode } from "./contracts.js";
 import { CONVENTIONAL_EXEC_PREFIX } from "./intent-detector.js";
 import {
@@ -116,6 +120,7 @@ export function shouldEnforceNativePlanMode(params: {
   phaseLifecycleEnabled: boolean;
   enforceNativePlanMode: boolean;
   tier: MatrixTier;
+  phase?: HarnessPhase;
   role: DomainRole;
   userModelLocked: boolean;
   roleLockedByLabel: boolean;
@@ -127,10 +132,12 @@ export function shouldEnforceNativePlanMode(params: {
     ? isNativePlanModeSupported(params.config, params.provider)
     : supportsNativePlanMode(params.provider);
 
+  const isDesignPhase = params.phase ? params.phase === "design" : params.tier === "plan";
+
   return (
     params.phaseLifecycleEnabled &&
     params.enforceNativePlanMode &&
-    params.tier === "plan" &&
+    isDesignPhase &&
     params.role !== "orchestrator" &&
     !params.userModelLocked &&
     !params.roleLockedByLabel &&
@@ -143,18 +150,24 @@ export function tierToPhase(
   tier: MatrixTier,
   role?: DomainRole,
   config?: EffectiveHarnessConfig | null,
+  explicitPhase?: HarnessPhase,
 ): HarnessPhase {
   if (tier === "review" || role === "review") {
     return "review";
   }
+  if (tier === "plan" || role === "pm" || role === "architect") {
+    return "design";
+  }
+  if (explicitPhase) {
+    return explicitPhase;
+  }
   if (config) {
-    const tierCfg = config.tiers.find((t) => t.id === tier);
+    const tierCfg =
+      config.tiers.find((t) => t.id === tier) ??
+      config.tiers.find((t) => t.id === normalizeTierAlias(tier));
     if (tierCfg?.defaultPhase) {
       return tierCfg.defaultPhase;
     }
-  }
-  if (tier === "plan") {
-    return "design";
   }
   return "exec";
 }
@@ -162,7 +175,9 @@ export function tierToPhase(
 export function createInitialHarnessMetadata(params: {
   role: DomainRole;
   tier: MatrixTier;
+  phase?: HarnessPhase;
   model?: string | null;
+  thinkingOptionId?: string | null;
   roleMatchedRule: string;
   tierMatchedRule: string;
   userModelLocked?: boolean;
@@ -170,6 +185,7 @@ export function createInitialHarnessMetadata(params: {
   resumeModeId?: string | null;
   lastBilledTier?: MatrixTier | null;
   lastBilledModel?: string | null;
+  lastBilledThinking?: string | null;
   config?: EffectiveHarnessConfig | null;
 }): HarnessAgentMetadata {
   return {
@@ -178,7 +194,7 @@ export function createInitialHarnessMetadata(params: {
     initialTier: params.tier,
     currentTier: params.tier,
     currentModel: params.model ?? null,
-    phase: tierToPhase(params.tier, params.role, params.config),
+    phase: tierToPhase(params.tier, params.role, params.config, params.phase),
     roleMatchedRule: params.roleMatchedRule,
     tierMatchedRule: params.tierMatchedRule,
     userModelLocked: Boolean(params.userModelLocked),
@@ -193,6 +209,8 @@ export function createInitialHarnessMetadata(params: {
     resumeModeId: params.resumeModeId ?? null,
     lastBilledTier: params.lastBilledTier ?? null,
     lastBilledModel: params.lastBilledModel ?? null,
+    currentThinking: params.thinkingOptionId ?? null,
+    lastBilledThinking: params.lastBilledThinking ?? null,
   };
 }
 
@@ -246,6 +264,8 @@ export function parseHarnessMetadata(raw: unknown): HarnessAgentMetadata | null 
     lastBilledTier:
       typeof obj.lastBilledTier === "string" ? (obj.lastBilledTier as MatrixTier) : null,
     lastBilledModel: typeof obj.lastBilledModel === "string" ? obj.lastBilledModel : null,
+    currentThinking: typeof obj.currentThinking === "string" ? obj.currentThinking : null,
+    lastBilledThinking: typeof obj.lastBilledThinking === "string" ? obj.lastBilledThinking : null,
   };
 }
 
@@ -358,6 +378,20 @@ function extractPathsFromTool(item: Record<string, unknown>): string[] {
   return paths;
 }
 
+function resolveFallbackToolName(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function resolveAutoDowngradeReason(
+  shouldDowngrade: boolean,
+  detectedCodeWrite: boolean,
+): HarnessDowngradeReason | null {
+  if (!shouldDowngrade) {
+    return null;
+  }
+  return detectedCodeWrite ? "write_tool_in_plan" : "explicit_exec_intent";
+}
+
 export function inspectTurnTimeline(
   items: readonly unknown[],
   docWhitelistPattern?: string,
@@ -405,11 +439,7 @@ export function inspectTurnTimeline(
         : null;
 
     const toolName =
-      typeof item.name === "string"
-        ? item.name
-        : typeof item.toolName === "string"
-          ? item.toolName
-          : "";
+      typeof item.name === "string" ? item.name : resolveFallbackToolName(item.toolName);
     const detailType = detail && typeof detail.type === "string" ? detail.type : "";
 
     // 1. Check handoff invocation
@@ -525,6 +555,9 @@ export interface EvaluateTurnAfterTransitionParams {
     detectedCodeWrite: boolean;
     handoffInvoked: boolean;
   };
+  providerStandardModel?: string;
+  providerStandardThinking?: string | null;
+  /** @deprecated Legacy alias for `providerStandardModel`. */
   providerFlashModel?: string;
   lockTierOnLabel?: boolean;
 }
@@ -532,6 +565,9 @@ export interface EvaluateTurnAfterTransitionParams {
 export interface EvaluateTurnAfterTransitionResult {
   nextMeta: HarnessAgentMetadata;
   shouldDowngrade: boolean;
+  standardModel: string;
+  standardThinking: string | null;
+  /** @deprecated Legacy alias for `standardModel`. */
   flashModel: string;
   downgradeReason: HarnessDowngradeReason | null;
   canAutoDowngrade: boolean;
@@ -540,15 +576,24 @@ export interface EvaluateTurnAfterTransitionResult {
 export function evaluateTurnAfterTransition(
   params: EvaluateTurnAfterTransitionParams,
 ): EvaluateTurnAfterTransitionResult {
-  const { meta, turnId, settings, timelineInspection, providerFlashModel, lockTierOnLabel } =
-    params;
+  const {
+    meta,
+    turnId,
+    settings,
+    timelineInspection,
+    providerStandardModel,
+    providerStandardThinking,
+    providerFlashModel,
+    lockTierOnLabel,
+  } = params;
   const nextTurnCount = meta.turnCount + 1;
-  const isPlanDesign = meta.currentTier === "plan" && meta.phase === "design";
+  const isPlanDesign = meta.phase === "design";
   const nextPlanTurnCount = isPlanDesign ? meta.planTurnCount + 1 : meta.planTurnCount;
 
   // Snapshot the billed configuration for the turn that just ran
   const billedTier = meta.currentTier;
   const billedModel = meta.currentModel;
+  const billedThinking = meta.currentThinking ?? null;
 
   let handoffSuggestedAtTurn = meta.handoffSuggestedAtTurn;
   if (
@@ -579,13 +624,13 @@ export function evaluateTurnAfterTransition(
   const shouldDowngrade =
     isPlanDesign && canAutoDowngrade && (timelineInspection.detectedCodeWrite || hasExecIntent);
 
-  const downgradeReason: HarnessDowngradeReason | null = shouldDowngrade
-    ? timelineInspection.detectedCodeWrite
-      ? "write_tool_in_plan"
-      : "explicit_exec_intent"
-    : null;
+  const downgradeReason: HarnessDowngradeReason | null = resolveAutoDowngradeReason(
+    shouldDowngrade,
+    timelineInspection.detectedCodeWrite,
+  );
 
-  const flashModel = providerFlashModel ?? "flash";
+  const standardModel = providerStandardModel ?? providerFlashModel ?? "flash";
+  const standardThinking = providerStandardThinking ?? null;
 
   const nextMeta: HarnessAgentMetadata = {
     ...meta,
@@ -594,20 +639,24 @@ export function evaluateTurnAfterTransition(
     writeToolDetectedInPlan:
       meta.writeToolDetectedInPlan || (isPlanDesign && timelineInspection.detectedCodeWrite),
     handoffSuggestedAtTurn,
-    currentTier: shouldDowngrade ? "flash" : meta.currentTier,
-    currentModel: shouldDowngrade ? flashModel : meta.currentModel,
+    currentTier: shouldDowngrade ? "standard" : meta.currentTier,
+    currentModel: shouldDowngrade ? standardModel : meta.currentModel,
+    currentThinking: shouldDowngrade ? standardThinking : (meta.currentThinking ?? null),
     phase: shouldDowngrade ? "exec" : meta.phase,
     autoDowngradedAtTurn: shouldDowngrade ? nextTurnCount : meta.autoDowngradedAtTurn,
     downgradeReason: shouldDowngrade ? downgradeReason : meta.downgradeReason,
     lastProcessedTurnId: turnId,
     lastBilledTier: billedTier,
     lastBilledModel: billedModel,
+    lastBilledThinking: billedThinking,
   };
 
   return {
     nextMeta,
     shouldDowngrade,
-    flashModel,
+    standardModel,
+    standardThinking,
+    flashModel: standardModel,
     downgradeReason,
     canAutoDowngrade,
   };

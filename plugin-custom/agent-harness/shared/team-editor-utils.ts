@@ -104,9 +104,10 @@ export const TEAM_TRACKER_OPTIONS: ReadonlyArray<{ label: string; value: AgentTe
 ];
 
 export const TEAM_TIER_OPTIONS: ReadonlyArray<{ label: string; value: string }> = [
-  { label: "Flash (Execution)", value: "flash" },
-  { label: "Plan (Design)", value: "plan" },
-  { label: "Review (Gate)", value: "review" },
+  { label: "Fast (Low-cost / Scouting)", value: "fast" },
+  { label: "Standard (Daily Coding)", value: "standard" },
+  { label: "Deep (Architecture / Review)", value: "deep" },
+  { label: "Max (Manual Peak)", value: "max" },
 ];
 
 export const TEAM_BINDING_PROVIDERS = ["antigravity", "claude", "codex", "opencode", "pi"] as const;

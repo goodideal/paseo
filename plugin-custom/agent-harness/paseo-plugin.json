@@ -1,7 +1,7 @@
 {
   "id": "agent-harness",
   "name": "Agent Harness",
-  "description": "Automatically injects domain capability harness profiles and routes agent creation to appropriate model tiers (plan / review / flash)",
+  "description": "Automatically injects domain capability harness profiles and routes agent creation to appropriate complexity tiers (fast / standard / deep / max)",
   "requirements": {
     "paseo": ">=0.16.0"
   }

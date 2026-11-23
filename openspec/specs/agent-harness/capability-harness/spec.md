@@ -51,12 +51,54 @@
 
 - **WHEN** 第一个 Agent 携带 `labels: { role: "review" }` 创建并打开
 - **AND** 第二个 Agent 在同一 `cwd` 下无标签创建（标题为 `"修复 daemon WebSocket RPC 协议兼容性"`）并打开
-- **THEN** 第一个 Agent 挂载 `PASEO_HARNESS_ROLE="review"` 且模型路由至 `"review"`
+- **THEN** 第一个 Agent 挂载 `PASEO_HARNESS_ROLE="review"` 且模型路由至 `"pro"`（`deep` 档 + `thinking: "high"`）
 - **AND** 第二个 Agent 挂载 `PASEO_HARNESS_ROLE="backend"`，不会残留第一个 Agent 的 `"review"` 角色
+
+### Requirement: 单维度四档复杂度与预算阶梯 (`fast · standard · deep · max`) (4-Tier Complexity & Budget Ladder)
+
+系统 SHALL 将模型路由收敛为单一复杂度/成本维度四档阶梯（`fast` · `standard` · `deep` · `max`），同时通过 `providerThinkingMappings` 为每档独立配置目标推理深度（`thinkingOptionId`）：
+
+- `fast`（`0.2x`）：轻量检索、调度（`orchestrator`）、探针（`scout`）与 `chore:`/`docs:`/`style:` 类微调，默认配置 `lite` / `gemini-4-hydrogen` 等轻量模型；
+- `standard`（`1x`）：日常主力开发档位（`ui`、`backend`、`qa`、`general` 及常规迭代默认档），默认配置 `flash` / `gemini-4-argon`；
+- `deep`（`3x`）：自动意图路由最高上限，用于架构设计、产品规划（`pm`、`architect`）与代码审查（`review`）及手动重度编码；
+- `max`（手动峰值）：保留给极难疑难故障与核心算法的手工峰值推理（如 `gemini-4-neon` / `plan` + `xhigh`）。
+
+#### Scenario: 缺失 max 模型配置时自动回退至 deep + xhigh
+
+- **WHEN** 自定义或三模型 Provider 仅配置 `fast`、`standard`、`deep` 而未显式配置 `max`
+- **THEN** `resolveTierTarget(config, provider, "max")` 返回 `deep` 档模型并将 `thinkingOptionId` 提升为 `"xhigh"`
+
+### Requirement: 复杂度档位与执行阶段的正交解耦 (`MatrixTier` vs `HarnessPhase`) (Orthogonal Tier/Phase Decoupling)
+
+系统 MUST 将复杂度档位（`fast | standard | deep | max`）与执行阶段（`phase`: `design | exec | review`）正交解耦：
+
+- 是否强制进入原生只读 `plan` 模式仅由 `phase === "design"` 或 `specialist.readonly === true` 决定，不得将 `"deep"`/`"max"` 档位本身等同于只读规划模式；
+- 会话创建时的初始 `modeId` 与 `thinkingOptionId` 由 `agent.create.before` 注入；
+- 自动设计意图在 `phase === "design"` 经 `ExitPlanMode` 批准或确认执行指令时自动步降至 `standard` 档（`phase: "exec"`），服务端同步更新 `model` 与元数据（若运行时 `PaseoAgentHandle` 支持 `setMode` / `setThinkingOption` 则一并下发）；
+- 通过 `harnessSwitchTierRpc` 手动切换至 `deep` 或 `max` 档时，除非当前角色为 `readonly` 或显式指定 `targetPhase: "design"`，否则默认切入可写 `"exec"` 阶段且在编写源码时不得自动降档；`HarnessPopover` 必须经由 `useComposers({ agentId })` 调用 `composer.setMode` 与 `composer.setThinking` 同步 `recommendedModeId` 与 `recommendedThinkingOptionId`。
+
+#### Scenario: Deep/Max 处于可写 exec 阶段时修改源码不触发自动降档
+
+- **WHEN** 会话处于 `currentTier: "deep"`（或 `"max"`）且 `phase: "exec"`，并在同一回合内修改 `.ts` / `.tsx` 业务源码
+- **THEN** `shouldEnforceNativePlanMode` 返回 `false`
+- **AND** `evaluateTurnAfterTransition` 返回 `shouldDowngrade: false`，保持当前档位与 `exec` 阶段不变
+
+### Requirement: max 档严格手动触发边界 (Strict Manual-Only Governance for Max Tier)
+
+系统 MUST 保证 `max` 档位仅由用户通过 `HarnessPopover` 手动点击切换或在创建会话时显式选用对应模型，严禁以下行为：
+
+- 自动意图检测（`detectIntentRoute` / `detectMatrixTier`）与 L2 LLM 分类器（`classifyIntentWithLlm`）输出 `max` 档位（出现 `"max"` 时由 `coerceAutoRoutingTier` 钳位至 `"deep"`）；
+- 任何内置专家默认绑定 `preferredTier: "max"`；
+- 当用户主动选择 `max` 模型（如 `"gemini-4-neon"` 或 `"custom/plan"`）且启用 `overrideIfDefaultOnly` 时，`resolveMatrixModel` 判定为 `preserve_user_choice` 并保留用户选定模型。
+
+#### Scenario: Popover 在 Max 档 active 时展示高配额消耗提示徽章
+
+- **WHEN** `HarnessPopover` 展示 `currentTier === "max"` 的非旁路会话
+- **THEN** Next Turn 状态卡片显示 `"Manual Max · High quota usage"` 提示标签
 
 ### Requirement: Antigravity 按模型粒度豁免与 Gemini 4 路由 (Antigravity Model-Level Bypass & Gemini 4 Routing)
 
-系统 SHALL 支持按模型正则规则（`bypassModels`，默认 `["^gemini-pro-orchestrator"]`）对 Antigravity 原生 Orchestrator 会话进行全链路豁免，而对 Antigravity 其余单阶模型启用 `agent-harness` 编排路由与能力容器注入，并将 `antigravity` 默认映射至 Gemini 4 三档位模型（`plan: "gemini-4-carbon-high"`、`flash: "gemini-4-hydrogen-high"`、`review: "gemini-4-argon-high"`，严禁路由至 `gemini-3*`）。
+系统 SHALL 支持按模型正则规则（`bypassModels`，默认 `["^gemini-pro-orchestrator"]`）对 Antigravity 原生 Orchestrator 会话进行全链路豁免，而对 Antigravity 其余单阶模型启用 `agent-harness` 编排路由与能力容器注入，并将 `antigravity` 默认映射至原生 Gemini 4 模型 ID 与配套 `thinkingOptionId`（`fast: "gemini-4-hydrogen"` + `"medium"`、`standard: "gemini-4-argon"` + `"high"`、`deep: "gemini-4-carbon"` + `"high"`、`max: "gemini-4-neon"` + `"xhigh"`，严禁路由至 `gemini-3*`）。
 
 #### Scenario: Antigravity 使用 Orchestrator 模型时全链路跳过 Harness
 
@@ -66,45 +108,50 @@
 
 #### Scenario: Antigravity 使用非 Orchestrator 单阶模型时启用 Gemini 4 路由与切片
 
-- **WHEN** `provider` 为 `"antigravity"` 且 `currentModel` 为 `"gemini-4-hydrogen-high"` 或未显式指定
+- **WHEN** `provider` 为 `"antigravity"` 且 `currentModel` 为 `"gemini-4-hydrogen"` 或未显式指定
 - **AND** 提示词为 `"你作为 CTO 设计一套完整架构方案"`（或携带 `labels: { role: "ui" }`）
-- **THEN** `resolveMatrixModel` 在规划意图下路由至 `"gemini-4-carbon-high"`（或在 `labels.role="ui"` 时路由至 `gemini-4-hydrogen-high` 并注入 `ui.yaml` 切片）
-- **AND** 当 `currentModel` 为用户显式锁定的非默认模型（如 `"gemini-4-neon-high"`）且 `overrideIfDefaultOnly` 为 `true` 时，保留原模型不被改写
+- **THEN** `resolveMatrixModel` 在规划意图下路由至 `"gemini-4-carbon"`（`tier: "deep"`, `thinkingOptionId: "high"`；或在 `labels.role="ui"` 时路由至 `standard` 档 `"gemini-4-argon"` 并注入 `ui.yaml` 切片）
+- **AND** 当 `currentModel` 为用户显式锁定的非默认或手动 `max` 模型（如 `"gemini-4-neon"`）且 `overrideIfDefaultOnly` 为 `true` 时，保留原模型不被改写
 
 ### Requirement: 敏捷探针 (Scout) 角色与 Pi Canonical 模型 ID 路由 (Scout & Pi Routing)
 
-系统 SHALL 支持将 `pi` Provider 映射至带 `headroom/` 前缀的规范模型 ID，并识别 `scout` 角色加载对应探针画像。
+系统 SHALL 支持将 `pi` Provider 映射至带 `headroom/` 前缀的四档规范模型 ID（`fast: "headroom/lite"`、`standard: "headroom/flash"`、`deep: "headroom/pro"`、`max: "headroom/plan"`），并识别 `scout` 角色加载对应探针画像（默认 `preferredTier: "fast"`）。
 
 #### Scenario: 敏捷探针 (Scout) 角色与 Pi Canonical 模型 ID 路由
 
 - **WHEN** `provider` 为 `"pi"` 且提示词包含 `"设计一套深模块架构方案"`
-- **THEN** `resolveMatrixModel` 返回 `targetModel` 为 `"headroom/plan"`（自动附带 Pi Required 的 `headroom/` 前缀）
+- **THEN** `resolveMatrixModel` 返回 `tier: "deep"`、`targetModel: "headroom/pro"`、`targetThinking: "high"`（自动附带 Pi Required 的 `headroom/` 前缀）
 - **AND** 当标题或 `labels.role` 命中 `"scout"` 时，`detectDomainRole` 返回 `role: "scout"`，指向 `~/.agents/profiles/scout-specialist.json`
 
-### Requirement: 专家角色与 Provider 模型映射可视化配置 (Specialist & Provider Matrix UI)
+### Requirement: 专家角色与 Provider 模型映射可视化配置与 v5 迁移 (Streamlined Settings Matrix UI & v5 Migration)
 
-系统 SHALL 在插件设置界面提供 Provider 模型档位映射编辑器（含 `antigravity` 及动态探测到的已安装 Provider）、模型旁路正则配置、以及各专家角色（`specialists`）的 `preferredProvider`、`preferredTier`、`modelOverride`、`lazyToolSlice` 等独立配置控件，并在 Composer Popover 动态展示启用的交接专家与原生 Orchestrator 豁免状态。
+系统 SHALL 在插件设置界面为四档（`Fast / Standard / Deep / Max`）提供简洁的单下拉模型选择（仅选择 `Custom Model ID...` 时按需展开自定义输入框）+ 推理深度（`Thinking`）下拉与 `Reset Provider Mappings` 一键恢复推荐配置操作、模型旁路正则配置、以及各专家角色（`specialists`）的 `preferredProvider`、`preferredTier`、`modelOverride`、`lazyToolSlice` 控件；在配置版本 `SETTINGS_SCHEMA_VERSION = 5` 下自动执行 `v1–v4 -> v5` 迁移，通过 `normalizeTierAlias`（`lite->fast`, `flash->standard`, `plan|review->deep`）升级未改动的内置映射同时保留用户自定义模型与自定义档位，并在 Composer Popover 单行展示 `Fast | Standard | Deep | Max` 切换按钮、活跃交接专家与原生 Orchestrator 状态。
 
-#### Scenario: 设置界面修改 UI 专家绑定至 Antigravity 并保存
+#### Scenario: 设置界面修改 Antigravity 档位模型与 Thinking、按需展示 Custom 输入并支持重置默认值
 
-- **WHEN** 用户在 `HarnessSettingsScreen` 的专家矩阵中选择 `"ui"` 并将其 `Preferred Provider` 切换为 `"antigravity"`
-- **THEN** 界面触发 `settings.save` 将 `specialists` 中 `ui` 项的 `preferredProvider` 持久化为 `"antigravity"`
-- **AND** `Model Override` 选择器联动展示 `antigravity` 的可用模型列表
+- **WHEN** 用户在 `HarnessSettingsScreen` 修改 `Standard Model` 为 `"gemini-4-neon"`、修改 `Standard Thinking` 为 `"xhigh"`，或在 `Fast Model` 选择 `"Custom Model ID..."` 并最终点击 `Reset Provider Mappings`
+- **THEN** `Standard Model`/`Standard Thinking` 即时持久化至 `providerMappings` 与 `providerThinkingMappings`
+- **AND** `Fast Custom Model ID` 输入框仅在选定 `"__custom__"` 或存在目录外自定义模型时显示；点击 `Reset defaults` 恢复对应客户端推荐的四档模型与 Thinking 映射
+
+#### Scenario: 从 v4 配置升级至 v5 时保留用户自定义模型与自定义档位
+
+- **WHEN** `agentHarnessSettings.migrate` 接收到含自定义 `claude` 映射及自定义档位（如 `"ultra"`）和未改动 `codex` v4 默认映射的 v4 配置
+- **THEN** `claude` 自定义模型被映射到对应规范档位且 `"ultra"` 档位保留，未改动的 `codex` 映射与内置专家 `preferredTier` 自动升级至四档默认值，同时补全 `providerThinkingMappings`
 
 #### Scenario: Popover 动态展示交接专家与原生 Orchestrator 状态
 
 - **WHEN** `HarnessPopover` 挂载于使用 `gemini-pro-orchestrator` 且无 `agentHarness` 元数据的会话时
-- **THEN** 顶部徽章显示 `"NATIVE ORCHESTRATOR"`
+- **THEN** 顶部徽章显示 `"NATIVE ORCHESTRATOR"`，单行展示 `Fast | Standard | Deep | Max` 四个锁定按钮
 - **AND** Specialist Handoff 区域按 `handoffPriority` 动态渲染 `enabled && handoffEnabled` 的专家卡片
 
 ### Requirement: Daemon Agent Profiles 真实模型同步与磁盘隔离 (Accurate Profile Sync & Isolation)
 
-系统 SHALL 在同步 Paseo 原生 `agentProfiles` 时经由 `modelOverride` 或 `providerMappings` 解析真实可执行模型 ID，并将图标转换为 kebab-case、按角色去重就地更新既有配置；同时 `general` 专家 MUST 使用独立的 `general.json` 磁盘画像，不得覆盖 `architect.json`。
+系统 SHALL 在同步 Paseo 原生 `agentProfiles` 时经由 `modelOverride` 或 `providerMappings` 解析真实可执行模型 ID 与 `thinkingOptionId`，并将图标转换为 kebab-case、按角色去重就地更新既有配置；同时 `general` 专家 MUST 使用独立的 `general.json` 磁盘画像，不得覆盖 `architect.json`。
 
-#### Scenario: 同步 Daemon Agent Profiles 时解析真实模型并避免重复
+#### Scenario: 同步 Daemon Agent Profiles 时解析真实模型、Thinking 并避免重复
 
-- **WHEN** 调用 `syncDaemonAgentProfiles` 同步包含 `pi`、`antigravity` 与既有的 `profile_ui_specialist`（`notes` 含 `role: ui |`）在内的专家列表
-- **THEN** `pi` 专家解析出 `"headroom/flash"`，`antigravity` 专家解析出 `"gemini-4-hydrogen-high"`，`CheckCircle` 图标转为 `"check-circle"`
+- **WHEN** 调用 `syncDaemonAgentProfiles` 同步包含 `pi`（`scout`, `fast`）、`antigravity`（`ui`, `standard`）与既有的 `profile_ui_specialist`（`notes` 含 `role: ui |`）在内的专家列表
+- **THEN** `pi` 专家解析出 `"headroom/lite"`（`thinkingOptionId: "low"`），`antigravity` `ui` 专家解析出 `"gemini-4-argon"`（`thinkingOptionId: "high"`），`CheckCircle` 图标转为 `"check-circle"`
 - **AND** 复用既有 `profile_ui_specialist` 的 `id` 就地更新，不生成额外的 `harness-ui` 重复条目
 
 ### Requirement: 工作区 agent-team.json 动态 N 角色装载与绑定保留 (Workspace Dynamic Team & Bindings)
@@ -206,7 +253,7 @@
 #### Scenario: 跨客户端交接 review 角色时默认路由至 Antigravity 审查模型并挂载委托门禁技能
 
 - **WHEN** 父会话（如运行在 `"claude"`）调用 `harness_handoff` 且 `targetRole` 为 `"review"`（未覆盖内置 `review` 配置）
-- **THEN** 新建子会话的 `provider/model` 路由至 `"antigravity/gemini-4-argon-high"`
+- **THEN** 新建子会话的 `provider/model` 路由至 `"antigravity/gemini-4-carbon"`（`targetTier: "deep"`, `thinkingOptionId: "high"`）
 - **AND** 系统提示词中的 `Primary Skills` 包含 `"open-code-review-delegate"`，且 `phase=review` 规则明确使用 `ocr delegate preview` 与 `ocr delegate rule`
 
 #### Scenario: 从 v3 旧版配置自动升级内置 review 专家与阶段规则至 v4

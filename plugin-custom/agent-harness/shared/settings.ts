@@ -1,15 +1,18 @@
 import { defineSettings } from "@getpaseo/plugin";
 import { z } from "zod";
+import { canonicalizeProviderName } from "./config-resolver.js";
 import {
   BUILTIN_BYPASS_MODELS,
   BUILTIN_CONVENTIONAL_EXEC_PREFIX,
   BUILTIN_EXEC_ACTION_PATTERNS,
+  BUILTIN_FAST_ACTION_PATTERNS,
   BUILTIN_FULLSTACK_BACKEND_PATTERN,
   BUILTIN_FULLSTACK_UI_PATTERN,
   BUILTIN_PHASE_RULES,
   BUILTIN_PLAN_PATTERNS,
   BUILTIN_PROVIDER_MAPPINGS,
   BUILTIN_PROVIDER_MODES,
+  BUILTIN_PROVIDER_THINKING_MAPPINGS,
   BUILTIN_REVIEW_PATTERNS,
   BUILTIN_SPECIALISTS,
   BUILTIN_TIERS,
@@ -17,8 +20,12 @@ import {
   LEGACY_V3_EXEC_PHASE_RULE,
   LEGACY_V3_REVIEW_DESCRIPTION,
   LEGACY_V3_REVIEW_HANDOFF_PROMPT,
-  LEGACY_V3_REVIEW_MATCH_PATTERN,
   LEGACY_V3_REVIEW_PHASE_RULE,
+  LEGACY_V4_DESIGN_PHASE_RULE,
+  LEGACY_V4_EXEC_PHASE_RULE,
+  LEGACY_V4_ORCHESTRATOR_DISPATCHER_RULE,
+  LEGACY_V4_PROVIDER_MAPPINGS,
+  LEGACY_V4_REVIEW_PHASE_RULE,
 } from "./presets.js";
 
 const DEFAULT_AFFIRMATIVE_CONFIRM_WORDS: readonly string[] = [
@@ -47,6 +54,12 @@ function cloneBuiltinProviderMappings(): Record<string, Record<string, string>> 
   );
 }
 
+function cloneBuiltinProviderThinkingMappings(): Record<string, Record<string, string>> {
+  return Object.fromEntries(
+    Object.entries(BUILTIN_PROVIDER_THINKING_MAPPINGS).map(([k, v]) => [k, { ...v }]),
+  );
+}
+
 function cloneBuiltinProviderModes(): Record<string, z.infer<typeof ProviderModeConfigSchema>> {
   return Object.fromEntries(Object.entries(BUILTIN_PROVIDER_MODES).map(([k, v]) => [k, { ...v }]));
 }
@@ -55,6 +68,7 @@ function createDefaultTierPatterns() {
   return {
     plan: [...BUILTIN_PLAN_PATTERNS],
     review: [...BUILTIN_REVIEW_PATTERNS],
+    fastAction: [...BUILTIN_FAST_ACTION_PATTERNS],
     execAction: [...BUILTIN_EXEC_ACTION_PATTERNS],
     conventionalExecPrefix: BUILTIN_CONVENTIONAL_EXEC_PREFIX,
   };
@@ -126,7 +140,7 @@ export const HarnessSpecialistConfigSchema = z.object({
   builtIn: z.boolean().default(false),
   readonly: z.boolean().optional(),
   preferredProvider: z.string().optional().default(""),
-  preferredTier: z.string().optional().default("flash"),
+  preferredTier: z.string().optional().default("standard"),
   modelOverride: z.string().optional().default(""),
   defaultModeId: z.string().optional().default(""),
   thinkingOptionId: z.string().optional().default(""),
@@ -156,6 +170,7 @@ export const HarnessSpecialistConfigSchema = z.object({
 export const TierPatternsSchema = z.object({
   plan: z.array(z.string()).default(() => [...BUILTIN_PLAN_PATTERNS]),
   review: z.array(z.string()).default(() => [...BUILTIN_REVIEW_PATTERNS]),
+  fastAction: z.array(z.string()).default(() => [...BUILTIN_FAST_ACTION_PATTERNS]),
   execAction: z.array(z.string()).default(() => [...BUILTIN_EXEC_ACTION_PATTERNS]),
   conventionalExecPrefix: z.string().default(BUILTIN_CONVENTIONAL_EXEC_PREFIX),
 });
@@ -195,6 +210,9 @@ export const AgentHarnessSettingsSchema = z.object({
   providerMappings: z
     .record(z.string(), z.record(z.string(), z.string()))
     .default(cloneBuiltinProviderMappings),
+  providerThinkingMappings: z
+    .record(z.string(), z.record(z.string(), z.string()))
+    .default(cloneBuiltinProviderThinkingMappings),
   providerModes: z.record(z.string(), ProviderModeConfigSchema).default(cloneBuiltinProviderModes),
   bypassProviders: z.array(z.string()).default(() => []),
   bypassModels: z.array(z.string()).default(() => [...BUILTIN_BYPASS_MODELS]),
@@ -205,7 +223,7 @@ export const AgentHarnessSettingsSchema = z.object({
     .array(HarnessSpecialistConfigSchema)
     .default(() => BUILTIN_SPECIALISTS.map((s) => HarnessSpecialistConfigSchema.parse(s))),
   defaultFallbackRole: z.string().default("general"),
-  defaultFallbackTier: z.string().default("flash"),
+  defaultFallbackTier: z.string().default("standard"),
 
   // Domain 4: Routing, Heuristics & LLM Fallback
   enableFullstackOrchestratorCollision: z.boolean().default(true),
@@ -241,7 +259,7 @@ export type AgentHarnessSettings = z.infer<typeof AgentHarnessSettingsSchema>;
 export const DEFAULT_AGENT_HARNESS_SETTINGS: AgentHarnessSettings =
   AgentHarnessSettingsSchema.parse({});
 
-export const SETTINGS_SCHEMA_VERSION = 4 as const;
+export const SETTINGS_SCHEMA_VERSION = 5 as const;
 
 function migrateLegacyReviewSpecialistToV4(spec: Record<string, unknown>): Record<string, unknown> {
   const builtinReview = BUILTIN_SPECIALISTS.find((s) => s.id === "review");
@@ -252,8 +270,7 @@ function migrateLegacyReviewSpecialistToV4(spec: Record<string, unknown>): Recor
   const nextSpec = { ...spec };
   const currentProvider =
     typeof nextSpec.preferredProvider === "string" ? nextSpec.preferredProvider.trim() : "";
-  const normProvider = currentProvider.toLowerCase();
-  if (!normProvider || normProvider === "claude" || normProvider === "claude-code") {
+  if (!currentProvider || canonicalizeProviderName(currentProvider) === "claude") {
     nextSpec.preferredProvider = builtinReview.preferredProvider;
   }
 
@@ -285,15 +302,103 @@ function migrateLegacyReviewSpecialistToV4(spec: Record<string, unknown>): Recor
   }
 
   if (Array.isArray(nextSpec.matchPatterns)) {
-    const nextPrimaryMatch = builtinReview.matchPatterns[0];
     nextSpec.matchPatterns = nextSpec.matchPatterns
       .filter((item): item is string => typeof item === "string")
       .map((item) =>
-        item === LEGACY_V3_REVIEW_MATCH_PATTERN && nextPrimaryMatch ? nextPrimaryMatch : item,
+        item === "\\b(?:ocr|code-review|security-review)\\b"
+          ? "\\b(?:ocr|open-code-review-delegate|code-review|security-review)\\b"
+          : item,
       );
   }
 
   return nextSpec;
+}
+
+function isUntouchedLegacyProviderMap(
+  providerId: string,
+  rawMap: Record<string, unknown>,
+): boolean {
+  const keys = Object.keys(rawMap);
+  if (keys.some((k) => k === "fast" || k === "standard" || k === "deep" || k === "max")) {
+    return false;
+  }
+  const legacyDefaults = LEGACY_V4_PROVIDER_MAPPINGS[providerId];
+  if (!legacyDefaults) {
+    return keys.length === 0;
+  }
+  for (const key of keys) {
+    const val = rawMap[key];
+    if (typeof val !== "string" || !val.trim()) continue;
+    const trimmed = val.trim();
+    if (trimmed !== legacyDefaults[key] && !/^gemini-3/i.test(trimmed)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function cleanModelValue(val: unknown): string {
+  if (typeof val !== "string") return "";
+  const trimmed = val.trim();
+  return /^gemini-3/i.test(trimmed) ? "" : trimmed;
+}
+
+function mapLegacySpecialistTier(rawTier: string): "fast" | "standard" | "deep" {
+  if (rawTier === "lite") {
+    return "fast";
+  }
+  if (rawTier === "flash") {
+    return "standard";
+  }
+  return "deep";
+}
+
+function migrateProviderMapToV5(
+  providerId: string,
+  rawMap: Record<string, unknown>,
+): Record<string, string> {
+  const builtin = BUILTIN_PROVIDER_MAPPINGS[providerId];
+  if (isUntouchedLegacyProviderMap(providerId, rawMap)) {
+    return builtin ? { ...builtin } : {};
+  }
+
+  const fastVal =
+    cleanModelValue(rawMap.fast) || cleanModelValue(rawMap.lite) || builtin?.fast || "";
+  const standardVal =
+    cleanModelValue(rawMap.standard) || cleanModelValue(rawMap.flash) || builtin?.standard || "";
+  const deepVal =
+    cleanModelValue(rawMap.deep) ||
+    cleanModelValue(rawMap.plan) ||
+    cleanModelValue(rawMap.review) ||
+    builtin?.deep ||
+    "";
+  const explicitMaxVal = cleanModelValue(rawMap.max);
+  const legacyPlanVal = cleanModelValue(rawMap.plan);
+  const maxVal =
+    explicitMaxVal || (legacyPlanVal && legacyPlanVal !== deepVal ? legacyPlanVal : "");
+
+  const out: Record<string, string> = {};
+  if (fastVal) out.fast = fastVal;
+  if (standardVal) out.standard = standardVal;
+  if (deepVal) out.deep = deepVal;
+  if (maxVal) out.max = maxVal;
+  for (const [k, v] of Object.entries(rawMap)) {
+    if (
+      k !== "plan" &&
+      k !== "review" &&
+      k !== "flash" &&
+      k !== "lite" &&
+      k !== "fast" &&
+      k !== "standard" &&
+      k !== "deep" &&
+      k !== "max" &&
+      typeof v === "string" &&
+      v.trim()
+    ) {
+      out[k] = v.trim();
+    }
+  }
+  return out;
 }
 
 function migrateLegacySettings(rawInput: Record<string, unknown>, fromVersion: number) {
@@ -316,19 +421,19 @@ function migrateLegacySettings(rawInput: Record<string, unknown>, fromVersion: n
       !Array.isArray(next.providerMappings)
     ) {
       const mappings = { ...(next.providerMappings as Record<string, unknown>) };
-      const existingAg =
+      if (
         mappings.antigravity &&
         typeof mappings.antigravity === "object" &&
         !Array.isArray(mappings.antigravity)
-          ? { ...(mappings.antigravity as Record<string, unknown>) }
-          : {};
-      for (const [tier, defaultModel] of Object.entries(BUILTIN_PROVIDER_MAPPINGS.antigravity)) {
-        const cur = existingAg[tier];
-        if (typeof cur !== "string" || !cur.trim() || /^gemini-3/i.test(cur.trim())) {
-          existingAg[tier] = defaultModel;
+      ) {
+        const existingAg = { ...(mappings.antigravity as Record<string, unknown>) };
+        for (const [tierKey, cur] of Object.entries(existingAg)) {
+          if (typeof cur !== "string" || !cur.trim() || /^gemini-3/i.test(cur.trim())) {
+            delete existingAg[tierKey];
+          }
         }
+        mappings.antigravity = existingAg;
       }
-      mappings.antigravity = existingAg;
       next.providerMappings = mappings;
     }
 
@@ -418,6 +523,161 @@ function migrateLegacySettings(rawInput: Record<string, unknown>, fromVersion: n
         rules.exec = BUILTIN_PHASE_RULES.exec;
       }
       next.phaseRules = rules;
+    }
+  }
+
+  if (fromVersion < 5) {
+    // 1. Upgrade built-in tier list while preserving custom user tiers
+    if (Array.isArray(next.tiers)) {
+      const builtinIds = new Set(BUILTIN_TIERS.map((t) => t.id));
+      const legacyTierIds = new Set(["plan", "flash", "review"]);
+      const hasNewBuiltin = next.tiers.some(
+        (t) =>
+          typeof t === "object" &&
+          t !== null &&
+          typeof (t as Record<string, unknown>).id === "string" &&
+          builtinIds.has((t as Record<string, unknown>).id as string),
+      );
+      if (!hasNewBuiltin) {
+        const customTiers = next.tiers.filter(
+          (t) =>
+            typeof t === "object" &&
+            t !== null &&
+            typeof (t as Record<string, unknown>).id === "string" &&
+            !legacyTierIds.has((t as Record<string, unknown>).id as string) &&
+            !builtinIds.has((t as Record<string, unknown>).id as string),
+        );
+        next.tiers = [...BUILTIN_TIERS.map((t) => ({ ...t })), ...customTiers];
+      }
+    }
+
+    // 2. Migrate defaultFallbackTier alias
+    if (typeof next.defaultFallbackTier === "string") {
+      const ft = next.defaultFallbackTier.trim().toLowerCase();
+      if (ft === "flash") next.defaultFallbackTier = "standard";
+      else if (ft === "plan" || ft === "review") next.defaultFallbackTier = "deep";
+      else if (ft === "lite") next.defaultFallbackTier = "fast";
+    }
+
+    // 3. Migrate providerMappings while preserving user customizations
+    if (
+      next.providerMappings &&
+      typeof next.providerMappings === "object" &&
+      !Array.isArray(next.providerMappings)
+    ) {
+      const incomingMappings = next.providerMappings as Record<string, unknown>;
+      const migratedMappings: Record<string, Record<string, string>> = {};
+      for (const [provKey, rawMap] of Object.entries(incomingMappings)) {
+        const normProv = provKey.trim().toLowerCase();
+        if (rawMap && typeof rawMap === "object" && !Array.isArray(rawMap)) {
+          migratedMappings[normProv] = migrateProviderMapToV5(
+            normProv,
+            rawMap as Record<string, unknown>,
+          );
+        }
+      }
+      for (const [provKey, builtinMap] of Object.entries(BUILTIN_PROVIDER_MAPPINGS)) {
+        if (!migratedMappings[provKey]) {
+          migratedMappings[provKey] = { ...builtinMap };
+        }
+      }
+      next.providerMappings = migratedMappings;
+    }
+
+    // 4. Populate providerThinkingMappings defaults
+    const baseThinking = cloneBuiltinProviderThinkingMappings();
+    if (
+      next.providerThinkingMappings &&
+      typeof next.providerThinkingMappings === "object" &&
+      !Array.isArray(next.providerThinkingMappings)
+    ) {
+      const existingThinking = next.providerThinkingMappings as Record<string, unknown>;
+      for (const [prov, mapVal] of Object.entries(existingThinking)) {
+        if (mapVal && typeof mapVal === "object" && !Array.isArray(mapVal)) {
+          const normProv = prov.trim().toLowerCase();
+          baseThinking[normProv] = {
+            ...(baseThinking[normProv] ?? {}),
+            ...Object.fromEntries(
+              Object.entries(mapVal as Record<string, unknown>).filter(
+                (entry): entry is [string, string] => typeof entry[1] === "string",
+              ),
+            ),
+          };
+        }
+      }
+    }
+    next.providerThinkingMappings = baseThinking;
+
+    // 5. Migrate built-in specialists preferredTier and v4 orchestrator template
+    const builtinSpecById = new Map(BUILTIN_SPECIALISTS.map((s) => [s.id, s]));
+    if (Array.isArray(next.specialists)) {
+      next.specialists = next.specialists.map((entry) => {
+        if (!entry || typeof entry !== "object") return entry;
+        const spec = { ...(entry as Record<string, unknown>) };
+        const id = typeof spec.id === "string" ? spec.id : "";
+        const builtin = builtinSpecById.get(id);
+        const rawTier =
+          typeof spec.preferredTier === "string" ? spec.preferredTier.trim().toLowerCase() : "";
+
+        if (
+          rawTier === "flash" ||
+          rawTier === "plan" ||
+          rawTier === "review" ||
+          rawTier === "lite"
+        ) {
+          if (builtin && spec.builtIn !== false) {
+            spec.preferredTier = builtin.preferredTier ?? "standard";
+          } else {
+            spec.preferredTier = mapLegacySpecialistTier(rawTier);
+          }
+        }
+
+        if (
+          id === "orchestrator" &&
+          typeof spec.rolePromptTemplate === "string" &&
+          (spec.rolePromptTemplate.trim() === LEGACY_V4_ORCHESTRATOR_DISPATCHER_RULE ||
+            isLegacyOrchestratorPrompt(spec.rolePromptTemplate)) &&
+          builtin
+        ) {
+          spec.rolePromptTemplate = builtin.rolePromptTemplate;
+        }
+        return spec;
+      });
+    }
+
+    // 6. Upgrade untouched v4 phaseRules
+    if (next.phaseRules && typeof next.phaseRules === "object" && !Array.isArray(next.phaseRules)) {
+      const rules = { ...(next.phaseRules as Record<string, unknown>) };
+      if (
+        typeof rules.orchestrator === "string" &&
+        (rules.orchestrator.trim() === LEGACY_V4_ORCHESTRATOR_DISPATCHER_RULE ||
+          isLegacyOrchestratorPrompt(rules.orchestrator))
+      ) {
+        rules.orchestrator = BUILTIN_PHASE_RULES.orchestrator;
+      }
+      if (rules.design === LEGACY_V4_DESIGN_PHASE_RULE) {
+        rules.design = BUILTIN_PHASE_RULES.design;
+      }
+      if (rules.exec === LEGACY_V4_EXEC_PHASE_RULE) {
+        rules.exec = BUILTIN_PHASE_RULES.exec;
+      }
+      if (rules.review === LEGACY_V4_REVIEW_PHASE_RULE) {
+        rules.review = BUILTIN_PHASE_RULES.review;
+      }
+      next.phaseRules = rules;
+    }
+
+    // 7. Ensure tierPatterns.fastAction exists
+    if (
+      next.tierPatterns &&
+      typeof next.tierPatterns === "object" &&
+      !Array.isArray(next.tierPatterns)
+    ) {
+      const tp = { ...(next.tierPatterns as Record<string, unknown>) };
+      if (!Array.isArray(tp.fastAction)) {
+        tp.fastAction = [...BUILTIN_FAST_ACTION_PATTERNS];
+      }
+      next.tierPatterns = tp;
     }
   }
 

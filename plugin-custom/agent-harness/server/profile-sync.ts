@@ -5,9 +5,11 @@ import type { PaseoApi } from "@getpaseo/client";
 import {
   expandHomeDir,
   normalizeProviderName,
-  resolveTargetModelForTier,
+  normalizeTierAlias,
+  resolveTierTarget,
 } from "../shared/config-resolver.js";
 import { DEFAULT_PROVIDER_MAPPINGS } from "../shared/intent-detector.js";
+import { BUILTIN_PROVIDER_THINKING_MAPPINGS } from "../shared/presets.js";
 import type {
   EffectiveHarnessConfig,
   HarnessSpecialistConfig,
@@ -206,8 +208,8 @@ export function importSpecialistsFromDisk(
           : (existing?.preferredProvider ?? ""),
       preferredTier:
         typeof raw.default_model === "string"
-          ? raw.default_model
-          : (existing?.preferredTier ?? "flash"),
+          ? normalizeTierAlias(raw.default_model)
+          : (existing?.preferredTier ?? "standard"),
       modelOverride: existing?.modelOverride ?? "",
       defaultModeId: existing?.defaultModeId ?? "",
       thinkingOptionId: existing?.thinkingOptionId ?? "",
@@ -310,22 +312,32 @@ function extractRoleFromNotes(notes: unknown): string | null {
   return match?.[1]?.toLowerCase() ?? null;
 }
 
-function resolveSyncedModelId(
+function resolveSyncedTarget(
   specialist: HarnessSpecialistConfig,
   provider: string,
   effectiveConfig?: EffectiveHarnessConfig | null,
-): string {
+): { model: string; thinkingOptionId: string | null } {
+  const tier = normalizeTierAlias(specialist.preferredTier?.trim() || "standard");
+  const normProvider = normalizeProviderName(provider);
+  const resolved = resolveTierTarget(
+    effectiveConfig ?? {
+      providerMappings: DEFAULT_PROVIDER_MAPPINGS,
+      providerThinkingMappings: BUILTIN_PROVIDER_THINKING_MAPPINGS,
+    },
+    normProvider,
+    tier,
+  );
   const override = specialist.modelOverride?.trim();
   if (override) {
-    return override;
+    return {
+      model: override,
+      thinkingOptionId: resolved.thinkingOptionId,
+    };
   }
-  const tier = specialist.preferredTier?.trim() || "flash";
-  const normProvider = normalizeProviderName(provider);
-  if (effectiveConfig) {
-    return resolveTargetModelForTier(effectiveConfig, normProvider, tier);
-  }
-  const mapping = DEFAULT_PROVIDER_MAPPINGS[normProvider];
-  return mapping?.[tier]?.trim() || tier;
+  return {
+    model: resolved.model,
+    thinkingOptionId: resolved.thinkingOptionId,
+  };
 }
 
 /**
@@ -392,7 +404,11 @@ export async function syncDaemonAgentProfiles(
       const canInheritThinking =
         existingProviderMatches &&
         (s.thinkingOptionId !== "" || existingMatch?.harnessManaged !== true);
-      const resolvedModel = resolveSyncedModelId(s, provider, effectiveConfig);
+      const { model: resolvedModel, thinkingOptionId: tierThinking } = resolveSyncedTarget(
+        s,
+        provider,
+        effectiveConfig,
+      );
       const resolvedModeId =
         s.defaultModeId?.trim() ||
         (canInheritModeId &&
@@ -406,7 +422,7 @@ export async function syncDaemonAgentProfiles(
         typeof existingMatch?.thinkingOptionId === "string" &&
         existingMatch.thinkingOptionId.trim()
           ? existingMatch.thinkingOptionId.trim()
-          : undefined);
+          : tierThinking || undefined);
 
       harnessProfiles.push({
         id: targetId,

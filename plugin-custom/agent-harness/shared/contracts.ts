@@ -57,6 +57,8 @@ export const HarnessAgentMetadataSchema = z.object({
   resumeModeId: z.string().nullable(),
   lastBilledTier: MatrixTierSchema.nullable(),
   lastBilledModel: z.string().nullable(),
+  currentThinking: z.string().nullable().optional(),
+  lastBilledThinking: z.string().nullable().optional(),
 });
 
 // Compile-time structural parity guard between HarnessAgentMetadata and its Zod schema
@@ -184,6 +186,7 @@ export const harnessSwitchTierRpc = defineRpc({
   input: z.object({
     agentId: z.string().min(1),
     targetTier: MatrixTierSchema,
+    targetPhase: HarnessPhaseSchema.optional(),
     currentModeId: z.string().nullable().optional(),
     reason: z.string().optional(),
   }),
@@ -193,12 +196,14 @@ export const harnessSwitchTierRpc = defineRpc({
     currentTier: MatrixTierSchema,
     previousModel: z.string().nullable(),
     currentModel: z.string(),
+    currentThinking: z.string().nullable().optional(),
     phase: HarnessPhaseSchema,
     /**
      * Mode ID that the client composer should synchronize via `composers[0]?.setMode(recommendedModeId)`
      * when non-null (e.g. restoring `resumeModeId` / `"acceptEdits"` / `"build"` when switching out of `plan`).
      */
     recommendedModeId: z.string().nullable(),
+    recommendedThinkingOptionId: z.string().nullable().optional(),
     metadata: HarnessAgentMetadataSchema,
   }),
 });
@@ -548,19 +553,22 @@ export function resolveResumeExecutionModeId(
 
 export function resolveSpecialistTargetTier(role: HandoffTargetRole): MatrixTier {
   const norm = role.toLowerCase().trim();
-  if (norm === "review" || norm === "be-reviewer" || norm === "ops-auditor") {
-    return "review";
+  if (norm === "orchestrator" || norm === "scout" || norm === "lead" || norm === "dispatcher") {
+    return "fast";
   }
   if (
+    norm === "review" ||
+    norm === "be-reviewer" ||
+    norm === "ops-auditor" ||
     norm === "architect" ||
     norm === "fe-architect" ||
     norm === "be-architect" ||
     norm === "pm" ||
     norm === "fe-pm"
   ) {
-    return "plan";
+    return "deep";
   }
-  return "flash";
+  return "standard";
 }
 
 export function formatSpecialistRolePrefix(role: HandoffTargetRole | DomainRole): string {

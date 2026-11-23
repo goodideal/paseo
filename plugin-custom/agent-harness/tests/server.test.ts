@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import contribute from "../index.server.js";
+import { applyAgentModeOption, applyAgentThinkingOption } from "../server/agent-controls.js";
 import {
   detectLocalFederatedTargets,
   hasLocalAntigravityTeamPlugin,
@@ -99,7 +100,8 @@ describe("agent-harness server contribute", () => {
     };
 
     const transformed = await hooks["agent.create.before"]({ request });
-    expect(transformed.config.model).toBe("custom/plan");
+    expect(transformed.config.model).toBe("custom/pro");
+    expect(transformed.config.thinkingOptionId).toBe("high");
   });
 
   it("does not override model if execution task", async () => {
@@ -158,7 +160,8 @@ describe("agent-harness server contribute", () => {
     };
 
     const created = await hooks["agent.create.before"]({ request: createReq });
-    expect(created.config.model).toBe("review");
+    expect(created.config.model).toBe("pro");
+    expect(created.config.thinkingOptionId).toBe("high");
 
     const openReq = {
       agentId: "agt_rev_1",
@@ -179,7 +182,7 @@ describe("agent-harness server contribute", () => {
     expect(opened.env.PASEO_HARNESS_PROFILE).toContain("security-review.json");
   });
 
-  it("arbitrates full-stack composite tasks (UI + backend/storage) to orchestrator Thin Dispatcher role and flash tier", async () => {
+  it("arbitrates full-stack composite tasks (UI + backend/storage) to orchestrator Thin Dispatcher role and fast tier", async () => {
     const { hooks } = createTestServer();
 
     const createRequest = {
@@ -194,7 +197,8 @@ describe("agent-harness server contribute", () => {
     };
 
     const createTransformed = await hooks["agent.create.before"]({ request: createRequest });
-    expect(createTransformed.config.model).toBe("flash");
+    expect(createTransformed.config.model).toBe("lite");
+    expect(createTransformed.config.thinkingOptionId).toBe("low");
     expect(createTransformed.config.systemPrompt).toContain("Role: orchestrator");
 
     const openRequest = {
@@ -340,15 +344,16 @@ describe("agent-harness server contribute", () => {
         config: {
           provider: "antigravity",
           cwd: "/Users/jerry/projects/ai/paseo/agy-ui-leaf",
-          model: "gemini-4-hydrogen-high",
+          model: "gemini-4-hydrogen",
           title: "设计一个多视口响应式 UI 布局方案",
           labels: { role: "ui" },
         },
       },
     });
 
-    // role=ui has preferredTier=flash -> gemini-4-hydrogen-high; prompt banner uses read_file
-    expect(created.config.model).toBe("gemini-4-hydrogen-high");
+    // role=ui has preferredTier=standard -> gemini-4-argon (thinking: high); prompt banner uses read_file
+    expect(created.config.model).toBe("gemini-4-argon");
+    expect(created.config.thinkingOptionId).toBe("high");
     expect(created.config.systemPrompt).toContain("read_file");
     expect(created.config.systemPrompt).not.toContain("invoke the `Skill` tool");
     expect(created.metadata?.[HARNESS_METADATA_KEY]?.role).toBe("ui");
@@ -375,8 +380,8 @@ describe("agent-harness server contribute", () => {
     expect(opened.tools.some((t: any) => t.name === "harness_handoff")).toBe(true);
   });
 
-  describe("Step 1: System Prompt decoupled by decision.tier", () => {
-    it("injects Design & Planning contract for tier=plan (and role !== orchestrator)", async () => {
+  describe("Step 1: System Prompt decoupled by phase and tier", () => {
+    it("injects Design & Planning contract for tier=deep, phase=design (and role !== orchestrator)", async () => {
       const { hooks } = createTestServer();
       const res = await hooks["agent.create.before"]({
         request: {
@@ -389,20 +394,20 @@ describe("agent-harness server contribute", () => {
       });
 
       const prompt = res.config.systemPrompt;
+      expect(prompt).toContain("- Matrix Tier: deep (model: pro, thinking: high)");
       expect(prompt).toContain(
-        "- [Phase: Design & Planning] Rule: You are running on the high-reasoning plan model (phase=design).",
+        "- [Phase: Design & Planning] Rule: You are running in read-only planning phase (phase=design, typically on `deep` tier).",
       );
       expect(prompt).toContain(
         "Except for spec/contract docs (openspec/**/*.md, design.md, proposal.md, spec.md, tasks.md, GLOSSARY.md), DO NOT directly edit business source files in this plan session!",
       );
       expect(prompt).toContain("harness_handoff");
-      // Old UI Consultation string must be completely removed
       expect(prompt).not.toContain(
         "Once the user selects a design or says to implement it, actually edit the target project files on disk.",
       );
     });
 
-    it("injects Fast Execution contract for tier=flash (and role !== orchestrator)", async () => {
+    it("injects Execution contract for tier=standard, phase=exec (and role !== orchestrator)", async () => {
       const { hooks } = createTestServer();
       const res = await hooks["agent.create.before"]({
         request: {
@@ -415,15 +420,16 @@ describe("agent-harness server contribute", () => {
       });
 
       const prompt = res.config.systemPrompt;
+      expect(prompt).toContain("- Matrix Tier: standard (model: flash, thinking: medium)");
       expect(prompt).toContain(
-        "- [Phase: Fast Execution] Rule: You are running on the fast flash model (phase=exec).",
+        "- [Phase: Execution] Rule: You are running in read-write execution phase (phase=exec).",
       );
       expect(prompt).toContain(
         "Review Gate: For non-trivial changes (>3 modified files or core state/protocol/security logic)",
       );
     });
 
-    it("injects Review Gate contract for tier=review (and role !== orchestrator)", async () => {
+    it("injects Review Gate contract for role=review (tier=deep, phase=review)", async () => {
       const { hooks } = createTestServer();
       const res = await hooks["agent.create.before"]({
         request: {
@@ -437,8 +443,9 @@ describe("agent-harness server contribute", () => {
       });
 
       const prompt = res.config.systemPrompt;
+      expect(prompt).toContain("- Matrix Tier: deep (model: pro, thinking: high)");
       expect(prompt).toContain(
-        "- [Phase: Review Gate] Rule: You are running on the review model (phase=review).",
+        "- [Phase: Review Gate] Rule: You are running in read-only review phase (phase=review, typically on `deep` tier).",
       );
       expect(prompt).toContain(
         "Perform read-only dual-axis audit (Standards + Spec) and agy + ocr delegate gate verification",
@@ -459,7 +466,7 @@ describe("agent-harness server contribute", () => {
 
       const prompt = res.config.systemPrompt;
       expect(prompt).toContain("Paseo Thin Dispatcher Rule");
-      expect(prompt).not.toContain("[Phase: Fast Execution]");
+      expect(prompt).not.toContain("[Phase: Execution]");
     });
   });
 
@@ -483,13 +490,14 @@ describe("agent-harness server contribute", () => {
       const harnessMeta = res.metadata[HARNESS_METADATA_KEY] as HarnessAgentMetadata;
       expect(harnessMeta).toBeDefined();
       expect(harnessMeta.version).toBe(1);
-      expect(harnessMeta.currentTier).toBe("plan");
+      expect(harnessMeta.currentTier).toBe("deep");
+      expect(harnessMeta.currentThinking).toBe("high");
       expect(harnessMeta.phase).toBe("design");
       expect(harnessMeta.turnCount).toBe(0);
       expect(harnessMeta.planTurnCount).toBe(0);
     });
 
-    it("initializes metadata even when nextConfig === config (default flash execution)", async () => {
+    it("initializes metadata even when nextConfig === config (default standard execution)", async () => {
       const { hooks } = createTestServer();
       const res = await hooks["agent.create.before"]({
         request: {
@@ -504,7 +512,8 @@ describe("agent-harness server contribute", () => {
 
       const harnessMeta = res.metadata[HARNESS_METADATA_KEY] as HarnessAgentMetadata;
       expect(harnessMeta).toBeDefined();
-      expect(harnessMeta.currentTier).toBe("flash");
+      expect(harnessMeta.currentTier).toBe("standard");
+      expect(harnessMeta.currentThinking).toBe("medium");
       expect(harnessMeta.phase).toBe("exec");
     });
 
@@ -529,25 +538,27 @@ describe("agent-harness server contribute", () => {
           config: {
             provider: "antigravity",
             cwd: "/dummy-single",
-            model: "gemini-4-hydrogen-high",
+            model: "gemini-4-hydrogen",
             title: "分析系统架构与设计方案",
           },
         },
       });
 
-      expect(singleTierRes.config.model).toBe("gemini-4-carbon-high");
+      expect(singleTierRes.config.model).toBe("gemini-4-carbon");
+      expect(singleTierRes.config.thinkingOptionId).toBe("high");
       expect(singleTierRes.metadata?.[HARNESS_METADATA_KEY]).toBeDefined();
-      expect(singleTierRes.metadata?.[HARNESS_METADATA_KEY]?.currentTier).toBe("plan");
+      expect(singleTierRes.metadata?.[HARNESS_METADATA_KEY]?.currentTier).toBe("deep");
     });
   });
 
   describe("Step 2: Hook 4 (agent.turn.before)", () => {
-    it("upgrades model for empty-title agent and synchronizes metadata", async () => {
+    it("upgrades model and thinking for empty-title agent and synchronizes metadata", async () => {
       const { hooks } = createTestServer();
       const initialMeta = createInitialHarnessMetadata({
         role: "general",
-        tier: "flash",
+        tier: "standard",
         model: "flash",
+        thinkingOptionId: "medium",
         roleMatchedRule: "default",
         tierMatchedRule: "default",
       });
@@ -562,11 +573,12 @@ describe("agent-harness server contribute", () => {
       const { context, handle } = createMockContext();
       await hooks["agent.turn.before"]({ agent }, context);
 
-      expect(handle.setModel).toHaveBeenCalledWith("plan");
+      expect(handle.setModel).toHaveBeenCalledWith("pro");
       expect(handle.setMetadata).toHaveBeenCalledWith({
         [HARNESS_METADATA_KEY]: expect.objectContaining({
-          currentTier: "plan",
-          currentModel: "plan",
+          currentTier: "deep",
+          currentModel: "pro",
+          currentThinking: "high",
           phase: "design",
         }),
       });
@@ -720,8 +732,9 @@ describe("agent-harness server contribute", () => {
         [HARNESS_METADATA_KEY]: expect.objectContaining({
           turnCount: 2,
           planTurnCount: 2,
-          currentTier: "flash",
+          currentTier: "standard",
           currentModel: "flash",
+          currentThinking: "medium",
           phase: "exec",
           autoDowngradedAtTurn: 2,
           downgradeReason: "explicit_exec_intent",
@@ -732,12 +745,14 @@ describe("agent-harness server contribute", () => {
       expect(handle.send).not.toHaveBeenCalled();
     });
 
-    it("auto-downgrades from plan to flash when code write tool (.tsx) is used in plan phase", async () => {
+    it("auto-downgrades from plan/deep to standard when code write tool (.tsx) is used in design phase", async () => {
       const { hooks } = createTestServer();
       const meta = createInitialHarnessMetadata({
         role: "ui",
-        tier: "plan",
-        model: "claude-3-7-sonnet",
+        tier: "deep",
+        phase: "design",
+        model: "pro",
+        thinkingOptionId: "high",
         roleMatchedRule: "keyword",
         tierMatchedRule: "plan",
       });
@@ -768,8 +783,9 @@ describe("agent-harness server contribute", () => {
         [HARNESS_METADATA_KEY]: expect.objectContaining({
           turnCount: 1,
           planTurnCount: 1,
-          currentTier: "flash",
+          currentTier: "standard",
           currentModel: "flash",
+          currentThinking: "medium",
           phase: "exec",
           autoDowngradedAtTurn: 1,
           downgradeReason: "write_tool_in_plan",
@@ -1129,7 +1145,7 @@ describe("agent-harness server contribute", () => {
   });
 
   describe("Step 3: Native Plan Mode Gate & ExitPlanMode Lifecycle", () => {
-    it("forces nextConfig.modeId = 'plan' and records resumeModeId for human root agent on plan tier", async () => {
+    it("forces nextConfig.modeId = 'plan' and records resumeModeId for human root agent in design phase", async () => {
       const { hooks } = createTestServer();
       const res = await hooks["agent.create.before"]({
         request: {
@@ -1145,7 +1161,8 @@ describe("agent-harness server contribute", () => {
       expect(res.config.modeId).toBe("plan");
       const meta = res.metadata[HARNESS_METADATA_KEY];
       expect(meta.resumeModeId).toBe("acceptEdits");
-      expect(meta.currentTier).toBe("plan");
+      expect(meta.currentTier).toBe("deep");
+      expect(meta.phase).toBe("design");
     });
 
     it("exempts background subagent from native plan mode enforcement", async () => {
@@ -1284,7 +1301,8 @@ describe("agent-harness server contribute", () => {
       expect(setModelMock).toHaveBeenCalledWith("flash");
       expect(setMetadataMock).toHaveBeenCalledWith({
         [HARNESS_METADATA_KEY]: expect.objectContaining({
-          currentTier: "flash",
+          currentTier: "standard",
+          currentThinking: "medium",
           phase: "exec",
           downgradeReason: "plan_approved",
           lastBilledTier: "plan",
@@ -1295,7 +1313,7 @@ describe("agent-harness server contribute", () => {
           data: expect.objectContaining({
             transitionKind: "plan_approved",
             fromTier: "plan",
-            toTier: "flash",
+            toTier: "standard",
           }),
         }),
       );
@@ -1434,7 +1452,8 @@ describe("agent-harness server contribute", () => {
       expect(setModelMock).toHaveBeenCalledWith("flash");
       expect(setMetadataMock).toHaveBeenCalledWith({
         [HARNESS_METADATA_KEY]: expect.objectContaining({
-          currentTier: "flash",
+          currentTier: "standard",
+          currentThinking: "medium",
           phase: "exec",
           lastBilledTier: "plan",
         }),
@@ -1443,7 +1462,7 @@ describe("agent-harness server contribute", () => {
         expect.objectContaining({
           data: expect.objectContaining({
             transitionKind: "auto_downgrade",
-            toTier: "flash",
+            toTier: "standard",
           }),
         }),
       );
@@ -1471,7 +1490,7 @@ describe("agent-harness server contribute", () => {
       expect(opened.tools.some((t: any) => t.name === "harness_handoff")).toBe(true);
     });
 
-    it("handles harnessSwitchTierRpc request and returns recommendedModeId", async () => {
+    it("handles harnessSwitchTierRpc request via real PaseoApi contract and returns recommendedModeId + recommendedThinkingOptionId", async () => {
       const registeredRpcHandlers: Record<string, any> = {};
       const { mockServer } = createTestServer();
       mockServer.handle.mockImplementation((contract: any, handler: any) => {
@@ -1487,7 +1506,7 @@ describe("agent-harness server contribute", () => {
       const setModelMock = vi.fn().mockResolvedValue(undefined);
       const setMetadataMock = vi.fn().mockResolvedValue(undefined);
       const handle = {
-        current: () => ({ provider: "claude", options: { model: "claude-3-7-sonnet" } }),
+        current: () => ({ provider: "claude", options: { model: "pro" } }),
         setModel: setModelMock,
         setMetadata: setMetadataMock,
         timeline: { append: vi.fn().mockResolvedValue({}) },
@@ -1501,21 +1520,84 @@ describe("agent-harness server contribute", () => {
         },
       };
 
+      // Standard PaseoAgentHandle has no setMode/setThinkingOption; agent-controls gracefully returns false
+      await expect(
+        applyAgentModeOption(context.paseo as any, "agt_rpc_switch", "acceptEdits"),
+      ).resolves.toBe(false);
+      await expect(
+        applyAgentThinkingOption(context.paseo as any, "agt_rpc_switch", "medium"),
+      ).resolves.toBe(false);
+
       const result = await switchHandler(
         {
           agentId: "agt_rpc_switch",
-          targetTier: "flash",
+          targetTier: "standard",
           currentModeId: "plan",
-          reason: "User clicked Flash in UI",
+          reason: "User clicked Standard in UI",
         },
         context,
       );
 
       expect(setModelMock).toHaveBeenCalledWith("flash");
-      expect(result.currentTier).toBe("flash");
+      expect(result.currentTier).toBe("standard");
+      expect(result.currentThinking).toBe("medium");
+      expect(result.recommendedThinkingOptionId).toBe("medium");
       expect(result.recommendedModeId).toBe("acceptEdits");
-      expect(result.metadata.currentTier).toBe("flash");
+      expect(result.metadata.currentTier).toBe("standard");
       expect(handle.timeline.append).toHaveBeenCalledTimes(1);
+
+      // Manual switch to deep or max unlocks plan mode into writable exec phase for non-readonly roles
+      const deepResult = await switchHandler(
+        {
+          agentId: "agt_rpc_switch",
+          targetTier: "deep",
+          currentModeId: "plan",
+          reason: "Manual switch to Deep coding",
+        },
+        context,
+      );
+      expect(deepResult.currentTier).toBe("deep");
+      expect(deepResult.phase).toBe("exec");
+      expect(deepResult.recommendedModeId).toBe("acceptEdits");
+      expect(deepResult.recommendedThinkingOptionId).toBe("high");
+      expect(setModelMock).toHaveBeenCalledWith("pro");
+
+      const maxResult = await switchHandler(
+        {
+          agentId: "agt_rpc_switch",
+          targetTier: "max",
+          currentModeId: "plan",
+          reason: "Manual switch to Max coding",
+        },
+        context,
+      );
+      expect(maxResult.currentTier).toBe("max");
+      expect(maxResult.phase).toBe("exec");
+      expect(maxResult.recommendedModeId).toBe("acceptEdits");
+      expect(maxResult.recommendedThinkingOptionId).toBe("high");
+      expect(setModelMock).toHaveBeenCalledWith("plan");
+    });
+
+    it("applies mode/thinking on handles supporting optional control methods without fake daemonClient", async () => {
+      const setMode = vi.fn().mockResolvedValue(undefined);
+      const setThinkingOption = vi.fn().mockResolvedValue(undefined);
+      const paseoWithOptionalControls = {
+        agents: {
+          ref: () => ({
+            setMode,
+            setThinkingOption,
+          }),
+        },
+      };
+
+      await expect(
+        applyAgentModeOption(paseoWithOptionalControls as any, "agt_1", "plan"),
+      ).resolves.toBe(true);
+      await expect(
+        applyAgentThinkingOption(paseoWithOptionalControls as any, "agt_1", "xhigh"),
+      ).resolves.toBe(true);
+      expect(setMode).toHaveBeenCalledWith("plan");
+      expect(setThinkingOption).toHaveBeenCalledWith("xhigh");
     });
 
     it("restores metadata from agent snapshot and backfills cache on cache miss during harnessSwitchTierRpc", async () => {
@@ -1534,9 +1616,9 @@ describe("agent-harness server contribute", () => {
       const existingMeta: HarnessAgentMetadata = {
         version: 1,
         role: "architect",
-        initialTier: "plan",
-        currentTier: "plan",
-        currentModel: "claude-3-7-sonnet",
+        initialTier: "deep",
+        currentTier: "deep",
+        currentModel: "pro",
         phase: "design",
         roleMatchedRule: "llm_fallback:architect",
         tierMatchedRule: "intent:plan",
@@ -1550,14 +1632,14 @@ describe("agent-harness server contribute", () => {
         downgradeReason: null,
         lastProcessedTurnId: "turn_5",
         resumeModeId: "dontAsk",
-        lastBilledTier: "plan",
-        lastBilledModel: "claude-3-7-sonnet",
+        lastBilledTier: "deep",
+        lastBilledModel: "pro",
       };
 
       const handle = {
         current: () => ({
           provider: "claude",
-          options: { model: "claude-3-7-sonnet" },
+          options: { model: "pro" },
           metadata: { [HARNESS_METADATA_KEY]: existingMeta },
         }),
         setModel: setModelMock,
@@ -1576,14 +1658,14 @@ describe("agent-harness server contribute", () => {
       const result = await switchHandler(
         {
           agentId: "agt_cache_miss_123",
-          targetTier: "flash",
+          targetTier: "standard",
           currentModeId: "plan",
         },
         context,
       );
 
       expect(setModelMock).toHaveBeenCalledWith("flash");
-      expect(result.currentTier).toBe("flash");
+      expect(result.currentTier).toBe("standard");
       // Preserved role, turnCount, and restored resumeModeId -> recommendedModeId
       expect(result.metadata.role).toBe("architect");
       expect(result.metadata.turnCount).toBe(5);
@@ -1671,16 +1753,37 @@ describe("agent-harness server contribute", () => {
 
       expect(result.childAgentId).toBe("agt_child_specialist_ui");
       expect(result.targetRole).toBe("ui");
-      expect(result.targetTier).toBe("flash");
-      expect(createAgentMock).toHaveBeenCalled();
+      expect(result.targetTier).toBe("standard");
+      expect(createAgentMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            provider: "claude/flash",
+            thinkingOptionId: "medium",
+          }),
+        }),
+      );
       expect(parentHandle.timeline.append).toHaveBeenCalledTimes(1);
 
       const timelinePayload = parentHandle.timeline.append.mock.calls[0][0];
       expect(timelinePayload.data.transitionKind).toBe("specialist_handoff");
       expect(timelinePayload.data.fromTier).toBe("plan");
-      expect(timelinePayload.data.toTier).toBe("flash");
+      expect(timelinePayload.data.toTier).toBe("standard");
+      expect(timelinePayload.data.phase).toBe("exec");
       expect(timelinePayload.data.turnNumber).toBe(4);
       expect(timelinePayload.data.reason).toBe("specialist_handoff");
+
+      // Handing off to readonly review specialist records phase="review" in timeline event
+      await handoffHandler(
+        {
+          agentId: "agt_parent_1",
+          workspaceId: "ws_parent",
+          targetRole: "review",
+          summaryOverride: "Audit implementation against spec",
+        },
+        context,
+      );
+      expect(parentHandle.timeline.append).toHaveBeenCalledTimes(2);
+      expect(parentHandle.timeline.append.mock.calls[1][0].data.phase).toBe("review");
     });
 
     it("executes harness_handoff tool, reads lastMessage when waitForCompletion is true, and appends timeline transition", async () => {
@@ -1789,7 +1892,7 @@ describe("agent-harness server contribute", () => {
       const timelinePayload = parentHandle.timeline.append.mock.calls[0][0];
       expect(timelinePayload.data.transitionKind).toBe("specialist_handoff");
       expect(timelinePayload.data.fromTier).toBe("plan");
-      expect(timelinePayload.data.toTier).toBe("flash");
+      expect(timelinePayload.data.toTier).toBe("standard");
       expect(timelinePayload.data.turnNumber).toBe(2);
       expect(timelinePayload.data.reason).toBe("specialist_handoff");
     });
@@ -1945,13 +2048,14 @@ describe("agent-harness server contribute", () => {
             config: {
               provider: "antigravity",
               cwd: "/tmp/llm-apply-role-cwd",
-              model: "gemini-4-hydrogen-high",
+              model: "gemini-4-hydrogen",
               title: "梳理跨租户状态流向",
             },
           },
         });
 
-        expect(created.config.model).toBe("gemini-4-carbon-high");
+        expect(created.config.model).toBe("gemini-4-carbon");
+        expect(created.config.thinkingOptionId).toBe("high");
         expect(created.metadata?.[HARNESS_METADATA_KEY]?.role).toBe("architect");
         expect(fetchSpy).toHaveBeenCalledTimes(1);
 
@@ -2050,7 +2154,8 @@ describe("agent-harness server contribute", () => {
       const patchedProfiles = patchMock.mock.calls[1][0].agentProfiles;
       const uiProfile = patchedProfiles.find((p: any) => p.id === "harness-ui");
       expect(uiProfile?.provider).toBe("antigravity");
-      expect(uiProfile?.model).toBe("gemini-4-hydrogen-high");
+      expect(uiProfile?.model).toBe("gemini-4-argon");
+      expect(uiProfile?.thinkingOptionId).toBe("high");
     });
 
     it("bypasses resumed untracked gemini-pro-orchestrator via snapshot and rejects harnessSwitchTierRpc", async () => {
@@ -2573,7 +2678,8 @@ describe("agent-harness server contribute", () => {
         );
 
         const reviewerSpawnReq = createdPayloads[1];
-        expect(reviewerSpawnReq.config.provider).toBe("claude/review");
+        expect(reviewerSpawnReq.config.provider).toBe("claude/pro");
+        expect(reviewerSpawnReq.config.thinkingOptionId).toBe("high");
         expect(reviewerSpawnReq.config.modeId).toBe("plan");
 
         const reviewerCreated = await hooks["agent.create.before"]({
@@ -2963,7 +3069,7 @@ describe("agent-harness server contribute", () => {
         const second = loadWorkspaceAgentTeam(repoDir, mockHome);
         expect(second).not.toBeNull();
         expect(second?.specialists[0]?.preferredProvider).toBe("claude");
-        expect(second?.specialists[0]?.preferredTier).toBe("plan");
+        expect(second?.specialists[0]?.preferredTier).toBe("deep");
       } finally {
         fs.rmSync(tmpBase, { recursive: true, force: true });
       }
@@ -3625,12 +3731,93 @@ describe("agent-harness server contribute", () => {
         fs.rmSync(tmpRepo, { recursive: true, force: true });
       }
     });
+
+    it("routes doctor to mainRepoRoot for inherited_from_main worktrees and appends save hint when manifest is absent", async () => {
+      const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), "harness-phase3-doctor-wt-"));
+      try {
+        const mainRepo = path.join(tmpBase, "main-repo");
+        const worktreeDir = path.join(tmpBase, "wt-doc");
+        const emptyRepo = path.join(tmpBase, "empty-repo");
+        fs.mkdirSync(path.join(mainRepo, ".git", "worktrees", "wt-doc"), { recursive: true });
+        fs.mkdirSync(path.join(mainRepo, ".agents"), { recursive: true });
+        fs.writeFileSync(
+          path.join(mainRepo, ".agents", "agent-team.json"),
+          JSON.stringify({ project_slug: "main-proj" }),
+        );
+        fs.mkdirSync(worktreeDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(worktreeDir, ".git"),
+          `gitdir: ${path.join(mainRepo, ".git", "worktrees", "wt-doc")}\n`,
+        );
+        fs.writeFileSync(
+          path.join(mainRepo, ".git", "worktrees", "wt-doc", "commondir"),
+          "../..\n",
+        );
+        fs.mkdirSync(path.join(emptyRepo, ".git"), { recursive: true });
+
+        const doctorInvocations: Array<{ target: string; cwd?: string }> = [];
+        const { handlers, mockContext } = setupTeamRpcHarness({
+          workspaces: {
+            "ws-wt": { directory: worktreeDir, name: "Inherited WT" },
+            "ws-empty": { directory: emptyRepo, name: "Empty Repo" },
+          },
+          resolveCompiler: () => ({
+            available: true,
+            pythonBin: "/usr/bin/python3",
+            scriptsDir: "/mock/scripts",
+            agentTeamPy: "/mock/scripts/agent_team.py",
+            message: null,
+          }),
+          runTeamCompiler: async (_cmd, args, opts) => {
+            if (args[1] === "doctor") {
+              const target = args[2] ?? "";
+              doctorInvocations.push({ target, cwd: opts?.cwd });
+              if (target === path.resolve(mainRepo)) {
+                return {
+                  exitCode: 0,
+                  stdout: `[PASS] Project directory exists: ${target}\n[PASS] Manifest exists\n`,
+                  stderr: "",
+                };
+              }
+              return {
+                exitCode: 1,
+                stdout: `[PASS] Project directory exists: ${target}\n[FAIL] Missing manifest: ${target}/.agents/agent-team.json\n`,
+                stderr: "",
+              };
+            }
+            return { exitCode: 1, stdout: "", stderr: "unexpected" };
+          },
+        });
+
+        const wtDoctor = await handlers[harnessTeamDoctorRpc.name](
+          { workspaceId: "ws-wt" },
+          mockContext,
+        );
+        expect(wtDoctor.passed).toBe(true);
+        expect(wtDoctor.output).toContain("Inherited from main project");
+        expect(doctorInvocations[0]).toEqual({
+          target: path.resolve(mainRepo),
+          cwd: path.resolve(mainRepo),
+        });
+
+        const emptyDoctor = await handlers[harnessTeamDoctorRpc.name](
+          { workspaceId: "ws-empty" },
+          mockContext,
+        );
+        expect(emptyDoctor.passed).toBe(false);
+        expect(emptyDoctor.failCount).toBe(1);
+        expect(emptyDoctor.output).toContain('click "Save & compile" first');
+      } finally {
+        fs.rmSync(tmpBase, { recursive: true, force: true });
+      }
+    });
   });
 
-  describe("agy + ocr delegate review mechanism & v4 migration", () => {
-    it("defaults review specialist to antigravity with open-code-review-delegate skill and routes harness_handoff to gemini-4-argon-high", async () => {
+  describe("agy + ocr delegate review mechanism & v4/v5 migration", () => {
+    it("defaults review specialist to antigravity with open-code-review-delegate skill and routes harness_handoff to gemini-4-carbon (deep)", async () => {
       const reviewSpec = DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "review");
       expect(reviewSpec?.preferredProvider).toBe("antigravity");
+      expect(reviewSpec?.preferredTier).toBe("deep");
       expect(reviewSpec?.primarySkills).toEqual([
         "mattpocock-skills:code-review",
         "open-code-review-delegate",
@@ -3652,7 +3839,8 @@ describe("agent-harness server contribute", () => {
           },
         },
       });
-      expect(created.config.model).toBe("gemini-4-argon-high");
+      expect(created.config.model).toBe("gemini-4-carbon");
+      expect(created.config.thinkingOptionId).toBe("high");
       expect(created.config.systemPrompt).toContain(
         "Primary Skills: code-review, open-code-review-delegate, gitea",
       );
@@ -3712,60 +3900,91 @@ describe("agent-harness server contribute", () => {
 
       expect(createChildMock).toHaveBeenCalledTimes(1);
       const spawnReq = createChildMock.mock.calls[0]?.[0];
-      expect(spawnReq.config.provider).toBe("antigravity/gemini-4-argon-high");
-      expect(handoffRes.structuredContent.targetTier).toBe("review");
-      expect(handoffRes.structuredContent.targetModel).toBe("gemini-4-argon-high");
+      expect(spawnReq.config.provider).toBe("antigravity/gemini-4-carbon");
+      expect(spawnReq.config.thinkingOptionId).toBe("high");
+      expect(handoffRes.structuredContent.targetTier).toBe("deep");
+      expect(handoffRes.structuredContent.targetModel).toBe("gemini-4-carbon");
     });
 
-    it("migrates v3 settings cleanly to v4 for review specialist (claude and claude-code) and phaseRules", () => {
-      for (const legacyProvider of ["claude", "claude-code"] as const) {
-        const v3Values = {
-          ...DEFAULT_AGENT_HARNESS_SETTINGS,
-          specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) =>
-            s.id === "review"
-              ? {
-                  ...s,
-                  description:
-                    "双轴代码审查与安全合规审计官（Standards 规范轴 + Spec 契约轴 + OCR 硬门禁）",
-                  preferredProvider: legacyProvider,
-                  handoffDefaultPrompt:
-                    "Perform dual-axis code review (Standards + Spec) and OCR gate scan.",
-                  primarySkills: ["mattpocock-skills:code-review", "security-review", "gitea"],
-                  qualityGates: ["dual-axis-semantic-review", "open-code-review-cli-gate"],
-                  matchPatterns: [
-                    "\\b(?:ocr|code-review|security-review)\\b",
-                    "代码审查|安全审计|双轴审查|质量门禁",
-                  ],
-                }
-              : s,
-          ),
-          phaseRules: {
-            ...DEFAULT_AGENT_HARNESS_SETTINGS.phaseRules,
-            exec: "- [Phase: Fast Execution] Rule: You are running on the fast flash model (phase=exec). Implement minimal, targeted code changes per spec and verify with targeted tests (npx vitest run <file> --bail=1, NEVER full suite), npm run typecheck, and npm run lint. Review Gate: For non-trivial changes (>3 modified files or core state/protocol/security logic), once green, spawn or hand off via paseo-handoff to Reviewer (Gate) (--label role=review) for dual-axis review (Standards + Spec) and local ocr scan.",
-            review:
-              "- [Phase: Review Gate] Rule: You are running on the review model (phase=review). Perform read-only dual-axis audit (Standards + Spec) and ocr gate verification; do not author large feature implementations directly.",
-          },
-        };
+    it("migrates v3 settings cleanly to v4 for review specialist and phaseRules", () => {
+      const v3Values = {
+        ...DEFAULT_AGENT_HARNESS_SETTINGS,
+        specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) =>
+          s.id === "review"
+            ? {
+                ...s,
+                description:
+                  "双轴代码审查与安全合规审计官（Standards 规范轴 + Spec 契约轴 + OCR 硬门禁）",
+                preferredProvider: "claude",
+                handoffDefaultPrompt:
+                  "Perform dual-axis code review (Standards + Spec) and OCR gate scan.",
+                primarySkills: ["mattpocock-skills:code-review", "security-review", "gitea"],
+                qualityGates: ["dual-axis-semantic-review", "open-code-review-cli-gate"],
+                matchPatterns: [
+                  "\\b(?:ocr|code-review|security-review)\\b",
+                  "代码审查|安全审计|双轴审查|质量门禁",
+                ],
+              }
+            : s,
+        ),
+        phaseRules: {
+          ...DEFAULT_AGENT_HARNESS_SETTINGS.phaseRules,
+          exec: "- [Phase: Fast Execution] Rule: You are running on the fast flash model (phase=exec). Implement minimal, targeted code changes per spec and verify with targeted tests (npx vitest run <file> --bail=1, NEVER full suite), npm run typecheck, and npm run lint. Review Gate: For non-trivial changes (>3 modified files or core state/protocol/security logic), once green, spawn or hand off via paseo-handoff to Reviewer (Gate) (--label role=review) for dual-axis review (Standards + Spec) and local ocr scan.",
+          review:
+            "- [Phase: Review Gate] Rule: You are running on the review model (phase=review). Perform read-only dual-axis audit (Standards + Spec) and ocr gate verification; do not author large feature implementations directly.",
+        },
+      };
 
-        const migrated = agentHarnessSettings.migrate!(
-          v3Values,
-          3,
-        ) as typeof DEFAULT_AGENT_HARNESS_SETTINGS;
-        const review = migrated.specialists.find((s) => s.id === "review")!;
-        expect(review.preferredProvider).toBe("antigravity");
-        expect(review.primarySkills).toEqual([
-          "mattpocock-skills:code-review",
-          "open-code-review-delegate",
-          "gitea",
-        ]);
-        expect(review.qualityGates).toEqual([
-          "dual-axis-semantic-review",
-          "open-code-review-delegate-gate",
-        ]);
-        expect(review.matchPatterns[0]).toContain("open-code-review-delegate");
-        expect(migrated.phaseRules.review).toContain("agy + ocr delegate gate verification");
-        expect(migrated.phaseRules.exec).toContain("agy + ocr delegate gate verification");
-      }
+      const migrated = agentHarnessSettings.migrate!(
+        v3Values,
+        3,
+      ) as typeof DEFAULT_AGENT_HARNESS_SETTINGS;
+      const review = migrated.specialists.find((s) => s.id === "review")!;
+      expect(review.preferredProvider).toBe("antigravity");
+      expect(review.primarySkills).toEqual([
+        "mattpocock-skills:code-review",
+        "open-code-review-delegate",
+        "gitea",
+      ]);
+      expect(review.qualityGates).toEqual([
+        "dual-axis-semantic-review",
+        "open-code-review-delegate-gate",
+      ]);
+      expect(review.matchPatterns[0]).toContain("open-code-review-delegate");
+      expect(migrated.phaseRules.review).toContain("agy + ocr delegate gate verification");
+      expect(migrated.phaseRules.exec).toContain("agy + ocr delegate gate verification");
+    });
+
+    it("syncs metadata phase=design when implicit architect role starts from exec-classified text, and marks manual max model as currentTier=max", async () => {
+      const { hooks } = createTestServer();
+      const architectCreate = await hooks["agent.create.before"]({
+        request: {
+          config: { provider: "claude", model: "flash" },
+          initialPrompt: "fix: update adr module boundary check",
+          metadata: {},
+        },
+      });
+      const architectMeta = architectCreate.metadata?.[
+        HARNESS_METADATA_KEY
+      ] as HarnessAgentMetadata;
+      expect(architectMeta.role).toBe("architect");
+      expect(architectMeta.phase).toBe("design");
+      expect(architectCreate.config.modeId).toBe("plan");
+      expect(architectCreate.config.systemPrompt).toContain("phase=design");
+
+      const maxCreate = await hooks["agent.create.before"]({
+        request: {
+          config: { provider: "antigravity", model: "gemini-4-neon" },
+          initialPrompt: "fix: deep race condition in lock manager",
+          metadata: {},
+        },
+      });
+      const maxMeta = maxCreate.metadata?.[HARNESS_METADATA_KEY] as HarnessAgentMetadata;
+      expect(maxMeta.currentTier).toBe("max");
+      expect(maxMeta.currentModel).toBe("gemini-4-neon");
+      expect(maxMeta.currentThinking).toBe("xhigh");
+      expect(maxMeta.userModelLocked).toBe(true);
+      expect(maxCreate.config.thinkingOptionId).toBe("xhigh");
     });
   });
 });

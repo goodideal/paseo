@@ -13,6 +13,7 @@ const mockUseAgent = vi.fn(() => ({
   currentModeId: "acceptEdits",
   metadata: {},
 }));
+const mockUseComposers = vi.fn((): any[] => []);
 
 const mockUseWorkspaces = vi.fn((): any[] => []);
 const mockUsePaseo = vi.fn((): any => ({ workspaces: { ref: vi.fn() } }));
@@ -25,6 +26,7 @@ vi.mock("@getpaseo/plugin/client", async (importOriginal) => {
     useSettings: (...args: any[]) => (mockUseSettings as any)(...args),
     useRpc: (...args: any[]) => (mockUseRpc as any)(...args),
     useAgent: (...args: any[]) => (mockUseAgent as any)(...args),
+    useComposers: (...args: any[]) => (mockUseComposers as any)(...args),
     useWorkspaces: (...args: any[]) => (mockUseWorkspaces as any)(...args),
     usePaseo: (...args: any[]) => (mockUsePaseo as any)(...args),
     useFileText: (...args: any[]) => (mockUseFileText as any)(...args),
@@ -329,14 +331,22 @@ describe("Agent Harness Client - Metadata Utils", () => {
       expect(resolveHarnessPillIcon(null)).toBe("Zap");
     });
 
-    it("returns Compass for plan tier", () => {
-      const meta = createSampleMetadata({ currentTier: "plan" });
-      expect(resolveHarnessPillIcon(meta)).toBe("Compass");
+    it("returns icons across both legacy and 4-tier names", () => {
+      const metaPlan = createSampleMetadata({ currentTier: "plan" });
+      expect(resolveHarnessPillIcon(metaPlan)).toBe("Compass");
+
+      expect(resolveHarnessPillIcon(createSampleMetadata({ currentTier: "fast" }))).toBe("Zap");
+      expect(resolveHarnessPillIcon(createSampleMetadata({ currentTier: "standard" }))).toBe("Cpu");
+      expect(resolveHarnessPillIcon(createSampleMetadata({ currentTier: "deep" }))).toBe("Compass");
+      expect(resolveHarnessPillIcon(createSampleMetadata({ currentTier: "max" }))).toBe("Flame");
     });
 
-    it("returns ShieldCheck for review tier", () => {
+    it("returns ShieldCheck for review tier or review phase", () => {
       const meta = createSampleMetadata({ currentTier: "review" });
       expect(resolveHarnessPillIcon(meta)).toBe("ShieldCheck");
+
+      const metaDeepReview = createSampleMetadata({ currentTier: "deep", phase: "review" });
+      expect(resolveHarnessPillIcon(metaDeepReview)).toBe("ShieldCheck");
     });
 
     it("returns Zap for flash tier", () => {
@@ -372,22 +382,22 @@ describe("Agent Harness Client - Metadata Utils", () => {
       const payload: HarnessTransitionPayload = {
         transitionKind: "plan_approved",
         role: "backend",
-        fromTier: "plan",
-        toTier: "flash",
-        fromModel: "claude-3-7-sonnet",
-        toModel: "claude-3-5-haiku",
+        fromTier: "deep",
+        toTier: "standard",
+        fromModel: "pro",
+        toModel: "flash",
         phase: "exec",
         reason: "plan_approved",
         turnNumber: 3,
         timestamp: "2026-11-12T00:00:00Z",
       };
       const vm = buildTransitionViewModel(payload);
-      expect(vm.title).toBe("Plan Approved -> Flash");
+      expect(vm.title).toBe("Plan Approved -> Standard");
       expect(vm.badgeCategory).toBe("success");
       expect(vm.icon).toBe("ShieldCheck");
-      expect(vm.tierSummary).toBe("Plan -> Flash");
-      expect(vm.modelSummary).toBe("claude-3-7-sonnet -> claude-3-5-haiku");
-      expect(vm.fullMigrationSummary).toBe("plan (claude-3-7-sonnet) -> flash (claude-3-5-haiku)");
+      expect(vm.tierSummary).toBe("Deep -> Standard");
+      expect(vm.modelSummary).toBe("pro -> flash");
+      expect(vm.fullMigrationSummary).toBe("deep (pro) -> standard (flash)");
       expect(vm.readableReason).toBe("Plan mode exit approved by user");
     });
 
@@ -395,17 +405,17 @@ describe("Agent Harness Client - Metadata Utils", () => {
       const payload: HarnessTransitionPayload = {
         transitionKind: "auto_downgrade",
         role: "ui",
-        fromTier: "plan",
-        toTier: "flash",
-        fromModel: "claude-3-7-sonnet",
-        toModel: "claude-3-5-haiku",
+        fromTier: "deep",
+        toTier: "standard",
+        fromModel: "pro",
+        toModel: "flash",
         phase: "exec",
         reason: "write_tool_in_plan",
         turnNumber: 2,
         timestamp: "2026-11-12T00:00:00Z",
       };
       const vm = buildTransitionViewModel(payload);
-      expect(vm.title).toBe("Auto Downgraded -> Flash");
+      expect(vm.title).toBe("Auto Stepped Down -> Standard");
       expect(vm.badgeCategory).toBe("warning");
       expect(vm.icon).toBe("Zap");
       expect(vm.readableReason).toBe("Write/modification tool detected during plan phase");
@@ -824,18 +834,64 @@ describe("HarnessSettingsScreen - Forms Gate & State Handling", () => {
     expect(screen.getByText("Provider Tier Mappings & Bypass")).toBeDefined();
     expect(screen.getByText("Specialist Roles Matrix")).toBeDefined();
 
-    // Verify antigravity target provider is selected by default and edit Flash preset
+    // Verify antigravity target provider is selected by default and edit Standard Model & Thinking
     const targetProviderSelect = screen.getByLabelText("Target Provider") as HTMLSelectElement;
     expect(targetProviderSelect.value).toBe("antigravity");
 
-    const flashPresetSelect = screen.getByLabelText("Flash Tier Preset") as HTMLSelectElement;
-    fireEvent.change(flashPresetSelect, { target: { value: "gemini-4-neon-high" } });
+    // Conditional custom model input is hidden until "__custom__" is chosen or stored
+    expect(screen.queryByLabelText("Fast Custom Model ID")).toBeNull();
+
+    const standardModelSelect = screen.getByLabelText("Standard Model") as HTMLSelectElement;
+    fireEvent.change(standardModelSelect, { target: { value: "gemini-4-neon" } });
     expect(mockSave).toHaveBeenCalledWith(
       expect.objectContaining({
         providerMappings: expect.objectContaining({
           antigravity: expect.objectContaining({
-            flash: "gemini-4-neon-high",
+            standard: "gemini-4-neon",
           }),
+        }),
+      }),
+      "rev-matrix-1",
+    );
+
+    const standardThinkingSelect = screen.getByLabelText("Standard Thinking") as HTMLSelectElement;
+    fireEvent.change(standardThinkingSelect, { target: { value: "xhigh" } });
+    expect(mockSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerThinkingMappings: expect.objectContaining({
+          antigravity: expect.objectContaining({
+            standard: "xhigh",
+          }),
+        }),
+      }),
+      "rev-matrix-1",
+    );
+
+    // Selecting Custom Model ID... reveals the custom input box dynamically
+    const fastModelSelect = screen.getByLabelText("Fast Model") as HTMLSelectElement;
+    fireEvent.change(fastModelSelect, { target: { value: "__custom__" } });
+    expect(screen.getByLabelText("Fast Custom Model ID")).toBeDefined();
+
+    // Reset Provider Mappings restores built-in 4-tier defaults for Antigravity
+    const resetProviderBtn = screen.getByRole("button", { name: "Reset defaults" });
+    fireEvent.click(resetProviderBtn);
+    expect(mockSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerMappings: expect.objectContaining({
+          antigravity: {
+            fast: "gemini-4-hydrogen",
+            standard: "gemini-4-argon",
+            deep: "gemini-4-carbon",
+            max: "gemini-4-neon",
+          },
+        }),
+        providerThinkingMappings: expect.objectContaining({
+          antigravity: {
+            fast: "medium",
+            standard: "high",
+            deep: "high",
+            max: "xhigh",
+          },
         }),
       }),
       "rev-matrix-1",
@@ -850,9 +906,6 @@ describe("HarnessSettingsScreen - Forms Gate & State Handling", () => {
     const lastCallValues = mockSave.mock.calls[mockSave.mock.calls.length - 1]?.[0];
     const updatedUi = lastCallValues.specialists.find((s: any) => s.id === "ui");
     expect(updatedUi?.preferredProvider).toBe("antigravity");
-    expect((screen.getByLabelText("Flash Model ID") as HTMLInputElement).value).toBe(
-      "gemini-4-neon-high",
-    );
   });
 
   it("debounces SettingsInput saves without disabling text inputs and shows toast on save failure", async () => {
@@ -980,10 +1033,85 @@ describe("HarnessPopover - Native Orchestrator & Dynamic Specialists", () => {
       screen.getByText("Managed natively by Orchestrator — tier switching disabled."),
     ).toBeDefined();
     expect(screen.getByText("Architect Specialist")).toBeDefined();
-    expect(screen.getByText("antigravity · plan")).toBeDefined();
+    expect(screen.getByText("Gate Specialist")).toBeDefined();
+    expect(screen.getAllByText("antigravity · deep")).toHaveLength(2);
 
-    fireEvent.click(screen.getByLabelText("Switch to plan"));
+    expect(screen.getByLabelText("Switch to fast")).toBeDefined();
+    expect(screen.getByLabelText("Switch to standard")).toBeDefined();
+    expect(screen.getByLabelText("Switch to deep")).toBeDefined();
+    expect(screen.getByLabelText("Switch to max")).toBeDefined();
+
+    fireEvent.click(screen.getByLabelText("Switch to deep"));
     expect(mockSwitchFn).not.toHaveBeenCalled();
+  });
+
+  it("renders 4-tier controls, Manual Max warning badge, and dispatches tier switch RPC + composer sync", async () => {
+    const mockSwitchFn = vi.fn().mockResolvedValue({
+      currentModel: "gemini-4-carbon",
+      recommendedModeId: "full-access",
+      recommendedThinkingOptionId: "high",
+    });
+    const noopRpc = vi.fn().mockResolvedValue({});
+    const mockComposerSetMode = vi.fn().mockResolvedValue(undefined);
+    const mockComposerSetThinking = vi.fn().mockResolvedValue(undefined);
+    mockUseComposers.mockReturnValue([
+      {
+        setMode: mockComposerSetMode,
+        setThinking: mockComposerSetThinking,
+      },
+    ]);
+    mockUseRpc.mockImplementation((contract: any) =>
+      contract?.name === "agent_harness.tier.switch.request" ? mockSwitchFn : noopRpc,
+    );
+    mockUseAgent.mockReturnValue({
+      status: "idle",
+      provider: "antigravity",
+      model: "gemini-4-neon",
+      currentModeId: "full-access",
+      metadata: {
+        [HARNESS_METADATA_KEY]: createSampleMetadata({
+          role: "backend",
+          currentTier: "max",
+          currentModel: "gemini-4-neon",
+          currentThinking: "xhigh",
+          phase: "exec",
+          lastBilledTier: "max",
+          lastBilledModel: "gemini-4-neon",
+        }),
+      },
+    } as any);
+    mockUseSettings.mockReturnValue({
+      status: "ready",
+      values: DEFAULT_AGENT_HARNESS_SETTINGS,
+    });
+
+    render(
+      React.createElement(HarnessPopover, {
+        workspaceId: "ws-1",
+        agentId: "agt-max",
+        theme: popoverTheme,
+        layout: { compact: false, platform: "web" },
+        close: vi.fn(),
+      } as any),
+    );
+
+    expect(screen.getByText("Manual Max · High quota usage")).toBeDefined();
+    expect(screen.getByText("Max · xhigh")).toBeDefined();
+
+    fireEvent.click(screen.getByLabelText("Switch to deep"));
+    expect(mockSwitchFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: "agt-max",
+        targetTier: "deep",
+        currentModeId: "full-access",
+      }),
+    );
+
+    await vi.waitFor(() => {
+      expect(mockComposerSetMode).toHaveBeenCalledWith("full-access");
+      expect(mockComposerSetThinking).toHaveBeenCalledWith("high");
+    });
+    mockUseComposers.mockReturnValue([]);
   });
 
   it("loads N dynamic workspace agent-team specialists via harnessEffectiveConfigRpc with RO tags and bound providers", async () => {
@@ -1081,8 +1209,8 @@ describe("HarnessPopover - Native Orchestrator & Dynamic Specialists", () => {
     expect(screen.getByText("fe-architect")).toBeDefined();
     expect(screen.getByText("fe-qa")).toBeDefined();
     expect(screen.getByText("be-developer")).toBeDefined();
-    expect(screen.getByText("codex · flash")).toBeDefined();
-    expect(screen.getByText("antigravity · flash")).toBeDefined();
+    expect(screen.getByText("codex · standard")).toBeDefined();
+    expect(screen.getByText("antigravity · standard")).toBeDefined();
     expect(screen.getAllByText("RO")).toHaveLength(2);
   });
 
@@ -1470,10 +1598,12 @@ describe("Agent Harness Phase 3 - WorkspaceTeamEditor & Entry Points", () => {
       notes: ["Defaulted to lean-solo"],
       usedCompiler: false,
     });
+    const doctorMock = vi.fn();
 
     mockUseRpc.mockImplementation((contract: any) => {
       if (contract?.name === "agent_harness.team.inspect.request") return inspectMock;
       if (contract?.name === "agent_harness.team.detect.request") return detectMock;
+      if (contract?.name === "agent_harness.team.doctor.request") return doctorMock;
       return vi.fn().mockResolvedValue({});
     });
 
@@ -1487,15 +1617,27 @@ describe("Agent Harness Phase 3 - WorkspaceTeamEditor & Entry Points", () => {
     );
 
     const detectBtn = await screen.findByRole("button", { name: "Detect and initialize" });
+    // Before initialization on an absent repo, footer Run doctor / Clean artifacts must not appear
+    expect(screen.queryByRole("button", { name: "Run doctor" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Clean artifacts" })).toBeNull();
+
     fireEvent.click(detectBtn);
 
     expect(await screen.findByText("Detection notes")).toBeDefined();
     expect(setModified).toHaveBeenLastCalledWith(true);
 
+    // Unsaved draft after Detect & initialize keeps Run doctor disabled until Save & compile
+    const doctorBtn = screen.getByRole("button", { name: "Run doctor" });
+    expect(doctorBtn.textContent).toContain("Run doctor (save first)");
+    expect(doctorBtn.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(doctorBtn);
+    expect(doctorMock).not.toHaveBeenCalled();
+
     const discardBtn = screen.getByRole("button", { name: "Discard" });
     fireEvent.click(discardBtn);
     expect(setModified).toHaveBeenLastCalledWith(false);
     expect(await screen.findByText("No agent team manifest found")).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Run doctor" })).toBeNull();
   });
 
   it("applies role auto-deps, preserves manual guard uncheck, edits bindings, and preserves draft on save error", async () => {
@@ -1524,7 +1666,7 @@ describe("Agent Harness Phase 3 - WorkspaceTeamEditor & Entry Points", () => {
           roles: ["be-developer", "fe-architect"],
           guards: ["guard-serena-nomem"],
           bindings: {
-            "fe-architect": { provider: "claude", tier: "plan", model: "claude-opus-4" },
+            "fe-architect": { provider: "claude", tier: "deep", model: "claude-opus-4" },
           },
         },
         localFederatedTargets: ["claude"],
@@ -1562,7 +1704,7 @@ describe("Agent Harness Phase 3 - WorkspaceTeamEditor & Entry Points", () => {
       target: { value: "claude" },
     });
     fireEvent.change(screen.getByLabelText("fe-architect tier"), {
-      target: { value: "plan" },
+      target: { value: "deep" },
     });
     fireEvent.change(screen.getByLabelText("fe-architect model override"), {
       target: { value: "claude-opus-4" },
@@ -1581,7 +1723,7 @@ describe("Agent Harness Phase 3 - WorkspaceTeamEditor & Entry Points", () => {
     expect(saveMock.mock.calls[1][0].manifest.guards).toEqual(["guard-serena-nomem"]);
     expect(saveMock.mock.calls[1][0].manifest.bindings["fe-architect"]).toEqual({
       provider: "claude",
-      tier: "plan",
+      tier: "deep",
       model: "claude-opus-4",
     });
     expect(setModified).toHaveBeenLastCalledWith(false);

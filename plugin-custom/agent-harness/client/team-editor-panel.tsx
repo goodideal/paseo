@@ -180,6 +180,7 @@ export function WorkspaceTeamEditor({
       setSaveError(null);
       setCompileWarnings([]);
       setAutoAddedNote(null);
+      setDoctorResult(null);
       setExternalUpdatePending(false);
       setResetSeq((prev) => prev + 1);
     } catch (err) {
@@ -582,6 +583,7 @@ export function WorkspaceTeamEditor({
       setDraftManifest(res.manifest);
       setDetectNotes(res.notes ?? []);
       setAutoAddedNote(`Initialized ${res.recommendedPreset} draft in this workspace.`);
+      setDoctorResult(null);
       setResetSeq((prev) => prev + 1);
       toastRef.current.show(`Detected ${res.recommendedPreset} team preset`, { variant: "info" });
     } catch (err) {
@@ -605,6 +607,7 @@ export function WorkspaceTeamEditor({
       const created = createManifestFromPreset(presetId, preset, baseSlug);
       setDraftManifest(created);
       setDetectNotes([`Initialized from preset ${preset.title}.`]);
+      setDoctorResult(null);
       setResetSeq((prev) => prev + 1);
     },
     [inspectData],
@@ -754,6 +757,7 @@ export function WorkspaceTeamEditor({
       setSaveError(null);
       setAutoAddedNote(null);
       setDetectNotes([]);
+      setDoctorResult(null);
       setExternalUpdatePending(false);
       setResetSeq((prev) => prev + 1);
       setInspectData((prev) =>
@@ -783,8 +787,12 @@ export function WorkspaceTeamEditor({
     }
   }, [draftManifest, inspectData?.workspaceName, isSaving, saveRpc, workspaceId]);
 
+  const hasOnDiskManifest =
+    inspectData?.manifestState === "present" ||
+    inspectData?.manifestState === "inherited_from_main";
+
   const handleRunDoctor = useCallback(async () => {
-    if (isRunningDoctor) return;
+    if (isRunningDoctor || !hasOnDiskManifest) return;
     const targetWorkspaceId = workspaceId;
     setIsRunningDoctor(true);
     try {
@@ -805,7 +813,7 @@ export function WorkspaceTeamEditor({
         setIsRunningDoctor(false);
       }
     }
-  }, [doctorRpc, isRunningDoctor, workspaceId]);
+  }, [doctorRpc, hasOnDiskManifest, isRunningDoctor, workspaceId]);
 
   const handleDiscard = useCallback(() => {
     if (externalUpdatePending) {
@@ -816,6 +824,7 @@ export function WorkspaceTeamEditor({
     setSaveError(null);
     setAutoAddedNote(null);
     setDetectNotes([]);
+    setDoctorResult(null);
     setResetSeq((prev) => prev + 1);
   }, [externalUpdatePending, loadWorkspaceInspect, savedManifest]);
 
@@ -920,7 +929,20 @@ export function WorkspaceTeamEditor({
     );
   }
 
+  function resolveDoctorButtonLabel(running: boolean, hasManifest: boolean): string {
+    if (running) {
+      return "Running doctor...";
+    }
+    return hasManifest ? "Run doctor" : "Run doctor (save first)";
+  }
+
   const isInherited = inspectData?.manifestState === "inherited_from_main";
+  const hasOrphanedArtifacts =
+    (inspectData?.localFederatedTargets?.length ?? 0) > 0 || Boolean(inspectData?.manifestError);
+  const canRunDoctor = hasOnDiskManifest && !isRunningDoctor;
+  const canShowClean = hasOnDiskManifest || hasOrphanedArtifacts;
+  const showFooterBar = Boolean(draftManifest) || canShowClean;
+  const doctorButtonLabel = resolveDoctorButtonLabel(isRunningDoctor, hasOnDiskManifest);
   const expectedWorkspaceManifestPath = inspectData?.checkoutRoot
     ? `${normalizeDisplayPath(inspectData.checkoutRoot)}/.agents/agent-team.json`
     : null;
@@ -1398,7 +1420,14 @@ export function WorkspaceTeamEditor({
                         <SettingsSelect
                           label={`${roleId} tier`}
                           value={binding.tier ?? ""}
-                          options={[{ label: "Auto from role", value: "" }, ...TEAM_TIER_OPTIONS]}
+                          options={[
+                            { label: "Auto from role", value: "" },
+                            ...TEAM_TIER_OPTIONS,
+                            ...(binding.tier &&
+                            !TEAM_TIER_OPTIONS.some((opt) => opt.value === binding.tier)
+                              ? [{ label: `Legacy (${binding.tier})`, value: binding.tier }]
+                              : []),
+                          ]}
                           onValueChange={(val) =>
                             handleUpdateBinding(roleId, { tier: val || undefined })
                           }
@@ -1445,6 +1474,12 @@ export function WorkspaceTeamEditor({
                     </Text>
                   </View>
                 </View>
+                {isDirty ? (
+                  <Text style={styles.metaText}>
+                    Checked saved files on disk. Click Save &amp; compile to include unsaved draft
+                    changes.
+                  </Text>
+                ) : null}
                 <View style={styles.outputBlock}>
                   <Text style={styles.outputText}>{doctorResult.output}</Text>
                 </View>
@@ -1482,60 +1517,64 @@ export function WorkspaceTeamEditor({
         ) : null}
 
         {/* Action Bar (1 Primary + 1 Secondary + Quiet Discard / Clean) */}
-        <View style={styles.footerBar}>
-          <View style={styles.footerPrimaryGroup}>
-            {draftManifest ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={saveButtonLabel}
-                disabled={isSaving || draftManifest.roles.length === 0}
-                onPress={() => void handleSaveAndCompile()}
-                style={[
-                  styles.btnPrimary,
-                  (isSaving || draftManifest.roles.length === 0) && styles.btnDisabled,
-                ]}
-              >
-                <Text style={styles.btnPrimaryText}>{saveButtonLabel}</Text>
-              </Pressable>
-            ) : null}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Run doctor"
-              disabled={isRunningDoctor}
-              onPress={() => void handleRunDoctor()}
-              style={[styles.btnSecondary, isRunningDoctor && styles.btnDisabled]}
-            >
-              <Text style={styles.btnSecondaryText}>
-                {isRunningDoctor ? "Running doctor..." : "Run doctor"}
-              </Text>
-            </Pressable>
+        {showFooterBar ? (
+          <View style={styles.footerBar}>
+            <View style={styles.footerPrimaryGroup}>
+              {draftManifest ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={saveButtonLabel}
+                  disabled={isSaving || draftManifest.roles.length === 0}
+                  onPress={() => void handleSaveAndCompile()}
+                  style={[
+                    styles.btnPrimary,
+                    (isSaving || draftManifest.roles.length === 0) && styles.btnDisabled,
+                  ]}
+                >
+                  <Text style={styles.btnPrimaryText}>{saveButtonLabel}</Text>
+                </Pressable>
+              ) : null}
+              {draftManifest || hasOnDiskManifest ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Run doctor"
+                  disabled={!canRunDoctor}
+                  onPress={() => void handleRunDoctor()}
+                  style={[styles.btnSecondary, !canRunDoctor && styles.btnDisabled]}
+                >
+                  <Text style={styles.btnSecondaryText}>{doctorButtonLabel}</Text>
+                </Pressable>
+              ) : null}
+            </View>
+            <View style={styles.footerSecondaryGroup}>
+              {isDirty ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Discard"
+                  disabled={isSaving}
+                  onPress={handleDiscard}
+                  style={styles.btnQuiet}
+                >
+                  <Text style={styles.btnQuietText}>Discard</Text>
+                </Pressable>
+              ) : null}
+              {canShowClean ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Clean artifacts"
+                  disabled={isCleaning}
+                  onPress={() => {
+                    setCleanDeleteManifest(false);
+                    setCleanModalOpen(true);
+                  }}
+                  style={styles.btnDanger}
+                >
+                  <Text style={styles.btnDangerText}>Clean artifacts...</Text>
+                </Pressable>
+              ) : null}
+            </View>
           </View>
-          <View style={styles.footerSecondaryGroup}>
-            {isDirty ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Discard"
-                disabled={isSaving}
-                onPress={handleDiscard}
-                style={styles.btnQuiet}
-              >
-                <Text style={styles.btnQuietText}>Discard</Text>
-              </Pressable>
-            ) : null}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Clean artifacts"
-              disabled={isCleaning}
-              onPress={() => {
-                setCleanDeleteManifest(false);
-                setCleanModalOpen(true);
-              }}
-              style={styles.btnDanger}
-            >
-              <Text style={styles.btnDangerText}>Clean artifacts...</Text>
-            </Pressable>
-          </View>
-        </View>
+        ) : null}
       </ScrollView>
 
       {/* Clean Artifacts Confirmation Modal */}

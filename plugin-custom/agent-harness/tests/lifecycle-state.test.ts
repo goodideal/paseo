@@ -55,6 +55,7 @@ describe("lifecycle-state", () => {
         initialTier: "plan",
         currentTier: "plan",
         currentModel: "claude-3-7-sonnet",
+        currentThinking: null,
         phase: "design",
         roleMatchedRule: "label:role",
         tierMatchedRule: "plan_keyword",
@@ -70,6 +71,7 @@ describe("lifecycle-state", () => {
         resumeModeId: null,
         lastBilledTier: null,
         lastBilledModel: null,
+        lastBilledThinking: null,
       });
     });
   });
@@ -776,13 +778,15 @@ describe("lifecycle-state", () => {
     });
   });
 
-  describe("dual-state billing in evaluateTurnAfterTransition", () => {
-    it("snapshots lastBilledTier and lastBilledModel upon transition to flash", () => {
+  describe("dual-state billing and orthogonal phase gating in evaluateTurnAfterTransition", () => {
+    it("snapshots lastBilledTier and lastBilledModel upon transition to standard", () => {
       const meta = {
         ...createInitialHarnessMetadata({
           role: "ui",
-          tier: "plan",
-          model: "claude-3-7-sonnet",
+          tier: "deep",
+          phase: "design",
+          model: "pro",
+          thinkingOptionId: "high",
           roleMatchedRule: "keyword",
           tierMatchedRule: "plan",
         }),
@@ -802,26 +806,79 @@ describe("lifecycle-state", () => {
           detectedCodeWrite: false,
           handoffInvoked: false,
         },
-        providerFlashModel: "claude-3-5-haiku",
+        providerStandardModel: "flash",
+        providerStandardThinking: "medium",
       });
 
       expect(result.shouldDowngrade).toBe(true);
       expect(result.downgradeReason).toBe("explicit_exec_intent");
-      expect(result.nextMeta.currentTier).toBe("flash");
-      expect(result.nextMeta.currentModel).toBe("claude-3-5-haiku");
-      expect(result.nextMeta.lastBilledTier).toBe("plan");
-      expect(result.nextMeta.lastBilledModel).toBe("claude-3-7-sonnet");
+      expect(result.nextMeta.currentTier).toBe("standard");
+      expect(result.nextMeta.currentModel).toBe("flash");
+      expect(result.nextMeta.currentThinking).toBe("medium");
+      expect(result.nextMeta.phase).toBe("exec");
+      expect(result.nextMeta.lastBilledTier).toBe("deep");
+      expect(result.nextMeta.lastBilledModel).toBe("pro");
+      expect(result.nextMeta.lastBilledThinking).toBe("high");
     });
 
-    it("updates lastBilledTier/Model on regular completed flash turns", () => {
+    it("keeps deep or max writable in exec phase without enforcing plan mode or auto-downgrading on code writes", () => {
+      for (const execTier of ["deep", "max"] as const) {
+        expect(
+          shouldEnforceNativePlanMode({
+            phaseLifecycleEnabled: true,
+            enforceNativePlanMode: true,
+            tier: execTier,
+            phase: "exec",
+            role: "backend",
+            userModelLocked: false,
+            roleLockedByLabel: false,
+            hasParentAgent: false,
+            provider: "claude",
+          }),
+        ).toBe(false);
+
+        const execMeta = createInitialHarnessMetadata({
+          role: "backend",
+          tier: execTier,
+          phase: "exec",
+          model: execTier === "max" ? "plan" : "pro",
+          thinkingOptionId: execTier === "max" ? "xhigh" : "high",
+          roleMatchedRule: "rpc",
+          tierMatchedRule: "rpc:manual_switch",
+        });
+
+        const result = evaluateTurnAfterTransition({
+          meta: execMeta,
+          turnId: `turn_${execTier}_write`,
+          settings: {
+            planTurnSoftLimit: 3,
+            autoDowngradePlanOnExec: true,
+          },
+          timelineInspection: {
+            latestUserText: "修改核心协议并发逻辑",
+            detectedCodeWrite: true,
+            handoffInvoked: false,
+          },
+          providerStandardModel: "flash",
+          providerStandardThinking: "medium",
+        });
+
+        expect(result.shouldDowngrade).toBe(false);
+        expect(result.nextMeta.currentTier).toBe(execTier);
+        expect(result.nextMeta.phase).toBe("exec");
+        expect(result.nextMeta.writeToolDetectedInPlan).toBe(false);
+      }
+    });
+
+    it("updates lastBilledTier/Model on regular completed standard turns", () => {
       const meta = {
         ...createInitialHarnessMetadata({
           role: "backend",
-          tier: "flash",
+          tier: "standard",
           model: "claude-3-5-haiku",
           roleMatchedRule: "keyword",
-          tierMatchedRule: "flash",
-          lastBilledTier: "plan",
+          tierMatchedRule: "standard",
+          lastBilledTier: "deep",
           lastBilledModel: "claude-3-7-sonnet",
         }),
         turnCount: 2,
@@ -841,12 +898,12 @@ describe("lifecycle-state", () => {
           detectedCodeWrite: false,
           handoffInvoked: false,
         },
-        providerFlashModel: "claude-3-5-haiku",
+        providerStandardModel: "claude-3-5-haiku",
       });
 
       expect(result.shouldDowngrade).toBe(false);
-      expect(result.nextMeta.currentTier).toBe("flash");
-      expect(result.nextMeta.lastBilledTier).toBe("flash");
+      expect(result.nextMeta.currentTier).toBe("standard");
+      expect(result.nextMeta.lastBilledTier).toBe("standard");
       expect(result.nextMeta.lastBilledModel).toBe("claude-3-5-haiku");
     });
   });

@@ -20,6 +20,7 @@ import {
 import {
   BUILTIN_BYPASS_MODELS,
   BUILTIN_PROVIDER_MAPPINGS,
+  BUILTIN_PROVIDER_THINKING_MAPPINGS,
   BUILTIN_TIERS,
 } from "../shared/presets.js";
 import { isModelBypassed } from "../shared/intent-detector.js";
@@ -60,15 +61,31 @@ function formatAgentTeamLabel(agentTeam: AgentTeamInspectInfo): string {
 const KNOWN_PROVIDERS = ["antigravity", "claude", "codex", "opencode", "pi"] as const;
 
 const ANTIGRAVITY_GEMINI4_MODELS = [
-  "gemini-4-carbon-high",
-  "gemini-4-hydrogen-high",
-  "gemini-4-argon-high",
-  "gemini-4-neon-high",
-  "gemini-4-carbon-medium",
-  "gemini-4-hydrogen-medium",
-  "gemini-4-argon-medium",
-  "gemini-4-neon-medium",
+  "gemini-4-hydrogen",
+  "gemini-4-argon",
+  "gemini-4-carbon",
+  "gemini-4-neon",
+  "claude-sonnet-5-5",
+  "claude-opus-5-5",
+  "gpt-oss-120b-medium",
 ] as const;
+
+const CUSTOM_MODEL_OPTION_VALUE = "__custom__";
+
+const THINKING_EFFORT_OPTIONS = [
+  { label: "Default", value: "" },
+  { label: "Low", value: "low" },
+  { label: "Medium", value: "medium" },
+  { label: "High", value: "high" },
+  { label: "Extra High (xhigh)", value: "xhigh" },
+] as const;
+
+const TIER_BUDGET_HINTS: Record<string, string> = {
+  fast: "0.2x routing, lookup, and low-risk quick edits",
+  standard: "1x default workhorse for daily features and tests",
+  deep: "3x planning, review, and complex core edits",
+  max: "Manual peak effort (inherits Deep + xhigh when unset)",
+};
 
 const BUILTIN_LAZY_TOOL_SLICES = [
   "ui.yaml",
@@ -111,24 +128,39 @@ function isSelectableRoutingModel(
 
 const INPUT_SAVE_DEBOUNCE_MS = 300;
 
+function mergeNestedStringMaps(
+  prev: Record<string, Record<string, string>> | undefined,
+  next: Record<string, Record<string, string>> | undefined,
+): Record<string, Record<string, string>> | undefined {
+  if (!prev) return next;
+  if (!next) return prev;
+  const merged = { ...prev };
+  for (const [provider, tierMap] of Object.entries(next)) {
+    merged[provider] = {
+      ...(merged[provider] ?? {}),
+      ...tierMap,
+    };
+  }
+  return merged;
+}
+
 function mergeSettingsPatches(
   prev: Partial<AgentHarnessSettings>,
   next: Partial<AgentHarnessSettings>,
 ): Partial<AgentHarnessSettings> {
-  let mergedProviderMappings = next.providerMappings ?? prev.providerMappings;
-  if (prev.providerMappings && next.providerMappings) {
-    mergedProviderMappings = { ...prev.providerMappings };
-    for (const [provider, tierMap] of Object.entries(next.providerMappings)) {
-      mergedProviderMappings[provider] = {
-        ...(mergedProviderMappings[provider] ?? {}),
-        ...tierMap,
-      };
-    }
-  }
+  const mergedProviderMappings = mergeNestedStringMaps(
+    prev.providerMappings,
+    next.providerMappings,
+  );
+  const mergedThinkingMappings = mergeNestedStringMaps(
+    prev.providerThinkingMappings,
+    next.providerThinkingMappings,
+  );
   return {
     ...prev,
     ...next,
     ...(mergedProviderMappings ? { providerMappings: mergedProviderMappings } : {}),
+    ...(mergedThinkingMappings ? { providerThinkingMappings: mergedThinkingMappings } : {}),
   };
 }
 
@@ -162,6 +194,7 @@ export function HarnessSettingsScreen({
   const [isSyncing, setIsSyncing] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState<string>("antigravity");
   const [selectedSpecialistId, setSelectedSpecialistId] = useState<string>("ui");
+  const [customModelOpenByTier, setCustomModelOpenByTier] = useState<Record<string, boolean>>({});
 
   const latestSettingsRef = useRef(settings);
   const toastRef = useRef(toast);
@@ -343,15 +376,18 @@ export function HarnessSettingsScreen({
       ...patchToSave,
       ...(patchToSave.providerMappings
         ? {
-            providerMappings: {
-              ...baseValues.providerMappings,
-              ...Object.fromEntries(
-                Object.entries(patchToSave.providerMappings).map(([prov, tierMap]) => [
-                  prov,
-                  { ...(baseValues.providerMappings?.[prov] ?? {}), ...tierMap },
-                ]),
-              ),
-            },
+            providerMappings: mergeNestedStringMaps(
+              baseValues.providerMappings,
+              patchToSave.providerMappings,
+            ),
+          }
+        : {}),
+      ...(patchToSave.providerThinkingMappings
+        ? {
+            providerThinkingMappings: mergeNestedStringMaps(
+              baseValues.providerThinkingMappings,
+              patchToSave.providerThinkingMappings,
+            ),
           }
         : {}),
     };
@@ -498,6 +534,7 @@ export function HarnessSettingsScreen({
     for (const tierId of tierIds) {
       inputRefs.current[`tier-input-${tierId}`]?.replaceText(map[tierId] ?? "");
     }
+    setCustomModelOpenByTier({});
     // Sync displayed tier input values only when selectedProvider changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProvider]);
@@ -555,6 +592,57 @@ export function HarnessSettingsScreen({
     [commitPatch, scheduleDebouncedSave, values.providerMappings],
   );
 
+  const updateProviderTierThinking = useCallback(
+    (providerId: string, tierId: string, thinkingOptionId: string) => {
+      const norm = normalizeProviderName(providerId);
+      const baseThinking =
+        latestSettingsRef.current?.values?.providerThinkingMappings ??
+        values.providerThinkingMappings ??
+        {};
+      const pendingProviderMap = pendingPatchRef.current.providerThinkingMappings?.[norm];
+      const nextProviderMap = {
+        ...(baseThinking[norm] ?? {}),
+        ...(pendingProviderMap ?? {}),
+        [tierId]: thinkingOptionId.trim(),
+      };
+      commitPatch({
+        providerThinkingMappings: {
+          [norm]: nextProviderMap,
+        },
+      });
+    },
+    [commitPatch, values.providerThinkingMappings],
+  );
+
+  const resetSelectedProviderMappings = useCallback(() => {
+    const norm = normalizeProviderName(selectedProvider);
+    const defaultModels = BUILTIN_PROVIDER_MAPPINGS[norm] ?? {
+      fast: "lite",
+      standard: "flash",
+      deep: "pro",
+      max: "plan",
+    };
+    const defaultThinking = BUILTIN_PROVIDER_THINKING_MAPPINGS[norm] ?? {
+      fast: "low",
+      standard: "medium",
+      deep: "high",
+      max: "xhigh",
+    };
+    setCustomModelOpenByTier({});
+    commitPatch({
+      providerMappings: {
+        [norm]: { ...defaultModels },
+      },
+      providerThinkingMappings: {
+        [norm]: { ...defaultThinking },
+      },
+    });
+    toastRef.current.show(
+      `Restored recommended 4-tier defaults for ${formatProviderDisplayLabel(selectedProvider)}`,
+      { variant: "success" },
+    );
+  }, [commitPatch, selectedProvider]);
+
   if (settings.status === "loading") {
     return (
       <View style={styles.loadingContainer}>
@@ -602,13 +690,21 @@ export function HarnessSettingsScreen({
 
   const fallbackModelOptions = [
     { label: "Lite (lite)", value: "lite" },
-    { label: "Pro (pro)", value: "pro" },
-    { label: "Flash (flash)", value: "flash" },
+    { label: "Standard (flash)", value: "flash" },
+    { label: "Deep (pro)", value: "pro" },
+    { label: "Max (plan)", value: "plan" },
   ];
+
+  function formatProviderStatusSuffix(status: { enabled?: boolean } | undefined): string {
+    if (!status) {
+      return "";
+    }
+    return status.enabled ? " · Active" : " · Disabled";
+  }
 
   const targetProviderOptions = providerIds.map((pid) => {
     const status = inspectedProviderMap.get(pid);
-    const suffix = status ? (status.enabled ? " · Active" : " · Disabled") : "";
+    const suffix = formatProviderStatusSuffix(status);
     return {
       label: `${formatProviderDisplayLabel(pid)}${suffix}`,
       value: pid,
@@ -618,7 +714,7 @@ export function HarnessSettingsScreen({
   const activeProviderModels = getModelsForProvider(selectedProvider);
 
   const specialistSelectOptions = specialistsList.map((s) => ({
-    label: `${s.name} (${s.preferredProvider || "inherit"} · ${s.modelOverride || s.preferredTier || "flash"})`,
+    label: `${s.name} (${s.preferredProvider || "inherit"} · ${s.modelOverride || s.preferredTier || "standard"})`,
     value: s.id,
   }));
 
@@ -640,7 +736,7 @@ export function HarnessSettingsScreen({
     ? resolveTargetModelForTier(
         effectiveConfig,
         activeSpecialistProvider,
-        activeSpecialist.preferredTier || "flash",
+        activeSpecialist.preferredTier || "standard",
       )
     : "flash";
   const activeSpecialistModels = activeSpecialist
@@ -729,7 +825,7 @@ export function HarnessSettingsScreen({
         <SettingsCard>
           <SettingsSelect
             label="Target Provider"
-            hint="Select a provider to configure Plan, Flash, and Review model mappings"
+            hint="Select a provider to configure Fast, Standard, Deep, and Max models"
             value={selectedProvider}
             options={targetProviderOptions}
             disabled={isSaving}
@@ -737,44 +833,72 @@ export function HarnessSettingsScreen({
           />
           {tiers.map((tier) => {
             const currentValue = values.providerMappings?.[selectedProvider]?.[tier.id] ?? "";
+            const currentThinking =
+              values.providerThinkingMappings?.[selectedProvider]?.[tier.id] ?? "";
+            const tierKey = `${selectedProvider}:${tier.id}`;
+            const isKnownModel = !currentValue || activeProviderModels.includes(currentValue);
+            const isCustomOpen = Boolean(customModelOpenByTier[tierKey]) || !isKnownModel;
+            const selectValue = isCustomOpen ? CUSTOM_MODEL_OPTION_VALUE : currentValue;
             const presetOptions = [
-              { label: "Custom / Unset", value: "" },
-              ...(currentValue && !activeProviderModels.includes(currentValue)
-                ? [{ label: currentValue, value: currentValue }]
-                : []),
+              {
+                label: tier.id === "max" ? "Inherit Deep (Fallback)" : "Unset / Default",
+                value: "",
+              },
               ...activeProviderModels.map((m) => ({ label: m, value: m })),
-              ...(activeProviderModels.length === 0 && currentValue !== tier.id
-                ? [{ label: tier.id, value: tier.id }]
-                : []),
+              { label: "Custom Model ID...", value: CUSTOM_MODEL_OPTION_VALUE },
             ];
 
             return (
-              <React.Fragment key={`${selectedProvider}:${tier.id}`}>
+              <React.Fragment key={tierKey}>
                 <SettingsSelect
-                  label={`${tier.name} Tier Preset`}
-                  hint={`Quick-select target model for ${selectedProvider} (${tier.id})`}
-                  value={currentValue}
+                  label={`${tier.name} Model`}
+                  hint={TIER_BUDGET_HINTS[tier.id] ?? tier.description ?? `Tier: ${tier.id}`}
+                  value={selectValue}
                   options={presetOptions}
                   disabled={isSaving}
                   onValueChange={(nextModel) => {
+                    if (nextModel === CUSTOM_MODEL_OPTION_VALUE) {
+                      setCustomModelOpenByTier((prev) => ({ ...prev, [tierKey]: true }));
+                      return;
+                    }
+                    setCustomModelOpenByTier((prev) => ({ ...prev, [tierKey]: false }));
                     inputRefs.current[`tier-input-${tier.id}`]?.replaceText(nextModel);
                     updateProviderTierModel(selectedProvider, tier.id, nextModel, false);
                   }}
                 />
-                <SettingsInput
-                  ref={setInputRef(`tier-input-${tier.id}`)}
-                  key={`tier-input-${tier.id}`}
-                  label={`${tier.name} Model ID`}
-                  hint="Custom model identifier override for this tier"
-                  initialValue={currentValue}
-                  placeholder={tier.id}
-                  onChangeText={(text) =>
-                    updateProviderTierModel(selectedProvider, tier.id, text, true)
+                {isCustomOpen ? (
+                  <SettingsInput
+                    ref={setInputRef(`tier-input-${tier.id}`)}
+                    key={`tier-input-${tier.id}`}
+                    label={`${tier.name} Custom Model ID`}
+                    hint={`Custom model identifier for ${selectedProvider} (${tier.id})`}
+                    initialValue={currentValue}
+                    placeholder={tier.id}
+                    onChangeText={(text) =>
+                      updateProviderTierModel(selectedProvider, tier.id, text, true)
+                    }
+                  />
+                ) : null}
+                <SettingsSelect
+                  label={`${tier.name} Thinking`}
+                  hint={`Reasoning effort for ${tier.name} tier`}
+                  value={currentThinking}
+                  options={THINKING_EFFORT_OPTIONS}
+                  disabled={isSaving}
+                  onValueChange={(nextThinking) =>
+                    updateProviderTierThinking(selectedProvider, tier.id, nextThinking)
                   }
                 />
               </React.Fragment>
             );
           })}
+          <SettingsAction
+            label="Reset Provider Mappings"
+            hint={`Restore recommended 4-tier defaults for ${formatProviderDisplayLabel(selectedProvider)}`}
+            actionLabel="Reset defaults"
+            disabled={isSaving}
+            onPress={resetSelectedProviderMappings}
+          />
           <SettingsInput
             ref={setInputRef("bypass-models-input")}
             key="bypass-models-input"
@@ -827,7 +951,7 @@ export function HarnessSettingsScreen({
             <SettingsSelect
               label="Preferred Tier"
               hint="Default capability tier mapped to the target provider's model"
-              value={activeSpecialist.preferredTier ?? "flash"}
+              value={activeSpecialist.preferredTier ?? "standard"}
               options={tierSelectOptions}
               disabled={isSaving}
               onValueChange={(preferredTier) => updateActiveSpecialist({ preferredTier })}
@@ -897,8 +1021,8 @@ export function HarnessSettingsScreen({
             onValueChange={handleToggle("enforceNativePlanMode")}
           />
           <SettingsSwitch
-            label="Auto Downgrade Plan to Flash"
-            hint="Automatically switch from Plan to Flash when modification tools or execution intents occur"
+            label="Auto Step Down Plan to Standard"
+            hint="Automatically step down from Deep Plan to Standard when modification tools or execution intents occur"
             value={values.autoDowngradePlanOnExec}
             disabled={isSaving}
             onValueChange={handleToggle("autoDowngradePlanOnExec")}

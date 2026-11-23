@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   classifyIntentWithLlm,
+  coerceAutoRoutingTier,
   detectDomainRole,
   detectDomainRoleHybrid,
+  detectIntentRoute,
   detectMatrixTier,
   isModelBypassed,
   resolveHarnessEnv,
@@ -12,7 +14,7 @@ import {
 const mockFetchSuccess = async () =>
   new Response(
     JSON.stringify({
-      choices: [{ message: { content: '{"role":"architect","tier":"plan"}' } }],
+      choices: [{ message: { content: '{"role":"architect","tier":"deep"}' } }],
     }),
     { status: 200 },
   );
@@ -22,7 +24,7 @@ const mockFetchTimeout = async () => {
 };
 
 describe("detectMatrixTier", () => {
-  it("detects PLAN tier for architectural, CTO, and root-cause analysis requests", () => {
+  it("detects DEEP (design phase) for architectural, CTO, and root-cause analysis requests", () => {
     const planPrompts = [
       "我对当前Provider这块的第一层分类，或者说生态，非常不满意。你作为CTO，给我优化的方案只是第一层分类。",
       "ssh ops, 分析一下线上的hub环境：为什么reader没有任何关联的数据？bug在哪里？分析根因。",
@@ -36,11 +38,12 @@ describe("detectMatrixTier", () => {
 
     for (const prompt of planPrompts) {
       const result = detectMatrixTier(prompt);
-      expect(result.tier, `Prompt failed to detect plan: "${prompt}"`).toBe("plan");
+      expect(result.tier, `Prompt failed to detect deep: "${prompt}"`).toBe("deep");
+      expect(result.phase).toBe("design");
     }
   });
 
-  it("detects REVIEW tier for code reviews, OCR gates, and audits", () => {
+  it("detects DEEP (review phase) for code reviews, OCR gates, and audits", () => {
     const reviewPrompts = [
       "review: 审查当前分支与 develop 的所有差异与契约合流",
       "CR 当前 PR 提交并输出审查摘要",
@@ -51,11 +54,12 @@ describe("detectMatrixTier", () => {
 
     for (const prompt of reviewPrompts) {
       const result = detectMatrixTier(prompt);
-      expect(result.tier, `Prompt failed to detect review: "${prompt}"`).toBe("review");
+      expect(result.tier, `Prompt failed to detect deep review: "${prompt}"`).toBe("deep");
+      expect(result.phase).toBe("review");
     }
   });
 
-  it("detects FLASH tier for code execution, fixes, releases, and general tasks", () => {
+  it("detects STANDARD (exec phase) for code execution, fixes, releases, and general tasks", () => {
     const execPrompts = [
       "fix: 🛑 Blocker Findings (1)",
       "/gitea dev and release beta",
@@ -67,36 +71,89 @@ describe("detectMatrixTier", () => {
 
     for (const prompt of execPrompts) {
       const result = detectMatrixTier(prompt);
-      expect(result.tier, `Prompt failed to detect flash: "${prompt}"`).toBe("flash");
+      expect(result.tier, `Prompt failed to detect standard: "${prompt}"`).toBe("standard");
+      expect(result.phase).toBe("exec");
     }
+  });
+
+  it("detects FAST (exec phase) for lightweight lookups, status checks, and chores", () => {
+    const fastPrompts = [
+      "chore: update dependencies lockfile",
+      "docs: update readme typo",
+      "查一下最近的错误日志",
+      "check status and logs for gateway",
+    ];
+
+    for (const prompt of fastPrompts) {
+      const result = detectIntentRoute(prompt);
+      expect(result.tier, `Prompt failed to detect fast: "${prompt}"`).toBe("fast");
+      expect(result.phase).toBe("exec");
+    }
+  });
+
+  it("never selects manual-only max tier in automatic intent detection or LLM fallback", async () => {
+    expect(coerceAutoRoutingTier("max")).toBe("deep");
+    expect(coerceAutoRoutingTier("plan")).toBe("deep");
+    expect(coerceAutoRoutingTier("flash")).toBe("standard");
+    expect(coerceAutoRoutingTier("lite")).toBe("fast");
+
+    const maxHintPrompt = detectIntentRoute("请使用 max xhigh opus 最高档模型彻底排查并设计方案");
+    expect(maxHintPrompt.tier).toBe("deep");
+    expect(maxHintPrompt.tier).not.toBe("max");
+
+    const llmMaxMock = async () =>
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: '{"role":"backend","tier":"max"}' } }],
+        }),
+        { status: 200 },
+      );
+    const llmResult = await classifyIntentWithLlm({
+      text: "复杂并发锁死疑难 Bug",
+      fetchImpl: llmMaxMock as unknown as typeof fetch,
+    });
+    expect(llmResult).toEqual({ role: "backend", tier: "deep" });
   });
 });
 
 describe("resolveMatrixModel", () => {
-  it("resolves model for opencode", () => {
+  it("resolves model and thinking option for opencode", () => {
     const planDecision = resolveMatrixModel({
       provider: "opencode",
       currentModel: "custom/flash",
       text: "你作为CTO，给我优化的方案",
     });
-    expect(planDecision.tier).toBe("plan");
-    expect(planDecision.targetModel).toBe("custom/plan");
+    expect(planDecision.tier).toBe("deep");
+    expect(planDecision.phase).toBe("design");
+    expect(planDecision.targetModel).toBe("custom/pro");
+    expect(planDecision.targetThinking).toBe("high");
 
     const reviewDecision = resolveMatrixModel({
       provider: "opencode",
       currentModel: "custom/flash",
       text: "代码审查该模块实现",
     });
-    expect(reviewDecision.tier).toBe("review");
-    expect(reviewDecision.targetModel).toBe("custom/review");
+    expect(reviewDecision.tier).toBe("deep");
+    expect(reviewDecision.phase).toBe("review");
+    expect(reviewDecision.targetModel).toBe("custom/pro");
 
-    const flashDecision = resolveMatrixModel({
+    const stdDecision = resolveMatrixModel({
       provider: "opencode",
       currentModel: "custom/flash",
       text: "fix: 修复一个空指针",
     });
-    expect(flashDecision.tier).toBe("flash");
-    expect(flashDecision.targetModel).toBe("custom/flash");
+    expect(stdDecision.tier).toBe("standard");
+    expect(stdDecision.phase).toBe("exec");
+    expect(stdDecision.targetModel).toBe("custom/flash");
+    expect(stdDecision.targetThinking).toBe("medium");
+
+    const fastDecision = resolveMatrixModel({
+      provider: "opencode",
+      currentModel: "custom/flash",
+      text: "chore: clean unused comments",
+    });
+    expect(fastDecision.tier).toBe("fast");
+    expect(fastDecision.targetModel).toBe("custom/lite");
   });
 
   it("resolves model for codex", () => {
@@ -105,27 +162,49 @@ describe("resolveMatrixModel", () => {
       currentModel: "flash",
       text: "架构设计与技术选型方案",
     });
-    expect(planDecision.tier).toBe("plan");
-    expect(planDecision.targetModel).toBe("plan");
+    expect(planDecision.tier).toBe("deep");
+    expect(planDecision.phase).toBe("design");
+    expect(planDecision.targetModel).toBe("pro");
+    expect(planDecision.targetThinking).toBe("high");
 
     const reviewDecision = resolveMatrixModel({
       provider: "codex",
       currentModel: "flash",
       text: "review: 门禁复核",
     });
-    expect(reviewDecision.tier).toBe("review");
-    expect(reviewDecision.targetModel).toBe("review");
+    expect(reviewDecision.tier).toBe("deep");
+    expect(reviewDecision.phase).toBe("review");
+    expect(reviewDecision.targetModel).toBe("pro");
   });
 
-  it("preserves explicitly chosen user model if not default flash", () => {
-    const decision = resolveMatrixModel({
+  it("preserves explicitly chosen user model and manual max model", () => {
+    const customDecision = resolveMatrixModel({
       provider: "opencode",
-      currentModel: "custom/pro",
+      currentModel: "custom/claude-opus",
       text: "方案设计",
       overrideIfDefaultOnly: true,
     });
-    expect(decision.targetModel).toBe("custom/pro");
-    expect(decision.matchedRule).toContain("preserve_user_choice");
+    expect(customDecision.targetModel).toBe("custom/claude-opus");
+    expect(customDecision.matchedRule).toContain("preserve_user_choice");
+
+    const manualMaxDecision = resolveMatrixModel({
+      provider: "opencode",
+      currentModel: "custom/plan",
+      text: "fix: 修复拼写",
+      overrideIfDefaultOnly: true,
+      customMappings: {
+        opencode: {
+          fast: "custom/lite",
+          standard: "custom/flash",
+          deep: "custom/pro",
+          max: "custom/plan",
+        },
+      },
+    });
+    expect(manualMaxDecision.targetModel).toBe("custom/plan");
+    expect(manualMaxDecision.tier).toBe("max");
+    expect(manualMaxDecision.targetThinking).toBe("xhigh");
+    expect(manualMaxDecision.matchedRule).toContain("preserve_user_choice");
   });
 
   it("resolves canonical headroom/* model IDs for pi provider", () => {
@@ -134,25 +213,34 @@ describe("resolveMatrixModel", () => {
       currentModel: "headroom/flash",
       text: "设计一套深模块架构方案",
     });
-    expect(planDecision.tier).toBe("plan");
-    expect(planDecision.targetModel).toBe("headroom/plan");
+    expect(planDecision.tier).toBe("deep");
+    expect(planDecision.targetModel).toBe("headroom/pro");
 
-    const flashDecision = resolveMatrixModel({
+    const stdDecision = resolveMatrixModel({
       provider: "pi",
       currentModel: "flash",
       text: "fix: 修复探针脚本",
     });
-    expect(flashDecision.tier).toBe("flash");
-    expect(flashDecision.targetModel).toBe("headroom/flash");
+    expect(stdDecision.tier).toBe("standard");
+    expect(stdDecision.targetModel).toBe("headroom/flash");
+
+    const fastDecision = resolveMatrixModel({
+      provider: "pi",
+      currentModel: "headroom/flash",
+      text: "查一下日志定位版本",
+    });
+    expect(fastDecision.tier).toBe("fast");
+    expect(fastDecision.targetModel).toBe("headroom/lite");
   });
 
-  it("classifies plugin implementation actions as flash execution", () => {
+  it("classifies plugin implementation actions as standard execution", () => {
     const decision = resolveMatrixModel({
       provider: "claude",
       currentModel: "flash",
       text: "同意，但在quick button的插件中实现",
     });
-    expect(decision.tier).toBe("flash");
+    expect(decision.tier).toBe("standard");
+    expect(decision.phase).toBe("exec");
     expect(decision.matchedRule).toContain("exec_action");
   });
 
@@ -178,7 +266,7 @@ describe("resolveMatrixModel", () => {
     try {
       const invalidPattern = "[unclosed-regex-test-pattern";
       expect(
-        isModelBypassed("gemini-4-hydrogen-high", [invalidPattern, "^gemini-pro-orchestrator"]),
+        isModelBypassed("gemini-4-hydrogen", [invalidPattern, "^gemini-pro-orchestrator"]),
       ).toBe(false);
       expect(
         isModelBypassed("gemini-pro-orchestrator", [invalidPattern, "^gemini-pro-orchestrator"]),
@@ -189,39 +277,47 @@ describe("resolveMatrixModel", () => {
     }
   });
 
-  it("routes non-orchestrator antigravity models across Gemini 4 tiers and preserves user-locked models", () => {
+  it("routes non-orchestrator antigravity models across Gemini 4 native IDs + thinking and preserves manual max/custom models", () => {
     const planDecision = resolveMatrixModel({
       provider: "antigravity",
-      currentModel: "gemini-4-hydrogen-high",
+      currentModel: "gemini-4-hydrogen",
       text: "你作为CTO，设计一套全新的分布式架构方案",
     });
-    expect(planDecision.tier).toBe("plan");
-    expect(planDecision.targetModel).toBe("gemini-4-carbon-high");
+    expect(planDecision.tier).toBe("deep");
+    expect(planDecision.phase).toBe("design");
+    expect(planDecision.targetModel).toBe("gemini-4-carbon");
+    expect(planDecision.targetThinking).toBe("high");
 
     const reviewDecision = resolveMatrixModel({
       provider: "antigravity",
       currentModel: undefined,
       text: "review: 代码审查与安全门禁审计",
     });
-    expect(reviewDecision.tier).toBe("review");
-    expect(reviewDecision.targetModel).toBe("gemini-4-argon-high");
+    expect(reviewDecision.tier).toBe("deep");
+    expect(reviewDecision.phase).toBe("review");
+    expect(reviewDecision.targetModel).toBe("gemini-4-carbon");
+    expect(reviewDecision.targetThinking).toBe("high");
 
     const execDecision = resolveMatrixModel({
       provider: "antigravity",
       currentModel: undefined,
       text: "fix: 修复按钮对齐问题",
     });
-    expect(execDecision.tier).toBe("flash");
-    expect(execDecision.targetModel).toBe("gemini-4-hydrogen-high");
+    expect(execDecision.tier).toBe("standard");
+    expect(execDecision.phase).toBe("exec");
+    expect(execDecision.targetModel).toBe("gemini-4-argon");
+    expect(execDecision.targetThinking).toBe("high");
 
-    const lockedDecision = resolveMatrixModel({
+    const lockedMaxDecision = resolveMatrixModel({
       provider: "antigravity",
-      currentModel: "gemini-4-neon-high",
-      text: "你作为CTO，设计一套架构方案",
+      currentModel: "gemini-4-neon",
+      text: "fix: 修复文案",
       overrideIfDefaultOnly: true,
     });
-    expect(lockedDecision.targetModel).toBe("gemini-4-neon-high");
-    expect(lockedDecision.matchedRule).toContain("preserve_user_choice");
+    expect(lockedMaxDecision.targetModel).toBe("gemini-4-neon");
+    expect(lockedMaxDecision.tier).toBe("max");
+    expect(lockedMaxDecision.targetThinking).toBe("xhigh");
+    expect(lockedMaxDecision.matchedRule).toContain("preserve_user_choice");
   });
 });
 
@@ -357,13 +453,14 @@ describe("resolveHarnessEnv", () => {
     expect(resultCr.tier).not.toBe("review");
   });
 
-  it("correctly classifies mobile UI design & layout review as UI role and PLAN tier", () => {
+  it("correctly classifies mobile UI design & layout review as UI role and DEEP (design) tier", () => {
     const prompt = "审视所有移动端的 ui 设计和布局，分析如何实现 ui 的一致性以及手机端的友好性。";
     const roleDecision = detectDomainRole({ text: prompt });
     expect(roleDecision.role).toBe("ui");
 
     const tierDecision = detectMatrixTier(prompt);
-    expect(tierDecision.tier).toBe("plan");
+    expect(tierDecision.tier).toBe("deep");
+    expect(tierDecision.phase).toBe("design");
   });
 
   it("falls back to L2 LLM classifier when L1 heuristic returns general, and degrades gracefully on timeout", async () => {

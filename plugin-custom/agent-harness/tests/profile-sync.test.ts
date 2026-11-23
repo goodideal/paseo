@@ -204,7 +204,7 @@ describe("Agent Harness Profile Sync & Repo Override", () => {
     const uiSpec = {
       ...DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "ui")!,
       preferredProvider: "antigravity",
-      preferredTier: "flash",
+      preferredTier: "standard",
     };
     const pmSpec = DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "pm")!;
     const scoutSpec = DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "scout")!;
@@ -223,24 +223,26 @@ describe("Agent Harness Profile Sync & Repo Override", () => {
     // Should preserve standalone custom profile
     expect(profiles.some((p) => p.id === "agent_profile_custom_user")).toBe(true);
 
-    // Should merge into existing profile_ui_specialist in-place without inheriting stale claude modeId/thinkingOptionId
+    // Should merge into existing profile_ui_specialist in-place without inheriting stale claude modeId
+    // while resolving antigravity standard native model + thinkingOptionId
     const mergedUi = profiles.filter((p) => p.id === "profile_ui_specialist");
     expect(mergedUi).toHaveLength(1);
     expect(mergedUi[0]?.provider).toBe("antigravity");
-    expect(mergedUi[0]?.model).toBe("gemini-4-hydrogen-high");
+    expect(mergedUi[0]?.model).toBe("gemini-4-argon");
     expect(mergedUi[0]?.modeId).toBeUndefined();
-    expect(mergedUi[0]?.thinkingOptionId).toBeUndefined();
+    expect(mergedUi[0]?.thinkingOptionId).toBe("high");
     expect(profiles.some((p) => p.id === "harness-ui")).toBe(false);
 
-    // Should not resurrect stale harness-managed modeId="plan" when pm defaultModeId is ""
+    // Should not resurrect stale harness-managed modeId="plan" or thinkingOptionId="max" when pm overrides are empty
     const syncedPm = profiles.find((p) => p.id === "pm");
     expect(syncedPm?.modeId).toBeUndefined();
-    expect(syncedPm?.thinkingOptionId).toBeUndefined();
+    expect(syncedPm?.thinkingOptionId).toBe("high");
 
-    // Pi scout must carry headroom/ prefix
+    // Pi scout must carry headroom/ prefix on fast tier (headroom/lite + low thinking)
     const scout = profiles.find((p) => p.id === "harness-scout");
     expect(scout?.provider).toBe("pi");
-    expect(scout?.model).toBe("headroom/flash");
+    expect(scout?.model).toBe("headroom/lite");
+    expect(scout?.thinkingOptionId).toBe("low");
 
     // QA icon CheckCircle must be normalized to check-circle
     const qa = profiles.find((p) => p.id === "harness-qa");

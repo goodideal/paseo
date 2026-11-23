@@ -528,16 +528,18 @@ export function loadHostCatalogAndPresets(homeDir = os.homedir()): {
           def.flow && typeof def.flow === "object"
             ? (def.flow as Record<string, unknown>)
             : undefined;
+        let rawCapabilities: string[] = [];
+        if (Array.isArray(def.capabilities)) {
+          rawCapabilities = def.capabilities.map(String);
+        } else if (Array.isArray(def.caps)) {
+          rawCapabilities = def.caps.map(String);
+        }
         parsedPresets[id] = {
           id,
           title: typeof def.title === "string" && def.title.trim() ? def.title.trim() : id,
           description: typeof def.description === "string" ? def.description : "",
           roles: def.roles.map(String),
-          capabilities: Array.isArray(def.capabilities)
-            ? def.capabilities.map(String)
-            : Array.isArray(def.caps)
-              ? def.caps.map(String)
-              : [],
+          capabilities: rawCapabilities,
           mcp_sources: Array.isArray(def.mcp_sources) ? def.mcp_sources.map(String) : [],
           guards: Array.isArray(def.guards) ? def.guards.map(String) : [],
           flow: {
@@ -1171,17 +1173,33 @@ export async function doctorWorkspaceTeam(options: {
       };
     }
 
+    const checkoutManifestPath = path.join(ws.checkoutRoot, ".agents", "agent-team.json");
+    const mainManifestPath = path.join(ws.mainRepoRoot, ".agents", "agent-team.json");
+    const hasCheckoutManifest = fs.existsSync(checkoutManifestPath);
+    const useInheritedMain =
+      !hasCheckoutManifest &&
+      ws.mainRepoRoot !== ws.checkoutRoot &&
+      fs.existsSync(mainManifestPath);
+    const doctorTargetRoot = useInheritedMain ? ws.mainRepoRoot : ws.checkoutRoot;
+
     const runner = options.runCompiler ?? defaultCompilerRunner;
     const res = await runner(
       compiler.pythonBin,
-      [compiler.agentTeamPy, "doctor", ws.checkoutRoot],
-      { cwd: ws.checkoutRoot, timeoutMs: 22_000 },
+      [compiler.agentTeamPy, "doctor", doctorTargetRoot],
+      { cwd: doctorTargetRoot, timeoutMs: 22_000 },
     );
-    const combined = stripAnsi([res.stdout, res.stderr].filter(Boolean).join("\n")).trim();
+    let combined = stripAnsi([res.stdout, res.stderr].filter(Boolean).join("\n")).trim();
+    if (useInheritedMain) {
+      const inheritedPrefix = `[INFO] Inherited from main project (${ws.mainRepoRoot}); worktree manifest not materialized yet.`;
+      combined = combined ? `${inheritedPrefix}\n${combined}` : inheritedPrefix;
+    }
     const lines = combined.split(/\r?\n/).map((ln) => ln.trimStart());
     const passCount = lines.filter((ln) => ln.startsWith("[PASS]")).length;
     const warnCount = lines.filter((ln) => ln.startsWith("[WARN]")).length;
     const failCount = lines.filter((ln) => ln.startsWith("[FAIL]")).length;
+    if (!hasCheckoutManifest && !useInheritedMain && failCount > 0) {
+      combined = `${combined}\n\nHint: Initialize a team preset and click "Save & compile" first to create .agents/agent-team.json.`;
+    }
     return {
       passed: res.exitCode === 0 && failCount === 0,
       exitCode: res.exitCode,

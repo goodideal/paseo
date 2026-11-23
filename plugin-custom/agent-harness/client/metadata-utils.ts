@@ -5,6 +5,7 @@ import {
   type HarnessAgentMetadata,
   type MatrixTier,
 } from "../shared/types.js";
+import { normalizeTierAlias } from "../shared/config-resolver.js";
 import { HarnessAgentMetadataSchema, type HarnessTransitionPayload } from "../shared/contracts.js";
 
 /** Capitalizes the first character of a string. */
@@ -85,22 +86,37 @@ export function formatHarnessPillLabel(meta: HarnessAgentMetadata | null): strin
 
 /**
  * Resolves the Lucide icon for the Composer Pill:
- * - "plan" -> "Compass"
- * - "review" -> "ShieldCheck"
- * - others (flash, null) -> "Zap"
+ * - review phase or legacy "review" tier -> "ShieldCheck"
+ * - "fast" (or legacy "flash") -> "Zap"
+ * - "standard" -> "Cpu"
+ * - "deep" (or legacy "plan") -> "Compass"
+ * - "max" -> "Flame"
  */
 export function resolveHarnessPillIcon(meta: HarnessAgentMetadata | null): string {
   if (!meta) {
     return "Zap";
   }
-  switch (meta.currentTier) {
-    case "plan":
-      return "Compass";
-    case "review":
-      return "ShieldCheck";
-    case "flash":
-    default:
+  if (meta.phase === "review" || meta.currentTier === "review") {
+    return "ShieldCheck";
+  }
+  if (meta.currentTier === "plan") {
+    return "Compass";
+  }
+  if (meta.currentTier === "flash") {
+    return "Zap";
+  }
+  const canonical = normalizeTierAlias(meta.currentTier);
+  switch (canonical) {
+    case "fast":
       return "Zap";
+    case "standard":
+      return "Cpu";
+    case "deep":
+      return "Compass";
+    case "max":
+      return "Flame";
+    default:
+      return "Cpu";
   }
 }
 
@@ -148,12 +164,12 @@ export function buildTransitionViewModel(payload: HarnessTransitionPayload): Tra
       icon = "Compass";
       break;
     case "plan_approved":
-      title = "Plan Approved -> Flash";
+      title = `Plan Approved -> ${capitalize(payload.toTier)}`;
       badgeCategory = "success";
       icon = "ShieldCheck";
       break;
     case "auto_downgrade":
-      title = "Auto Downgraded -> Flash";
+      title = `Auto Stepped Down -> ${capitalize(payload.toTier)}`;
       badgeCategory = "warning";
       icon = "Zap";
       break;

@@ -39,11 +39,12 @@ describe("agent-harness workspace.create.before", () => {
     };
 
     const result = await workspaceHook(request);
-    expect(result.agent.config.model).toBe("plan");
+    expect(result.agent.config.model).toBe("pro");
+    expect(result.agent.config.thinkingOptionId).toBe("high");
     expect(result.agent.config.title).toContain("分析一下线上的hub环境");
   });
 
-  it("keeps flash for execution tasks", async () => {
+  it("keeps standard flash model for execution tasks", async () => {
     const { workspaceHook } = setupServer();
     const request = {
       source: { kind: "directory", path: "/tmp/demo" },
@@ -71,7 +72,7 @@ describe("agent-harness workspace.create.before", () => {
 });
 
 describe("agent-harness agent.create.before fallback", () => {
-  it("still routes plan intent when agent is created directly with title", async () => {
+  it("still routes deep design intent when agent is created directly with title", async () => {
     const { agentHook } = setupServer();
     const request = {
       config: {
@@ -83,6 +84,7 @@ describe("agent-harness agent.create.before fallback", () => {
     };
 
     const result = await agentHook(request);
-    expect(result.config.model).toBe("custom/plan");
+    expect(result.config.model).toBe("custom/pro");
+    expect(result.config.thinkingOptionId).toBe("high");
   });
 });

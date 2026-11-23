@@ -1,9 +1,15 @@
-import { BUILTIN_BYPASS_MODELS } from "./presets.js";
+import {
+  BUILTIN_BYPASS_MODELS,
+  BUILTIN_PROVIDER_MAPPINGS,
+  BUILTIN_PROVIDER_THINKING_MAPPINGS,
+} from "./presets.js";
 import type { AgentHarnessSettings } from "./settings.js";
 import type {
   AgentTeamSummary,
   EffectiveHarnessConfig,
+  HarnessPhase,
   HarnessSpecialistConfig,
+  MatrixTier,
   McpServerConfigEntry,
   RepoHarnessOverride,
 } from "./types.js";
@@ -188,19 +194,120 @@ export function findSpecialist(
 }
 
 /**
+ * Normalizes legacy 3-tier names (`flash | plan | review`) and aliases (`lite`) into
+ * canonical 4-tier complexity IDs (`fast | standard | deep | max`), preserving custom tier IDs.
+ */
+export function normalizeTierAlias(tier?: string | null): MatrixTier {
+  const norm = tier?.trim().toLowerCase() ?? "";
+  if (!norm) {
+    return "standard";
+  }
+  switch (norm) {
+    case "lite":
+      return "fast";
+    case "flash":
+      return "standard";
+    case "plan":
+    case "review":
+      return "deep";
+    default:
+      return norm;
+  }
+}
+
+export interface ResolvedTierTarget {
+  canonicalTier: MatrixTier;
+  model: string;
+  thinkingOptionId: string | null;
+}
+
+/**
+ * Resolves both target model ID and thinking effort option for a provider + tier,
+ * supporting both canonical 4-tier (`fast | standard | deep | max`) and legacy 3-tier
+ * (`plan | flash | review`) keys as well as omitted `max` fallback (`deep + xhigh`).
+ */
+export function resolveTierTarget(
+  config: Pick<EffectiveHarnessConfig, "providerMappings"> &
+    Partial<Pick<EffectiveHarnessConfig, "providerThinkingMappings">>,
+  provider: string,
+  tier: string,
+): ResolvedTierTarget {
+  const rawTier = tier?.trim() || "standard";
+  const rawLower = rawTier.toLowerCase();
+  const canonicalTier = normalizeTierAlias(rawTier);
+  const normProvider = normalizeProviderName(provider);
+  const canonProvider = canonicalizeProviderName(provider);
+
+  const canonMapping = config.providerMappings?.[canonProvider] ?? {};
+  const rawMapping =
+    config.providerMappings?.[normProvider] ?? config.providerMappings?.[provider] ?? {};
+  const mapping = normProvider !== canonProvider ? { ...canonMapping, ...rawMapping } : rawMapping;
+
+  const canonThinkingMap = config.providerThinkingMappings?.[canonProvider] ?? {};
+  const rawThinkingMap =
+    config.providerThinkingMappings?.[normProvider] ??
+    config.providerThinkingMappings?.[provider] ??
+    {};
+  const thinkingMap =
+    normProvider !== canonProvider ? { ...canonThinkingMap, ...rawThinkingMap } : rawThinkingMap;
+
+  const builtinThinkingMap =
+    BUILTIN_PROVIDER_THINKING_MAPPINGS[normProvider] ??
+    BUILTIN_PROVIDER_THINKING_MAPPINGS[canonProvider] ??
+    {};
+  const builtinMap =
+    BUILTIN_PROVIDER_MAPPINGS[normProvider] ?? BUILTIN_PROVIDER_MAPPINGS[canonProvider];
+
+  let model = "";
+  if (canonicalTier === "fast") {
+    model = mapping.fast?.trim() || mapping.lite?.trim() || mapping.flash?.trim() || "";
+  } else if (canonicalTier === "standard") {
+    model = mapping.standard?.trim() || mapping.flash?.trim() || "";
+  } else if (canonicalTier === "deep") {
+    model =
+      rawLower === "review" && mapping.review?.trim()
+        ? mapping.review.trim()
+        : mapping.deep?.trim() || mapping.plan?.trim() || mapping.review?.trim() || "";
+  } else if (canonicalTier === "max") {
+    model = mapping.max?.trim() || mapping.deep?.trim() || mapping.plan?.trim() || "";
+  } else {
+    model = mapping[rawTier]?.trim() || mapping[canonicalTier]?.trim() || "";
+  }
+
+  if (!model) {
+    if (builtinMap?.[canonicalTier]?.trim()) {
+      model = builtinMap[canonicalTier].trim();
+    } else {
+      model = rawLower === canonicalTier ? canonicalTier : rawTier;
+    }
+  }
+
+  const explicitMaxModelMissing = canonicalTier === "max" && !mapping.max?.trim();
+  const configuredThinking = thinkingMap[canonicalTier]?.trim() || thinkingMap[rawTier]?.trim();
+  const fallbackThinking = explicitMaxModelMissing
+    ? "xhigh"
+    : (builtinThinkingMap[canonicalTier]?.trim() ?? "");
+
+  const resolvedThinking =
+    configuredThinking || (config.providerThinkingMappings ? "" : fallbackThinking);
+
+  return {
+    canonicalTier,
+    model,
+    thinkingOptionId: resolvedThinking || (explicitMaxModelMissing ? "xhigh" : null),
+  };
+}
+
+/**
  * Resolves the target model ID for a given provider and tier.
  */
 export function resolveTargetModelForTier(
-  config: EffectiveHarnessConfig,
+  config: Pick<EffectiveHarnessConfig, "providerMappings"> &
+    Partial<Pick<EffectiveHarnessConfig, "providerThinkingMappings">>,
   provider: string,
   tier: string,
 ): string {
-  const normProvider = normalizeProviderName(provider);
-  const mapping = config.providerMappings[normProvider] ?? config.providerMappings[provider];
-  if (mapping && mapping[tier]?.trim()) {
-    return mapping[tier].trim();
-  }
-  return tier;
+  return resolveTierTarget(config, provider, tier).model;
 }
 
 /**
@@ -274,11 +381,36 @@ export function resolveSpecialistPaths(
 /**
  * Builds the Capability Harness active profile system prompt banner.
  */
+function resolveBannerPhase(
+  optionsPhase: HarnessPhase | undefined,
+  tier: MatrixTier,
+  specialistId: string,
+): HarnessPhase {
+  if (optionsPhase) {
+    return optionsPhase;
+  }
+  if (tier === "plan") {
+    return "design";
+  }
+  if (tier === "flash") {
+    return "exec";
+  }
+  if (tier === "review" || specialistId === "review") {
+    return "review";
+  }
+  if (specialistId === "pm" || specialistId === "architect") {
+    return "design";
+  }
+  return "exec";
+}
+
 export function buildSystemPromptBanner(options: {
   config: EffectiveHarnessConfig;
   specialist: HarnessSpecialistConfig;
   tier: string;
   targetModel: string;
+  phase?: HarnessPhase;
+  thinkingOptionId?: string | null;
   roleMatchedRule: string;
   tierMatchedRule?: string;
   homeDir?: string;
@@ -307,7 +439,7 @@ export function buildSystemPromptBanner(options: {
       .filter((s) => s.enabled && s.handoffEnabled)
       .map((s) => {
         const prov = s.preferredProvider?.trim() || "inherit";
-        const mod = s.modelOverride?.trim() || s.preferredTier || "flash";
+        const mod = s.modelOverride?.trim() || s.preferredTier || "standard";
         return `${s.id} (${prov}·${mod}${s.readonly ? "·RO" : ""})`;
       })
       .join(", ");
@@ -318,7 +450,7 @@ export function buildSystemPromptBanner(options: {
 
     const bridgeLines = [
       "[Agent Harness — Federation Bridge]",
-      `- Matrix Tier: ${tier} (model: ${targetModel || "default"}); ${ownerLabel} owns repo skills & MCP.`,
+      `- Matrix Tier: ${tier} (model: ${targetModel || "default"}${options.thinkingOptionId ? `, thinking: ${options.thinkingOptionId}` : ""}); ${ownerLabel} owns repo skills & MCP.`,
       ...(availableHandoffs
         ? [
             `- Cross-Client Handoff (\`harness_handoff\`): Available workspace specialists: ${availableHandoffs}.`,
@@ -347,8 +479,7 @@ export function buildSystemPromptBanner(options: {
   const qualityGates = specialist.qualityGates.filter(Boolean);
   const docsFocus = specialist.docsFocus.filter(Boolean);
 
-  const phase =
-    tier === "plan" ? "design" : tier === "flash" ? "exec" : tier === "review" ? "review" : tier;
+  const phase = resolveBannerPhase(options.phase, tier, specialist.id);
 
   const phaseRule =
     specialist.rolePromptTemplate?.trim() ||
@@ -360,7 +491,7 @@ export function buildSystemPromptBanner(options: {
   const lines = [
     "[Capability Harness Active Profile]",
     `- Role: ${specialist.id} (rule: ${roleMatchedRule})${specialist.description ? ` — ${specialist.description}` : ""}`,
-    `- Matrix Tier: ${tier} (model: ${targetModel || "default"})`,
+    `- Matrix Tier: ${tier} (model: ${targetModel || "default"}${options.thinkingOptionId ? `, thinking: ${options.thinkingOptionId}` : ""})`,
     ...(profilePath ? [`- Profile Spec: ${profilePath}`] : []),
     ...(lazyToolConfigPath ? [`- Lazy-Tool Slice: ${lazyToolConfigPath}`] : []),
     ...(primarySkills.length > 0 ? [`- Primary Skills: ${primarySkills.join(", ")}`] : []),

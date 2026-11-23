@@ -2,31 +2,38 @@ import type { HarnessSpecialistConfig, HarnessTierConfig, ProviderModeConfig } f
 
 export const BUILTIN_TIERS: HarnessTierConfig[] = [
   {
-    id: "plan",
-    name: "Plan",
-    icon: "Compass",
-    defaultPhase: "design",
-    description: "High-reasoning architecture, proposal, and specification design",
-  },
-  {
-    id: "flash",
-    name: "Flash",
+    id: "fast",
+    name: "Fast",
     icon: "Zap",
     defaultPhase: "exec",
-    description: "Fast targeted code implementation and validation",
+    description: "Lightweight exploration, routing, and low-risk quick edits (0.2x)",
   },
   {
-    id: "review",
-    name: "Review",
-    icon: "ShieldCheck",
-    defaultPhase: "review",
-    description: "Dual-axis code review and quality gate audits",
+    id: "standard",
+    name: "Standard",
+    icon: "Cpu",
+    defaultPhase: "exec",
+    description: "Default engineering workhorse for daily features and tests (1x)",
+  },
+  {
+    id: "deep",
+    name: "Deep",
+    icon: "Compass",
+    defaultPhase: "exec",
+    description: "High-reasoning design, code review, and complex core edits (3x ceiling)",
+  },
+  {
+    id: "max",
+    name: "Max",
+    icon: "Flame",
+    defaultPhase: "exec",
+    description: "Manual peak reasoning for intractable bugs and critical algorithms (manual only)",
   },
 ];
 
 export const BUILTIN_BYPASS_MODELS: string[] = ["^gemini-pro-orchestrator"];
 
-export const BUILTIN_PROVIDER_MAPPINGS: Record<string, Record<string, string>> = {
+export const LEGACY_V4_PROVIDER_MAPPINGS: Record<string, Record<string, string>> = {
   antigravity: {
     plan: "gemini-4-carbon-high",
     review: "gemini-4-argon-high",
@@ -54,6 +61,72 @@ export const BUILTIN_PROVIDER_MAPPINGS: Record<string, Record<string, string>> =
   },
 };
 
+export const BUILTIN_PROVIDER_MAPPINGS: Record<string, Record<string, string>> = {
+  antigravity: {
+    fast: "gemini-4-hydrogen",
+    standard: "gemini-4-argon",
+    deep: "gemini-4-carbon",
+    max: "gemini-4-neon",
+  },
+  opencode: {
+    fast: "custom/lite",
+    standard: "custom/flash",
+    deep: "custom/pro",
+    max: "custom/plan",
+  },
+  codex: {
+    fast: "lite",
+    standard: "flash",
+    deep: "pro",
+    max: "plan",
+  },
+  claude: {
+    fast: "lite",
+    standard: "flash",
+    deep: "pro",
+    max: "plan",
+  },
+  pi: {
+    fast: "headroom/lite",
+    standard: "headroom/flash",
+    deep: "headroom/pro",
+    max: "headroom/plan",
+  },
+};
+
+export const BUILTIN_PROVIDER_THINKING_MAPPINGS: Record<string, Record<string, string>> = {
+  antigravity: {
+    fast: "medium",
+    standard: "high",
+    deep: "high",
+    max: "xhigh",
+  },
+  opencode: {
+    fast: "low",
+    standard: "medium",
+    deep: "high",
+    max: "xhigh",
+  },
+  codex: {
+    fast: "low",
+    standard: "medium",
+    deep: "high",
+    max: "xhigh",
+  },
+  claude: {
+    fast: "low",
+    standard: "medium",
+    deep: "high",
+    max: "high",
+  },
+  pi: {
+    fast: "low",
+    standard: "medium",
+    deep: "high",
+    max: "xhigh",
+  },
+};
+
 export const BUILTIN_PROVIDER_MODES: Record<string, ProviderModeConfig> = {
   antigravity: {
     supportsNativePlanMode: false,
@@ -73,8 +146,11 @@ export const BUILTIN_PROVIDER_MODES: Record<string, ProviderModeConfig> = {
   },
 };
 
-export const ORCHESTRATOR_DISPATCHER_RULE =
+export const LEGACY_V4_ORCHESTRATOR_DISPATCHER_RULE =
   '- Paseo Thin Dispatcher Rule: As `role=orchestrator` (running on fast `flash` model), DO NOT write complex architecture or business code yourself, and DO NOT use Claude\'s internal `Agent` tool! Instead, act strictly as a fast Thin Dispatcher: 1) Spawn `role=architect` and `role=pm` via `harness_handoff` (or `paseo run --workspace "$PASEO_WORKSPACE_ID" --label role=<architect|pm> --title "<Role Task>" "<Prompt>"`, preserving `PASEO_AGENT_ID` and honoring each specialist\'s configured provider and model) to define `design.md`, shared contracts, and `proposal.md`/`spec.md`; 2) Once contracts are ready, spawn `role=backend` and `role=ui` in parallel (`harness_handoff` or `paseo run --no-wait` + `paseo wait`); 3) Spawn `role=review` for dual-axis gate verification, run final targeted verification, and report the summary.';
+
+export const ORCHESTRATOR_DISPATCHER_RULE =
+  '- Paseo Thin Dispatcher Rule: As `role=orchestrator` (running on `fast` tier), DO NOT write complex architecture or business code yourself, and DO NOT use Claude\'s internal `Agent` tool! Instead, act strictly as a fast Thin Dispatcher: 1) Spawn `role=architect` (`deep`) and `role=pm` (`deep`) via `harness_handoff` (or `paseo run --workspace "$PASEO_WORKSPACE_ID" --label role=<architect|pm> --title "<Role Task>" "<Prompt>"`, preserving `PASEO_AGENT_ID` and honoring each specialist\'s configured provider and model) to define `design.md`, shared contracts, and `proposal.md`/`spec.md`; 2) Once contracts are ready, spawn `role=backend` (`standard`) and `role=ui` (`standard`) in parallel (`harness_handoff` or `paseo run --no-wait` + `paseo wait`); 3) Spawn `role=review` (`deep`) for dual-axis gate verification, run final targeted verification, and report the summary.';
 
 export const LEGACY_ORCHESTRATOR_DISPATCHER_RULE =
   '- Paseo Thin Dispatcher Rule: As `role=orchestrator` (running on fast `flash` model), DO NOT write complex architecture or business code yourself, and DO NOT use Claude\'s internal `Agent` tool! Instead, act strictly as a fast Thin Dispatcher: 1) Spawn `role=architect` (`plan` model) and `role=pm` (`plan` model) via `paseo run --workspace "$PASEO_WORKSPACE_ID" --provider claude --mode bypassPermissions --label role=<architect|pm> --title "<Role Task>" "<Prompt>"` (preserving `PASEO_AGENT_ID` so they group cleanly in your Subagents Track pill) to define `design.md`, shared contracts, and `proposal.md`/`spec.md`; 2) Once contracts are ready, spawn `role=backend` (`flash`) and `role=ui` (`flash`) in parallel (`--no-wait` + `paseo wait`); 3) Spawn `role=review` (`review`) for dual-axis gate verification, run final `npm test`, and report the summary.';
@@ -85,13 +161,20 @@ export const LEGACY_V3_REVIEW_DESCRIPTION =
 export const LEGACY_V3_REVIEW_HANDOFF_PROMPT =
   "Perform dual-axis code review (Standards + Spec) and OCR gate scan.";
 
-export const LEGACY_V3_REVIEW_MATCH_PATTERN = "\\b(?:ocr|code-review|security-review)\\b";
-
 export const LEGACY_V3_EXEC_PHASE_RULE =
   "- [Phase: Fast Execution] Rule: You are running on the fast flash model (phase=exec). Implement minimal, targeted code changes per spec and verify with targeted tests (npx vitest run <file> --bail=1, NEVER full suite), npm run typecheck, and npm run lint. Review Gate: For non-trivial changes (>3 modified files or core state/protocol/security logic), once green, spawn or hand off via paseo-handoff to Reviewer (Gate) (--label role=review) for dual-axis review (Standards + Spec) and local ocr scan.";
 
 export const LEGACY_V3_REVIEW_PHASE_RULE =
   "- [Phase: Review Gate] Rule: You are running on the review model (phase=review). Perform read-only dual-axis audit (Standards + Spec) and ocr gate verification; do not author large feature implementations directly.";
+
+export const LEGACY_V4_DESIGN_PHASE_RULE =
+  "- [Phase: Design & Planning] Rule: You are running on the high-reasoning plan model (phase=design). Present concise architectural proposals, trade-offs, and specs (for UI tasks, present concise visual concepts, layout wireframes, and UX trade-offs — DO NOT dump long HTML/React code blocks). Except for spec/contract docs (openspec/**/*.md, design.md, proposal.md, spec.md, tasks.md, GLOSSARY.md), DO NOT directly edit business source files in this plan session! Once the plan is confirmed, you or the user can exit plan mode via the `ExitPlanMode` permission or invoke the host tool `harness_handoff` (targetRole: ui, backend, qa, or review) to hand off execution to a fast flash specialist.";
+
+export const LEGACY_V4_EXEC_PHASE_RULE =
+  "- [Phase: Fast Execution] Rule: You are running on the fast flash model (phase=exec). Implement minimal, targeted code changes per spec and verify with targeted tests (npx vitest run <file> --bail=1, NEVER full suite), npm run typecheck, and npm run lint. Review Gate: For non-trivial changes (>3 modified files or core state/protocol/security logic), once green, spawn or hand off via harness_handoff / paseo-handoff to Reviewer (Gate) (--label role=review) for dual-axis review (Standards + Spec) and agy + ocr delegate gate verification (`ocr delegate preview` + `ocr delegate rule`).";
+
+export const LEGACY_V4_REVIEW_PHASE_RULE =
+  "- [Phase: Review Gate] Rule: You are running on the review model (phase=review). Perform read-only dual-axis audit (Standards + Spec) and agy + ocr delegate gate verification (`ocr delegate preview --format json` + `ocr delegate rule --format json <paths...>`, LLM-free on OCR side — do NOT invoke standalone LLM-backed `ocr review`); do not author large feature implementations directly.";
 
 export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
   {
@@ -104,7 +187,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     enabled: true,
     builtIn: true,
     preferredProvider: "claude",
-    preferredTier: "flash",
+    preferredTier: "fast",
     modelOverride: "",
     defaultModeId: "bypassPermissions",
     lockTierOnLabel: true,
@@ -139,7 +222,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     enabled: true,
     builtIn: true,
     preferredProvider: "claude",
-    preferredTier: "flash",
+    preferredTier: "standard",
     modelOverride: "",
     defaultModeId: "",
     lockTierOnLabel: false,
@@ -177,7 +260,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     enabled: true,
     builtIn: true,
     preferredProvider: "codex",
-    preferredTier: "flash",
+    preferredTier: "standard",
     modelOverride: "",
     defaultModeId: "",
     lockTierOnLabel: false,
@@ -220,7 +303,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     enabled: true,
     builtIn: true,
     preferredProvider: "claude",
-    preferredTier: "plan",
+    preferredTier: "deep",
     modelOverride: "",
     defaultModeId: "",
     lockTierOnLabel: true,
@@ -264,7 +347,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     enabled: true,
     builtIn: true,
     preferredProvider: "claude",
-    preferredTier: "plan",
+    preferredTier: "deep",
     modelOverride: "",
     defaultModeId: "",
     lockTierOnLabel: true,
@@ -311,7 +394,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     enabled: true,
     builtIn: true,
     preferredProvider: "codex",
-    preferredTier: "flash",
+    preferredTier: "standard",
     modelOverride: "",
     defaultModeId: "",
     lockTierOnLabel: false,
@@ -355,7 +438,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     enabled: true,
     builtIn: true,
     preferredProvider: "antigravity",
-    preferredTier: "review",
+    preferredTier: "deep",
     modelOverride: "",
     defaultModeId: "",
     lockTierOnLabel: true,
@@ -399,7 +482,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     enabled: true,
     builtIn: true,
     preferredProvider: "pi",
-    preferredTier: "flash",
+    preferredTier: "fast",
     modelOverride: "",
     defaultModeId: "",
     lockTierOnLabel: false,
@@ -437,7 +520,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     enabled: true,
     builtIn: true,
     preferredProvider: "",
-    preferredTier: "flash",
+    preferredTier: "standard",
     modelOverride: "",
     defaultModeId: "",
     lockTierOnLabel: false,
@@ -492,6 +575,12 @@ export const BUILTIN_REVIEW_PATTERNS = [
 export const BUILTIN_CONVENTIONAL_EXEC_PREFIX =
   "^\\s*(?:(?:fix|feat|chore|refactor|test|docs|style|build|ci|perf)\\s*[:：]|\\/(?:gitea\\s+(?:dev|ship|release)|install-local)\\b)";
 
+export const BUILTIN_FAST_ACTION_PATTERNS = [
+  "^\\s*(?:chore|docs|style)\\s*[:：]",
+  "\\b(?:grep|locate|check\\s+(?:status|logs|version)|typo|rename|formatting)\\b",
+  "查一下|找一下|搜一下|看下日志|改个文案|改文案|错别字|重命名|拼写|格式化|更新文档|补充注释",
+];
+
 export const BUILTIN_EXEC_ACTION_PATTERNS = [
   "修复|落地|编写代码|直接修改|添加测试|打包|发布|同步到|在[^，。！？\\n]{1,30}?(?:中|里)实现|给[^，。！？\\n]{1,30}?(?:增加|加上)|替换|微调",
 ];
@@ -505,8 +594,8 @@ export const BUILTIN_FULLSTACK_BACKEND_PATTERN =
 export const BUILTIN_PHASE_RULES: Record<string, string> = {
   orchestrator: ORCHESTRATOR_DISPATCHER_RULE,
   design:
-    "- [Phase: Design & Planning] Rule: You are running on the high-reasoning plan model (phase=design). Present concise architectural proposals, trade-offs, and specs (for UI tasks, present concise visual concepts, layout wireframes, and UX trade-offs — DO NOT dump long HTML/React code blocks). Except for spec/contract docs (openspec/**/*.md, design.md, proposal.md, spec.md, tasks.md, GLOSSARY.md), DO NOT directly edit business source files in this plan session! Once the plan is confirmed, you or the user can exit plan mode via the `ExitPlanMode` permission or invoke the host tool `harness_handoff` (targetRole: ui, backend, qa, or review) to hand off execution to a fast flash specialist.",
-  exec: "- [Phase: Fast Execution] Rule: You are running on the fast flash model (phase=exec). Implement minimal, targeted code changes per spec and verify with targeted tests (npx vitest run <file> --bail=1, NEVER full suite), npm run typecheck, and npm run lint. Review Gate: For non-trivial changes (>3 modified files or core state/protocol/security logic), once green, spawn or hand off via harness_handoff / paseo-handoff to Reviewer (Gate) (--label role=review) for dual-axis review (Standards + Spec) and agy + ocr delegate gate verification (`ocr delegate preview` + `ocr delegate rule`).",
+    "- [Phase: Design & Planning] Rule: You are running in read-only planning phase (phase=design, typically on `deep` tier). Present concise architectural proposals, trade-offs, and specs (for UI tasks, present concise visual concepts, layout wireframes, and UX trade-offs — DO NOT dump long HTML/React code blocks). Except for spec/contract docs (openspec/**/*.md, design.md, proposal.md, spec.md, tasks.md, GLOSSARY.md), DO NOT directly edit business source files in this plan session! Once the plan is confirmed, exit plan mode via `ExitPlanMode` (which automatically steps down to `standard` tier) or invoke the host tool `harness_handoff` (targetRole: ui, backend, qa, or review) to hand off execution to a specialist.",
+  exec: "- [Phase: Execution] Rule: You are running in read-write execution phase (phase=exec). Implement minimal, targeted code changes per spec and verify with targeted tests (npx vitest run <file> --bail=1, NEVER full suite), npm run typecheck, and npm run lint. Review Gate: For non-trivial changes (>3 modified files or core state/protocol/security logic), once green, spawn or hand off via harness_handoff / paseo-handoff to Reviewer (Gate) (--label role=review) for dual-axis review (Standards + Spec) and agy + ocr delegate gate verification (`ocr delegate preview` + `ocr delegate rule`).",
   review:
-    "- [Phase: Review Gate] Rule: You are running on the review model (phase=review). Perform read-only dual-axis audit (Standards + Spec) and agy + ocr delegate gate verification (`ocr delegate preview --format json` + `ocr delegate rule --format json <paths...>`, LLM-free on OCR side — do NOT invoke standalone LLM-backed `ocr review`); do not author large feature implementations directly.",
+    "- [Phase: Review Gate] Rule: You are running in read-only review phase (phase=review, typically on `deep` tier). Perform read-only dual-axis audit (Standards + Spec) and agy + ocr delegate gate verification (`ocr delegate preview --format json` + `ocr delegate rule --format json <paths...>`, LLM-free on OCR side — do NOT invoke standalone LLM-backed `ocr review`); do not author large feature implementations directly.",
 };

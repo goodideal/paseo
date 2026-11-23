@@ -2,7 +2,8 @@
  * Built-in matrix tiers supported out of the box.
  * MatrixTier is widened to allow user-defined custom tiers.
  */
-export type BuiltInMatrixTier = "plan" | "review" | "flash";
+export type BuiltInMatrixTier = "fast" | "standard" | "deep" | "max";
+export type LegacyMatrixTier = "flash" | "plan" | "review";
 export type MatrixTier = BuiltInMatrixTier | (string & {});
 
 /**
@@ -37,6 +38,8 @@ export type ProviderModelMapping = Record<string, string>;
 export interface RouterDecision {
   tier: MatrixTier;
   targetModel: string;
+  targetThinking?: string | null;
+  phase?: HarnessPhase;
   reason: string;
   matchedRule: string;
   previousModel?: string;
@@ -107,6 +110,8 @@ export type HarnessAgentMetadata = {
   resumeModeId: string | null;
   lastBilledTier: MatrixTier | null;
   lastBilledModel: string | null;
+  currentThinking?: string | null;
+  lastBilledThinking?: string | null;
 };
 
 // ============================================================================
@@ -230,6 +235,7 @@ export interface EffectiveHarnessConfig {
   mcpServerCatalog: Record<string, McpServerConfigEntry>;
   tiers: HarnessTierConfig[];
   providerMappings: Record<string, Record<string, string>>;
+  providerThinkingMappings?: Record<string, Record<string, string>>;
   providerModes: Record<string, ProviderModeConfig>;
   bypassProviders: string[];
   bypassModels: string[];
@@ -243,6 +249,7 @@ export interface EffectiveHarnessConfig {
   tierPatterns: {
     plan: string[];
     review: string[];
+    fastAction?: string[];
     execAction: string[];
     conventionalExecPrefix: string;
   };

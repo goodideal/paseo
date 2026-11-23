@@ -4,8 +4,9 @@ import {
   findSpecialist,
   isNativePlanModeSupported,
   normalizeProviderName,
+  normalizeTierAlias,
   resolveResumeExecutionMode,
-  resolveTargetModelForTier,
+  resolveTierTarget,
 } from "../shared/config-resolver.js";
 import {
   formatSpecialistRolePrefix,
@@ -16,12 +17,18 @@ import {
   supportsNativePlanMode,
 } from "../shared/contracts.js";
 import { DEFAULT_PROVIDER_MAPPINGS } from "../shared/intent-detector.js";
-import { HARNESS_LEAF_LABEL_KEY, parseHarnessMetadata } from "../shared/lifecycle-state.js";
+import {
+  HARNESS_LEAF_LABEL_KEY,
+  parseHarnessMetadata,
+  tierToPhase,
+} from "../shared/lifecycle-state.js";
+import { BUILTIN_PROVIDER_THINKING_MAPPINGS } from "../shared/presets.js";
 import type {
   DomainRole,
   EffectiveHarnessConfig,
   HandoffTargetRole,
   HarnessAgentMetadata,
+  HarnessPhase,
   HarnessTransitionKind,
   MatrixTier,
 } from "../shared/types.js";
@@ -49,6 +56,7 @@ export interface SpawnSpecialistParams {
     toTier: MatrixTier;
     fromModel: string | null;
     toModel: string | null;
+    phase?: HarnessPhase;
     reason: string;
     childAgentId?: string | null;
     childAgentTitle?: string | null;
@@ -96,9 +104,11 @@ export async function spawnHarnessSpecialist(
   const normalizedProvider = normalizeProviderName(targetProvider);
 
   // Resolve target tier
-  const targetTier = specialist?.preferredTier || resolveSpecialistTargetTier(targetRole);
+  const targetTier = normalizeTierAlias(
+    specialist?.preferredTier || resolveSpecialistTargetTier(targetRole),
+  );
 
-  // Resolve target model (only apply modelOverride when compatible with resolved target provider)
+  // Resolve target model & thinking option (only apply modelOverride when compatible with resolved target provider)
   const preferredSpecProvider = specialist?.preferredProvider?.trim()
     ? normalizeProviderName(specialist.preferredProvider)
     : "";
@@ -106,15 +116,19 @@ export async function spawnHarnessSpecialist(
     Boolean(specialist?.modelOverride?.trim()) &&
     (!preferredSpecProvider || normalizedProvider === preferredSpecProvider);
 
-  let targetModel = "";
-  if (canApplyModelOverride) {
-    targetModel = specialist!.modelOverride!.trim();
-  } else if (config) {
-    targetModel = resolveTargetModelForTier(config, normalizedProvider, targetTier);
-  } else {
-    const mapping = DEFAULT_PROVIDER_MAPPINGS[normalizedProvider];
-    targetModel = mapping ? mapping[targetTier] : targetTier;
-  }
+  const tierResolved = resolveTierTarget(
+    config ?? {
+      providerMappings: DEFAULT_PROVIDER_MAPPINGS,
+      providerThinkingMappings: BUILTIN_PROVIDER_THINKING_MAPPINGS,
+    },
+    normalizedProvider,
+    targetTier,
+  );
+  const targetModel = canApplyModelOverride
+    ? specialist!.modelOverride!.trim()
+    : tierResolved.model;
+  const effectiveThinkingOptionId =
+    specialist?.thinkingOptionId?.trim() || tierResolved.thinkingOptionId || undefined;
 
   // Resolve default mode id (read-only enforcement takes precedence over custom defaultModeId)
   const supportsPlanMode = config
@@ -141,6 +155,7 @@ export async function spawnHarnessSpecialist(
   const agentConfig = {
     provider: `${normalizedProvider}/${targetModel}`,
     ...(execModeId ? { modeId: execModeId } : {}),
+    ...(effectiveThinkingOptionId ? { thinkingOptionId: effectiveThinkingOptionId } : {}),
   };
 
   const spawnLabels = {
@@ -184,6 +199,7 @@ export async function spawnHarnessSpecialist(
   const fromTier = parentMeta?.currentTier ?? null;
   const fromModel = parentMeta?.currentModel ?? null;
   const turnNumber = parentMeta?.turnCount ?? 0;
+  const targetPhase = tierToPhase(targetTier, targetRole, config);
 
   const timelineEnabled = !shouldEmitTimeline || shouldEmitTimeline();
   if (timelineEnabled && parentHandle) {
@@ -195,7 +211,7 @@ export async function spawnHarnessSpecialist(
         toTier: targetTier,
         fromModel,
         toModel: targetModel,
-        phase: "exec",
+        phase: targetPhase,
         reason: "specialist_handoff",
         turnNumber,
         childAgentId,
@@ -215,6 +231,7 @@ export async function spawnHarnessSpecialist(
         toTier: targetTier,
         fromModel,
         toModel: targetModel,
+        phase: targetPhase,
         reason: "specialist_handoff",
         childAgentId,
         childAgentTitle: normalizedTitle,

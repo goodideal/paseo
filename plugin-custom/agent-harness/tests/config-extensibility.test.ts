@@ -4,6 +4,7 @@ import {
   resolveEffectiveHarnessConfig,
   findSpecialist,
   resolveTargetModelForTier,
+  resolveTierTarget,
 } from "../shared/config-resolver.js";
 import { importSpecialistsFromDisk, exportSpecialistsToDisk } from "../server/profile-sync.js";
 import fs from "node:fs";
@@ -22,7 +23,7 @@ describe("Agent Harness v2 Config & Extensibility", () => {
       enabled: true,
       builtIn: false,
       preferredProvider: "codex",
-      preferredTier: "plan",
+      preferredTier: "deep",
       modelOverride: "codex-deep-reasoning",
       defaultModeId: "bypassPermissions",
       lockTierOnLabel: true,
@@ -55,7 +56,12 @@ describe("Agent Harness v2 Config & Extensibility", () => {
     expect(findSpecialist(effective, "rust")?.id).toBe("rust-kernel");
 
     const targetModel = resolveTargetModelForTier(effective, "codex", "plan");
-    expect(targetModel).toBe("plan");
+    expect(targetModel).toBe("pro");
+    expect(resolveTierTarget(effective, "codex", "deep")).toEqual({
+      canonicalTier: "deep",
+      model: "pro",
+      thinkingOptionId: "high",
+    });
   });
 
   it("supports dynamic custom model tiers", () => {
@@ -75,16 +81,17 @@ describe("Agent Harness v2 Config & Extensibility", () => {
       tiers: customTiers,
       providerMappings: {
         claude: {
-          plan: "claude-3-7-sonnet",
+          fast: "claude-3-5-haiku",
+          standard: "claude-sonnet",
+          deep: "claude-opus",
+          max: "claude-opus-max",
           pro: "claude-3-7-sonnet-reasoning",
-          flash: "claude-3-5-haiku",
-          review: "claude-3-7-sonnet",
         },
       },
     };
 
     const effective = resolveEffectiveHarnessConfig(baseSettings as any);
-    expect(effective.tiers.length).toBe(4);
+    expect(effective.tiers.length).toBe(5);
     expect(effective.tiers.find((t) => t.id === "pro")).toBeDefined();
 
     const target = resolveTargetModelForTier(effective, "claude", "pro");
@@ -113,7 +120,7 @@ function DEFAULT_SETTINGS_FOR_TEST() {
     mcpServerCatalog: {},
     tiers: BUILTIN_TIERS,
     providerMappings: {
-      claude: { plan: "plan", review: "review", flash: "flash" },
+      claude: { fast: "lite", standard: "flash", deep: "pro", max: "plan" },
     },
     providerModes: {},
     bypassProviders: [],
@@ -121,11 +128,17 @@ function DEFAULT_SETTINGS_FOR_TEST() {
     honorSpecialistPreferredProvider: true,
     specialists: BUILTIN_SPECIALISTS,
     defaultFallbackRole: "general",
-    defaultFallbackTier: "flash",
+    defaultFallbackTier: "standard",
     enableFullstackOrchestratorCollision: true,
     fullstackUiPattern: "ui",
     fullstackBackendPattern: "db",
-    tierPatterns: { plan: [], review: [], execAction: [], conventionalExecPrefix: "" },
+    tierPatterns: {
+      plan: [],
+      review: [],
+      fastAction: [],
+      execAction: [],
+      conventionalExecPrefix: "",
+    },
     llmFallbackEnabled: false,
     llmFallbackEndpoint: "",
     llmFallbackApiKey: "",
