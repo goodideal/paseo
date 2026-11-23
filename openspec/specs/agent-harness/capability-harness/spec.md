@@ -260,3 +260,23 @@
 
 - **WHEN** 加载 `fromVersion < 4` 的持久化配置，其中内置 `review` 专家的 `preferredProvider` 为 `"claude"`（或 `"claude-code"`）、`primarySkills` 含 `"security-review"`、`qualityGates` 含 `"open-code-review-cli-gate"`
 - **THEN** `agentHarnessSettings.migrate` 将 `review.preferredProvider` 升级为 `"antigravity"`，将技能与门禁替换为 `"open-code-review-delegate"` 与 `"open-code-review-delegate-gate"`，并将未自定义修改的 `phaseRules.exec` 与 `phaseRules.review` 同步更新为 `agy + ocr delegate` 规则
+
+### Requirement: 运行时外部模型切换与遗留档位自动校准 (Runtime External Model Sync & Legacy Tier Reconciliation)
+
+系统 SHALL 在 `agent.turn.before` 与 `agent.turn.after` 中读取会话运行时快照模型及 `thinkingOptionId`，当用户通过 Paseo 原生选择器切换模型或恢复带有遗留 v4 档位名（`flash | plan | review | lite`）的会话时，经 `inferTierFromModel` 与 `reconcileRuntimeHarnessMetadata` 自动同步 `currentTier`、`currentModel`、`currentThinking`、`lastBilled*` 及 `userModelLocked` 状态；当快照模型不可用时 MUST 保持原元数据不变。
+
+#### Scenario: 用户在原生选择器将模型从 gemini-4-neon 切换为 gemini-4-hydrogen 后自动校准为 fast 档
+
+- **WHEN** 会话元数据记录 `currentModel: "gemini-4-neon"`、`currentTier: "flash"`、`userModelLocked: true`，且运行时快照模型变更为 `"gemini-4-hydrogen"`（`thinkingOptionId: "high"`）
+- **THEN** `agent.turn.before` 与 `agent.turn.after` 将 `currentTier` 与 `lastBilledTier` 同步更新为 `"fast"`、`currentModel` 与 `lastBilledModel` 更新为 `"gemini-4-hydrogen"`、`currentThinking` 与 `lastBilledThinking` 更新为 `"high"`
+- **AND** `userModelLocked` 重置为 `false`，`tierMatchedRule` 记录为 `"runtime_sync:external_model_change"`
+
+### Requirement: 共享工作树并发可写交接互斥与上下文注入 (Concurrent Writable Handoff Guard & Parent Context Injection)
+
+系统 MUST 在父会话处于 `status === "running"` 时保护共享工作树：服务端 `harnessHandoffRpc` 与客户端 `HarnessPopover` SHALL 禁用并拒绝派发非只读可写专家，仅放行只读专家（`readonly: true` 或 `review`）；未提供 `summaryOverride` 时，服务端 SHALL 自动注入父会话任务标题与最近时间线摘要及共享工作区暂存约束（`[Parent Session Context]`）；同时在 `supportsNativePaseoTools=false` 的 Antigravity 非叶子会话中，系统 SHALL 注入使用 `mcp_paseo_create_agent` 派生专家子代理的规范指引。
+
+#### Scenario: 父会话运行中时阻止可写专家派发并放行只读 review 专家与上下文注入
+
+- **WHEN** 父会话处于 `status === "running"`，用户或客户端调用 `agent_harness.specialist.handoff.request`
+- **THEN** 派发可写专家（如 `qa`、`ui`）被拒绝并抛出明确错误，且 `HarnessPopover` 将可写专家卡片置为禁用态
+- **AND** 派发只读 `review` 专家正常放行；当未传入 `summaryOverride` 时，子会话提示词自动附带 `[Parent Session Context]`（含 `Parent Task`、最近时间线摘要及禁止盲目 `git add -A` 约束）

@@ -25,6 +25,7 @@ import { DEFAULT_PROVIDER_MAPPINGS, isModelBypassed } from "../shared/intent-det
 import {
   HARNESS_BYPASSED_META_KEY,
   extractSnapshotModel,
+  extractTimelineItems,
   parseHarnessMetadata,
 } from "../shared/lifecycle-state.js";
 import { BUILTIN_PROVIDER_THINKING_MAPPINGS } from "../shared/presets.js";
@@ -80,6 +81,45 @@ export interface RpcHandlerDependencies {
   resolveWorkspaceDir?: WorkspaceDirResolver;
   resolveCompiler?: typeof resolveHostCompiler;
   runTeamCompiler?: CompilerRunner;
+}
+
+function isReadOnlyHandoffRole(role: string, specialist?: { readonly?: boolean } | null): boolean {
+  return Boolean(specialist?.readonly || role.trim().toLowerCase() === "review");
+}
+
+function extractParentTimelineSummary(rawTimeline: unknown): string {
+  const items = extractTimelineItems(rawTimeline);
+  let lastUserText = "";
+  let lastAssistantText = "";
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    const item = items[i];
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    const text =
+      typeof record.text === "string"
+        ? record.text.trim()
+        : typeof record.content === "string"
+          ? record.content.trim()
+          : "";
+    if (!text) continue;
+    if (
+      !lastAssistantText &&
+      (record.type === "assistant_message" ||
+        (record.type === "message" && record.role === "assistant"))
+    ) {
+      lastAssistantText = text.slice(0, 400);
+    } else if (
+      !lastUserText &&
+      (record.type === "user_message" || (record.type === "message" && record.role === "user"))
+    ) {
+      lastUserText = text.slice(0, 300);
+    }
+    if (lastUserText && lastAssistantText) break;
+  }
+  const parts: string[] = [];
+  if (lastUserText) parts.push(`- Latest Request: ${lastUserText}`);
+  if (lastAssistantText) parts.push(`- Latest Context: ${lastAssistantText}`);
+  return parts.join("\n");
 }
 
 function pickWorkspaceDirectory(entry: Record<string, unknown>): string {
@@ -324,11 +364,44 @@ export function registerHarnessRpcHandlers(
 
     const effectiveConfig = deps.getConfig?.(parentWorkspaceId, parentCwd);
     const specialist = effectiveConfig ? findSpecialist(effectiveConfig, targetRole) : undefined;
+    const isReadOnly = isReadOnlyHandoffRole(targetRole, specialist);
+
+    if (parentSnapshot?.status === "running" && !isReadOnly) {
+      throw new Error(
+        "Parent agent is currently running in this workspace. Wait for the active turn to finish before spawning a writable specialist, or spawn a read-only reviewer.",
+      );
+    }
 
     const defaultPrompt =
       specialist?.handoffDefaultPrompt?.trim() ||
       `Execute implementation for specialist task as role ${targetRole}.`;
-    const promptText = summaryOverride?.trim() || defaultPrompt;
+    let promptText = summaryOverride?.trim() || "";
+    if (!promptText) {
+      const contextLines: string[] = [];
+      const parentTitle =
+        typeof parentSnapshot?.title === "string" ? parentSnapshot.title.trim() : "";
+      if (parentTitle) {
+        contextLines.push(`- Parent Task: ${parentTitle}`);
+      }
+      if (typeof parentHandle.timeline?.refetch === "function") {
+        try {
+          const rawTimeline = await parentHandle.timeline.refetch({
+            direction: "tail",
+            limit: 6,
+          });
+          const timelineSummary = extractParentTimelineSummary(rawTimeline);
+          if (timelineSummary) {
+            contextLines.push(timelineSummary);
+          }
+        } catch {
+          // Optional parent timeline enrichment
+        }
+      }
+      contextLines.push(
+        "- Shared Workspace Discipline: Only stage files you explicitly modified; never run git add -A blindly in a shared workspace.",
+      );
+      promptText = `${defaultPrompt}\n\n[Parent Session Context]\n${contextLines.join("\n")}`;
+    }
 
     const prefix = specialist?.handoffTitlePrefix?.trim() || formatSpecialistRolePrefix(targetRole);
     const title = `${prefix} Task Execution`;

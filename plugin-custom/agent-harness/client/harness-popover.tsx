@@ -185,7 +185,7 @@ export const HarnessPopover = memo(function HarnessPopover({
           ? `${targetProvider} · ${targetModel}`
           : s.description || `Role: ${s.id}`,
         icon: s.icon || "Bot",
-        readonly: Boolean(s.readonly),
+        readonly: Boolean(s.readonly || (s.builtIn && s.id === "review")),
       };
     };
 
@@ -583,6 +583,7 @@ export const HarnessPopover = memo(function HarnessPopover({
   );
 
   const isPlanMode = agent?.currentModeId === "plan";
+  const isParentRunning = agent?.status === "running";
   const isDesignPhase = meta?.phase === "design";
   const phaseBadgeText = resolvePhaseBadgeText(meta, isBypassedSession);
   const modeGateLabel = resolveModeGateBadgeLabel(isPlanMode, isBypassedSession, currentTier);
@@ -734,6 +735,14 @@ export const HarnessPopover = memo(function HarnessPopover({
       {/* Specialist Handoff */}
       <Text style={styles.sectionTitle}>Specialist Handoff</Text>
 
+      {isParentRunning ? (
+        <View style={styles.dualStateBanner}>
+          <Text style={styles.dualStateBannerText}>
+            Parent turn running — writable specialists locked until turn ends
+          </Text>
+        </View>
+      ) : null}
+
       {isDesignPhase ? (
         <View style={styles.handoffRecommendation}>
           <Icon name="Sparkles" size={11} color={theme.colors.accent} />
@@ -751,18 +760,21 @@ export const HarnessPopover = memo(function HarnessPopover({
                 return <View key={`spacer-${colIdx}`} style={styles.specialistSpacer} />;
               }
               const isHighlight = isDesignPhase && (spec.role === "ui" || spec.role === "backend");
+              const isWritableBlocked = isParentRunning && !spec.readonly;
+              const isDisabled = isHandoffRunning || isWritableBlocked;
 
               return (
                 <Pressable
                   key={spec.role}
-                  disabled={isHandoffRunning}
+                  disabled={isDisabled}
                   accessibilityRole="button"
                   accessibilityLabel={spec.name}
                   onPress={() => handleHandoff(spec.role)}
                   style={({ pressed }) => [
                     styles.specialistCard,
                     isHighlight && styles.specialistCardDesignHint,
-                    pressed && { opacity: 0.7, transform: [{ scale: 0.98 }] },
+                    isWritableBlocked && { opacity: 0.45 },
+                    pressed && !isDisabled && { opacity: 0.7, transform: [{ scale: 0.98 }] },
                   ]}
                 >
                   <View style={styles.specialistHeader}>

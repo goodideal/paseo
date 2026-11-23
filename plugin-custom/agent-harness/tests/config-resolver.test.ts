@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildSystemPromptBanner,
   findSpecialist,
+  inferTierFromModel,
   isFederatedLocalProvider,
   normalizeTierAlias,
   resolveEffectiveHarnessConfig,
@@ -784,6 +785,93 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
     });
     expect(claudeBridge).toContain("[Agent Harness — Federation Bridge]");
     expect(claudeBridge).toContain("local synthesized claude agents (team-multi-demo)");
+  });
+
+  it("infers tiers from runtime model IDs including suffix-stripped variants and shared max fallback", () => {
+    const effective = resolveEffectiveHarnessConfig(DEFAULT_AGENT_HARNESS_SETTINGS);
+
+    expect(inferTierFromModel(effective, "antigravity", "gemini-4-hydrogen")).toEqual({
+      tier: "fast",
+      isKnownTierModel: true,
+      isRouterManagedNonMax: true,
+      isDedicatedMax: false,
+    });
+    expect(inferTierFromModel(effective, "antigravity", "gemini-4-hydrogen-high")).toEqual({
+      tier: "fast",
+      isKnownTierModel: true,
+      isRouterManagedNonMax: true,
+      isDedicatedMax: false,
+    });
+    expect(inferTierFromModel(effective, "antigravity", "gemini-4-argon")).toEqual({
+      tier: "standard",
+      isKnownTierModel: true,
+      isRouterManagedNonMax: true,
+      isDedicatedMax: false,
+    });
+    expect(inferTierFromModel(effective, "antigravity", "gemini-4-carbon")).toEqual({
+      tier: "deep",
+      isKnownTierModel: true,
+      isRouterManagedNonMax: true,
+      isDedicatedMax: false,
+    });
+    expect(inferTierFromModel(effective, "antigravity", "gemini-4-neon")).toEqual({
+      tier: "max",
+      isKnownTierModel: true,
+      isRouterManagedNonMax: false,
+      isDedicatedMax: true,
+    });
+    expect(inferTierFromModel(effective, "antigravity", "custom-unknown-model", "flash")).toEqual({
+      tier: "standard",
+      isKnownTierModel: false,
+      isRouterManagedNonMax: false,
+      isDedicatedMax: false,
+    });
+    expect(
+      inferTierFromModel(
+        {
+          providerMappings: {
+            mycustom: { fast: "small", standard: "medium", deep: "large", max: "large" },
+          },
+        },
+        "mycustom",
+        "large",
+      ),
+    ).toEqual({
+      tier: "deep",
+      isKnownTierModel: true,
+      isRouterManagedNonMax: true,
+      isDedicatedMax: false,
+    });
+  });
+
+  it("includes Antigravity mcp_paseo_create_agent specialist handoff instructions for non-leaf sessions only", () => {
+    const effective = resolveEffectiveHarnessConfig(DEFAULT_AGENT_HARNESS_SETTINGS);
+    const uiSpec = findSpecialist(effective, "ui")!;
+
+    const rootBanner = buildSystemPromptBanner({
+      config: effective,
+      specialist: uiSpec,
+      tier: "standard",
+      targetModel: "gemini-4-argon",
+      roleMatchedRule: "heuristic:ui",
+      homeDir: "/tmp/mock-home",
+      provider: "antigravity",
+      isLeaf: false,
+    });
+    expect(rootBanner).toContain("mcp_paseo_create_agent");
+    expect(rootBanner).toContain("paseo.harness-leaf");
+
+    const leafBanner = buildSystemPromptBanner({
+      config: effective,
+      specialist: uiSpec,
+      tier: "standard",
+      targetModel: "gemini-4-argon",
+      roleMatchedRule: "label:role",
+      homeDir: "/tmp/mock-home",
+      provider: "antigravity",
+      isLeaf: true,
+    });
+    expect(leafBanner).not.toContain("mcp_paseo_create_agent");
   });
 });
 

@@ -2017,4 +2017,62 @@ describe("Agent Harness Phase 3 - WorkspaceTeamEditor & Entry Points", () => {
     fireEvent.click(openEditorBtn);
     expect(onOpenWorkspaceTeam).toHaveBeenCalledWith("ws-open");
   });
+
+  it("locks writable specialist handoffs in HarnessPopover while parent agent is running, keeping readonly review enabled", async () => {
+    const handoffRpcMock = vi.fn().mockResolvedValue({ childTitle: "[Review] Task Execution" });
+    const effectiveRpcMock = vi.fn().mockResolvedValue({
+      config: {
+        specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists,
+        agentTeam: null,
+      },
+    });
+    mockUseRpc.mockImplementation((contract: any) => {
+      if (contract?.name === "agent_harness.specialist.handoff.request") return handoffRpcMock;
+      if (contract?.name === "agent_harness.config.effective.request") return effectiveRpcMock;
+      return vi.fn().mockResolvedValue({});
+    });
+    mockUseAgent.mockReturnValue({
+      status: "running",
+      provider: "antigravity",
+      model: "gemini-4-hydrogen",
+      cwd: "/repos/open",
+      currentModeId: "full-access",
+      metadata: {},
+    } as any);
+    mockUseSettings.mockReturnValue({
+      status: "ready",
+      values: DEFAULT_AGENT_HARNESS_SETTINGS,
+    });
+
+    render(
+      React.createElement(HarnessPopover, {
+        context: "agent" as const,
+        host: { id: "h1", label: "Local" },
+        workspaceId: "ws-busy",
+        agentId: "agt-busy",
+        theme: editorTheme,
+        layout: { compact: false, platform: "web" },
+        close: vi.fn(),
+      }),
+    );
+
+    expect(
+      await screen.findByText("Parent turn running — writable specialists locked until turn ends"),
+    ).toBeDefined();
+
+    const uiBtn = screen.getByRole("button", { name: "UI Specialist" });
+    fireEvent.click(uiBtn);
+    expect(handoffRpcMock).not.toHaveBeenCalled();
+
+    const gateBtn = screen.getByRole("button", { name: "Gate Specialist" });
+    expect(screen.getByText("RO")).toBeDefined();
+    fireEvent.click(gateBtn);
+    await vi.waitFor(() => {
+      expect(handoffRpcMock).toHaveBeenCalledWith({
+        agentId: "agt-busy",
+        workspaceId: "ws-busy",
+        targetRole: "review",
+      });
+    });
+  });
 });

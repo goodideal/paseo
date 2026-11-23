@@ -553,7 +553,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
 ];
 
 export const BUILTIN_PLAN_PATTERNS = [
-  "方案|设计|架构|规划|规整|路线图|选型|探讨|重构|策略|演进|评估|调研|对比",
+  "方案|计划|设计|架构|规划|规整|路线图|选型|探讨|重构|策略|演进|评估|调研|对比|考虑如何|如何统一|怎么统一",
   "\\b(?:plan|design|architecture|proposal|rfc|spec|strategy|roadmap|brainstorm|evaluate|benchmark)\\b",
   "分析|根本原因|为什么.*(?:bug|故障|少|没有|异常|慢|卡)|排查根因",
   "\\bcto\\b",
@@ -582,7 +582,7 @@ export const BUILTIN_FAST_ACTION_PATTERNS = [
 ];
 
 export const BUILTIN_EXEC_ACTION_PATTERNS = [
-  "修复|落地|编写代码|直接修改|添加测试|打包|发布|同步到|在[^，。！？\\n]{1,30}?(?:中|里)实现|给[^，。！？\\n]{1,30}?(?:增加|加上)|替换|微调",
+  "按(?:这个|这套|上述)?(?:方案|计划)[^，。！？\\n]{0,20}?(?:改|修改|写|实现|落地)|修复|落地|编写代码|直接修改|添加测试|打包|发布|同步到|在[^，。！？\\n]{1,30}?(?:中|里)实现|给[^，。！？\\n]{1,30}?(?:增加|加上)|替换|微调",
 ];
 
 export const BUILTIN_FULLSTACK_UI_PATTERN =

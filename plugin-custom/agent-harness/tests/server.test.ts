@@ -3986,5 +3986,203 @@ describe("agent-harness server contribute", () => {
       expect(maxMeta.userModelLocked).toBe(true);
       expect(maxCreate.config.thinkingOptionId).toBe("xhigh");
     });
+
+    it("reconciles external Paseo model switches and legacy v4 tier labels across turn hooks", async () => {
+      const { hooks } = createTestServer();
+      const setModelMock = vi.fn().mockResolvedValue(undefined);
+      const setMetadataMock = vi.fn().mockResolvedValue(undefined);
+
+      const legacyMeta: HarnessAgentMetadata = {
+        version: 1,
+        role: "ui",
+        initialTier: "flash",
+        currentTier: "flash",
+        currentModel: "gemini-4-neon",
+        phase: "exec",
+        roleMatchedRule: "heuristic:ui",
+        tierMatchedRule: "preserve_user_choice (default_fallback)",
+        userModelLocked: true,
+        roleLockedByLabel: false,
+        turnCount: 0,
+        planTurnCount: 0,
+        writeToolDetectedInPlan: false,
+        handoffSuggestedAtTurn: null,
+        autoDowngradedAtTurn: null,
+        downgradeReason: null,
+        lastProcessedTurnId: null,
+        resumeModeId: "full-access",
+        lastBilledTier: "flash",
+        lastBilledModel: "gemini-4-neon",
+        currentThinking: null,
+        lastBilledThinking: null,
+      };
+
+      const liveSnapshot = {
+        id: "agt_ext_switch",
+        provider: "antigravity",
+        model: "gemini-4-hydrogen",
+        thinkingOptionId: "high",
+        runtimeInfo: {
+          model: "gemini-4-hydrogen",
+          thinkingOptionId: "high",
+        },
+        metadata: { [HARNESS_METADATA_KEY]: legacyMeta },
+      };
+
+      const handle = {
+        current: () => liveSnapshot,
+        setModel: setModelMock,
+        setMetadata: setMetadataMock,
+        timeline: { refetch: vi.fn().mockResolvedValue({ items: [] }) },
+      };
+      const context = {
+        paseo: {
+          agents: {
+            ref: vi.fn().mockReturnValue(handle),
+          },
+        },
+      };
+
+      await hooks["agent.turn.before"](
+        {
+          agent: {
+            id: "agt_ext_switch",
+            provider: "antigravity",
+            title: "设计统一后台样式方案",
+            metadata: { [HARNESS_METADATA_KEY]: legacyMeta },
+          },
+        },
+        context,
+      );
+
+      // Should NOT override the user's manual switch to hydrogen on Turn 0
+      expect(setModelMock).not.toHaveBeenCalled();
+      expect(setMetadataMock).toHaveBeenCalledWith({
+        [HARNESS_METADATA_KEY]: expect.objectContaining({
+          initialTier: "standard",
+          currentTier: "fast",
+          currentModel: "gemini-4-hydrogen",
+          currentThinking: "high",
+          lastBilledTier: "standard",
+          userModelLocked: false,
+          tierMatchedRule: "runtime_sync:external_model_change",
+        }),
+      });
+
+      setMetadataMock.mockClear();
+
+      await hooks["agent.turn.after"](
+        {
+          agent: {
+            id: "agt_ext_switch",
+            provider: "antigravity",
+            metadata: { [HARNESS_METADATA_KEY]: legacyMeta },
+          },
+          turnId: "turn_ext_1",
+          outcome: { kind: "completed" },
+        },
+        context,
+      );
+
+      expect(setMetadataMock).toHaveBeenCalledWith({
+        [HARNESS_METADATA_KEY]: expect.objectContaining({
+          turnCount: 1,
+          currentTier: "fast",
+          currentModel: "gemini-4-hydrogen",
+          currentThinking: "high",
+          lastBilledTier: "fast",
+          lastBilledModel: "gemini-4-hydrogen",
+          lastBilledThinking: "high",
+          lastProcessedTurnId: "turn_ext_1",
+        }),
+      });
+    });
+
+    it("blocks concurrent writable specialist handoff while parent is running, allows readonly review, and injects parent context", async () => {
+      const registeredRpcHandlers: Record<string, any> = {};
+      const { mockServer } = createTestServer();
+      mockServer.handle.mockImplementation((contract: any, handler: any) => {
+        registeredRpcHandlers[contract.name] = handler;
+      });
+      contribute(mockServer);
+
+      const handoffHandler = registeredRpcHandlers["agent_harness.specialist.handoff.request"];
+      expect(handoffHandler).toBeDefined();
+
+      let parentStatus: "running" | "idle" = "running";
+      const createChildMock = vi.fn().mockResolvedValue({ id: "agt_child_guard" });
+      const parentHandle = {
+        current: () => ({
+          status: parentStatus,
+          provider: "antigravity",
+          cwd: "/workspace/project",
+          workspaceId: "ws_guard",
+          title: "Unify admin workspace UI",
+          metadata: {},
+        }),
+        timeline: {
+          append: vi.fn().mockResolvedValue({}),
+          refetch: vi.fn().mockResolvedValue({
+            items: [
+              { type: "user_message", text: "Fix PR #573 workflow issues" },
+              { type: "assistant_message", text: "Updated reviewdog.yml and executor tests" },
+            ],
+          }),
+        },
+      };
+      const context = {
+        paseo: {
+          agents: {
+            ref: vi.fn().mockReturnValue(parentHandle),
+            create: createChildMock,
+          },
+          workspaces: {
+            ref: vi.fn().mockReturnValue({
+              agents: { create: createChildMock },
+            }),
+          },
+        },
+      };
+
+      await expect(
+        handoffHandler(
+          {
+            agentId: "agt_parent_busy",
+            workspaceId: "ws_guard",
+            targetRole: "qa",
+          },
+          context,
+        ),
+      ).rejects.toThrow(/Parent agent is currently running/);
+      expect(createChildMock).not.toHaveBeenCalled();
+
+      // Readonly review specialist is still allowed while parent is running, and receives parent context
+      await handoffHandler(
+        {
+          agentId: "agt_parent_busy",
+          workspaceId: "ws_guard",
+          targetRole: "review",
+        },
+        context,
+      );
+      expect(createChildMock).toHaveBeenCalledTimes(1);
+      const reviewPrompt = createChildMock.mock.calls[0]?.[0]?.prompt as string;
+      expect(reviewPrompt).toContain("[Parent Session Context]");
+      expect(reviewPrompt).toContain("Parent Task: Unify admin workspace UI");
+      expect(reviewPrompt).toContain("Fix PR #573 workflow issues");
+      expect(reviewPrompt).toContain("Shared Workspace Discipline");
+
+      // Once parent is idle, writable specialist handoff succeeds
+      parentStatus = "idle";
+      await handoffHandler(
+        {
+          agentId: "agt_parent_busy",
+          workspaceId: "ws_guard",
+          targetRole: "qa",
+        },
+        context,
+      );
+      expect(createChildMock).toHaveBeenCalledTimes(2);
+    });
   });
 });

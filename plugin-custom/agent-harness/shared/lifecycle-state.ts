@@ -1,7 +1,9 @@
 import {
   compileSafeRegex,
+  inferTierFromModel,
   isNativePlanModeSupported,
   normalizeTierAlias,
+  resolveTierTarget,
 } from "./config-resolver.js";
 import { supportsNativePlanMode } from "./contracts.js";
 import { CONVENTIONAL_EXEC_PREFIX } from "./intent-detector.js";
@@ -681,4 +683,103 @@ export function extractSnapshotModel(snapshot: unknown): string | null {
     }
   }
   return null;
+}
+
+/** Extracts the active thinking option from a live agent snapshot. */
+export function extractSnapshotThinking(snapshot: unknown): string | null {
+  if (!snapshot || typeof snapshot !== "object") {
+    return null;
+  }
+  const candidate = snapshot as {
+    runtimeInfo?: { thinkingOptionId?: unknown } | null;
+    effectiveThinkingOptionId?: unknown;
+    thinkingOptionId?: unknown;
+    options?: { thinkingOptionId?: unknown } | null;
+  };
+  for (const val of [
+    candidate.runtimeInfo?.thinkingOptionId,
+    candidate.effectiveThinkingOptionId,
+    candidate.thinkingOptionId,
+    candidate.options?.thinkingOptionId,
+  ]) {
+    if (typeof val === "string" && val.trim()) {
+      return val.trim();
+    }
+  }
+  return null;
+}
+
+/**
+ * Reconciles persisted `agentHarness` metadata against a live runtime snapshot
+ * when the user changes models externally or resumes a legacy v4 metadata record.
+ * Returns `{ meta, changed: false }` untouched when snapshot model is unavailable.
+ */
+export function reconcileRuntimeHarnessMetadata(params: {
+  meta: HarnessAgentMetadata;
+  snapshot: unknown;
+  provider: string;
+  config: EffectiveHarnessConfig;
+}): { meta: HarnessAgentMetadata; changed: boolean } {
+  const { meta, snapshot, provider, config } = params;
+  const snapModel = extractSnapshotModel(snapshot);
+  if (!snapModel) {
+    return { meta, changed: false };
+  }
+
+  const snapThinking = extractSnapshotThinking(snapshot);
+  const inferred = inferTierFromModel(config, provider, snapModel, meta.currentTier);
+  const canonicalInitialTier = normalizeTierAlias(meta.initialTier);
+  const canonicalLastBilledTier = meta.lastBilledTier
+    ? normalizeTierAlias(meta.lastBilledTier)
+    : null;
+
+  if (snapModel !== meta.currentModel) {
+    const resolvedThinking =
+      snapThinking ??
+      resolveTierTarget(config, provider, inferred.tier).thinkingOptionId ??
+      meta.currentThinking ??
+      null;
+    return {
+      meta: {
+        ...meta,
+        initialTier: canonicalInitialTier,
+        currentTier: inferred.tier,
+        currentModel: snapModel,
+        currentThinking: resolvedThinking,
+        lastBilledTier: canonicalLastBilledTier,
+        userModelLocked: !inferred.isRouterManagedNonMax,
+        tierMatchedRule: "runtime_sync:external_model_change",
+      },
+      changed: true,
+    };
+  }
+
+  const canonicalCurrentTier = normalizeTierAlias(meta.currentTier);
+  const isLegacyTier = canonicalCurrentTier !== meta.currentTier;
+  let nextCurrentTier = meta.currentTier;
+  if (isLegacyTier) {
+    nextCurrentTier = inferred.isKnownTierModel ? inferred.tier : canonicalCurrentTier;
+  }
+  const baseThinking = meta.currentThinking ?? null;
+  const nextThinking = baseThinking === null && snapThinking ? snapThinking : baseThinking;
+
+  if (
+    nextCurrentTier !== meta.currentTier ||
+    canonicalInitialTier !== meta.initialTier ||
+    canonicalLastBilledTier !== meta.lastBilledTier ||
+    nextThinking !== baseThinking
+  ) {
+    return {
+      meta: {
+        ...meta,
+        initialTier: canonicalInitialTier,
+        currentTier: nextCurrentTier,
+        currentThinking: nextThinking,
+        lastBilledTier: canonicalLastBilledTier,
+      },
+      changed: true,
+    };
+  }
+
+  return { meta, changed: false };
 }

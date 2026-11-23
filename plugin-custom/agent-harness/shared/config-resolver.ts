@@ -2,6 +2,7 @@ import {
   BUILTIN_BYPASS_MODELS,
   BUILTIN_PROVIDER_MAPPINGS,
   BUILTIN_PROVIDER_THINKING_MAPPINGS,
+  LEGACY_V4_PROVIDER_MAPPINGS,
 } from "./presets.js";
 import type { AgentHarnessSettings } from "./settings.js";
 import type {
@@ -298,6 +299,124 @@ export function resolveTierTarget(
   };
 }
 
+export interface InferredModelTier {
+  tier: MatrixTier;
+  isKnownTierModel: boolean;
+  isRouterManagedNonMax: boolean;
+  isDedicatedMax: boolean;
+}
+
+const MODEL_THINKING_SUFFIX_PATTERN = /-(?:low|medium|high|xhigh)$/i;
+
+/**
+ * Infers the canonical complexity tier from a concrete runtime model ID.
+ * Checks configured mappings first, then built-in mappings (exact and without
+ * trailing thinking suffix such as `-high`), and finally legacy v4 mappings.
+ */
+export function inferTierFromModel(
+  config: Pick<EffectiveHarnessConfig, "providerMappings"> | null | undefined,
+  provider: string,
+  modelId: string,
+  fallbackTier?: string | null,
+): InferredModelTier {
+  const trimmed = modelId.trim();
+  const fallback = normalizeTierAlias(fallbackTier);
+  if (!trimmed) {
+    return {
+      tier: fallback,
+      isKnownTierModel: false,
+      isRouterManagedNonMax: false,
+      isDedicatedMax: false,
+    };
+  }
+
+  const normProvider = normalizeProviderName(provider);
+  const canonProvider = canonicalizeProviderName(provider);
+
+  const canonConfigMap = config?.providerMappings?.[canonProvider] ?? {};
+  const rawConfigMap =
+    config?.providerMappings?.[normProvider] ?? config?.providerMappings?.[provider] ?? {};
+  const configMap =
+    normProvider !== canonProvider ? { ...canonConfigMap, ...rawConfigMap } : rawConfigMap;
+  const builtinMap =
+    BUILTIN_PROVIDER_MAPPINGS[normProvider] ?? BUILTIN_PROVIDER_MAPPINGS[canonProvider] ?? {};
+  const legacyMap =
+    LEGACY_V4_PROVIDER_MAPPINGS[normProvider] ?? LEGACY_V4_PROVIDER_MAPPINGS[canonProvider] ?? {};
+
+  const matchMap = (map: Record<string, string>, candidate: string): InferredModelTier | null => {
+    const nonMaxEntries: Array<[MatrixTier, string]> = [];
+    let maxModel = "";
+    for (const [rawKey, rawVal] of Object.entries(map)) {
+      const val = typeof rawVal === "string" ? rawVal.trim() : "";
+      if (!val) continue;
+      const canonicalKey = normalizeTierAlias(rawKey);
+      if (canonicalKey === "max") {
+        maxModel = val;
+      } else {
+        nonMaxEntries.push([canonicalKey, val]);
+      }
+    }
+
+    const tierPriority = (t: MatrixTier): number => {
+      if (t === "fast") return 0;
+      if (t === "standard") return 1;
+      if (t === "deep") return 2;
+      return 3;
+    };
+    nonMaxEntries.sort((a, b) => tierPriority(a[0]) - tierPriority(b[0]));
+
+    for (const [tierKey, val] of nonMaxEntries) {
+      if (val === candidate) {
+        return {
+          tier: tierKey,
+          isKnownTierModel: true,
+          isRouterManagedNonMax: true,
+          isDedicatedMax: false,
+        };
+      }
+    }
+    if (maxModel && maxModel === candidate) {
+      return {
+        tier: "max",
+        isKnownTierModel: true,
+        isRouterManagedNonMax: false,
+        isDedicatedMax: true,
+      };
+    }
+    return null;
+  };
+
+  const stripped = MODEL_THINKING_SUFFIX_PATTERN.test(trimmed)
+    ? trimmed.replace(MODEL_THINKING_SUFFIX_PATTERN, "")
+    : "";
+
+  const activeCandidates = [configMap, builtinMap];
+  for (const map of activeCandidates) {
+    const exact = matchMap(map, trimmed);
+    if (exact) return exact;
+  }
+  if (stripped) {
+    for (const map of activeCandidates) {
+      const byBase = matchMap(map, stripped);
+      if (byBase) return byBase;
+    }
+  }
+
+  const legacyExact = matchMap(legacyMap, trimmed);
+  if (legacyExact) return legacyExact;
+  if (stripped) {
+    const legacyByBase = matchMap(legacyMap, stripped);
+    if (legacyByBase) return legacyByBase;
+  }
+
+  return {
+    tier: fallback,
+    isKnownTierModel: false,
+    isRouterManagedNonMax: false,
+    isDedicatedMax: false,
+  };
+}
+
 /**
  * Resolves the target model ID for a given provider and tier.
  */
@@ -537,6 +656,12 @@ export function buildSystemPromptBanner(options: {
 
   if (phaseRule) {
     lines.push(phaseRule);
+  }
+
+  if (isAntigravity && !options.isLeaf) {
+    lines.push(
+      `- Antigravity Specialist Handoff (\`mcp_paseo_create_agent\`): Native \`harness_handoff\` is unavailable on Antigravity (\`supportsNativePaseoTools=false\`). To hand off or spawn a Paseo specialist (e.g. \`role=review\`, \`role=backend\`, \`role=ui\`, \`role=qa\`) instead of in-process \`invoke_subagent\`, call \`mcp_paseo_create_agent\` in this workspace with \`provider: "antigravity/<targetModel>"\` (\`review\`/\`architect\`/\`pm\` -> \`gemini-4-carbon\`, \`ui\`/\`backend\`/\`qa\` -> \`gemini-4-argon\`), \`labels: { "role": "<targetRole>", "paseo.harness-leaf": "1" }\`, and a self-contained \`initialPrompt\`.`,
+    );
   }
 
   return lines.join("\n");

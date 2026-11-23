@@ -37,6 +37,7 @@ import {
   hasShortAffirmativeExecConfirmation,
   inspectTurnTimeline,
   parseHarnessMetadata,
+  reconcileRuntimeHarnessMetadata,
   shouldEnforceNativePlanMode,
   tierToPhase,
 } from "./shared/lifecycle-state.js";
@@ -1480,6 +1481,21 @@ export default function contribute(server: PluginServerContext) {
 
   const switchedFirstTurnAgents = new Set<string>();
 
+  async function resolveRuntimeSnapshot(
+    agent: { id: string },
+    handle: ReturnType<PaseoApi["agents"]["ref"]> | undefined,
+  ): Promise<unknown> {
+    if (extractSnapshotModel(agent)) {
+      return agent;
+    }
+    let snap = handle?.current?.();
+    if (!extractSnapshotModel(snap) && typeof handle?.refresh === "function") {
+      const refreshed = await handle.refresh().catch(() => undefined);
+      snap = refreshed?.agent ?? snap;
+    }
+    return snap ?? agent;
+  }
+
   // Hook 4: agent.turn.before
   const removeTurnHook = server.addHook("agent.turn.before", async (payload, context) => {
     capturePaseoApi(context?.paseo);
@@ -1497,7 +1513,24 @@ export default function contribute(server: PluginServerContext) {
       return;
     }
 
-    const meta = readLatestMetadata(agent);
+    let meta = readLatestMetadata(agent);
+    if (meta) {
+      const handle = context.paseo.agents.ref(agent.id);
+      const runtimeSnap = await resolveRuntimeSnapshot(agent, handle);
+      const reconciled = reconcileRuntimeHarnessMetadata({
+        meta,
+        snapshot: runtimeSnap,
+        provider: agent.provider,
+        config: effectiveConfig,
+      });
+      if (reconciled.changed) {
+        meta = reconciled.meta;
+        if (meta.tierMatchedRule === "runtime_sync:external_model_change") {
+          switchedFirstTurnAgents.add(agent.id);
+        }
+        await updateAgentMetadata(agent.id, meta, handle);
+      }
+    }
     const specialist = meta ? findSpecialist(effectiveConfig, meta.role) : undefined;
     const isRoleLocked = Boolean(
       specialist?.readonly ||
@@ -1638,12 +1671,22 @@ export default function contribute(server: PluginServerContext) {
       return;
     }
 
-    const meta = readLatestMetadata(agent);
+    let meta = readLatestMetadata(agent);
     if (!meta || (turnId !== null && meta.lastProcessedTurnId === turnId)) {
       return;
     }
 
     const handle = context.paseo.agents.ref(agent.id);
+    const runtimeSnap = await resolveRuntimeSnapshot(agent, handle);
+    const reconciled = reconcileRuntimeHarnessMetadata({
+      meta,
+      snapshot: runtimeSnap,
+      provider: agent.provider,
+      config: effectiveConfig,
+    });
+    if (reconciled.changed) {
+      meta = reconciled.meta;
+    }
     const isPlanDesign = meta.phase === "design";
     const nextTurnCount = meta.turnCount + 1;
     const nextPlanTurnCount = isPlanDesign ? meta.planTurnCount + 1 : meta.planTurnCount;

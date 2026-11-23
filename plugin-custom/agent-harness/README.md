@@ -43,6 +43,7 @@ flowchart TD
 - 原生只读 `plan` 模式仅由 `phase === "design"` 或 `specialist.readonly === true` 决定（针对支持原生 Plan 的 `claude` / `opencode`）。
 - 自动设计意图在 `ExitPlanMode` 批准或收到明确执行指令后，自动步降至 `standard`（`phase: "exec"`），恢复写入权限并追加 `harness-transition` 时间线卡片。
 - 通过 `HarnessPopover` 手动切换到 `deep` 或 `max` 时默认进入可写 `exec` 阶段（除非角色为 `readonly` 或显式传入 `targetPhase: "design"`），修改业务源码不会触发自动降档。
+- 运行时在 `agent.turn.before` / `agent.turn.after` 经 `inferTierFromModel` 与 `reconcileRuntimeHarnessMetadata` 校验活跃模型快照：用户通过 Paseo 原生选择器切换模型或恢复带 v4 遗留档位（`flash`/`plan`/`review`）的会话时，自动同步 `currentTier`、`currentModel`、`currentThinking`、`lastBilled*` 与 `userModelLocked` 状态。
 
 ### 3. 内置 9 角色专家矩阵（`BUILTIN_SPECIALISTS`）
 
@@ -84,11 +85,11 @@ flowchart TD
 ### 服务端生命周期钩子与工具（[index.server.ts](index.server.ts)）
 
 - **Hooks**：`workspace.create.before`、`worktree.create.before`、`agent.create.before`、`agent.create.after`、`agent.open.before`、`agent.permission.before`（只读 Shell 白名单自动审批）、`agent.permission.after`（捕获 `ExitPlanMode` 自动步降）、`agent.turn.before`、`agent.turn.after`、`agent.close.after`、`agent.archive.after`。
-- **Host Tool**：`harness_handoff`（支持 `targetRole`、`title`、`specPrompt`、`waitForCompletion`，派生子会话注入 `PASEO_HARNESS_LEAF=1` 阻止递归套娃）。
+- **Host Tool & 跨端交接**：`harness_handoff`（支持 `targetRole`、`title`、`specPrompt`、`waitForCompletion`，派生子会话注入 `PASEO_HARNESS_LEAF=1` 阻止递归套娃）；针对 `supportsNativePaseoTools=false` 的 Antigravity 非叶子会话，系统提示词注入基于 `mcp_paseo_create_agent` 派生专家子代理的规范指引。
 
 ### RPC 列表（[shared/contracts.ts](shared/contracts.ts)）
 
-- 会话与配置：`agent_harness.tier.switch.request`、`agent_harness.specialist.handoff.request`、`agent_harness.environment.inspect.request`、`agent_harness.profiles.sync.request`、`agent_harness.config.effective.request`
+- 会话与配置：`agent_harness.tier.switch.request`、`agent_harness.specialist.handoff.request`（父会话 `status === "running"` 时互斥拦截可写专家、放行只读 `review`，并在缺省 `summaryOverride` 时自动注入 `[Parent Session Context]`）、`agent_harness.environment.inspect.request`、`agent_harness.profiles.sync.request`、`agent_harness.config.effective.request`
 - 工作区团队编排（按已注册 `workspaceId` 鉴权并按 `checkoutRoot` 互斥串行）：`agent_harness.team.inspect.request`、`agent_harness.team.detect.request`、`agent_harness.team.save.request`、`agent_harness.team.doctor.request`、`agent_harness.team.clean.request`
 
 ---

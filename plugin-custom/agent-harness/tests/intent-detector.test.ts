@@ -114,6 +114,18 @@ describe("detectMatrixTier", () => {
     });
     expect(llmResult).toEqual({ role: "backend", tier: "deep" });
   });
+
+  it("detects Chinese planning requests containing '计划' or '考虑如何' as DEEP (design) while keeping execution overrides STANDARD", () => {
+    const planDecision = detectIntentRoute(
+      "关于运营管理和全局设置，里面的UI非常混乱，包括模板、组件、布局、大小，还有文字，都非常混乱。你去考虑如何进行统一的样式和布局。给我输出个计划。",
+    );
+    expect(planDecision.tier).toBe("deep");
+    expect(planDecision.phase).toBe("design");
+
+    const execDecision = detectIntentRoute("好的，按这个计划改代码");
+    expect(execDecision.tier).toBe("standard");
+    expect(execDecision.phase).toBe("exec");
+  });
 });
 
 describe("resolveMatrixModel", () => {
