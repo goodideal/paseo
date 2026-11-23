@@ -1,6 +1,6 @@
 import type { PluginClientContext, PluginButtonRegistration } from "@getpaseo/plugin/client";
 import { QuickPromptsSettingsScreen } from "./client/settings-screen.js";
-import { QuickPromptsPopover } from "./client/popover.js";
+import { QuickToolsPopover } from "./client/popover.js";
 import { QuickPromptsComposerItem } from "./client/composer-item.js";
 import {
   quickPromptsGlobalGetRpc,
@@ -37,17 +37,17 @@ export default function contribute(client: PluginClientContext) {
       pills.delete(agentId);
     }
     const registration = client.addComposerPill({
-      id: "quick-prompts",
+      id: "quick-tools",
       workspaceId,
       agentId,
       button: {
-        title: "Quick Prompts",
+        title: "Quick Tools",
         label: "​",
         icon: "Sparkles",
         behavior: {
           kind: "popover",
           Content: (props) => (
-            <QuickPromptsPopover
+            <QuickToolsPopover
               {...props}
               workspaceId={workspaceId}
               agentId={agentId}

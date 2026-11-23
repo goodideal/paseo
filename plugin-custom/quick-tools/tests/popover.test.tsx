@@ -1,13 +1,23 @@
 /** @vitest-environment jsdom */
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import React from "react";
 import { render, fireEvent, waitFor } from "@testing-library/react";
-import { QuickPromptsPopover } from "../client/popover.js";
+import { QuickToolsPopover } from "../client/popover.js";
+
+const mockSyncLabels = vi.fn().mockResolvedValue({ tagged: 2, skipped: 4 });
+const mockCopyText = vi.fn().mockResolvedValue(undefined);
+const mockToastShow = vi.fn();
+const mockToastError = vi.fn();
 
 // Mock @getpaseo/plugin/client hooks
 vi.mock("@getpaseo/plugin/client", () => ({
-  useAgent: vi.fn(() => ({ status: "idle", labels: [] })),
-  useWorkspace: vi.fn(() => ({ projectId: "test-proj" })),
+  useAgent: vi.fn(() => ({ status: "idle", cwd: "/repos/demo", labels: [] })),
+  useWorkspace: vi.fn(() => ({
+    projectId: "test-proj",
+    kind: "worktree",
+    branch: "feat/quick-tools",
+    directory: "/repos/demo/.worktrees/feat-quick-tools",
+  })),
   usePaseo: vi.fn(() => ({
     agents: {
       ref: vi.fn(() => ({
@@ -19,6 +29,9 @@ vi.mock("@getpaseo/plugin/client", () => ({
   })),
   useSettings: vi.fn(() => ({ status: "ready", values: { aiSuggestions: true } })),
   useRpc: vi.fn((contract) => {
+    if (contract.name.includes("workspace_labels.sync")) {
+      return mockSyncLabels;
+    }
     return vi.fn().mockImplementation(async () => {
       if (contract.name.includes("global.get")) {
         return {
@@ -53,8 +66,9 @@ vi.mock("@getpaseo/plugin/client", () => ({
   }),
 }));
 
-vi.mock("@getpaseo/plugin/client/react-native", () => ({
-  useToast: vi.fn(() => ({ show: vi.fn() })),
+vi.mock("@getpaseo/plugin/client/ui", () => ({
+  useToast: vi.fn(() => ({ show: mockToastShow, error: mockToastError })),
+  copyText: (...args: [string]) => mockCopyText(...args),
   Icon: vi.fn(({ name }) => <span data-testid={`icon-${name}`}>{name}</span>),
 }));
 
@@ -62,13 +76,17 @@ vi.mock("../client/prompt-executor.js", () => ({
   executeQuickPrompt: vi.fn().mockResolvedValue(true),
 }));
 
-describe("QuickPromptsPopover (Minimal Strip)", () => {
-  it("renders action chips cleanly with custom icon and color support", async () => {
+describe("QuickToolsPopover", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("renders quick info, quick actions, and quick prompt chips cleanly", async () => {
     const close = vi.fn();
     const onOpenSettings = vi.fn();
 
-    const { getByTestId, queryByPlaceholderText, queryByText } = render(
-      <QuickPromptsPopover
+    const { getByTestId, getByText, queryByPlaceholderText } = render(
+      <QuickToolsPopover
         workspaceId="ws-1"
         agentId="agent-1"
         theme={
@@ -99,15 +117,35 @@ describe("QuickPromptsPopover (Minimal Strip)", () => {
       expect(getByTestId("icon-Eye")).toBeDefined();
     });
 
-    // Verification of minimalism: no search box, no redundant tabs, no bottom caption
-    expect(queryByPlaceholderText("搜索快捷指令...")).toBeNull();
-    expect(queryByText("全部")).toBeNull();
-    expect(queryByText("AI推荐")).toBeNull();
-    expect(queryByText("规则推荐")).toBeNull();
-    expect(queryByText("点击一键发送 · 或在输入框输入 /快捷键")).toBeNull();
+    // Quick Info card shows kind badge, branch, and path
+    expect(getByTestId("quick-tools-info-card")).toBeDefined();
+    expect(getByText("WT")).toBeDefined();
+    expect(getByText("feat/quick-tools")).toBeDefined();
+    expect(getByText("/repos/demo/.worktrees/feat-quick-tools")).toBeDefined();
 
-    // Settings trigger exists
-    const settingsBtn = getByTestId("quick-prompts-settings-trigger");
+    // Quick Actions work
+    fireEvent.click(getByTestId("quick-tools-action-copy-path"));
+    await waitFor(() => {
+      expect(mockCopyText).toHaveBeenCalledWith("/repos/demo/.worktrees/feat-quick-tools");
+      expect(mockToastShow).toHaveBeenCalledWith("Copied path");
+    });
+
+    fireEvent.click(getByTestId("quick-tools-action-copy-branch"));
+    await waitFor(() => {
+      expect(mockCopyText).toHaveBeenCalledWith("feat/quick-tools");
+      expect(mockToastShow).toHaveBeenCalledWith("Copied branch");
+    });
+
+    fireEvent.click(getByTestId("quick-tools-action-sync-labels"));
+    await waitFor(() => {
+      expect(mockSyncLabels).toHaveBeenCalledWith({ force: true });
+      expect(mockToastShow).toHaveBeenCalledWith("Labels synced: 2 updated, 4 unchanged");
+    });
+
+    expect(queryByPlaceholderText("搜索快捷指令...")).toBeNull();
+
+    // Settings trigger opens Quick Tools settings and closes popover
+    const settingsBtn = getByTestId("quick-tools-settings-trigger");
     expect(settingsBtn).toBeDefined();
     fireEvent.click(settingsBtn);
     expect(onOpenSettings).toHaveBeenCalled();

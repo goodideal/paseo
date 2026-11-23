@@ -92,7 +92,7 @@ describe("Quick Prompts Client Entrypoint", () => {
       setTimeout(() => {
         expect(client.addComposerPill).toHaveBeenCalledTimes(1);
         expect(pills.length).toBe(1);
-        expect(pills[0].id).toBe("quick-prompts");
+        expect(pills[0].id).toBe("quick-tools");
         expect(pills[0].button.behavior.kind).toBe("popover");
 
         // Subsequent upsert for the same workspace keeps the pill pinned in place (no remove + re-add)
