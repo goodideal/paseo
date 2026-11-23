@@ -14,6 +14,11 @@ import {
   BUILTIN_SPECIALISTS,
   BUILTIN_TIERS,
   LEGACY_ORCHESTRATOR_DISPATCHER_RULE,
+  LEGACY_V3_EXEC_PHASE_RULE,
+  LEGACY_V3_REVIEW_DESCRIPTION,
+  LEGACY_V3_REVIEW_HANDOFF_PROMPT,
+  LEGACY_V3_REVIEW_MATCH_PATTERN,
+  LEGACY_V3_REVIEW_PHASE_RULE,
 } from "./presets.js";
 
 const DEFAULT_AFFIRMATIVE_CONFIRM_WORDS: readonly string[] = [
@@ -236,9 +241,62 @@ export type AgentHarnessSettings = z.infer<typeof AgentHarnessSettingsSchema>;
 export const DEFAULT_AGENT_HARNESS_SETTINGS: AgentHarnessSettings =
   AgentHarnessSettingsSchema.parse({});
 
-export const SETTINGS_SCHEMA_VERSION = 3 as const;
+export const SETTINGS_SCHEMA_VERSION = 4 as const;
 
-function migrateLegacySettingsToV3(rawInput: Record<string, unknown>, fromVersion: number) {
+function migrateLegacyReviewSpecialistToV4(spec: Record<string, unknown>): Record<string, unknown> {
+  const builtinReview = BUILTIN_SPECIALISTS.find((s) => s.id === "review");
+  if (!builtinReview) {
+    return spec;
+  }
+
+  const nextSpec = { ...spec };
+  const currentProvider =
+    typeof nextSpec.preferredProvider === "string" ? nextSpec.preferredProvider.trim() : "";
+  const normProvider = currentProvider.toLowerCase();
+  if (!normProvider || normProvider === "claude" || normProvider === "claude-code") {
+    nextSpec.preferredProvider = builtinReview.preferredProvider;
+  }
+
+  if (nextSpec.description === LEGACY_V3_REVIEW_DESCRIPTION) {
+    nextSpec.description = builtinReview.description;
+  }
+
+  if (nextSpec.handoffDefaultPrompt === LEGACY_V3_REVIEW_HANDOFF_PROMPT) {
+    nextSpec.handoffDefaultPrompt = builtinReview.handoffDefaultPrompt;
+  }
+
+  if (Array.isArray(nextSpec.primarySkills)) {
+    const mapped = nextSpec.primarySkills
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => (item === "security-review" ? "open-code-review-delegate" : item));
+    if (!mapped.includes("open-code-review-delegate")) {
+      mapped.push("open-code-review-delegate");
+    }
+    nextSpec.primarySkills = Array.from(new Set(mapped));
+  }
+
+  if (Array.isArray(nextSpec.qualityGates)) {
+    const mapped = nextSpec.qualityGates
+      .filter((item): item is string => typeof item === "string")
+      .map((item) =>
+        item === "open-code-review-cli-gate" ? "open-code-review-delegate-gate" : item,
+      );
+    nextSpec.qualityGates = Array.from(new Set(mapped));
+  }
+
+  if (Array.isArray(nextSpec.matchPatterns)) {
+    const nextPrimaryMatch = builtinReview.matchPatterns[0];
+    nextSpec.matchPatterns = nextSpec.matchPatterns
+      .filter((item): item is string => typeof item === "string")
+      .map((item) =>
+        item === LEGACY_V3_REVIEW_MATCH_PATTERN && nextPrimaryMatch ? nextPrimaryMatch : item,
+      );
+  }
+
+  return nextSpec;
+}
+
+function migrateLegacySettings(rawInput: Record<string, unknown>, fromVersion: number) {
   const next: Record<string, unknown> = { ...rawInput };
 
   if (fromVersion < 3) {
@@ -339,6 +397,30 @@ function migrateLegacySettingsToV3(rawInput: Record<string, unknown>, fromVersio
     }
   }
 
+  if (fromVersion < 4) {
+    if (Array.isArray(next.specialists)) {
+      next.specialists = next.specialists.map((entry) => {
+        if (!entry || typeof entry !== "object") return entry;
+        const spec = entry as Record<string, unknown>;
+        if (spec.id === "review" && spec.builtIn !== false) {
+          return migrateLegacyReviewSpecialistToV4(spec);
+        }
+        return spec;
+      });
+    }
+
+    if (next.phaseRules && typeof next.phaseRules === "object" && !Array.isArray(next.phaseRules)) {
+      const rules = { ...(next.phaseRules as Record<string, unknown>) };
+      if (rules.review === LEGACY_V3_REVIEW_PHASE_RULE) {
+        rules.review = BUILTIN_PHASE_RULES.review;
+      }
+      if (rules.exec === LEGACY_V3_EXEC_PHASE_RULE) {
+        rules.exec = BUILTIN_PHASE_RULES.exec;
+      }
+      next.phaseRules = rules;
+    }
+  }
+
   return AgentHarnessSettingsSchema.parse(next);
 }
 
@@ -350,9 +432,9 @@ export const agentHarnessSettings = defineSettings({
   migrate: (values: unknown, fromVersion: number) => {
     if (fromVersion < SETTINGS_SCHEMA_VERSION && typeof values === "object" && values !== null) {
       try {
-        return migrateLegacySettingsToV3(values as Record<string, unknown>, fromVersion);
+        return migrateLegacySettings(values as Record<string, unknown>, fromVersion);
       } catch (err) {
-        console.error("[AgentHarness] Failed to migrate settings to v3", err);
+        console.error("[AgentHarness] Failed to migrate settings", err);
         return DEFAULT_AGENT_HARNESS_SETTINGS;
       }
     }

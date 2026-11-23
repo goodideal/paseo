@@ -9,6 +9,7 @@ import {
   loadWorkspaceAgentTeam,
 } from "../server/agent-team-loader.js";
 import { createInitialHarnessMetadata, HARNESS_LEAF_META_KEY } from "../shared/lifecycle-state.js";
+import { agentHarnessSettings, DEFAULT_AGENT_HARNESS_SETTINGS } from "../shared/settings.js";
 import { HARNESS_METADATA_KEY, type HarnessAgentMetadata } from "../shared/types.js";
 import {
   harnessInspectEnvironmentRpc,
@@ -440,7 +441,7 @@ describe("agent-harness server contribute", () => {
         "- [Phase: Review Gate] Rule: You are running on the review model (phase=review).",
       );
       expect(prompt).toContain(
-        "Perform read-only dual-axis audit (Standards + Spec) and ocr gate verification",
+        "Perform read-only dual-axis audit (Standards + Spec) and agy + ocr delegate gate verification",
       );
     });
 
@@ -3622,6 +3623,148 @@ describe("agent-harness server contribute", () => {
         expect(fs.existsSync(path.join(tmpRepo, ".agents", "agent-team.json"))).toBe(true);
       } finally {
         fs.rmSync(tmpRepo, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe("agy + ocr delegate review mechanism & v4 migration", () => {
+    it("defaults review specialist to antigravity with open-code-review-delegate skill and routes harness_handoff to gemini-4-argon-high", async () => {
+      const reviewSpec = DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "review");
+      expect(reviewSpec?.preferredProvider).toBe("antigravity");
+      expect(reviewSpec?.primarySkills).toEqual([
+        "mattpocock-skills:code-review",
+        "open-code-review-delegate",
+        "gitea",
+      ]);
+      expect(reviewSpec?.qualityGates).toEqual([
+        "dual-axis-semantic-review",
+        "open-code-review-delegate-gate",
+      ]);
+
+      const { hooks } = createTestServer();
+      const created = await hooks["agent.create.before"]({
+        request: {
+          config: {
+            provider: "antigravity",
+            cwd: "/workspace/demo",
+            title: "双轴审查与门禁",
+            labels: { role: "review" },
+          },
+        },
+      });
+      expect(created.config.model).toBe("gemini-4-argon-high");
+      expect(created.config.systemPrompt).toContain(
+        "Primary Skills: code-review, open-code-review-delegate, gitea",
+      );
+
+      const opened = await hooks["agent.open.before"]({
+        request: {
+          agentId: "agt_parent_exec",
+          provider: "claude",
+          cwd: "/workspace/demo",
+          reason: "create",
+          purpose: "interactive",
+          title: "执行阶段",
+          labels: {},
+          tools: [],
+          env: {},
+          mcpServers: {},
+        },
+      });
+      const handoffTool = opened.tools.find((t: any) => t.name === "harness_handoff");
+      expect(handoffTool).toBeDefined();
+
+      const createChildMock = vi.fn().mockResolvedValue({ id: "agt_child_review" });
+      const handoffRes = await handoffTool.execute(
+        {
+          targetRole: "review",
+          title: "Review PR changes",
+          specPrompt: "Run dual-axis review and ocr delegate checks.",
+        },
+        {
+          agent: {
+            id: "agt_parent_exec",
+            provider: "claude",
+            cwd: "/workspace/demo",
+            workspaceId: "ws_demo",
+          },
+          paseo: {
+            agents: {
+              ref: () => ({
+                current: () => ({
+                  provider: "claude",
+                  cwd: "/workspace/demo",
+                  workspaceId: "ws_demo",
+                  metadata: {},
+                }),
+                timeline: { append: vi.fn().mockResolvedValue({}) },
+              }),
+              create: createChildMock,
+            },
+            workspaces: {
+              ref: () => ({
+                agents: { create: createChildMock },
+              }),
+            },
+          },
+        },
+      );
+
+      expect(createChildMock).toHaveBeenCalledTimes(1);
+      const spawnReq = createChildMock.mock.calls[0]?.[0];
+      expect(spawnReq.config.provider).toBe("antigravity/gemini-4-argon-high");
+      expect(handoffRes.structuredContent.targetTier).toBe("review");
+      expect(handoffRes.structuredContent.targetModel).toBe("gemini-4-argon-high");
+    });
+
+    it("migrates v3 settings cleanly to v4 for review specialist (claude and claude-code) and phaseRules", () => {
+      for (const legacyProvider of ["claude", "claude-code"] as const) {
+        const v3Values = {
+          ...DEFAULT_AGENT_HARNESS_SETTINGS,
+          specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) =>
+            s.id === "review"
+              ? {
+                  ...s,
+                  description:
+                    "双轴代码审查与安全合规审计官（Standards 规范轴 + Spec 契约轴 + OCR 硬门禁）",
+                  preferredProvider: legacyProvider,
+                  handoffDefaultPrompt:
+                    "Perform dual-axis code review (Standards + Spec) and OCR gate scan.",
+                  primarySkills: ["mattpocock-skills:code-review", "security-review", "gitea"],
+                  qualityGates: ["dual-axis-semantic-review", "open-code-review-cli-gate"],
+                  matchPatterns: [
+                    "\\b(?:ocr|code-review|security-review)\\b",
+                    "代码审查|安全审计|双轴审查|质量门禁",
+                  ],
+                }
+              : s,
+          ),
+          phaseRules: {
+            ...DEFAULT_AGENT_HARNESS_SETTINGS.phaseRules,
+            exec: "- [Phase: Fast Execution] Rule: You are running on the fast flash model (phase=exec). Implement minimal, targeted code changes per spec and verify with targeted tests (npx vitest run <file> --bail=1, NEVER full suite), npm run typecheck, and npm run lint. Review Gate: For non-trivial changes (>3 modified files or core state/protocol/security logic), once green, spawn or hand off via paseo-handoff to Reviewer (Gate) (--label role=review) for dual-axis review (Standards + Spec) and local ocr scan.",
+            review:
+              "- [Phase: Review Gate] Rule: You are running on the review model (phase=review). Perform read-only dual-axis audit (Standards + Spec) and ocr gate verification; do not author large feature implementations directly.",
+          },
+        };
+
+        const migrated = agentHarnessSettings.migrate!(
+          v3Values,
+          3,
+        ) as typeof DEFAULT_AGENT_HARNESS_SETTINGS;
+        const review = migrated.specialists.find((s) => s.id === "review")!;
+        expect(review.preferredProvider).toBe("antigravity");
+        expect(review.primarySkills).toEqual([
+          "mattpocock-skills:code-review",
+          "open-code-review-delegate",
+          "gitea",
+        ]);
+        expect(review.qualityGates).toEqual([
+          "dual-axis-semantic-review",
+          "open-code-review-delegate-gate",
+        ]);
+        expect(review.matchPatterns[0]).toContain("open-code-review-delegate");
+        expect(migrated.phaseRules.review).toContain("agy + ocr delegate gate verification");
+        expect(migrated.phaseRules.exec).toContain("agy + ocr delegate gate verification");
       }
     });
   });

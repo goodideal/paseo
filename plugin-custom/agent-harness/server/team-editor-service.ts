@@ -233,8 +233,9 @@ const FALLBACK_CATALOG: AgentTeamCatalogData = {
     },
     {
       id: "gate-ocr",
-      title: "Local OpenCodeReview (ocr) & Two-Axis Review Gate",
-      description: "Enforce two-axis diff review alongside local ocr static gates.",
+      title: "Antigravity + OpenCodeReview Delegate (ocr delegate) & Two-Axis Review Gate",
+      description:
+        "Enforce two-axis diff review alongside LLM-free ocr delegate file/rule resolution driven by the host review agent.",
       requires_mcp: [],
       requires_guards: [],
       enables_flow: {},

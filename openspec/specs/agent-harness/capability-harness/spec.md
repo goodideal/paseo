@@ -198,3 +198,18 @@
 - **WHEN** 客户端传入未在 Paseo 注册的 `workspaceId` 请求 `team.save` 或 `team.clean`
 - **THEN** RPC 拒绝请求并抛出明确错误，不访问或修改磁盘文件系统
 - **AND** 对同一工作区的并发 `team.save` 请求按检出目录互斥串行执行，避免 `.agents/agent-team.json` 与生成目录竞争损坏
+
+### Requirement: 内置审查专家默认绑定 Antigravity 与 ocr delegate 规则门禁 (Antigravity + OCR Delegate Review Gate & Schema Migration)
+
+系统 SHALL 将内置 `review` 专家角色（`Reviewer & Security Audit Gate`）的默认 `preferredProvider` 设为 `"antigravity"`，`primarySkills` 注入 `["mattpocock-skills:code-review", "open-code-review-delegate", "gitea"]`，`qualityGates` 设为 `["dual-axis-semantic-review", "open-code-review-delegate-gate"]`，并在 `phase=exec` 与 `phase=review` 阶段规则中指示采用宿主审查代理配合 LLM-Free `ocr delegate`（`ocr delegate preview` + `ocr delegate rule`）取代独立外部 LLM `ocr review`；同时当插件配置版本低于 `v4` 时，系统 SHALL 自动将内置 `review` 专家的遗留 `"claude"` / `"claude-code"` Provider、`"security-review"` 技能、`"open-code-review-cli-gate"` 门禁及遗留 `phaseRules` 平滑迁移至 `v4` 契约。
+
+#### Scenario: 跨客户端交接 review 角色时默认路由至 Antigravity 审查模型并挂载委托门禁技能
+
+- **WHEN** 父会话（如运行在 `"claude"`）调用 `harness_handoff` 且 `targetRole` 为 `"review"`（未覆盖内置 `review` 配置）
+- **THEN** 新建子会话的 `provider/model` 路由至 `"antigravity/gemini-4-argon-high"`
+- **AND** 系统提示词中的 `Primary Skills` 包含 `"open-code-review-delegate"`，且 `phase=review` 规则明确使用 `ocr delegate preview` 与 `ocr delegate rule`
+
+#### Scenario: 从 v3 旧版配置自动升级内置 review 专家与阶段规则至 v4
+
+- **WHEN** 加载 `fromVersion < 4` 的持久化配置，其中内置 `review` 专家的 `preferredProvider` 为 `"claude"`（或 `"claude-code"`）、`primarySkills` 含 `"security-review"`、`qualityGates` 含 `"open-code-review-cli-gate"`
+- **THEN** `agentHarnessSettings.migrate` 将 `review.preferredProvider` 升级为 `"antigravity"`，将技能与门禁替换为 `"open-code-review-delegate"` 与 `"open-code-review-delegate-gate"`，并将未自定义修改的 `phaseRules.exec` 与 `phaseRules.review` 同步更新为 `agy + ocr delegate` 规则

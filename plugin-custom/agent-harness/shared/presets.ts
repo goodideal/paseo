@@ -79,6 +79,20 @@ export const ORCHESTRATOR_DISPATCHER_RULE =
 export const LEGACY_ORCHESTRATOR_DISPATCHER_RULE =
   '- Paseo Thin Dispatcher Rule: As `role=orchestrator` (running on fast `flash` model), DO NOT write complex architecture or business code yourself, and DO NOT use Claude\'s internal `Agent` tool! Instead, act strictly as a fast Thin Dispatcher: 1) Spawn `role=architect` (`plan` model) and `role=pm` (`plan` model) via `paseo run --workspace "$PASEO_WORKSPACE_ID" --provider claude --mode bypassPermissions --label role=<architect|pm> --title "<Role Task>" "<Prompt>"` (preserving `PASEO_AGENT_ID` so they group cleanly in your Subagents Track pill) to define `design.md`, shared contracts, and `proposal.md`/`spec.md`; 2) Once contracts are ready, spawn `role=backend` (`flash`) and `role=ui` (`flash`) in parallel (`--no-wait` + `paseo wait`); 3) Spawn `role=review` (`review`) for dual-axis gate verification, run final `npm test`, and report the summary.';
 
+export const LEGACY_V3_REVIEW_DESCRIPTION =
+  "双轴代码审查与安全合规审计官（Standards 规范轴 + Spec 契约轴 + OCR 硬门禁）";
+
+export const LEGACY_V3_REVIEW_HANDOFF_PROMPT =
+  "Perform dual-axis code review (Standards + Spec) and OCR gate scan.";
+
+export const LEGACY_V3_REVIEW_MATCH_PATTERN = "\\b(?:ocr|code-review|security-review)\\b";
+
+export const LEGACY_V3_EXEC_PHASE_RULE =
+  "- [Phase: Fast Execution] Rule: You are running on the fast flash model (phase=exec). Implement minimal, targeted code changes per spec and verify with targeted tests (npx vitest run <file> --bail=1, NEVER full suite), npm run typecheck, and npm run lint. Review Gate: For non-trivial changes (>3 modified files or core state/protocol/security logic), once green, spawn or hand off via paseo-handoff to Reviewer (Gate) (--label role=review) for dual-axis review (Standards + Spec) and local ocr scan.";
+
+export const LEGACY_V3_REVIEW_PHASE_RULE =
+  "- [Phase: Review Gate] Rule: You are running on the review model (phase=review). Perform read-only dual-axis audit (Standards + Spec) and ocr gate verification; do not author large feature implementations directly.";
+
 export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
   {
     id: "orchestrator",
@@ -334,12 +348,13 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     id: "review",
     name: "Reviewer & Security Audit Gate",
     shortLabel: "Gate",
-    description: "双轴代码审查与安全合规审计官（Standards 规范轴 + Spec 契约轴 + OCR 硬门禁）",
+    description:
+      "双轴代码审查与安全合规审计官（Standards 规范轴 + Spec 契约轴 + agy + ocr delegate 门禁）",
     icon: "ShieldCheck",
     color: "orange",
     enabled: true,
     builtIn: true,
-    preferredProvider: "claude",
+    preferredProvider: "antigravity",
     preferredTier: "review",
     modelOverride: "",
     defaultModeId: "",
@@ -347,9 +362,10 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     handoffEnabled: true,
     handoffPriority: 60,
     handoffTitlePrefix: "[Review]",
-    handoffDefaultPrompt: "Perform dual-axis code review (Standards + Spec) and OCR gate scan.",
+    handoffDefaultPrompt:
+      "Perform dual-axis code review (Standards + Spec) and agy + ocr delegate gate audit (ocr delegate preview + ocr delegate rule).",
     syncToDaemonProfile: true,
-    primarySkills: ["mattpocock-skills:code-review", "security-review", "gitea"],
+    primarySkills: ["mattpocock-skills:code-review", "open-code-review-delegate", "gitea"],
     mandatorySkillActivation: true,
     skillsRoot: "/Users/jerry/.agents/skills",
     docsFocus: [
@@ -358,7 +374,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
       "docs/protocol-compatibility.md",
       "docs/protocol-validation.md",
     ],
-    qualityGates: ["dual-axis-semantic-review", "open-code-review-cli-gate"],
+    qualityGates: ["dual-axis-semantic-review", "open-code-review-delegate-gate"],
     ssotOutputTarget: "",
     rolePromptTemplate: "",
     lazyToolSlice: "review.yaml",
@@ -368,7 +384,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     extraEnv: {},
     aliases: ["security-review", "reviewer"],
     matchPatterns: [
-      "\\b(?:ocr|code-review|security-review)\\b",
+      "\\b(?:ocr|open-code-review-delegate|code-review|security-review)\\b",
       "代码审查|安全审计|双轴审查|质量门禁",
     ],
     profileFilename: "security-review.json",
@@ -490,7 +506,7 @@ export const BUILTIN_PHASE_RULES: Record<string, string> = {
   orchestrator: ORCHESTRATOR_DISPATCHER_RULE,
   design:
     "- [Phase: Design & Planning] Rule: You are running on the high-reasoning plan model (phase=design). Present concise architectural proposals, trade-offs, and specs (for UI tasks, present concise visual concepts, layout wireframes, and UX trade-offs — DO NOT dump long HTML/React code blocks). Except for spec/contract docs (openspec/**/*.md, design.md, proposal.md, spec.md, tasks.md, GLOSSARY.md), DO NOT directly edit business source files in this plan session! Once the plan is confirmed, you or the user can exit plan mode via the `ExitPlanMode` permission or invoke the host tool `harness_handoff` (targetRole: ui, backend, qa, or review) to hand off execution to a fast flash specialist.",
-  exec: "- [Phase: Fast Execution] Rule: You are running on the fast flash model (phase=exec). Implement minimal, targeted code changes per spec and verify with targeted tests (npx vitest run <file> --bail=1, NEVER full suite), npm run typecheck, and npm run lint. Review Gate: For non-trivial changes (>3 modified files or core state/protocol/security logic), once green, spawn or hand off via paseo-handoff to Reviewer (Gate) (--label role=review) for dual-axis review (Standards + Spec) and local ocr scan.",
+  exec: "- [Phase: Fast Execution] Rule: You are running on the fast flash model (phase=exec). Implement minimal, targeted code changes per spec and verify with targeted tests (npx vitest run <file> --bail=1, NEVER full suite), npm run typecheck, and npm run lint. Review Gate: For non-trivial changes (>3 modified files or core state/protocol/security logic), once green, spawn or hand off via harness_handoff / paseo-handoff to Reviewer (Gate) (--label role=review) for dual-axis review (Standards + Spec) and agy + ocr delegate gate verification (`ocr delegate preview` + `ocr delegate rule`).",
   review:
-    "- [Phase: Review Gate] Rule: You are running on the review model (phase=review). Perform read-only dual-axis audit (Standards + Spec) and ocr gate verification; do not author large feature implementations directly.",
+    "- [Phase: Review Gate] Rule: You are running on the review model (phase=review). Perform read-only dual-axis audit (Standards + Spec) and agy + ocr delegate gate verification (`ocr delegate preview --format json` + `ocr delegate rule --format json <paths...>`, LLM-free on OCR side — do NOT invoke standalone LLM-backed `ocr review`); do not author large feature implementations directly.",
 };
