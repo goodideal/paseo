@@ -125,3 +125,28 @@ describe("Provider metrics", () => {
     ).toBe(false);
   });
 });
+
+describe("Provider background work", () => {
+  it("validates session.background_work items and null clearing payloads", () => {
+    const active: ProviderEvent = {
+      type: "session.background_work",
+      sessionId: "session-1",
+      items: [
+        {
+          id: "call-1",
+          kind: "shell",
+          description: "Run OCR · 活跃",
+          command: "ocr review",
+          canStop: false,
+        },
+      ],
+    };
+    const cleared: ProviderEvent = {
+      type: "session.background_work",
+      sessionId: "session-1",
+      items: null,
+    };
+    expect(ProviderEventSchema.parse(active)).toEqual(active);
+    expect(ProviderEventSchema.parse(cleared)).toEqual(cleared);
+  });
+});

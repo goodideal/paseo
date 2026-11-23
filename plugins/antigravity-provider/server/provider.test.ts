@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import type { ProviderEvent } from "@getpaseo/plugin/server/provider";
@@ -885,4 +885,469 @@ it("keeps a turn open for backgrounded run_command calls but not IsDaemon comman
   } finally {
     await connection.close();
   }
+});
+
+describe("background task log tailing", () => {
+  it("streams local task log tail with activity and silence annotations, rejects traversal, and preserves final rawOutput", async () => {
+    const { directory, launch } = await launchAgent(`
+      const { createInterface } = require("node:readline");
+      const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+      createInterface({ input: process.stdin }).on("line", (line) => {
+        const { id, method, params } = JSON.parse(line);
+        switch (method) {
+          case "initialize":
+            send({ id, result: { protocolVersion: 1, agentCapabilities: {} } });
+            break;
+          case "session/new":
+            send({ id, result: { sessionId: "sess-bg-1", configOptions: [
+              { id: "mode", name: "Mode", category: "mode", type: "select", currentValue: "default",
+                options: [{ value: "default", name: "Default" }] },
+            ] } });
+            send({ method: "session/update", params: { sessionId: "sess-bg-1", update: {
+              sessionUpdate: "available_commands_update", availableCommands: [],
+            } } });
+            break;
+          case "session/prompt":
+            if (params.prompt?.[0]?.text === "finish") {
+              send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+                sessionUpdate: "tool_call_update", toolCallId: "cmd-bg", status: "completed",
+                rawOutput: { output: "FINAL COMPLETE OUTPUT", exit_code: 0 },
+              } } });
+              send({ id, result: { stopReason: "end_turn" } });
+              break;
+            }
+            send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+              sessionUpdate: "tool_call", toolCallId: "cmd-bg", name: "run_command",
+              title: "Run OCR review", status: "in_progress",
+              rawInput: { CommandLine: "ocr review --effort low", toolSummary: "Run OCR review" },
+            } } });
+            send({ id, result: { stopReason: "end_turn" } });
+            break;
+          case "session/close":
+            send({ id, result: {} });
+            break;
+        }
+      });
+    `);
+
+    const brainRoot = path.join(directory, "brain");
+    const sessionDir = path.join(brainRoot, "sess-bg-1");
+    const logsDir = path.join(sessionDir, ".system_generated", "logs");
+    const tasksDir = path.join(sessionDir, ".system_generated", "tasks");
+    await mkdir(logsDir, { recursive: true });
+    await mkdir(tasksDir, { recursive: true });
+
+    const outsideSecret = path.join(directory, "secret.log");
+    await writeFile(outsideSecret, "TOP SECRET DO NOT LEAK\n");
+    const validTaskLog = path.join(tasksDir, "task-42.log");
+    await writeFile(validTaskLog, "[ocr] scanning file 1\n[ocr] scanning file 2\n");
+
+    const transcriptLines = [
+      JSON.stringify({
+        step_index: 41,
+        type: "GENERIC",
+        status: "RUNNING",
+        content: `Tool is running as a background task with task id: sess-bg-1/task-41\nTask Description: evil command\nTask logs are available at: file://${outsideSecret}`,
+      }),
+      JSON.stringify({
+        step_index: 42,
+        type: "GENERIC",
+        status: "RUNNING",
+        content: `Tool is running as a background task with task id: sess-bg-1/task-42\nTask Description: ocr review --effort low\nTask logs are available at: file://${validTaskLog}`,
+      }),
+    ];
+    await writeFile(path.join(logsDir, "transcript.jsonl"), transcriptLines.join("\n") + "\n");
+
+    let clockMs = 10_000;
+    const provider = createAntigravityProvider({
+      brainRootDir: brainRoot,
+      initialDelayMs: 15,
+      pollIntervalMs: 25,
+      silentThresholdMs: 200,
+      now: () => clockMs,
+    });
+    const connection = await provider.connect({
+      launch,
+      versions: [1],
+      capabilities: ["prompt.message", "prompt.steer"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+
+    try {
+      await connection.send({
+        type: "session.open",
+        requestId: "open-bg",
+        sessionId: "agy-bg",
+        history: "skip",
+        config: { cwd: directory, env: {}, mcpServers: {}, settings: {}, persist: false },
+      });
+      await expect
+        .poll(() => events.find((event) => event.type === "session.ready"), { timeout: 3_000 })
+        .toBeDefined();
+
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "agy-bg",
+        prompt: {
+          clientMessageId: "p1",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "start" }] },
+        },
+      });
+
+      await expect
+        .poll(
+          () =>
+            events.find(
+              (event) =>
+                event.type === "timeline.item" &&
+                event.item.type === "tool_call" &&
+                event.item.id === "cmd-bg" &&
+                event.item.detail.type === "shell" &&
+                event.item.detail.output?.includes("[ocr] scanning file 2"),
+            ),
+          { timeout: 3_000 },
+        )
+        .toBeDefined();
+
+      await expect
+        .poll(
+          () =>
+            events.find(
+              (event) =>
+                event.type === "session.background_work" &&
+                event.items?.[0]?.description === "Run OCR review · 活跃",
+            ),
+          { timeout: 3_000 },
+        )
+        .toBeDefined();
+
+      // Advance clock past silentThresholdMs without growing the file -> transitions to 静默.
+      clockMs = 10_250;
+      await expect
+        .poll(
+          () =>
+            events.find(
+              (event) =>
+                event.type === "session.background_work" &&
+                event.items?.[0]?.description === "Run OCR review · 静默 200ms+",
+            ),
+          { timeout: 3_000 },
+        )
+        .toBeDefined();
+      expect(
+        events.some(
+          (event) =>
+            event.type === "timeline.item" &&
+            event.item.type === "tool_call" &&
+            event.item.detail.type === "shell" &&
+            event.item.detail.output?.includes("静默"),
+        ),
+      ).toBe(true);
+
+      // Finish the tool via steer prompt and ensure final rawOutput wins cleanly.
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "agy-bg",
+        prompt: {
+          clientMessageId: "p2",
+          delivery: "steer",
+          input: { type: "message", content: [{ type: "text", text: "finish" }] },
+        },
+      });
+      await expect
+        .poll(
+          () =>
+            events.find(
+              (event) =>
+                event.type === "timeline.item" &&
+                event.item.type === "tool_call" &&
+                event.item.id === "cmd-bg" &&
+                event.item.status === "completed" &&
+                event.item.detail.type === "shell" &&
+                event.item.detail.output === "FINAL COMPLETE OUTPUT",
+            ),
+          { timeout: 3_000 },
+        )
+        .toBeDefined();
+      await expect
+        .poll(() => events.findLast((event) => event.type === "session.background_work")?.items, {
+          timeout: 3_000,
+        })
+        .toEqual([]);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("rejects task log paths escaping .system_generated/tasks/", async () => {
+    const { directory, launch } = await launchAgent(`
+      const { createInterface } = require("node:readline");
+      const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+      createInterface({ input: process.stdin }).on("line", (line) => {
+        const { id, method, params } = JSON.parse(line);
+        if (method === "initialize") send({ id, result: { protocolVersion: 1, agentCapabilities: {} } });
+        if (method === "session/new") {
+          send({ id, result: { sessionId: "sess-escape", configOptions: [
+            { id: "mode", name: "Mode", category: "mode", type: "select", currentValue: "default",
+              options: [{ value: "default", name: "Default" }] },
+          ] } });
+          send({ method: "session/update", params: { sessionId: "sess-escape", update: {
+            sessionUpdate: "available_commands_update", availableCommands: [],
+          } } });
+        }
+        if (method === "session/prompt") {
+          send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+            sessionUpdate: "tool_call", toolCallId: "cmd-escape", name: "run_command",
+            title: "Escape check", status: "in_progress",
+            rawInput: { CommandLine: "evil command" },
+          } } });
+          send({ id, result: { stopReason: "end_turn" } });
+        }
+        if (method === "session/close") send({ id, result: {} });
+      });
+    `);
+
+    const brainRoot = path.join(directory, "brain");
+    const sessionDir = path.join(brainRoot, "sess-escape");
+    const logsDir = path.join(sessionDir, ".system_generated", "logs");
+    const tasksDir = path.join(sessionDir, ".system_generated", "tasks");
+    await mkdir(logsDir, { recursive: true });
+    await mkdir(tasksDir, { recursive: true });
+
+    const outsideLog = path.join(directory, "outside.log");
+    await writeFile(outsideLog, "SENSITIVE OUTSIDE CONTENT\n");
+    const symlinkLog = path.join(tasksDir, "task-2.log");
+    await symlink(outsideLog, symlinkLog);
+    await writeFile(
+      path.join(logsDir, "transcript.jsonl"),
+      [
+        JSON.stringify({
+          step_index: 1,
+          type: "GENERIC",
+          status: "RUNNING",
+          content: `Tool is running as a background task with task id: sess-escape/task-1\nTask Description: evil command\nTask logs are available at: file://${tasksDir}/../../../outside.log`,
+        }),
+        JSON.stringify({
+          step_index: 2,
+          type: "GENERIC",
+          status: "RUNNING",
+          content: `Tool is running as a background task with task id: sess-escape/task-2\nTask Description: evil command\nTask logs are available at: file://${symlinkLog}`,
+        }),
+      ].join("\n") + "\n",
+    );
+
+    const provider = createAntigravityProvider({
+      brainRootDir: brainRoot,
+      initialDelayMs: 10,
+      pollIntervalMs: 20,
+      silentThresholdMs: 5_000,
+    });
+    const connection = await provider.connect({
+      launch,
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+
+    try {
+      await connection.send({
+        type: "session.open",
+        requestId: "open-escape",
+        sessionId: "agy-escape",
+        history: "skip",
+        config: { cwd: directory, env: {}, mcpServers: {}, settings: {}, persist: false },
+      });
+      await expect
+        .poll(() => events.find((event) => event.type === "session.ready"), { timeout: 3_000 })
+        .toBeDefined();
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "agy-escape",
+        prompt: {
+          clientMessageId: "p-esc",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "go" }] },
+        },
+      });
+      await expect
+        .poll(
+          () =>
+            events.find(
+              (event) =>
+                event.type === "session.background_work" &&
+                event.items?.[0]?.description === "Escape check · 活跃",
+            ),
+          { timeout: 3_000 },
+        )
+        .toBeDefined();
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(
+        events.some(
+          (event) =>
+            event.type === "timeline.item" &&
+            event.item.type === "tool_call" &&
+            event.item.detail.type === "shell" &&
+            event.item.detail.output?.includes("SENSITIVE OUTSIDE CONTENT"),
+        ),
+      ).toBe(false);
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("ignores stale historical records and rebinds when a newer matching task log appears", async () => {
+    const { directory, launch } = await launchAgent(`
+      const { createInterface } = require("node:readline");
+      const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+      createInterface({ input: process.stdin }).on("line", (line) => {
+        const { id, method, params } = JSON.parse(line);
+        if (method === "initialize") send({ id, result: { protocolVersion: 1, agentCapabilities: {} } });
+        if (method === "session/new") {
+          send({ id, result: { sessionId: "sess-rebind", configOptions: [
+            { id: "mode", name: "Mode", category: "mode", type: "select", currentValue: "default",
+              options: [{ value: "default", name: "Default" }] },
+          ] } });
+          send({ method: "session/update", params: { sessionId: "sess-rebind", update: {
+            sessionUpdate: "available_commands_update", availableCommands: [],
+          } } });
+        }
+        if (method === "session/prompt") {
+          send({ method: "session/update", params: { sessionId: params.sessionId, update: {
+            sessionUpdate: "tool_call", toolCallId: "cmd-rebind", name: "run_command",
+            title: "Run tests", status: "in_progress",
+            rawInput: { CommandLine: "npm test" },
+          } } });
+          send({ id, result: { stopReason: "end_turn" } });
+        }
+        if (method === "session/close") send({ id, result: {} });
+      });
+    `);
+
+    const brainRoot = path.join(directory, "brain");
+    const sessionDir = path.join(brainRoot, "sess-rebind");
+    const logsDir = path.join(sessionDir, ".system_generated", "logs");
+    const tasksDir = path.join(sessionDir, ".system_generated", "tasks");
+    await mkdir(logsDir, { recursive: true });
+    await mkdir(tasksDir, { recursive: true });
+
+    const staleLog = path.join(tasksDir, "task-1.log");
+    await writeFile(staleLog, "OLD STALE OUTPUT\n");
+    const recentOldLog = path.join(tasksDir, "task-2.log");
+    await writeFile(recentOldLog, "INITIAL RECENT OUTPUT\n");
+    const freshNewLog = path.join(tasksDir, "task-3.log");
+    await writeFile(freshNewLog, "NEW RUN OUTPUT\n");
+
+    const transcriptPath = path.join(logsDir, "transcript.jsonl");
+    const nowIso = new Date().toISOString();
+    await writeFile(
+      transcriptPath,
+      [
+        JSON.stringify({
+          step_index: 1,
+          type: "GENERIC",
+          status: "RUNNING",
+          created_at: "2020-01-01T00:00:00Z",
+          content: `Tool is running as a background task with task id: sess-rebind/task-1\nTask Description: npm test\nTask logs are available at: file://${staleLog}`,
+        }),
+        JSON.stringify({
+          step_index: 2,
+          type: "GENERIC",
+          status: "DONE",
+          created_at: nowIso,
+          content: `Tool is running as a background task with task id: sess-rebind/task-2\nTask Description: npm test\nTask logs are available at: file://${recentOldLog}`,
+        }),
+      ].join("\n") + "\n",
+    );
+
+    const provider = createAntigravityProvider({
+      brainRootDir: brainRoot,
+      initialDelayMs: 10,
+      pollIntervalMs: 25,
+      silentThresholdMs: 5_000,
+    });
+    const connection = await provider.connect({
+      launch,
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+
+    try {
+      await connection.send({
+        type: "session.open",
+        requestId: "open-rebind",
+        sessionId: "agy-rebind",
+        history: "skip",
+        config: { cwd: directory, env: {}, mcpServers: {}, settings: {}, persist: false },
+      });
+      await expect
+        .poll(() => events.find((event) => event.type === "session.ready"), { timeout: 3_000 })
+        .toBeDefined();
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "agy-rebind",
+        prompt: {
+          clientMessageId: "p-rebind",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "go" }] },
+        },
+      });
+
+      await expect
+        .poll(
+          () =>
+            events.find(
+              (event) =>
+                event.type === "session.background_work" &&
+                event.items?.[0]?.description === "Run tests · 活跃",
+            ),
+          { timeout: 3_000 },
+        )
+        .toBeDefined();
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(
+        events.some(
+          (event) =>
+            event.type === "timeline.item" &&
+            event.item.type === "tool_call" &&
+            event.item.detail.type === "shell" &&
+            (event.item.detail.output?.includes("OLD STALE OUTPUT") ||
+              event.item.detail.output?.includes("INITIAL RECENT OUTPUT")),
+        ),
+      ).toBe(false);
+
+      // Now the new RUNNING step lands in transcript.jsonl and should be bound immediately.
+      await writeFile(
+        transcriptPath,
+        JSON.stringify({
+          step_index: 3,
+          type: "GENERIC",
+          status: "RUNNING",
+          created_at: new Date().toISOString(),
+          content: `Tool is running as a background task with task id: sess-rebind/task-3\nTask Description: npm test\nTask logs are available at: file://${freshNewLog}`,
+        }) + "\n",
+        { flag: "a" },
+      );
+
+      await expect
+        .poll(
+          () =>
+            events.find(
+              (event) =>
+                event.type === "timeline.item" &&
+                event.item.type === "tool_call" &&
+                event.item.detail.type === "shell" &&
+                event.item.detail.output?.includes("NEW RUN OUTPUT"),
+            ),
+          { timeout: 3_000 },
+        )
+        .toBeDefined();
+    } finally {
+      await connection.close();
+    }
+  });
 });

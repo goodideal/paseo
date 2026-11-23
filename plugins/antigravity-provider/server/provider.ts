@@ -6,6 +6,10 @@ import {
   type ProviderRegistration,
 } from "@getpaseo/plugin/server/provider";
 import { z } from "zod";
+import {
+  createAntigravityToolObserver,
+  type BackgroundLogTailerOptions,
+} from "./background-log-tailer.js";
 import { mapToolCall } from "./tool-calls.js";
 
 const legacySession = z.object({
@@ -101,7 +105,16 @@ function describeSignIn(env: Readonly<Record<string, string>>): string {
     : "SSH session: no\nSign-in: can differ from agy over SSH";
 }
 
-export function createAntigravityProvider(): ProviderRegistration {
+function createAntigravityTransformer(tailerOptions?: BackgroundLogTailerOptions): AcpTransformer {
+  return {
+    ...antigravity,
+    observeToolCall: createAntigravityToolObserver(tailerOptions),
+  };
+}
+
+export function createAntigravityProvider(
+  tailerOptions?: BackgroundLogTailerOptions,
+): ProviderRegistration {
   const provider = runAcpProvider({
     id: "antigravity",
     label: "Antigravity",
@@ -140,7 +153,7 @@ export function createAntigravityProvider(): ProviderRegistration {
         default: true,
       },
     },
-    transformers: [antigravity],
+    transformers: [createAntigravityTransformer(tailerOptions)],
   });
   return {
     ...provider,

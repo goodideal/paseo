@@ -27,6 +27,8 @@ import type {
   AcpConfigureContext,
   AcpRequest,
   AcpToolCallSnapshot,
+  AcpToolCallUpdatePatch,
+  AcpToolObserverContext,
   AcpTransformer,
   AcpVendorUpdate,
   RunAcpProviderOptions,
@@ -37,6 +39,7 @@ import {
   ProviderInputSchema,
   negotiateProviderCapabilities,
   requireProviderCapabilities,
+  type ProviderBackgroundWorkItem,
   type ProviderCatalog,
   type ProviderCapability,
   type ProviderCommand,
@@ -430,6 +433,9 @@ class AcpRuntime {
   private mcpServerNames: readonly string[] = [];
   private readonly liveOpenToolIds = new Set<string>();
   private readonly canceledToolCallIds = new Set<string>();
+  private readonly toolObserverCleanups = new Map<string, Array<() => void>>();
+  private readonly toolBackgroundDescriptions = new Map<string, string | null>();
+  private lastBackgroundWorkJson: string | null = null;
   // Running tool rows published by transformers; the turn's terminal closes any left open.
   private readonly vendorToolCalls = new Map<string, ToolCallTimelineItem>();
   private readonly pendingCompactions = new Set<string>();
@@ -881,6 +887,7 @@ class AcpRuntime {
 
   private async retireDeferredTurn(active: ActivePrompt, deferredTurnId: string): Promise<boolean> {
     active.cancelling = true;
+    this.stopToolObservers();
     // Record open tools owned by Stop before writing session/cancel so any failure
     // update arriving during cancel preserves their canceled state.
     for (const id of this.liveOpenToolIds) this.canceledToolCallIds.add(id);
@@ -1529,6 +1536,7 @@ class AcpRuntime {
       if (snapshot.status !== "pending" && snapshot.status !== "in_progress") continue;
       if (preserve && this.liveOpenToolIds.has(id) && this.toolKeepsTurnOpen(snapshot)) continue;
       this.liveOpenToolIds.delete(id);
+      this.stopToolObservers(id);
       if (options?.suppressTrailingToolEcho) this.canceledToolCallIds.add(id);
       const completed: AcpToolCallSnapshot = {
         ...snapshot,
@@ -1560,6 +1568,7 @@ class AcpRuntime {
       });
     }
     this.pendingCompactions.clear();
+    this.syncBackgroundWork();
   }
 
   private reduceToolCall(
@@ -1600,8 +1609,9 @@ class AcpRuntime {
         },
       };
     }
-    this.toolCalls.set(snapshot.id, { source, presentation: snapshot });
     const isOpen = snapshot.status === "pending" || snapshot.status === "in_progress";
+    snapshot = preserveRunningShellOutput(snapshot, current, isOpen);
+    this.toolCalls.set(snapshot.id, { source, presentation: snapshot });
     if (this.replayWindow === null) {
       if (isOpen) this.liveOpenToolIds.add(snapshot.id);
       else this.liveOpenToolIds.delete(snapshot.id);
@@ -1611,9 +1621,147 @@ class AcpRuntime {
       sessionId: this.options.boundarySessionId,
       item: toolTimelineItem(snapshot),
     });
+    if (this.replayWindow === null) {
+      this.syncLiveToolState(snapshot, isOpen);
+    }
     const isOpenQualifying =
       this.liveOpenToolIds.has(snapshot.id) && this.toolKeepsTurnOpen(snapshot);
     this.noteDeferredToolTransition(wasOpenQualifying, isOpenQualifying, isOpen, snapshot, wireSeq);
+  }
+
+  private startToolObservers(snapshot: AcpToolCallSnapshot): void {
+    if (this.closing || this.processFailed || this.toolObserverCleanups.has(snapshot.id)) return;
+    const cleanups: Array<() => void> = [];
+    this.toolObserverCleanups.set(snapshot.id, cleanups);
+    const context: AcpToolObserverContext = {
+      sessionId: this.options.boundarySessionId,
+      nativeSessionId: this.nativeSessionId,
+      updateToolCall: (toolCallId, patch) => this.updateLiveToolCall(toolCallId, patch),
+    };
+    for (const transformer of this.transformers) {
+      try {
+        const cleanup = transformer.observeToolCall?.(snapshot, context);
+        if (typeof cleanup === "function") cleanups.push(cleanup);
+      } catch {
+        // Ignore failing observers so earlier registrations and tool updates stay intact.
+      }
+    }
+    if (cleanups.length === 0) this.toolObserverCleanups.delete(snapshot.id);
+  }
+
+  private stopToolObservers(toolCallId?: string): void {
+    if (toolCallId !== undefined) {
+      const cleanups = this.toolObserverCleanups.get(toolCallId);
+      if (cleanups) {
+        this.toolObserverCleanups.delete(toolCallId);
+        for (const cleanup of cleanups) {
+          try {
+            cleanup();
+          } catch {
+            // Ignore cleanup failures during tool shutdown.
+          }
+        }
+      }
+      this.toolBackgroundDescriptions.delete(toolCallId);
+      return;
+    }
+    const entries = [...this.toolObserverCleanups.values()];
+    this.toolObserverCleanups.clear();
+    this.toolBackgroundDescriptions.clear();
+    for (const cleanups of entries) {
+      for (const cleanup of cleanups) {
+        try {
+          cleanup();
+        } catch {
+          // Ignore cleanup failures during session shutdown.
+        }
+      }
+    }
+  }
+
+  private updateLiveToolCall(toolCallId: string, patch: AcpToolCallUpdatePatch): void {
+    if (
+      this.closing ||
+      this.processFailed ||
+      this.deferredRetirement ||
+      this.activePrompt?.cancelling ||
+      !this.liveOpenToolIds.has(toolCallId)
+    ) {
+      return;
+    }
+    const entry = this.toolCalls.get(toolCallId);
+    if (!entry) return;
+    const status = entry.presentation.status;
+    if (status !== "pending" && status !== "in_progress") return;
+    if (patch.detail !== undefined) {
+      entry.presentation = { ...entry.presentation, detail: patch.detail };
+      this.emit({
+        type: "timeline.item",
+        sessionId: this.options.boundarySessionId,
+        item: toolTimelineItem(entry.presentation),
+      });
+    }
+    if (patch.backgroundDescription !== undefined) {
+      this.toolBackgroundDescriptions.set(toolCallId, patch.backgroundDescription);
+      this.syncBackgroundWork();
+    }
+  }
+
+  private syncLiveToolState(snapshot: AcpToolCallSnapshot, isOpen: boolean): void {
+    if (isOpen) this.startToolObservers(snapshot);
+    else this.stopToolObservers(snapshot.id);
+    this.syncBackgroundWork();
+  }
+
+  private syncBackgroundWork(clear = false): void {
+    if (!this.options.options.acpOptions?.deferTurnOnRunningTools) return;
+    if (clear || this.processFailed) {
+      this.emitClearedBackgroundWork(null);
+      return;
+    }
+    if (this.closing) return;
+    const items = this.collectBackgroundWorkItems();
+    if (items.length === 0) {
+      this.emitClearedBackgroundWork([]);
+      return;
+    }
+    if (!this.shouldPublishBackgroundWork()) return;
+    const encoded = JSON.stringify(items);
+    if (encoded === this.lastBackgroundWorkJson) return;
+    this.lastBackgroundWorkJson = encoded;
+    this.emit({
+      type: "session.background_work",
+      sessionId: this.options.boundarySessionId,
+      items,
+    });
+  }
+
+  private emitClearedBackgroundWork(items: [] | null): void {
+    if (this.lastBackgroundWorkJson === null) return;
+    this.lastBackgroundWorkJson = null;
+    this.emit({
+      type: "session.background_work",
+      sessionId: this.options.boundarySessionId,
+      items,
+    });
+  }
+
+  private shouldPublishBackgroundWork(): boolean {
+    return (
+      Boolean(this.activePrompt?.deferred) ||
+      this.toolBackgroundDescriptions.size > 0 ||
+      this.lastBackgroundWorkJson !== null
+    );
+  }
+
+  private collectBackgroundWorkItems(): ProviderBackgroundWorkItem[] {
+    const items: ProviderBackgroundWorkItem[] = [];
+    for (const id of this.liveOpenToolIds) {
+      const snapshot = this.toolCalls.get(id)?.presentation;
+      if (!snapshot || !this.toolKeepsTurnOpen(snapshot)) continue;
+      items.push(toBackgroundWorkItem(snapshot, this.toolBackgroundDescriptions.get(snapshot.id)));
+    }
+    return items;
   }
 
   private vendorNotification(method: string, params: unknown): void {
@@ -1689,6 +1837,8 @@ class AcpRuntime {
   }
 
   private settlePendingWork(failureMessage?: string): void {
+    this.stopToolObservers();
+    this.syncBackgroundWork(true);
     for (const permission of this.permissions.values()) {
       permission.resolve({ outcome: { outcome: "cancelled" } });
     }
@@ -1848,6 +1998,7 @@ class AcpRuntime {
     this.fallbackChunkIds.clear();
     const outcome = await new Promise<DeferredTurnOutcome>((resolve) => {
       active.deferred = { timer: null, resolve };
+      this.syncBackgroundWork();
       this.scheduleDeferredSettle();
     });
     if (this.closing || this.deferredRetirement) return;
@@ -2409,6 +2560,65 @@ function terminalToolItem(
     return { ...item, status: "failed", error: item.error ?? { message: "Turn failed" } };
   }
   return { ...item, status: state, error: null };
+}
+
+function preserveRunningShellOutput(
+  snapshot: AcpToolCallSnapshot,
+  current: AcpToolCallSnapshot | undefined,
+  isOpen: boolean,
+): AcpToolCallSnapshot {
+  if (
+    !isOpen ||
+    current?.detail?.type !== "shell" ||
+    snapshot.detail?.type !== "shell" ||
+    snapshot.detail.output !== undefined ||
+    current.detail.output === undefined
+  ) {
+    return snapshot;
+  }
+  return { ...snapshot, detail: { ...snapshot.detail, output: current.detail.output } };
+}
+
+function toBackgroundWorkItem(
+  snapshot: AcpToolCallSnapshot,
+  customDescription: string | null | undefined,
+): ProviderBackgroundWorkItem {
+  const command =
+    snapshot.detail?.type === "shell"
+      ? snapshot.detail.command
+      : extractCommandString(snapshot.input);
+  const description =
+    customDescription !== undefined ? customDescription : defaultToolDescription(snapshot, command);
+  return {
+    id: snapshot.id,
+    kind: snapshot.detail?.type === "shell" || snapshot.name === "run_command" ? "shell" : "other",
+    description,
+    ...(command ? { command } : {}),
+    canStop: false,
+  };
+}
+
+function extractCommandString(input: unknown): string | undefined {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return undefined;
+  const record = input as Record<string, unknown>;
+  const raw = record.CommandLine ?? record.command ?? record.cmd;
+  return typeof raw === "string" && raw.trim().length > 0 ? raw : undefined;
+}
+
+function defaultToolDescription(
+  snapshot: AcpToolCallSnapshot,
+  command: string | undefined,
+): string | null {
+  if (
+    typeof snapshot.input === "object" &&
+    snapshot.input !== null &&
+    !Array.isArray(snapshot.input)
+  ) {
+    const summary = (snapshot.input as Record<string, unknown>).toolSummary;
+    if (typeof summary === "string" && summary.trim().length > 0) return summary.trim();
+  }
+  const title = snapshot.title.trim();
+  return title.length > 0 && title !== command ? title : null;
 }
 
 function jsonValue(value: unknown) {

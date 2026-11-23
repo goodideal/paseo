@@ -563,6 +563,14 @@ export interface ProviderMetric {
   tone?: "default" | "ok" | "warning" | "danger";
 }
 
+export interface ProviderBackgroundWorkItem {
+  id: string;
+  kind: string;
+  description: string | null;
+  command?: string;
+  canStop?: boolean;
+}
+
 interface ProviderTimelineIdentity {
   id: string;
   revertToken?: JsonValue;
@@ -756,6 +764,11 @@ export type ProviderEvent =
   | { type: "session.permission"; sessionId: string; request: ProviderPermissionRequest }
   | { type: "session.permission_resolved"; sessionId: string; permissionId: string }
   | { type: "session.notice"; sessionId: string; notice: ProviderNotice }
+  | {
+      type: "session.background_work";
+      sessionId: string;
+      items: ProviderBackgroundWorkItem[] | null;
+    }
   | { type: "timeline.item"; sessionId: string; item: ProviderTimelineItem; timestamp?: string };
 
 export function negotiateProviderCapabilities(
@@ -1490,6 +1503,16 @@ const providerPermissionRequestSchema: z.ZodType<ProviderPermissionRequest> = z
   })
   .strip();
 
+const providerBackgroundWorkItemSchema: z.ZodType<ProviderBackgroundWorkItem> = z
+  .object({
+    id: idSchema,
+    kind: z.string().min(1),
+    description: z.string().nullable(),
+    command: z.string().optional(),
+    canStop: z.boolean().optional(),
+  })
+  .strip();
+
 export const ProviderEventSchema: z.ZodType<ProviderEvent> = z.discriminatedUnion("type", [
   z.object({ type: z.literal("catalog"), requestId: idSchema, catalog: catalogSchema }).strip(),
   z
@@ -1628,6 +1651,13 @@ export const ProviderEventSchema: z.ZodType<ProviderEvent> = z.discriminatedUnio
     .strip(),
   z
     .object({ type: z.literal("session.notice"), sessionId: idSchema, notice: noticeSchema })
+    .strip(),
+  z
+    .object({
+      type: z.literal("session.background_work"),
+      sessionId: idSchema,
+      items: z.array(providerBackgroundWorkItemSchema).nullable(),
+    })
     .strip(),
   z
     .object({

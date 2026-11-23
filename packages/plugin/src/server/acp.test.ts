@@ -6723,4 +6723,163 @@ describe("deferTurnOnRunningTools", () => {
     });
     await connection.close();
   });
+
+  it("publishes session.background_work for deferred tools, streams observeToolCall updates, and ignores post-completion patches", async () => {
+    const { connector, instances } = connectorHarness({
+      handleRequest(instance, request) {
+        if (request.method !== "session/prompt") return false;
+        instance.notify("session/update", {
+          sessionId: "connector-session",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "obs-1",
+            name: "run_command",
+            title: "Run OCR review",
+            status: "in_progress",
+            rawInput: { CommandLine: "ocr review", toolSummary: "Run OCR review" },
+          },
+        });
+        instance.respond(request, { stopReason: "end_turn" });
+        return true;
+      },
+    });
+    let triggerPatch: ((output: string, description: string) => void) | null = null;
+    let cleanedUp = false;
+    const registration = runAcpProvider({
+      id: "deferred-observe",
+      label: "Deferred Observe",
+      connector,
+      acpOptions: {
+        deferTurnOnRunningTools: { settleDelayMs: 20, quietLimitMs: 1_000 },
+      },
+      transformers: [
+        {
+          toolCall(call) {
+            if (call.name !== "run_command") return call;
+            const input = call.input as { CommandLine?: string; output?: string };
+            const out = (call.output as { output?: string } | null)?.output;
+            return {
+              ...call,
+              detail: {
+                type: "shell",
+                command: input.CommandLine ?? "",
+                ...(out !== undefined ? { output: out } : {}),
+              },
+            };
+          },
+          observeToolCall(call, context) {
+            expect(context.nativeSessionId).toBe("connector-session");
+            triggerPatch = (output, backgroundDescription) => {
+              context.updateToolCall(call.id, {
+                detail: { type: "shell", command: "ocr review", output },
+                backgroundDescription,
+              });
+            };
+            return () => {
+              cleanedUp = true;
+            };
+          },
+        },
+      ],
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "obs-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "run" }] },
+        },
+      });
+      const initialBg = await waitForEvent(
+        events,
+        (event) => event.type === "session.background_work" && (event.items?.length ?? 0) > 0,
+      );
+      expect(initialBg).toEqual({
+        type: "session.background_work",
+        sessionId: "session-1",
+        items: [
+          {
+            id: "obs-1",
+            kind: "shell",
+            description: "Run OCR review",
+            command: "ocr review",
+            canStop: false,
+          },
+        ],
+      });
+
+      triggerPatch?.("[live] step 1", "Run OCR review · 活跃");
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "obs-1" &&
+          event.item.detail.type === "shell" &&
+          event.item.detail.output === "[live] step 1",
+      );
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.background_work" &&
+          event.items?.[0]?.description === "Run OCR review · 活跃",
+      );
+
+      // Complete the tool with final rawOutput; observer must clean up and background work must clear.
+      instances[1].notify("session/update", {
+        sessionId: "connector-session",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "obs-1",
+          status: "completed",
+          rawOutput: { output: "FINAL OUTPUT" },
+        },
+      });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "obs-1" &&
+          event.item.status === "completed",
+      );
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.background_work" &&
+          Array.isArray(event.items) &&
+          event.items.length === 0,
+      );
+      expect(cleanedUp).toBe(true);
+
+      // Late patch from observer after completion must be ignored.
+      const timelineCountBeforeLatePatch = events.filter(
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "obs-1",
+      ).length;
+      triggerPatch?.("[stale] overwrite attempt", "stale");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const timelineCountAfterLatePatch = events.filter(
+        (event) =>
+          event.type === "timeline.item" &&
+          event.item.type === "tool_call" &&
+          event.item.id === "obs-1",
+      ).length;
+      expect(timelineCountAfterLatePatch).toBe(timelineCountBeforeLatePatch);
+    } finally {
+      await connection.close();
+    }
+  });
 });

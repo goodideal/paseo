@@ -129,6 +129,17 @@ export type AcpVendorUpdate =
   | { type: "timeline"; item: ProviderTimelineItem }
   | { type: "notice"; notice: ProviderNotice };
 
+export interface AcpToolCallUpdatePatch {
+  detail?: ProviderToolCallDetail;
+  /** Omit to leave the current description unchanged; `null` reverts to the runtime default. */
+  backgroundDescription?: string | null;
+}
+
+export interface AcpToolObserverContext extends AcpContext {
+  nativeSessionId: string;
+  updateToolCall(toolCallId: string, patch: AcpToolCallUpdatePatch): void;
+}
+
 export interface AcpTransformer {
   /** Decode an older saved session and supply extension metadata for session/new or session/load. */
   sessionOpen?(context: {
@@ -154,6 +165,11 @@ export interface AcpTransformer {
     toolCall: AcpToolCallSnapshot,
     context: AcpContext & { mcpServerNames?: readonly string[] },
   ): AcpToolCallSnapshot;
+  /** Observe a live running tool call and push throttled detail or background work updates. */
+  observeToolCall?(
+    toolCall: AcpToolCallSnapshot,
+    context: AcpToolObserverContext,
+  ): (() => void) | void;
 }
 
 export function runAcpProvider(options: RunAcpProviderOptions): ProviderRegistration {

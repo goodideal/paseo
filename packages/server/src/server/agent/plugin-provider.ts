@@ -1543,9 +1543,14 @@ class PluginAgentSession implements AgentSession {
     await this.bridge.interrupt();
   }
 
+  private clearBackgroundWork(): AgentStreamEvent {
+    return { type: "background_work", provider: this.provider, items: null };
+  }
+
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    this.emit(this.clearBackgroundWork());
     this.listeners.clear();
     await this.replaying?.catch(() => undefined);
     await this.clearBinding();
@@ -1673,7 +1678,7 @@ class PluginAgentSession implements AgentSession {
   private accept(event: ProviderEvent, live: boolean): void {
     const translated = this.translate(event);
     for (const next of translated) {
-      this.history.push(next);
+      if (next.type !== "background_work") this.history.push(next);
       if (live) this.emit(next);
     }
   }
@@ -1709,10 +1714,21 @@ class PluginAgentSession implements AgentSession {
         return this.translateConfig(event);
       case "session.notice":
         return this.translateNotice(event);
+      case "session.background_work":
+        return [
+          {
+            type: "background_work",
+            provider: this.provider,
+            items: event.items ? event.items.map((item) => ({ ...item })) : null,
+          },
+        ];
       case "session.runtime_failed":
-        return [this.translateFailure(event.error)];
+        return [this.clearBackgroundWork(), this.translateFailure(event.error)];
       case "session.closed":
-        return event.error ? [this.translateFailure(event.error)] : [];
+        return [
+          this.clearBackgroundWork(),
+          ...(event.error ? [this.translateFailure(event.error)] : []),
+        ];
       default:
         return [];
     }

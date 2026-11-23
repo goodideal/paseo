@@ -20,7 +20,7 @@ import { describe, expect, test } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type { AgentClient, AgentStreamEvent } from "./agent-sdk-types.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
-import { AgentManager } from "./agent-manager.js";
+import { AgentManager, type AgentManagerEvent } from "./agent-manager.js";
 import { buildProviderRegistry } from "./provider-registry.js";
 import { ProviderOverrideSchema } from "@getpaseo/protocol/provider-config";
 import { PluginAgentClientRegistry } from "./plugin-provider.js";
@@ -3673,6 +3673,96 @@ test("bounds settings wait when Stop is queued behind an unanswered steer", asyn
     await Promise.all([steerPromise, stopPromise]);
   } finally {
     releaseSteer?.();
+    await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
+    await plugins.shutdown();
+  }
+});
+
+test("bridges session.background_work into AgentBackgroundWorkStore and clears it on session.closed", async () => {
+  const logger = createTestLogger();
+  let emitEvent: ((event: ProviderEvent) => void) | null = null;
+  let sessionId = "";
+  const harness = createProviderHarness({
+    capabilities: ["prompt.message", "session.persistence"],
+    async handleInput(input, emit) {
+      if (input.type === "session.open") {
+        emitEvent = emit;
+        sessionId = input.sessionId;
+        emit({
+          type: "session.opened",
+          requestId: input.requestId,
+          sessionId: input.sessionId,
+          capabilities: ["prompt.message", "session.persistence"],
+          restoration: "core",
+          persistence: { version: 1, data: { id: "bg-1" } },
+          cwd: input.config.cwd,
+        });
+        emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+        return true;
+      }
+      return false;
+    },
+  });
+  const plugins = new PluginAgentClientRegistry(logger);
+  plugins.replace([harness.registration]);
+  const registry = buildProviderRegistry(logger, { pluginProviders: plugins.definitions() });
+  const manager = new AgentManager({
+    logger,
+    clients: { "plugin-direct": registry["plugin-direct"].createClient(logger) },
+    providerDefinitions: { "plugin-direct": registry["plugin-direct"] },
+  });
+  try {
+    const agent = await manager.createAgent(
+      { provider: "plugin-direct", cwd: tmpdir() },
+      undefined,
+      { workspaceId: undefined },
+    );
+    const managerEvents: AgentManagerEvent[] = [];
+    manager.subscribe((event) => managerEvents.push(event), {
+      agentId: agent.id,
+      replayState: false,
+    });
+
+    emitEvent!({
+      type: "session.background_work",
+      sessionId,
+      items: [
+        {
+          id: "cmd-1",
+          kind: "shell",
+          description: "Run OCR · 活跃",
+          command: "ocr review",
+          canStop: false,
+        },
+      ],
+    });
+    await expect
+      .poll(() => manager.listAgentBackgroundWork(agent.id), { timeout: 2_000 })
+      .toEqual([
+        {
+          id: "cmd-1",
+          kind: "shell",
+          description: "Run OCR · 活跃",
+          command: "ocr review",
+          startedAt: expect.any(String),
+        },
+      ]);
+    expect(managerEvents).toContainEqual({
+      type: "background_work",
+      agentId: agent.id,
+      items: [expect.objectContaining({ id: "cmd-1", description: "Run OCR · 活跃" })],
+    });
+
+    emitEvent!({ type: "session.closed", sessionId });
+    await expect
+      .poll(() => manager.listAgentBackgroundWork(agent.id), { timeout: 2_000 })
+      .toEqual([]);
+    expect(managerEvents).toContainEqual({
+      type: "background_work",
+      agentId: agent.id,
+      items: [],
+    });
+  } finally {
     await Promise.all(manager.listAgents().map((item) => manager.closeAgent(item.id)));
     await plugins.shutdown();
   }
