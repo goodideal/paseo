@@ -25,7 +25,7 @@ flowchart TD
 
 ### 1. 四档复杂度阶梯与 `Thinking` 映射
 
-设置版本 `SETTINGS_SCHEMA_VERSION = 5` 将模型路由收敛为单一复杂度/成本维度，并由 `providerThinkingMappings` 为每档独立配置推理深度（`thinkingOptionId`）：
+设置版本 `SETTINGS_SCHEMA_VERSION = 6` 将模型路由收敛为单一复杂度/成本维度，并由 `providerThinkingMappings` 为每档独立配置推理深度（`thinkingOptionId`）；当模型路由发生跨档位切换时，`thinkingOptionId` 随目标档位同步更新：
 
 | 档位         | 倍率 | 自动路由 | Antigravity (`Thinking`)       | Claude (`Thinking`) | Codex (`Thinking`) | OpenCode (`Thinking`)     | Pi (`Thinking`)             |
 | :----------- | :--- | :------- | :----------------------------- | :------------------ | :----------------- | :------------------------ | :-------------------------- |
@@ -94,7 +94,7 @@ flowchart TD
 
 ---
 
-## 配置迁移（v1–v4 -> v5）
+## 配置迁移（v1–v5 -> v6）
 
 `agentHarnessSettings.migrate` 在加载旧版持久化配置时自动执行无损迁移：
 
@@ -103,6 +103,9 @@ flowchart TD
    - 未改动的旧 3 档映射自动升级至 4 档默认值并补全 `providerThinkingMappings`；
    - 通过 `normalizeTierAlias`（`lite -> fast`、`flash -> standard`、`plan | review -> deep`）迁移内置与自定义映射；
    - 保留用户自定义模型与自定义档位（如 `ultra`），并清理废弃的 `gemini-3*` 条目。
+3. **v5 -> v6**：
+   - 升级未自定义的 `ui` 主题/暗黑模式正则与 MCP 列表（移除不存在的 `browser-tools`，对齐 `ui.yaml`）、补全 `general` 的 `sequential-thinking`（对齐 `codex.yaml`）；
+   - 升级未自定义的 `fullstackUiPattern`、`execAction`（覆盖服务启停动作）与 `affirmativeConfirmWords`（补齐 `ok, continue`、`go`），保留用户自定义项。
 
 ---
 

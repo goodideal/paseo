@@ -43,7 +43,13 @@ describe("Agent Harness Profile Sync & Repo Override", () => {
 
     const content = JSON.parse(fs.readFileSync(uiFile, "utf8"));
     expect(content.name).toBe("ui");
-    expect(content.primary_skills).toContain("ui-ux-pro-max");
+    expect(content.primary_skills).toEqual([
+      "ui-ux-pro-max",
+      "unslop",
+      "visual-verdict",
+      "diagnosing-bugs",
+      "pr",
+    ]);
     expect(content.docs_focus).toContain("docs/design.md");
   });
 
@@ -53,7 +59,11 @@ describe("Agent Harness Profile Sync & Repo Override", () => {
       description: "Custom test specialist from disk",
       preferred_provider: "codex",
       default_model: "flash",
-      primary_skills: ["test-gardener"],
+      primary_skills: [
+        "test-gardener",
+        "superpowers:verification-before-completion",
+        "mattpocock-skills:codebase-design",
+      ],
       mcp_servers: ["serena"],
       docs_focus: ["docs/qa.md"],
     };
@@ -77,7 +87,12 @@ describe("Agent Harness Profile Sync & Repo Override", () => {
     const imported = specialists.find((s) => s.id === "custom-tester");
     expect(imported).toBeDefined();
     expect(imported?.preferredProvider).toBe("codex");
-    expect(imported?.primarySkills).toContain("test-gardener");
+    expect(imported?.primarySkills).toEqual([
+      "test-gardener",
+      "tdd",
+      "diagnosing-bugs",
+      "codebase-design",
+    ]);
   });
 
   it("loads repo harness override from .paseo/agent-harness.json", () => {

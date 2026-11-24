@@ -74,6 +74,12 @@ describe("detectMatrixTier", () => {
       expect(result.tier, `Prompt failed to detect standard: "${prompt}"`).toBe("standard");
       expect(result.phase).toBe("exec");
     }
+
+    for (const serviceCmd of ["启动服务", "重启开发服务", "start dev server"]) {
+      const result = detectIntentRoute(serviceCmd);
+      expect(result.tier, `Prompt failed to detect standard: "${serviceCmd}"`).toBe("standard");
+      expect(result.phase).toBe("exec");
+    }
   });
 
   it("detects FAST (exec phase) for lightweight lookups, status checks, and chores", () => {
@@ -348,11 +354,17 @@ describe("detectDomainRole", () => {
       "重构 QuickPrompts 弹窗组件的 Unistyles 样式与 hover 交互",
       "使用 ui-ux-pro-max 和 unslop 优化移动端面板布局",
       "修复 React Native Sheet 滚动折叠与按钮对齐问题",
+      "检查本项目的 dark mode 存在的问题，以及优化方案",
+      "深色模式与主题切换样式优化",
     ];
     for (const text of uiTexts) {
       const result = detectDomainRole({ text });
       expect(result.role, `Failed UI detection for: ${text}`).toBe("ui");
     }
+
+    const darkPlanTier = detectIntentRoute("检查本项目的 dark mode 存在的问题，以及优化方案");
+    expect(darkPlanTier.tier).toBe("deep");
+    expect(darkPlanTier.phase).toBe("design");
   });
 
   it("detects PM role from PRD, user stories, and product discovery keywords", () => {

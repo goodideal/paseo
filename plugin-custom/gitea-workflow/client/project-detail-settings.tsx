@@ -11,7 +11,7 @@ import {
   SettingsAction,
 } from "@getpaseo/plugin/client/ui";
 import type { GiteaProjectDiagnostic } from "../shared/types.js";
-import { getAgentChangeModeOptions } from "./host-settings.js";
+import { getAgentChangeModeOptions, isLegacyWorkflowPolicy } from "./host-settings.js";
 import { PromptEditorField } from "./prompt-editor-field.js";
 import {
   DEFAULT_AGENT_AUTO_PROMPT,
@@ -19,6 +19,21 @@ import {
   DEFAULT_AGENT_REVIEW_PROMPT,
   PROMPT_PLACEHOLDERS,
 } from "../shared/prompts.js";
+
+function getProjectWorkflowPolicyOptions(currentValue?: string) {
+  const options: Array<{ label: string; value: string }> = [
+    { label: "继承全局默认", value: "" },
+    { label: "直通 PR (0 卡点)", value: "direct_pr" },
+    { label: "质询方案确认 (1 卡点 · Grilling)", value: "grill_plan" },
+  ];
+  if (currentValue && isLegacyWorkflowPolicy(currentValue)) {
+    options.push({
+      label: `旧版兼容策略 (${currentValue})`,
+      value: currentValue,
+    });
+  }
+  return options;
+}
 
 export interface ProjectDetailSettingsProps {
   projectId: string;
@@ -82,6 +97,47 @@ export function ProjectDetailSettings({
             }}
           />
           <SettingsSelect
+            label="工作流策略覆盖 (可选)"
+            hint="留空继承全局默认工作流策略"
+            value={projectSettings.workflowPolicyOverride || ""}
+            options={getProjectWorkflowPolicyOptions(projectSettings.workflowPolicyOverride) as any}
+            disabled={settings.saving}
+            onValueChange={(val: string) => {
+              const updated = {
+                ...values.projects,
+                [projectId]: {
+                  ...projectSettings,
+                  workflowPolicyOverride: (val || undefined) as any,
+                },
+              };
+              void settings.save({ ...values, projects: updated }, settings.revision);
+            }}
+          />
+          <SettingsSelect
+            label="Harness 模式覆盖 (可选)"
+            hint="留空继承全局配置"
+            value={projectSettings.harnessModeOverride || ""}
+            options={
+              [
+                { label: "继承全局默认", value: "" },
+                { label: "自动托管 (角色 + 引擎 + 切片)", value: "auto" },
+                { label: "锁定引擎 (仅路由档位与切片)", value: "provider_locked" },
+                { label: "停用联动 (静态配置)", value: "disabled" },
+              ] as any
+            }
+            disabled={settings.saving}
+            onValueChange={(val: string) => {
+              const updated = {
+                ...values.projects,
+                [projectId]: {
+                  ...projectSettings,
+                  harnessModeOverride: val || undefined,
+                },
+              };
+              void settings.save({ ...values, projects: updated }, settings.revision);
+            }}
+          />
+          <SettingsSelect
             label="执行引擎覆盖 (可选)"
             hint="留空继承全局配置"
             value={projectSettings.agentProviderOverride || ""}
@@ -92,6 +148,7 @@ export function ProjectDetailSettings({
                 { label: "Codex", value: "codex" },
                 { label: "Google Antigravity", value: "antigravity" },
                 { label: "OpenCode", value: "opencode" },
+                { label: "Pi", value: "pi" },
               ] as any
             }
             disabled={settings.saving}
@@ -101,7 +158,7 @@ export function ProjectDetailSettings({
               if (val === "claude" && currentMode === "full-access") {
                 nextMode = "bypassPermissions";
               } else if (
-                val === "codex" &&
+                (val === "codex" || val === "pi") &&
                 (currentMode === "bypassPermissions" || currentMode === "acceptEdits")
               ) {
                 nextMode = "full-access";
@@ -112,6 +169,32 @@ export function ProjectDetailSettings({
                   ...projectSettings,
                   agentProviderOverride: val || undefined,
                   agentChangeModeOverride: nextMode || undefined,
+                },
+              };
+              void settings.save({ ...values, projects: updated }, settings.revision);
+            }}
+          />
+          <SettingsSelect
+            label="独立审查引擎覆盖 (可选)"
+            hint="留空时保持 Agent Harness 审查专家异构引擎（默认 Antigravity）"
+            value={projectSettings.reviewProviderOverride || ""}
+            options={
+              [
+                { label: "继承全局默认", value: "" },
+                { label: "Claude Code", value: "claude" },
+                { label: "Codex", value: "codex" },
+                { label: "Google Antigravity", value: "antigravity" },
+                { label: "OpenCode", value: "opencode" },
+                { label: "Pi", value: "pi" },
+              ] as any
+            }
+            disabled={settings.saving}
+            onValueChange={(val: string) => {
+              const updated = {
+                ...values.projects,
+                [projectId]: {
+                  ...projectSettings,
+                  reviewProviderOverride: val || undefined,
                 },
               };
               void settings.save({ ...values, projects: updated }, settings.revision);
@@ -141,7 +224,7 @@ export function ProjectDetailSettings({
           />
           <SettingsInput
             label="模型覆盖 (可选)"
-            hint="留空继承全局配置，如 gemini-flash[1M]、claude-3-7-sonnet"
+            hint="留空时继承全局配置或按 Agent Harness 四档矩阵自动匹配（如 pro、flash、gemini-4-argon）"
             initialValue={projectSettings.agentModelOverride || ""}
             disabled={settings.saving}
             onChangeText={(val: string) => {
@@ -262,6 +345,7 @@ export function ProjectDetailSettings({
                   ...projectSettings,
                   agentAutoPromptOverride: undefined,
                   agentPlanPromptOverride: undefined,
+                  agentReviewPromptOverride: undefined,
                 },
               };
               void settings.save({ ...values, projects: updated }, settings.revision);
@@ -274,11 +358,11 @@ export function ProjectDetailSettings({
         <SettingsCard>
           <SettingsRow
             label="Agent Auto (全自动模式)"
-            hint="在 Issue 添加标签 agent-auto 或 agent:auto。认领后无人值守自动推进方案规划、代码编写、动态测试与 PR 提交，全流程无需干预。"
+            hint="添加 Issue 标签 agent-auto 或 agent:auto。认领后按 TDD 完成编码、测试校验、独立双轴审查（含自动返修）并创建 PR，全程 0 人工卡点。"
           />
           <SettingsRow
             label="Agent Plan (规划审查模式)"
-            hint="在 Issue 添加标签 agent-plan 或 agent:plan。Agent 仅产出架构设计与实施计划，在 Review 面板等待人工审批通过后才开始执行编码。"
+            hint="添加 Issue 标签 agent-plan 或 agent:plan。先输出 Grilling 关键决策质询与模块方案，经单次人工确认后自动完成编码、独立审查与 PR 交付。"
           />
         </SettingsCard>
       </SettingsSection>
@@ -308,6 +392,13 @@ export function ProjectDetailSettings({
               {diagnostic?.connectionStatus || "unknown"}
             </Text>
           </SettingsRow>
+          {diagnostic?.agentTeam ? (
+            <SettingsRow label="工作区 Agent Team">
+              <Text style={mutedColor}>
+                {`${diagnostic.agentTeam.projectSlug} · ${diagnostic.agentTeam.preset} (${diagnostic.agentTeam.rolesCount} 角色)`}
+              </Text>
+            </SettingsRow>
+          ) : null}
           <SettingsAction label="" actionLabel="返回项目列表" onPress={onBack} />
         </SettingsCard>
       </SettingsSection>

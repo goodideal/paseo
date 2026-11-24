@@ -7,7 +7,7 @@ describe("MultiProjectPoller", () => {
       current: { enabled: true, pollIntervalSeconds: 60, maxConcurrentRuns: 3 },
       isProjectAuthorized: vi.fn().mockImplementation((id: string) => id === "proj-auth"),
       getReadyLabel: vi.fn().mockReturnValue("agent-ready"),
-      getWorkflowPolicy: vi.fn().mockReturnValue("full_superpowers"),
+      getWorkflowPolicy: vi.fn().mockReturnValue("direct_pr"),
       getBaseBranch: vi.fn().mockReturnValue("develop"),
     };
     const mockResolver = {
@@ -64,6 +64,8 @@ describe("MultiProjectPoller", () => {
           token: "tok",
           title: "🐞 #101 [Bug] Fix bug",
           baseBranch: "develop",
+          policy: "direct_pr",
+          mode: "auto",
         }),
       }),
     );
@@ -771,6 +773,89 @@ describe("MultiProjectPoller", () => {
       155,
       expect.stringContaining("#### 方案架构建议"),
     );
+  });
+
+  it("routes fallback policies when issue has no explicit agent-auto or agent-plan trigger tag", async () => {
+    const cases: Array<{
+      policy: string;
+      expectedWorkflowId: string;
+      expectedMode: "auto" | "plan";
+    }> = [
+      { policy: "direct_pr", expectedWorkflowId: "gitea.issue-to-pr", expectedMode: "auto" },
+      {
+        policy: "unattended",
+        expectedWorkflowId: "gitea.issue-to-pr.unattended",
+        expectedMode: "auto",
+      },
+      { policy: "grill_plan", expectedWorkflowId: "gitea.issue-to-pr.plan", expectedMode: "plan" },
+      {
+        policy: "issue_preapproved",
+        expectedWorkflowId: "gitea.issue-to-pr.preapproved",
+        expectedMode: "plan",
+      },
+      {
+        policy: "full_superpowers",
+        expectedWorkflowId: "gitea.issue-to-pr.plan",
+        expectedMode: "plan",
+      },
+    ];
+
+    for (const c of cases) {
+      const mockWorkflows = {
+        runCreate: vi.fn().mockResolvedValue({ runId: `run-${c.policy}` }),
+      };
+      const poller = new MultiProjectPoller({
+        settings: {
+          current: { enabled: true, pollIntervalSeconds: 60 },
+          isProjectAuthorized: () => true,
+          getReadyLabel: () => "agent-ready",
+          getWorkflowPolicy: () => c.policy,
+        } as any,
+        resolver: {
+          resolveProject: async () => ({
+            projectId: "proj-policy",
+            baseUrl: "https://gitea.local",
+            token: "tok",
+            repoOwner: "org",
+            repoName: "repo",
+            authSource: "tea",
+          }),
+        } as any,
+        clientPool: {
+          getClient: () => ({
+            fetchReadyIssues: async () => [
+              { number: 500, title: "Policy test", labels: [{ name: "agent-ready" }] },
+            ],
+          }),
+        } as any,
+        indexStore: {
+          getRunIdForIssue: async () => null,
+          recordRun: async () => undefined,
+        } as any,
+        getWorkflows: () => mockWorkflows as any,
+        getProjects: async () => [{ projectId: "proj-policy", projectKind: "git" }] as any,
+        getWorkspaces: () =>
+          ({
+            list: async () => ({
+              entries: [
+                { id: "wks-policy", projectId: "proj-policy", workspaceKind: "local_checkout" },
+              ],
+            }),
+          }) as any,
+      });
+
+      await poller.poll();
+
+      expect(mockWorkflows.runCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workflowId: c.expectedWorkflowId,
+          input: expect.objectContaining({
+            policy: c.policy,
+            mode: c.expectedMode,
+          }),
+        }),
+      );
+    }
   });
 });
 

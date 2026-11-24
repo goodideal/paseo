@@ -21,6 +21,9 @@ import {
 const WRITE_TOOL_NAME_PATTERN =
   /^(?:edit|multiedit|write|notebookedit|apply_patch|write_file|edit_file|replace_in_files|replace_symbol_body|replace_content|patch)$/i;
 
+const PASEO_CREATE_AGENT_TOOL_PATTERN =
+  /^(?:paseo\.create_agent|mcp_+paseo_+create_agent|paseo__create_agent)$/i;
+
 const DEFAULT_DOC_WHITELIST_PATTERN = /\.(?:md|mdx|txt)$/i;
 const OPENSPEC_WHITELIST_PATTERN = /(?:^|[\\/])openspec[\\/]/i;
 
@@ -33,6 +36,8 @@ const EXPLICIT_EXEC_PATTERNS: RegExp[] = [
   /(?:好的[，, ]*)?就?按(?:这个|这套|上述|方案[a-zA-Z0-9_-]*|计划).*(?:改代码|修改|实现|落地|做|写)/i,
   /(?:直接|开始|立即|赶紧)(?:改|写|落地|实现|编写)(?:代码|吧)?/i,
   /(?:开始写代码|改代码吧|写代码吧|实施方案|开始实施|开始实现)/i,
+  // Service startup / operational commands
+  /(?:启动|重启|停止)(?:一下)?(?:开发|本地|前端|后端)?服务|\b(?:start|restart|stop)\s+(?:the\s+)?(?:dev\s+)?server\b/i,
   // English affirmative execution / implementation phrases
   /\b(?:implement(?:\s+it|\s+this(?:\s+plan)?|\s+now)?|go\s+ahead\s+and\s+implement|start\s+implementing|proceed\s+with\s+implementation|let\'s\s+implement|please\s+implement)\b/i,
 ];
@@ -43,8 +48,17 @@ const SHORT_AFFIRMATIVE_EXEC_WORDS = new Set([
   "yes continue",
   "continue",
   "ok",
+  "ok, continue",
+  "ok continue",
   "okay",
+  "okay, continue",
+  "okay continue",
+  "sure, continue",
+  "sure continue",
+  "go",
   "go ahead",
+  "let's go",
+  "lets go",
   "proceed",
   "do it",
   "ship it",
@@ -54,8 +68,14 @@ const SHORT_AFFIRMATIVE_EXEC_WORDS = new Set([
   "好的",
   "好，继续",
   "好的，继续",
+  "好，开始",
+  "好的，开始",
+  "好开始",
+  "好的开始",
   "继续",
   "继续吧",
+  "继续执行",
+  "按方案执行",
   "改吧",
   "写吧",
   "开始",
@@ -73,14 +93,16 @@ const SHORT_AFFIRMATIVE_EXEC_WORDS = new Set([
   "按这个来",
 ]);
 
+function normalizeAffirmativePhrase(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[\s\p{P}\p{S}]+/gu, " ")
+    .trim();
+}
+
 const NORMALIZED_SHORT_AFFIRMATIVE_EXEC_WORDS = new Set<string>();
 for (const word of SHORT_AFFIRMATIVE_EXEC_WORDS) {
-  NORMALIZED_SHORT_AFFIRMATIVE_EXEC_WORDS.add(
-    word
-      .toLowerCase()
-      .replace(/[\s\p{P}\p{S}]+/gu, " ")
-      .trim(),
-  );
+  NORMALIZED_SHORT_AFFIRMATIVE_EXEC_WORDS.add(normalizeAffirmativePhrase(word));
 }
 
 export function hasShortAffirmativeExecConfirmation(
@@ -102,16 +124,18 @@ export function hasShortAffirmativeExecConfirmation(
   }
 
   const lower = trimmed.toLowerCase();
+  const normalized = normalizeAffirmativePhrase(lower);
   if (customWords && customWords.length > 0) {
     for (const w of customWords) {
       if (lower === w.toLowerCase()) return true;
+      const normalizedCustom = normalizeAffirmativePhrase(w);
+      if (normalizedCustom && normalizedCustom === normalized) return true;
     }
   }
 
   if (SHORT_AFFIRMATIVE_EXEC_WORDS.has(lower)) {
     return true;
   }
-  const normalized = lower.replace(/[\s\p{P}\p{S}]+/gu, " ").trim();
   return (
     SHORT_AFFIRMATIVE_EXEC_WORDS.has(normalized) ||
     NORMALIZED_SHORT_AFFIRMATIVE_EXEC_WORDS.has(normalized)
@@ -154,10 +178,22 @@ export function tierToPhase(
   config?: EffectiveHarnessConfig | null,
   explicitPhase?: HarnessPhase,
 ): HarnessPhase {
-  if (tier === "review" || role === "review") {
+  const normRole = role?.trim().toLowerCase() ?? "";
+  if (
+    tier === "review" ||
+    normRole === "review" ||
+    normRole.endsWith("-reviewer") ||
+    normRole.endsWith("-auditor")
+  ) {
     return "review";
   }
-  if (tier === "plan" || role === "pm" || role === "architect") {
+  if (
+    tier === "plan" ||
+    normRole === "pm" ||
+    normRole.endsWith("-pm") ||
+    normRole === "architect" ||
+    normRole.endsWith("-architect")
+  ) {
     return "design";
   }
   if (explicitPhase) {
@@ -482,6 +518,20 @@ export function inspectTurnTimeline(
       handoffInvoked = true;
     }
 
+    if (PASEO_CREATE_AGENT_TOOL_PATTERN.test(toolName)) {
+      const detailInputObj = detail ? parseRecord(detail.input) : null;
+      const candidateInput = detailInputObj ?? inputObj ?? argsObj;
+      const labelsObj = candidateInput ? parseRecord(candidateInput.labels) : null;
+      if (
+        !candidateInput ||
+        Boolean(labelsObj?.role) ||
+        Boolean(labelsObj?.profile) ||
+        labelsObj?.[HARNESS_LEAF_LABEL_KEY] === "1"
+      ) {
+        handoffInvoked = true;
+      }
+    }
+
     const command =
       (detail && typeof detail.command === "string" ? detail.command : "") ||
       (inputObj && typeof inputObj.command === "string" ? inputObj.command : "") ||
@@ -667,6 +717,9 @@ export function evaluateTurnAfterTransition(
 export const HARNESS_BYPASSED_META_KEY = "agentHarnessBypassed" as const;
 export const HARNESS_LEAF_META_KEY = "agentHarnessLeaf" as const;
 export const HARNESS_LEAF_LABEL_KEY = "paseo.harness-leaf" as const;
+export const HARNESS_WORKFLOW_UNATTENDED_LABEL_KEY = "paseo.workflow.unattended" as const;
+export const HARNESS_WORKFLOW_PHASE_LABEL_KEY = "paseo.workflow.phase" as const;
+export const HARNESS_WORKFLOW_TIER_LABEL_KEY = "paseo.workflow.tier" as const;
 
 export function extractSnapshotModel(snapshot: unknown): string | null {
   if (!snapshot || typeof snapshot !== "object") {
@@ -761,7 +814,7 @@ export function reconcileRuntimeHarnessMetadata(params: {
     nextCurrentTier = inferred.isKnownTierModel ? inferred.tier : canonicalCurrentTier;
   }
   const baseThinking = meta.currentThinking ?? null;
-  const nextThinking = baseThinking === null && snapThinking ? snapThinking : baseThinking;
+  const nextThinking = snapThinking ?? baseThinking;
 
   if (
     nextCurrentTier !== meta.currentTier ||

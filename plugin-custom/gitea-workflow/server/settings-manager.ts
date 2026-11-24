@@ -1,6 +1,7 @@
 import type { PluginSettings } from "@getpaseo/plugin/server";
 import {
   GiteaHostSettingsSchema,
+  type GiteaHarnessMode,
   type GiteaHostSettings,
   type GiteaWorkflowPolicy,
 } from "../shared/types.js";
@@ -56,6 +57,27 @@ export class SettingsManager {
     return (
       this._current.projects[projectId]?.workflowPolicyOverride || this._current.workflowPolicy
     );
+  }
+
+  getHarnessMode(projectId?: string): GiteaHarnessMode {
+    if (projectId && this._current.projects[projectId]?.harnessModeOverride) {
+      return this._current.projects[projectId].harnessModeOverride!;
+    }
+    return this._current.harnessMode || "auto";
+  }
+
+  getHasExplicitProviderOverride(projectId?: string): boolean {
+    if (!projectId) return false;
+    const override = this._current.projects[projectId]?.agentProviderOverride;
+    return typeof override === "string" && override.trim().length > 0;
+  }
+
+  getReviewProviderOverride(projectId?: string): string | undefined {
+    if (projectId && this._current.projects[projectId]?.reviewProviderOverride) {
+      const candidate = this._current.projects[projectId].reviewProviderOverride?.trim();
+      if (candidate) return candidate;
+    }
+    return undefined;
   }
 
   getAgentProvider(projectId?: string): string {

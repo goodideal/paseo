@@ -24,7 +24,7 @@ describe("E2E Automated Task to Review Flow (Multi-Project)", () => {
       },
       isProjectAuthorized: vi.fn().mockImplementation((id: string) => id === "proj-ecommerce"),
       getReadyLabel: vi.fn().mockReturnValue("agent-ready"),
-      getWorkflowPolicy: vi.fn().mockReturnValue("full_superpowers"),
+      getWorkflowPolicy: vi.fn().mockReturnValue("direct_pr"),
     };
 
     vi.spyOn(resolver, "resolveProject").mockResolvedValue({
@@ -96,6 +96,7 @@ describe("E2E Automated Task to Review Flow (Multi-Project)", () => {
     expect(createdRuns).toHaveLength(1);
     expect(createdRuns[0].presetId).toBe(issueToPrPreset.workflowId);
     expect(createdRuns[0].input.issueNumber).toBe(1);
+    expect(createdRuns[0].input.mode).toBe("auto");
     expect(await indexStore.hasActiveRunForIssue("proj-ecommerce", "shop", "storefront", 1)).toBe(
       true,
     );

@@ -8,8 +8,11 @@ import {
   hasExplicitExecTransitionIntent,
   inspectTurnTimeline,
   parseHarnessMetadata,
+  reconcileRuntimeHarnessMetadata,
   tierToPhase,
 } from "../shared/lifecycle-state.js";
+import { resolveEffectiveHarnessConfig } from "../shared/config-resolver.js";
+import { DEFAULT_AGENT_HARNESS_SETTINGS } from "../shared/settings.js";
 import {
   HARNESS_METADATA_KEY,
   HARNESS_METADATA_VERSION,
@@ -34,6 +37,16 @@ describe("lifecycle-state", () => {
       expect(tierToPhase("review", "general")).toBe("review");
       expect(tierToPhase("review", "review")).toBe("review");
       expect(tierToPhase("plan", "review")).toBe("review");
+      expect(tierToPhase("deep", "be-reviewer")).toBe("review");
+      expect(tierToPhase("deep", "fe-reviewer")).toBe("review");
+      expect(tierToPhase("deep", "ops-auditor")).toBe("review");
+    });
+
+    it("maps agent-team architect and pm suffixed roles to design phase", () => {
+      expect(tierToPhase("deep", "fe-architect")).toBe("design");
+      expect(tierToPhase("deep", "be-architect")).toBe("design");
+      expect(tierToPhase("deep", "fe-pm")).toBe("design");
+      expect(tierToPhase("standard", "be-developer", null, "design")).toBe("design");
     });
   });
 
@@ -280,6 +293,41 @@ describe("lifecycle-state", () => {
       ];
       expect(inspectTurnTimeline(itemsArgsJson).detectedCodeWrite).toBe(true);
     });
+
+    it("detects Antigravity paseo.create_agent and mcp_paseo_create_agent specialist spawns as handoffs", () => {
+      const mappedAgyCall = [
+        { type: "user_message", text: "ok, continue" },
+        {
+          type: "tool_call",
+          name: "paseo.create_agent",
+          detail: {
+            type: "unknown",
+            input: { labels: { role: "ui" } },
+          },
+        },
+      ];
+      expect(inspectTurnTimeline(mappedAgyCall).handoffInvoked).toBe(true);
+
+      const rawMcpLeafCall = [
+        { type: "user_message", text: "开始审查" },
+        {
+          type: "tool_call",
+          name: "mcp_paseo_create_agent",
+          input: { labels: { "paseo.harness-leaf": "1" } },
+        },
+      ];
+      expect(inspectTurnTimeline(rawMcpLeafCall).handoffInvoked).toBe(true);
+
+      const nonHarnessSpawn = [
+        { type: "user_message", text: "create helper" },
+        {
+          type: "tool_call",
+          name: "mcp_paseo_create_agent",
+          input: { labels: { custom: "helper" } },
+        },
+      ];
+      expect(inspectTurnTimeline(nonHarnessSpawn).handoffInvoked).toBe(false);
+    });
   });
 
   describe("hasExplicitExecTransitionIntent", () => {
@@ -291,6 +339,8 @@ describe("lifecycle-state", () => {
       expect(hasExplicitExecTransitionIntent("直接落地")).toBe(true);
       expect(hasExplicitExecTransitionIntent("开始写代码")).toBe(true);
       expect(hasExplicitExecTransitionIntent("开始实施吧")).toBe(true);
+      expect(hasExplicitExecTransitionIntent("启动服务")).toBe(true);
+      expect(hasExplicitExecTransitionIntent("重启开发服务")).toBe(true);
     });
 
     it("recognizes English exec transition phrases", () => {
@@ -298,6 +348,7 @@ describe("lifecycle-state", () => {
       expect(hasExplicitExecTransitionIntent("implement this plan")).toBe(true);
       expect(hasExplicitExecTransitionIntent("go ahead and implement")).toBe(true);
       expect(hasExplicitExecTransitionIntent("start implementing")).toBe(true);
+      expect(hasExplicitExecTransitionIntent("start dev server")).toBe(true);
     });
 
     it("recognizes conventional commit prefixes", () => {
@@ -717,8 +768,14 @@ describe("lifecycle-state", () => {
         "yes continue",
         "continue",
         "ok",
+        "ok, continue",
+        "ok continue",
         "okay",
+        "okay, continue",
+        "sure, continue",
+        "go",
         "go ahead",
+        "let's go",
         "proceed",
         "do it",
         "ship it",
@@ -730,6 +787,7 @@ describe("lifecycle-state", () => {
         expect(hasShortAffirmativeExecConfirmation(w.toUpperCase(), 1)).toBe(true);
         expect(hasShortAffirmativeExecConfirmation(w + "!", 2)).toBe(true);
       }
+      expect(hasShortAffirmativeExecConfirmation("ok continue!", 1, ["ok, continue"])).toBe(true);
     });
 
     it("matches Chinese short affirmative words", () => {
@@ -738,8 +796,12 @@ describe("lifecycle-state", () => {
         "好的",
         "好，继续",
         "好的，继续",
+        "好，开始",
+        "好的，开始",
         "继续",
         "继续吧",
+        "继续执行",
+        "按方案执行",
         "改吧",
         "写吧",
         "开始",
@@ -905,6 +967,33 @@ describe("lifecycle-state", () => {
       expect(result.nextMeta.currentTier).toBe("standard");
       expect(result.nextMeta.lastBilledTier).toBe("standard");
       expect(result.nextMeta.lastBilledModel).toBe("claude-3-5-haiku");
+    });
+
+    it("reconciles drifted runtime thinkingOptionId even when snapshot model matches metadata", () => {
+      const config = resolveEffectiveHarnessConfig(DEFAULT_AGENT_HARNESS_SETTINGS);
+      const meta = createInitialHarnessMetadata({
+        role: "general",
+        tier: "deep",
+        phase: "design",
+        model: "gemini-4-carbon",
+        thinkingOptionId: "high",
+        roleMatchedRule: "default_general",
+        tierMatchedRule: "plan",
+      });
+
+      const reconciled = reconcileRuntimeHarnessMetadata({
+        meta,
+        snapshot: {
+          model: "gemini-4-carbon",
+          thinkingOptionId: "medium",
+          runtimeInfo: { model: "gemini-4-carbon", thinkingOptionId: "medium" },
+        },
+        provider: "antigravity",
+        config,
+      });
+
+      expect(reconciled.changed).toBe(true);
+      expect(reconciled.meta.currentThinking).toBe("medium");
     });
   });
 });

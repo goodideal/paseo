@@ -32,7 +32,7 @@ describe("Agent Harness v2 Config & Extensibility", () => {
       handoffTitlePrefix: "[Rust]",
       handoffDefaultPrompt: "Optimize unsafe blocks and memory layout.",
       syncToDaemonProfile: true,
-      primarySkills: ["mattpocock-skills:codebase-design"],
+      primarySkills: ["codebase-design"],
       mandatorySkillActivation: true,
       docsFocus: ["docs/architecture.md"],
       qualityGates: ["memory-safety"],

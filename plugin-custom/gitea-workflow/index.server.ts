@@ -83,9 +83,14 @@ export default function contribute(server: PluginServerContext) {
 
   const clientPool = new GiteaClientPool();
   const resolver = new ProjectGiteaResolver();
-  const diagnosticsService = new DiagnosticsService(resolver, clientPool, settingsManager);
   let activePaseo: PaseoApi | null = null;
   let paseoClient: PaseoClient | null = null;
+  const diagnosticsService = new DiagnosticsService(
+    resolver,
+    clientPool,
+    settingsManager,
+    () => paseoClient ?? activePaseo,
+  );
 
   const stepAdapters = createGiteaStepAdapters(clientPool, indexStore, settingsManager);
   const stepJobRunner = new WorkflowStepJobRunner(stepAdapters);
@@ -277,8 +282,11 @@ export default function contribute(server: PluginServerContext) {
     } catch {
       // fallback if project list is pending
     }
-    const diagnostics = await diagnosticsService.diagnoseProjects(projects);
-    return { diagnostics };
+    const [diagnostics, harnessStatus] = await Promise.all([
+      diagnosticsService.diagnoseProjects(projects, context.paseo),
+      diagnosticsService.probeHarnessStatus(context.paseo),
+    ]);
+    return { diagnostics, harnessStatus };
   });
 
   server.handle(pruneEvidenceRpc, async ({ olderThanDays }) => {

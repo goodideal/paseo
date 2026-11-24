@@ -95,7 +95,7 @@ describe("HostSettingsScreen", () => {
         maxConcurrentRuns: 3,
         maxAutomaticRepairCycles: 2,
         automationProfile: "claude-code",
-        workflowPolicy: "full_superpowers" as const,
+        workflowPolicy: "direct_pr" as const,
         projects: {},
         inProgressLabel: "agent-in-progress",
         reviewedLabel: "agent-reviewed",
@@ -138,7 +138,7 @@ describe("HostSettingsScreen", () => {
         maxConcurrentRuns: 3,
         maxAutomaticRepairCycles: 2,
         automationProfile: "claude-code",
-        workflowPolicy: "full_superpowers" as const,
+        workflowPolicy: "direct_pr" as const,
         projects: {},
         inProgressLabel: "agent-in-progress",
         reviewedLabel: "agent-reviewed",
@@ -215,7 +215,7 @@ describe("HostSettingsScreen", () => {
         agentProvider: "codex",
         agentModel: "",
         agentChangeMode: "auto",
-        workflowPolicy: "full_superpowers" as const,
+        workflowPolicy: "direct_pr" as const,
         projects: {},
         inProgressLabel: "agent-in-progress",
         reviewedLabel: "agent-reviewed",
@@ -264,7 +264,7 @@ describe("HostSettingsScreen", () => {
         maxConcurrentRuns: 3,
         maxAutomaticRepairCycles: 2,
         automationProfile: "claude-code",
-        workflowPolicy: "full_superpowers" as const,
+        workflowPolicy: "direct_pr" as const,
         agentAutoPrompt: "Initial custom auto",
         agentPlanPrompt: "Initial custom plan",
         projects: {},
@@ -318,7 +318,7 @@ describe("HostSettingsScreen", () => {
         maxConcurrentRuns: 3,
         maxAutomaticRepairCycles: 2,
         automationProfile: "claude-code",
-        workflowPolicy: "full_superpowers" as const,
+        workflowPolicy: "direct_pr" as const,
         agentAutoPrompt: "Modified custom auto",
         agentPlanPrompt: "Modified custom plan",
         projects: {},
@@ -355,6 +355,186 @@ describe("HostSettingsScreen", () => {
     fireEvent.click(resetPlanBtn);
     expect(mockSave).toHaveBeenCalledWith(
       expect.objectContaining({ agentPlanPrompt: DEFAULT_AGENT_PLAN_PROMPT }),
+      "rev-1",
+    );
+  });
+
+  it("renders harnessMode selector, harnessStatus row, Pi provider, and agentTeam suffix in HostSettingsScreen", async () => {
+    const mockSave = vi.fn().mockResolvedValue(true);
+    const mockSettings = {
+      status: "ready" as const,
+      values: {
+        enabled: true,
+        pollIntervalSeconds: 60,
+        maxConcurrentRuns: 3,
+        maxAutomaticRepairCycles: 2,
+        automationProfile: "claude-code",
+        harnessMode: "auto" as const,
+        agentProvider: "claude",
+        agentModel: "",
+        agentChangeMode: "auto",
+        workflowPolicy: "direct_pr" as const,
+        projects: {},
+        inProgressLabel: "agent-in-progress",
+        reviewedLabel: "agent-reviewed",
+        evidenceRetentionDays: 90,
+      },
+      revision: "rev-1",
+      saving: false,
+      save: mockSave,
+      reload: vi.fn(),
+      reset: vi.fn(),
+    };
+
+    const mockRpc = vi.fn().mockResolvedValue({
+      diagnostics: [
+        {
+          projectId: "prj_team",
+          projectName: "team-service",
+          host: "gitea.local",
+          baseUrl: "http://gitea.local",
+          repoOwner: "corp",
+          repoName: "team-service",
+          connectionStatus: "connected",
+          authSource: "tea",
+          authorized: true,
+          readyLabel: "agent-ready",
+          pendingIssueCount: 2,
+          agentTeam: {
+            projectSlug: "corp-team-service",
+            preset: "fullstack",
+            rolesCount: 5,
+          },
+        },
+      ],
+      harnessStatus: {
+        available: true,
+        enabled: true,
+        specialistsCount: 8,
+      },
+    });
+    const mockUseRpc = vi.fn().mockReturnValue(mockRpc);
+
+    render(
+      <HostSettingsScreen
+        theme={{ colors: { foreground: "#000", surface0: "#fff" } } as any}
+        host={{ id: "h1", label: "Local" }}
+        layout={{ compact: false, platform: "web" }}
+        settingsOverride={mockSettings as any}
+        useRpcHook={mockUseRpc as any}
+      />,
+    );
+
+    expect(await screen.findByText("team-service")).toBeDefined();
+    expect(screen.getByText("已连接 (tea) · 2 个待办 · Team: fullstack (5)")).toBeDefined();
+    expect(screen.getByText("Agent Harness 状态")).toBeDefined();
+    expect(screen.getByText("已连接 · 8 个专家角色就绪")).toBeDefined();
+
+    const harnessSelect = screen.getByLabelText("Agent Harness 编排模式");
+    fireEvent.change(harnessSelect, { target: { value: "provider_locked" } });
+    expect(mockSave).toHaveBeenCalledWith(
+      expect.objectContaining({ harnessMode: "provider_locked" }),
+      "rev-1",
+    );
+
+    const providerSelect = screen.getByLabelText("Agent 引擎");
+    fireEvent.change(providerSelect, { target: { value: "pi" } });
+    expect(mockSave).toHaveBeenCalledWith(
+      expect.objectContaining({ agentProvider: "pi" }),
+      "rev-1",
+    );
+  });
+
+  it("allows selecting grill_plan in workflowPolicy and updating maxAutomaticRepairCycles", () => {
+    const mockSave = vi.fn().mockResolvedValue(true);
+    const mockSettings = {
+      status: "ready" as const,
+      values: {
+        enabled: true,
+        pollIntervalSeconds: 60,
+        maxConcurrentRuns: 3,
+        maxAutomaticRepairCycles: 2,
+        automationProfile: "claude-code",
+        workflowPolicy: "direct_pr" as const,
+        projects: {},
+        inProgressLabel: "agent-in-progress",
+        reviewedLabel: "agent-reviewed",
+        evidenceRetentionDays: 90,
+      },
+      revision: "rev-1",
+      saving: false,
+      saveError: null,
+      save: mockSave,
+      reload: vi.fn(),
+      reset: vi.fn(),
+    };
+
+    render(
+      <HostSettingsScreen
+        theme={{ colors: { foreground: "#000", surface0: "#fff" } } as any}
+        host={{ id: "h1", label: "Local" }}
+        layout={{ compact: false, platform: "web" }}
+        settingsOverride={mockSettings as any}
+        diagnosticsOverride={[]}
+      />,
+    );
+
+    const policySelect = screen.getByLabelText("默认工作流策略");
+    fireEvent.change(policySelect, { target: { value: "grill_plan" } });
+    expect(mockSave).toHaveBeenCalledWith(
+      expect.objectContaining({ workflowPolicy: "grill_plan" }),
+      "rev-1",
+    );
+
+    const repairSelect = screen.getByLabelText("自动返修轮数上限");
+    fireEvent.change(repairSelect, { target: { value: "3" } });
+    expect(mockSave).toHaveBeenCalledWith(
+      expect.objectContaining({ maxAutomaticRepairCycles: 3 }),
+      "rev-1",
+    );
+  });
+
+  it("renders legacy workflowPolicy full_superpowers gracefully and allows switching to direct_pr", () => {
+    const mockSave = vi.fn().mockResolvedValue(true);
+    const mockSettings = {
+      status: "ready" as const,
+      values: {
+        enabled: true,
+        pollIntervalSeconds: 60,
+        maxConcurrentRuns: 3,
+        maxAutomaticRepairCycles: 2,
+        automationProfile: "claude-code",
+        workflowPolicy: "full_superpowers" as any,
+        projects: {},
+        inProgressLabel: "agent-in-progress",
+        reviewedLabel: "agent-reviewed",
+        evidenceRetentionDays: 90,
+      },
+      revision: "rev-1",
+      saving: false,
+      saveError: null,
+      save: mockSave,
+      reload: vi.fn(),
+      reset: vi.fn(),
+    };
+
+    render(
+      <HostSettingsScreen
+        theme={{ colors: { foreground: "#000", surface0: "#fff" } } as any}
+        host={{ id: "h1", label: "Local" }}
+        layout={{ compact: false, platform: "web" }}
+        settingsOverride={mockSettings as any}
+        diagnosticsOverride={[]}
+      />,
+    );
+
+    expect(screen.getByText("旧版兼容策略 (full_superpowers)")).toBeDefined();
+    const policySelect = screen.getByLabelText("默认工作流策略") as HTMLSelectElement;
+    expect(policySelect.value).toBe("full_superpowers");
+
+    fireEvent.change(policySelect, { target: { value: "direct_pr" } });
+    expect(mockSave).toHaveBeenCalledWith(
+      expect.objectContaining({ workflowPolicy: "direct_pr" }),
       "rev-1",
     );
   });
@@ -618,6 +798,136 @@ describe("HostSettingsScreen", () => {
             "proj-1": expect.objectContaining({
               agentAutoPromptOverride: undefined,
               agentPlanPromptOverride: undefined,
+              agentReviewPromptOverride: undefined,
+            }),
+          }),
+        }),
+        "rev-1",
+      );
+    });
+
+    it("renders workflowPolicyOverride selector in ProjectDetailSettings and saves grill_plan", () => {
+      const mockSave = vi.fn().mockResolvedValue(true);
+      const mockSettings = {
+        values: {
+          projects: {
+            "proj-1": {
+              enabled: true,
+              readyLabel: "agent-ready",
+            },
+          },
+        },
+        revision: "rev-1",
+        saving: false,
+        save: mockSave,
+      };
+
+      render(
+        <ProjectDetailSettings
+          projectId="proj-1"
+          settings={mockSettings}
+          theme={
+            {
+              colors: {
+                foreground: "#000",
+                foregroundMuted: "#888",
+                statusSuccess: "green",
+                statusDanger: "red",
+              },
+            } as any
+          }
+          onBack={vi.fn()}
+        />,
+      );
+
+      const policyOverrideSelect = screen.getByLabelText("工作流策略覆盖 (可选)");
+      fireEvent.change(policyOverrideSelect, { target: { value: "grill_plan" } });
+      expect(mockSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projects: expect.objectContaining({
+            "proj-1": expect.objectContaining({
+              workflowPolicyOverride: "grill_plan",
+            }),
+          }),
+        }),
+        "rev-1",
+      );
+    });
+
+    it("renders harnessModeOverride, reviewProviderOverride, and agentTeam diagnostic row in ProjectDetailSettings", () => {
+      const mockSave = vi.fn().mockResolvedValue(true);
+      const mockSettings = {
+        values: {
+          projects: {
+            "proj-1": {
+              enabled: true,
+              readyLabel: "agent-ready",
+            },
+          },
+        },
+        revision: "rev-1",
+        saving: false,
+        save: mockSave,
+      };
+
+      render(
+        <ProjectDetailSettings
+          projectId="proj-1"
+          diagnostic={{
+            projectId: "proj-1",
+            projectName: "My Project",
+            host: "gitea.local",
+            baseUrl: "http://gitea.local",
+            repoOwner: "org",
+            repoName: "my-project",
+            connectionStatus: "connected",
+            authSource: "tea",
+            authorized: true,
+            readyLabel: "agent-ready",
+            agentTeam: {
+              projectSlug: "org-my-project",
+              preset: "backend-heavy",
+              rolesCount: 4,
+            },
+          }}
+          settings={mockSettings}
+          theme={
+            {
+              colors: {
+                foreground: "#000",
+                foregroundMuted: "#888",
+                statusSuccess: "green",
+                statusDanger: "red",
+              },
+            } as any
+          }
+          onBack={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByText("工作区 Agent Team")).toBeDefined();
+      expect(screen.getByText("org-my-project · backend-heavy (4 角色)")).toBeDefined();
+
+      const harnessOverrideSelect = screen.getByLabelText("Harness 模式覆盖 (可选)");
+      fireEvent.change(harnessOverrideSelect, { target: { value: "disabled" } });
+      expect(mockSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projects: expect.objectContaining({
+            "proj-1": expect.objectContaining({
+              harnessModeOverride: "disabled",
+            }),
+          }),
+        }),
+        "rev-1",
+      );
+
+      const reviewProviderSelect = screen.getByLabelText("独立审查引擎覆盖 (可选)");
+      fireEvent.change(reviewProviderSelect, { target: { value: "antigravity" } });
+      expect(mockSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projects: expect.objectContaining({
+            "proj-1": expect.objectContaining({
+              reviewProviderOverride: "antigravity",
             }),
           }),
         }),

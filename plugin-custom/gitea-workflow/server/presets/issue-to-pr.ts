@@ -12,7 +12,7 @@ interface StepDefinition {
   approval: "required" | "automatic";
 }
 
-export function buildGiteaWorkflowDefinition(strategy: GiteaWorkflowPolicy = "full_superpowers") {
+export function buildDirectPrWorkflowDefinition(workflowId = "gitea.issue-to-pr") {
   const steps: StepDefinition[] = [
     {
       id: "fetch-issue",
@@ -40,205 +40,39 @@ export function buildGiteaWorkflowDefinition(strategy: GiteaWorkflowPolicy = "fu
       concurrency: 1,
       approval: "automatic",
     },
-  ];
-
-  if (strategy === "full_superpowers") {
-    steps.push(
-      {
-        id: "brainstorm-agent",
-        type: "gitea.agent_execute",
-        dependsOn: ["worktree-create"],
-        input: { phase: "brainstorm" },
-        timeoutMs: 30 * 60 * 1000,
-        retries: 0,
-        concurrency: 1,
-        approval: "automatic",
-      },
-      {
-        id: "design-approval",
-        type: "approval.wait",
-        dependsOn: ["brainstorm-agent"],
-        input: { reason: "Design proposal requires human approval" },
-        timeoutMs: 60 * 60 * 1000,
-        retries: 0,
-        concurrency: 1,
-        approval: "required",
-      },
-      {
-        id: "spec-agent",
-        type: "gitea.agent_execute",
-        dependsOn: ["design-approval"],
-        input: { phase: "spec" },
-        timeoutMs: 30 * 60 * 1000,
-        retries: 0,
-        concurrency: 1,
-        approval: "automatic",
-      },
-      {
-        id: "spec-approval",
-        type: "approval.wait",
-        dependsOn: ["spec-agent"],
-        input: { reason: "Design spec requires human approval" },
-        timeoutMs: 60 * 60 * 1000,
-        retries: 0,
-        concurrency: 1,
-        approval: "required",
-      },
-      {
-        id: "plan-agent",
-        type: "gitea.agent_execute",
-        dependsOn: ["spec-approval"],
-        input: { phase: "plan" },
-        timeoutMs: 30 * 60 * 1000,
-        retries: 0,
-        concurrency: 1,
-        approval: "automatic",
-      },
-      {
-        id: "plan-approval",
-        type: "approval.wait",
-        dependsOn: ["plan-agent"],
-        input: { reason: "Implementation plan requires human approval" },
-        timeoutMs: 60 * 60 * 1000,
-        retries: 0,
-        concurrency: 1,
-        approval: "required",
-      },
-      {
-        id: "implement-agent",
-        type: "gitea.agent_execute",
-        dependsOn: ["plan-approval"],
-        input: { phase: "implement" },
-        timeoutMs: 60 * 60 * 1000,
-        retries: 0,
-        concurrency: 1,
-        approval: "automatic",
-      },
-    );
-  } else if (strategy === "issue_preapproved") {
-    steps.push(
-      {
-        id: "plan-agent",
-        type: "gitea.agent_execute",
-        dependsOn: ["worktree-create"],
-        input: { phase: "plan" },
-        timeoutMs: 30 * 60 * 1000,
-        retries: 0,
-        concurrency: 1,
-        approval: "automatic",
-      },
-      {
-        id: "plan-approval",
-        type: "approval.wait",
-        dependsOn: ["plan-agent"],
-        input: { reason: "Implementation plan requires human approval" },
-        timeoutMs: 60 * 60 * 1000,
-        retries: 0,
-        concurrency: 1,
-        approval: "required",
-      },
-      {
-        id: "implement-agent",
-        type: "gitea.agent_execute",
-        dependsOn: ["plan-approval"],
-        input: { phase: "implement" },
-        timeoutMs: 60 * 60 * 1000,
-        retries: 0,
-        concurrency: 1,
-        approval: "automatic",
-      },
-    );
-  } else {
-    // unattended strategy: proceed without intermediate approval pauses
-    steps.push(
-      {
-        id: "plan-agent",
-        type: "gitea.agent_execute",
-        dependsOn: ["worktree-create"],
-        input: { phase: "plan" },
-        timeoutMs: 30 * 60 * 1000,
-        retries: 0,
-        concurrency: 1,
-        approval: "automatic",
-      },
-      {
-        id: "implement-agent",
-        type: "gitea.agent_execute",
-        dependsOn: ["plan-agent"],
-        input: { phase: "implement" },
-        timeoutMs: 60 * 60 * 1000,
-        retries: 0,
-        concurrency: 1,
-        approval: "automatic",
-      },
-    );
-  }
-
-  // Final verification, independent review, manifest gate and delivery
-  steps.push(
     {
-      id: "verify-command",
-      type: "verify.command",
-      dependsOn: ["implement-agent"],
-      input: { verificationProfile: "unit-test" },
-      timeoutMs: 15 * 60 * 1000,
-      retries: 1,
+      id: "implement-agent",
+      type: "gitea.agent_execute",
+      dependsOn: ["worktree-create"],
+      input: { phase: "auto_design", timeoutMs: 45 * 60 * 1000 },
+      timeoutMs: 45 * 60 * 1000,
+      retries: 0,
       concurrency: 1,
       approval: "automatic",
     },
     {
       id: "independent-review",
-      type: "gitea.agent_execute",
-      dependsOn: ["verify-command"],
-      input: { phase: "review" },
-      timeoutMs: 30 * 60 * 1000,
+      type: "gitea.quality_gate",
+      dependsOn: ["implement-agent"],
+      timeoutMs: 45 * 60 * 1000,
       retries: 0,
       concurrency: 1,
       approval: "automatic",
     },
     {
-      id: "resolve-delivery",
-      type: "gitea.resolve_delivery",
+      id: "deliver-pr",
+      type: "gitea.deliver_pr",
       dependsOn: ["independent-review"],
-      timeoutMs: 30_000,
-      retries: 0,
-      concurrency: 1,
-      approval: "automatic",
-    },
-    {
-      id: "delivery-approval",
-      type: "approval.wait",
-      dependsOn: ["resolve-delivery"],
-      input: { reason: "Final delivery requires human approval" },
-      timeoutMs: 60 * 60 * 1000,
-      retries: 0,
-      concurrency: 1,
-      approval: "required",
-    },
-    {
-      id: "git-push",
-      type: "git.push",
-      dependsOn: ["delivery-approval"],
-      timeoutMs: 60_000,
+      timeoutMs: 120_000,
       retries: 1,
       concurrency: 1,
       approval: "automatic",
     },
-    {
-      id: "git-create-pr",
-      type: "git.create_pr",
-      dependsOn: ["git-push"],
-      input: { title: "Automated implementation for issue" },
-      timeoutMs: 60_000,
-      retries: 1,
-      concurrency: 1,
-      approval: "automatic",
-    },
-  );
+  ];
 
   return {
-    id: `gitea.issue-to-pr${strategy === "full_superpowers" ? "" : `.${strategy.replace("issue_", "")}`}`,
-    revision: "1",
+    id: workflowId,
+    revision: "2",
     maxConcurrency: 1,
     maxArtifactBytes: 10 * 1024 * 1024,
     steps,
@@ -246,103 +80,10 @@ export function buildGiteaWorkflowDefinition(strategy: GiteaWorkflowPolicy = "fu
 }
 
 export function buildAutoWorkflowDefinition() {
-  const steps: StepDefinition[] = [
-    {
-      id: "fetch-issue",
-      type: "gitea.fetch_issue",
-      timeoutMs: 30_000,
-      retries: 2,
-      concurrency: 1,
-      approval: "automatic",
-    },
-    {
-      id: "claim-issue",
-      type: "gitea.claim_issue",
-      dependsOn: ["fetch-issue"],
-      timeoutMs: 30_000,
-      retries: 1,
-      concurrency: 1,
-      approval: "automatic",
-    },
-    {
-      id: "worktree-create",
-      type: "worktree.create",
-      dependsOn: ["claim-issue"],
-      timeoutMs: 60_000,
-      retries: 1,
-      concurrency: 1,
-      approval: "automatic",
-    },
-    {
-      id: "auto-design",
-      type: "gitea.agent_execute",
-      dependsOn: ["worktree-create"],
-      input: { phase: "auto_design", timeoutMs: 30 * 60 * 1000 },
-      timeoutMs: 30 * 60 * 1000,
-      retries: 0,
-      concurrency: 1,
-      approval: "automatic",
-    },
-    {
-      id: "verify-command",
-      type: "verify.command",
-      dependsOn: ["auto-design"],
-      input: { verificationProfile: "unit-test" },
-      timeoutMs: 15 * 60 * 1000,
-      retries: 1,
-      concurrency: 1,
-      approval: "automatic",
-    },
-    {
-      id: "independent-review",
-      type: "gitea.agent_execute",
-      dependsOn: ["verify-command"],
-      input: { phase: "review", timeoutMs: 30 * 60 * 1000 },
-      timeoutMs: 30 * 60 * 1000,
-      retries: 0,
-      concurrency: 1,
-      approval: "automatic",
-    },
-    {
-      id: "resolve-delivery",
-      type: "gitea.resolve_delivery",
-      dependsOn: ["independent-review"],
-      timeoutMs: 30_000,
-      retries: 0,
-      concurrency: 1,
-      approval: "automatic",
-    },
-    {
-      id: "git-push",
-      type: "git.push",
-      dependsOn: ["resolve-delivery"],
-      timeoutMs: 60_000,
-      retries: 1,
-      concurrency: 1,
-      approval: "automatic",
-    },
-    {
-      id: "git-create-pr",
-      type: "git.create_pr",
-      dependsOn: ["git-push"],
-      input: { title: "Automated implementation for issue" },
-      timeoutMs: 60_000,
-      retries: 1,
-      concurrency: 1,
-      approval: "automatic",
-    },
-  ];
-
-  return {
-    id: "gitea.issue-to-pr.auto",
-    revision: "1",
-    maxConcurrency: 1,
-    maxArtifactBytes: 10 * 1024 * 1024,
-    steps,
-  };
+  return buildDirectPrWorkflowDefinition("gitea.issue-to-pr.auto");
 }
 
-export function buildPlanWorkflowDefinition() {
+export function buildPlanWorkflowDefinition(workflowId = "gitea.issue-to-pr.plan") {
   const steps: StepDefinition[] = [
     {
       id: "fetch-issue",
@@ -369,51 +110,11 @@ export function buildPlanWorkflowDefinition() {
       retries: 1,
       concurrency: 1,
       approval: "automatic",
-    },
-    {
-      id: "brainstorm-agent",
-      type: "gitea.agent_execute",
-      dependsOn: ["worktree-create"],
-      input: { phase: "brainstorm", timeoutMs: 30 * 60 * 1000 },
-      timeoutMs: 30 * 60 * 1000,
-      retries: 0,
-      concurrency: 1,
-      approval: "automatic",
-    },
-    {
-      id: "gate-brainstorm",
-      type: "approval.wait",
-      dependsOn: ["brainstorm-agent"],
-      input: { phase: "brainstorm", reason: "Brainstorm proposal requires confirmation" },
-      timeoutMs: 60 * 60 * 1000,
-      retries: 0,
-      concurrency: 1,
-      approval: "required",
-    },
-    {
-      id: "spec-agent",
-      type: "gitea.agent_execute",
-      dependsOn: ["gate-brainstorm"],
-      input: { phase: "spec", timeoutMs: 30 * 60 * 1000 },
-      timeoutMs: 30 * 60 * 1000,
-      retries: 0,
-      concurrency: 1,
-      approval: "automatic",
-    },
-    {
-      id: "gate-spec",
-      type: "approval.wait",
-      dependsOn: ["spec-agent"],
-      input: { phase: "spec", reason: "Design spec requires confirmation" },
-      timeoutMs: 60 * 60 * 1000,
-      retries: 0,
-      concurrency: 1,
-      approval: "required",
     },
     {
       id: "plan-agent",
       type: "gitea.agent_execute",
-      dependsOn: ["gate-spec"],
+      dependsOn: ["worktree-create"],
       input: { phase: "plan", timeoutMs: 30 * 60 * 1000 },
       timeoutMs: 30 * 60 * 1000,
       retries: 0,
@@ -424,7 +125,10 @@ export function buildPlanWorkflowDefinition() {
       id: "gate-plan",
       type: "approval.wait",
       dependsOn: ["plan-agent"],
-      input: { phase: "plan", reason: "Implementation plan requires confirmation" },
+      input: {
+        phase: "plan",
+        reason: "Grilling design & implementation plan requires confirmation",
+      },
       timeoutMs: 60 * 60 * 1000,
       retries: 0,
       concurrency: 1,
@@ -441,59 +145,19 @@ export function buildPlanWorkflowDefinition() {
       approval: "automatic",
     },
     {
-      id: "verify-command",
-      type: "verify.command",
-      dependsOn: ["implement-agent"],
-      input: { verificationProfile: "unit-test" },
-      timeoutMs: 15 * 60 * 1000,
-      retries: 1,
-      concurrency: 1,
-      approval: "automatic",
-    },
-    {
       id: "independent-review",
-      type: "gitea.agent_execute",
-      dependsOn: ["verify-command"],
-      input: { phase: "review" },
-      timeoutMs: 30 * 60 * 1000,
+      type: "gitea.quality_gate",
+      dependsOn: ["implement-agent"],
+      timeoutMs: 45 * 60 * 1000,
       retries: 0,
       concurrency: 1,
       approval: "automatic",
     },
     {
-      id: "resolve-delivery",
-      type: "gitea.resolve_delivery",
+      id: "deliver-pr",
+      type: "gitea.deliver_pr",
       dependsOn: ["independent-review"],
-      timeoutMs: 30_000,
-      retries: 0,
-      concurrency: 1,
-      approval: "automatic",
-    },
-    {
-      id: "gate-delivery",
-      type: "approval.wait",
-      dependsOn: ["resolve-delivery"],
-      input: { phase: "delivery", reason: "Final PR delivery requires confirmation" },
-      timeoutMs: 60 * 60 * 1000,
-      retries: 0,
-      concurrency: 1,
-      approval: "required",
-    },
-    {
-      id: "git-push",
-      type: "git.push",
-      dependsOn: ["gate-delivery"],
-      timeoutMs: 60_000,
-      retries: 1,
-      concurrency: 1,
-      approval: "automatic",
-    },
-    {
-      id: "git-create-pr",
-      type: "git.create_pr",
-      dependsOn: ["git-push"],
-      input: { title: "Automated implementation for issue" },
-      timeoutMs: 60_000,
+      timeoutMs: 120_000,
       retries: 1,
       concurrency: 1,
       approval: "automatic",
@@ -501,44 +165,67 @@ export function buildPlanWorkflowDefinition() {
   ];
 
   return {
-    id: "gitea.issue-to-pr.plan",
-    revision: "1",
+    id: workflowId,
+    revision: "2",
     maxConcurrency: 1,
     maxArtifactBytes: 10 * 1024 * 1024,
     steps,
   };
 }
 
+export function buildGiteaWorkflowDefinition(strategy: GiteaWorkflowPolicy = "direct_pr") {
+  switch (strategy) {
+    case "direct_pr":
+      return buildDirectPrWorkflowDefinition("gitea.issue-to-pr");
+    case "unattended":
+      return buildDirectPrWorkflowDefinition("gitea.issue-to-pr.unattended");
+    case "grill_plan":
+      return buildPlanWorkflowDefinition("gitea.issue-to-pr.plan");
+    case "issue_preapproved":
+      return buildPlanWorkflowDefinition("gitea.issue-to-pr.preapproved");
+    case "full_superpowers":
+      return buildPlanWorkflowDefinition("gitea.issue-to-pr.legacy-superpowers");
+    default:
+      return buildDirectPrWorkflowDefinition("gitea.issue-to-pr");
+  }
+}
+
 export const giteaWorkflowPresets: PluginWorkflowPreset[] = [
   {
     workflowId: "gitea.issue-to-pr",
-    name: "Gitea Superpowers Pipeline (Full)",
+    name: "Gitea Issue-to-PR Pipeline (Direct PR)",
     sourcePreset: "gitea-workflow",
-    definition: buildGiteaWorkflowDefinition("full_superpowers"),
+    definition: buildGiteaWorkflowDefinition("direct_pr"),
   },
   {
     workflowId: "gitea.issue-to-pr.auto",
-    name: "Gitea Superpowers Pipeline (Auto)",
+    name: "Gitea Issue-to-PR Pipeline (Auto)",
     sourcePreset: "gitea-workflow",
     definition: buildAutoWorkflowDefinition(),
   },
   {
     workflowId: "gitea.issue-to-pr.plan",
-    name: "Gitea Superpowers Pipeline (Plan)",
+    name: "Gitea Issue-to-PR Pipeline (Grill & Plan)",
     sourcePreset: "gitea-workflow",
-    definition: buildPlanWorkflowDefinition(),
+    definition: buildGiteaWorkflowDefinition("grill_plan"),
   },
   {
     workflowId: "gitea.issue-to-pr.preapproved",
-    name: "Gitea Superpowers Pipeline (Preapproved)",
+    name: "Gitea Issue-to-PR Pipeline (Preapproved)",
     sourcePreset: "gitea-workflow",
     definition: buildGiteaWorkflowDefinition("issue_preapproved"),
   },
   {
     workflowId: "gitea.issue-to-pr.unattended",
-    name: "Gitea Superpowers Pipeline (Unattended)",
+    name: "Gitea Issue-to-PR Pipeline (Unattended)",
     sourcePreset: "gitea-workflow",
     definition: buildGiteaWorkflowDefinition("unattended"),
+  },
+  {
+    workflowId: "gitea.issue-to-pr.legacy-superpowers",
+    name: "Gitea Issue-to-PR Pipeline (Legacy Plan)",
+    sourcePreset: "gitea-workflow",
+    definition: buildGiteaWorkflowDefinition("full_superpowers"),
   },
 ];
 

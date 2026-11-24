@@ -25,6 +25,12 @@ export function getAgentChangeModeOptions(provider?: string, isOverride = false)
       { label: "完全访问 (Full Access - 自动映射为 Build)", value: "full-access" },
       { label: "计划模式 (Plan Mode)", value: "plan" },
     );
+  } else if (p === "pi" || p.startsWith("pi/") || p.startsWith("pi-") || p.startsWith("pi_")) {
+    options.push(
+      { label: "默认模式 (Default)", value: "auto" },
+      { label: "完全访问 (Full Access)", value: "full-access" },
+      { label: "计划模式 (Plan Mode)", value: "plan" },
+    );
   } else {
     options.push(
       { label: "默认模式 (Default)", value: "auto" },
@@ -59,10 +65,33 @@ import {
   PROMPT_PLACEHOLDERS,
 } from "../shared/prompts.js";
 
-const policyOptions = [
-  { label: "完整 Superpowers (推荐)", value: "full_superpowers" },
-  { label: "Issue 视为已批准设计", value: "issue_preapproved" },
-  { label: "无人值守 (自动推进)", value: "unattended" },
+const LEGACY_WORKFLOW_POLICIES = new Set(["full_superpowers", "issue_preapproved", "unattended"]);
+
+export function isLegacyWorkflowPolicy(value?: string): boolean {
+  return Boolean(value && LEGACY_WORKFLOW_POLICIES.has(value));
+}
+
+export function getWorkflowPolicyOptions(currentValue?: string) {
+  const options: Array<{ label: string; value: string }> = [
+    { label: "直通 PR (0 卡点 · 推荐)", value: "direct_pr" },
+    { label: "质询方案确认 (1 卡点 · Grilling)", value: "grill_plan" },
+  ];
+  if (currentValue && isLegacyWorkflowPolicy(currentValue)) {
+    options.push({
+      label: `旧版兼容策略 (${currentValue})`,
+      value: currentValue,
+    });
+  }
+  return options;
+}
+
+const repairCycleOptions = [
+  { label: "0 次 (不自动返修)", value: "0" },
+  { label: "1 次", value: "1" },
+  { label: "2 次 (默认)", value: "2" },
+  { label: "3 次", value: "3" },
+  { label: "4 次", value: "4" },
+  { label: "5 次", value: "5" },
 ] as const;
 
 const intervalOptions = [
@@ -78,6 +107,31 @@ const retentionOptions = [
   { label: "180 天", value: "180" },
   { label: "365 天", value: "365" },
 ] as const;
+
+function formatHarnessStatusHint(harnessStatus: {
+  available: boolean;
+  enabled: boolean;
+  specialistsCount?: number;
+}): string {
+  if (harnessStatus.available && harnessStatus.enabled) {
+    return `已连接 · ${harnessStatus.specialistsCount ?? 0} 个专家角色就绪`;
+  }
+  return "未启用 · 自动回退静态引擎配置";
+}
+
+function formatProjectDiagnosticHint(proj: GiteaProjectDiagnostic): string {
+  if (proj.connectionStatus === "connected") {
+    let baseText = `已连接 (${proj.authSource}) · ${proj.pendingIssueCount ?? 0} 个待办`;
+    if (proj.agentTeam && proj.agentTeam.rolesCount > 0) {
+      baseText += ` · Team: ${proj.agentTeam.preset} (${proj.agentTeam.rolesCount})`;
+    }
+    return baseText;
+  }
+  if (proj.connectionStatus === "unauthorized") {
+    return "未找到 Gitea Token";
+  }
+  return "非 Gitea 远端";
+}
 
 export interface HostSettingsScreenProps extends PluginSurfaceProps {
   useSettingsHook?: (def: any) => any;
@@ -98,14 +152,20 @@ export function HostSettingsScreen({
     : (settingsOverride ?? useSettings(giteaSettingsDefinition));
 
   const defaultRpcCaller = useCallback(
-    async (_input: Record<string, never> = {}) => ({
+    async (
+      _input: Record<string, never> = {},
+    ): Promise<{
+      diagnostics: GiteaProjectDiagnostic[];
+      harnessStatus?: { available: boolean; enabled: boolean; specialistsCount?: number };
+    }> => ({
       diagnostics: diagnosticsOverride ?? [],
     }),
     [diagnosticsOverride],
   );
-  let rpcFunc: (
-    input: Record<string, never>,
-  ) => Promise<{ diagnostics: GiteaProjectDiagnostic[] }> = defaultRpcCaller;
+  let rpcFunc: (input: Record<string, never>) => Promise<{
+    diagnostics: GiteaProjectDiagnostic[];
+    harnessStatus?: { available: boolean; enabled: boolean; specialistsCount?: number };
+  }> = defaultRpcCaller;
   try {
     rpcFunc = (useRpcHook ?? useRpc)(diagnoseProjectsRpc);
   } catch {
@@ -116,13 +176,19 @@ export function HostSettingsScreen({
   const [diagnostics, setDiagnostics] = useState<GiteaProjectDiagnostic[]>(
     diagnosticsOverride ?? [],
   );
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [harnessStatus, setHarnessStatus] = useState<{
+    available: boolean;
+    enabled: boolean;
+    specialistsCount?: number;
+  } | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState(null as string | null);
 
   const refreshDiagnostics = useCallback(async () => {
     if (diagnosticsOverride) return;
     try {
       const res = await diagnoseProjects({});
-      setDiagnostics(res.diagnostics);
+      setDiagnostics(res?.diagnostics ?? []);
+      setHarnessStatus(res?.harnessStatus ?? null);
     } catch {
       // ignore
     }
@@ -169,6 +235,13 @@ export function HostSettingsScreen({
 
   const changePolicy = (policy: string) => {
     void settings.save({ ...values, workflowPolicy: policy as any }, settings.revision);
+  };
+
+  const changeMaxRepairCycles = (cyclesStr: string) => {
+    void settings.save(
+      { ...values, maxAutomaticRepairCycles: parseInt(cyclesStr, 10) },
+      settings.revision,
+    );
   };
 
   const changeInterval = (secondsStr: string) => {
@@ -238,10 +311,19 @@ export function HostSettingsScreen({
           </Pressable>
           <SettingsSelect
             label="默认工作流策略"
+            hint="Issue 未附带 agent-auto / agent-plan 标签时的默认流程控制"
             value={values.workflowPolicy}
-            options={policyOptions as any}
+            options={getWorkflowPolicyOptions(values.workflowPolicy) as any}
             disabled={settings.saving}
             onValueChange={changePolicy}
+          />
+          <SettingsSelect
+            label="自动返修轮数上限"
+            hint="测试失败或独立审查未通过时，同会话自动返修上限；超限后创建 [WIP] PR"
+            value={String(values.maxAutomaticRepairCycles ?? 2)}
+            options={repairCycleOptions as any}
+            disabled={settings.saving}
+            onValueChange={changeMaxRepairCycles}
           />
           <SettingsInput
             label="全局默认基准分支 (Base Branch)"
@@ -265,17 +347,38 @@ export function HostSettingsScreen({
         <SettingsCard>
           <SettingsRow
             label="Agent Auto (全自动模式)"
-            hint="添加 Issue 标签 agent-auto 或 agent:auto。认领后无人值守自动推进方案规划、代码编写、动态测试与 PR 提交，全流程无需人工干预。"
+            hint="添加 Issue 标签 agent-auto 或 agent:auto。认领后按 TDD 完成编码、测试校验、独立双轴审查（含自动返修）并创建 PR，全程 0 人工卡点。"
           />
           <SettingsRow
             label="Agent Plan (规划审查模式)"
-            hint="添加 Issue 标签 agent-plan 或 agent:plan。Agent 仅产出架构设计与实施方案，在 Paseo Review 面板等待人工审批通过后方可执行编码。"
+            hint="添加 Issue 标签 agent-plan 或 agent:plan。先输出 Grilling 关键决策质询与模块方案，经单次人工确认后自动完成编码、独立审查与 PR 交付。"
           />
         </SettingsCard>
       </SettingsSection>
 
       <SettingsSection title="执行引擎与模型 (Agent & Model)">
         <SettingsCard>
+          <SettingsSelect
+            label="Agent Harness 编排模式"
+            value={values.harnessMode || "auto"}
+            options={
+              [
+                { label: "自动托管 (按阶段路由角色、引擎与切片)", value: "auto" },
+                { label: "锁定引擎 (仅由 Harness 路由档位与切片)", value: "provider_locked" },
+                { label: "停用联动 (仅使用静态配置)", value: "disabled" },
+              ] as any
+            }
+            disabled={settings.saving}
+            onValueChange={(harnessMode: string) =>
+              void settings.save(
+                { ...values, harnessMode: harnessMode as GiteaHostSettings["harnessMode"] },
+                settings.revision,
+              )
+            }
+          />
+          {harnessStatus ? (
+            <SettingsRow label="Agent Harness 状态" hint={formatHarnessStatusHint(harnessStatus)} />
+          ) : null}
           <SettingsSelect
             label="Agent 引擎"
             hint="执行自动化开发任务的代码智能代理"
@@ -286,6 +389,7 @@ export function HostSettingsScreen({
                 { label: "Codex", value: "codex" },
                 { label: "Google Antigravity", value: "antigravity" },
                 { label: "OpenCode", value: "opencode" },
+                { label: "Pi", value: "pi" },
               ] as any
             }
             disabled={settings.saving}
@@ -295,7 +399,7 @@ export function HostSettingsScreen({
               if (agentProvider === "claude" && currentMode === "full-access") {
                 nextMode = "bypassPermissions";
               } else if (
-                agentProvider === "codex" &&
+                (agentProvider === "codex" || agentProvider === "pi") &&
                 (currentMode === "bypassPermissions" || currentMode === "acceptEdits")
               ) {
                 nextMode = "full-access";
@@ -308,7 +412,7 @@ export function HostSettingsScreen({
           />
           <SettingsInput
             label="指定模型 (可选)"
-            hint="留空使用引擎默认模型，如 gemini-flash[1M]、claude-3-7-sonnet、gpt-4o"
+            hint="留空时按 Agent Harness 四档矩阵自动匹配（如 pro、flash、gemini-4-argon）"
             initialValue={values.agentModel || ""}
             disabled={settings.saving}
             onChangeText={(agentModel) =>
@@ -428,12 +532,7 @@ export function HostSettingsScreen({
           ) : (
             diagnostics.map((proj) => {
               const authorized = values.projects[proj.projectId]?.enabled ?? false;
-              const statusText =
-                proj.connectionStatus === "connected"
-                  ? `已连接 (${proj.authSource}) · ${proj.pendingIssueCount ?? 0} 个待办`
-                  : proj.connectionStatus === "unauthorized"
-                    ? "未找到 Gitea Token"
-                    : "非 Gitea 远端";
+              const statusText = formatProjectDiagnosticHint(proj);
 
               return (
                 <SettingsRow

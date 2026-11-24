@@ -4,6 +4,7 @@ import {
   findSpecialist,
   inferTierFromModel,
   isFederatedLocalProvider,
+  normalizePrimarySkills,
   normalizeTierAlias,
   resolveEffectiveHarnessConfig,
   resolveResumeExecutionMode,
@@ -203,7 +204,9 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
     expect(banner).toContain("[Capability Harness Active Profile]");
     expect(banner).toContain("- Role: ui (rule: heuristic:ui)");
     expect(banner).toContain("- Focus Documents: docs/design.md");
-    expect(banner).toContain("- Primary Skills: ui-ux-pro-max, unslop, visual-verdict");
+    expect(banner).toContain(
+      "- Primary Skills: ui-ux-pro-max, unslop, visual-verdict, diagnosing-bugs, pr",
+    );
     expect(banner).toContain("- Workspace Boundary Guardrail (CRITICAL):");
     expect(banner).toContain("Mandatory Skill Activation");
   });
@@ -238,6 +241,7 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
       serena: { type: "stdio" as const, command: "serena" },
       dbx: { type: "stdio" as const, command: "dbx" },
       playwright: { type: "stdio" as const, command: "playwright" },
+      paseo: { type: "http" as const, url: "http://127.0.0.1:6767/mcp/agents" },
     };
 
     const filtered = resolveSessionMcpServers({
@@ -248,9 +252,10 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
 
     // dbx must be excluded
     expect(filtered.dbx).toBeUndefined();
-    // serena and playwright preserved
+    // serena, playwright, and built-in paseo preserved
     expect(filtered.serena).toBeDefined();
     expect(filtered.playwright).toBeDefined();
+    expect(filtered.paseo).toBeDefined();
     // custom-db injected from catalog
     expect(filtered["custom-db"]).toBeDefined();
     expect(filtered["custom-db"].command).toBe("custom-db-mcp");
@@ -572,8 +577,60 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
 
     expect(banner).toContain("read_file");
     expect(banner).not.toContain("invoke the `Skill` tool");
-    expect(banner).toContain("codebase-design, tdd, test-gardener");
+    expect(banner).toContain("codebase-design, tdd, diagnosing-bugs, test-gardener, pr");
     expect(banner).not.toContain("mattpocock-skills:");
+  });
+
+  it("normalizes primarySkills across all 5 providers banners (no superpowers:* or mattpocock-skills:)", () => {
+    expect(
+      normalizePrimarySkills([
+        "  paseo  ",
+        "superpowers:dispatching-parallel-agents",
+        "superpowers:verification-before-completion",
+        "superpowers:brainstorming",
+        "mattpocock-skills:codebase-design",
+        "mattpocock-skills:tdd",
+        "custom-skill",
+      ]),
+    ).toEqual(["paseo", "codebase-design", "tdd", "diagnosing-bugs", "custom-skill"]);
+
+    const effective = resolveEffectiveHarnessConfig(DEFAULT_AGENT_HARNESS_SETTINGS, {
+      specialistOverrides: {
+        backend: {
+          primarySkills: [
+            "superpowers:verification-before-completion",
+            "mattpocock-skills:domain-modeling",
+            "superpowers:legacy-removed",
+          ],
+        },
+      },
+    });
+    const backend = findSpecialist(effective, "backend")!;
+    expect(backend.primarySkills).toEqual([
+      "codebase-design",
+      "tdd",
+      "diagnosing-bugs",
+      "test-gardener",
+      "pr",
+      "domain-modeling",
+    ]);
+
+    for (const provider of ["claude", "codex", "opencode", "pi", "antigravity"]) {
+      const banner = buildSystemPromptBanner({
+        config: effective,
+        specialist: backend,
+        tier: "standard",
+        targetModel: "flash",
+        roleMatchedRule: "label:role",
+        homeDir: "/tmp/mock-home",
+        provider,
+      });
+      expect(banner).toContain(
+        "- Primary Skills: codebase-design, tdd, diagnosing-bugs, test-gardener, pr, domain-modeling",
+      );
+      expect(banner).not.toContain("superpowers:");
+      expect(banner).not.toContain("mattpocock-skills:");
+    }
   });
 
   it("replaces builtin specialists with workspace agent-team N roles, skips antigravity LAZY_TOOL_CONFIG, and enforces federation/leaf prompts", () => {
@@ -872,6 +929,302 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
       isLeaf: true,
     });
     expect(leafBanner).not.toContain("mcp_paseo_create_agent");
+
+    // UI specialist with vendor skillsRoot includes fallback defaultSkillsRoot in banner
+    expect(rootBanner).toContain("fallback: ~/.agents/skills");
+    expect(rootBanner).toContain("or fallback `~/.agents/skills`");
+
+    // Backend specialist whose expanded skillsRoot equals defaultSkillsRoot omits fallback
+    const backendSpec = findSpecialist(effective, "backend")!;
+    const backendBanner = buildSystemPromptBanner({
+      config: effective,
+      specialist: backendSpec,
+      tier: "standard",
+      targetModel: "gemini-4-argon",
+      roleMatchedRule: "label:role",
+      homeDir: "/Users/jerry",
+      provider: "antigravity",
+      isLeaf: true,
+    });
+    expect(backendBanner).not.toContain("fallback:");
+  });
+
+  it("injects unattended workflow design phaseRule and suppresses Antigravity handoff prompt when isUnattendedWorkflow=true", () => {
+    const effective = resolveEffectiveHarnessConfig(DEFAULT_AGENT_HARNESS_SETTINGS);
+    const architectSpec = findSpecialist(effective, "architect")!;
+
+    const unattendedDesignBanner = buildSystemPromptBanner({
+      config: effective,
+      specialist: architectSpec,
+      tier: "deep",
+      targetModel: "gemini-4-carbon",
+      phase: "design",
+      roleMatchedRule: "label:role",
+      homeDir: "/Users/jerry",
+      provider: "antigravity",
+      isLeaf: false,
+      isUnattendedWorkflow: true,
+    });
+
+    expect(unattendedDesignBanner).toContain(
+      "- [Phase: Unattended Workflow Design & Spec] Rule: You are running in an automated workflow stage (phase=design). Author concise architectural proposals, design specs, or implementation plans as instructed by the workflow prompt (writing spec/plan Markdown files if requested); DO NOT edit business source files in this design stage, DO NOT invoke interactive ExitPlanMode, and DO NOT spawn subagents.",
+    );
+    expect(unattendedDesignBanner).not.toContain("[Phase: Design & Planning]");
+    expect(unattendedDesignBanner).not.toContain("mcp_paseo_create_agent");
+
+    // When specialist has custom rolePromptTemplate, custom prompt wins over unattended design default
+    const customTemplateBanner = buildSystemPromptBanner({
+      config: effective,
+      specialist: {
+        ...architectSpec,
+        rolePromptTemplate: "- [Custom Architect Template] Follow repo ADR strictly.",
+      },
+      tier: "deep",
+      targetModel: "gemini-4-carbon",
+      phase: "design",
+      roleMatchedRule: "label:role",
+      homeDir: "/Users/jerry",
+      provider: "antigravity",
+      isUnattendedWorkflow: true,
+    });
+    expect(customTemplateBanner).toContain(
+      "- [Custom Architect Template] Follow repo ADR strictly.",
+    );
+    expect(customTemplateBanner).not.toContain("[Phase: Unattended Workflow Design & Spec]");
+
+    // Agent-team suffixed roles (fe-architect, be-reviewer) resolve banner phase accurately even when options.phase is omitted
+    const feArchitectBanner = buildSystemPromptBanner({
+      config: effective,
+      specialist: {
+        ...architectSpec,
+        id: "fe-architect",
+        rolePromptTemplate: "",
+      },
+      tier: "deep",
+      targetModel: "gemini-4-carbon",
+      roleMatchedRule: "label:role",
+      homeDir: "/Users/jerry",
+      provider: "antigravity",
+      isUnattendedWorkflow: true,
+    });
+    expect(feArchitectBanner).toContain("[Phase: Unattended Workflow Design & Spec]");
+
+    const beReviewerSpec = {
+      ...findSpecialist(effective, "review")!,
+      id: "be-reviewer",
+      rolePromptTemplate: "",
+    };
+    const beReviewerBanner = buildSystemPromptBanner({
+      config: effective,
+      specialist: beReviewerSpec,
+      tier: "deep",
+      targetModel: "gemini-4-carbon",
+      roleMatchedRule: "label:role",
+      homeDir: "/Users/jerry",
+      provider: "antigravity",
+      isUnattendedWorkflow: true,
+    });
+    expect(beReviewerBanner).toContain("[Phase: Review Gate]");
+  });
+
+  it("migrates v5 settings cleanly to v6 while preserving user-customized fields", async () => {
+    const presets = await import("../shared/presets.js");
+    const v5Untouched = {
+      ...DEFAULT_AGENT_HARNESS_SETTINGS,
+      fullstackUiPattern: presets.LEGACY_V5_FULLSTACK_UI_PATTERN,
+      affirmativeConfirmWords: [
+        "继续",
+        "好",
+        "可以",
+        "行",
+        "没问题",
+        "ok",
+        "lgtm",
+        "go ahead",
+        "proceed",
+        "yes",
+        "sure",
+        "start",
+        "开始吧",
+        "改吧",
+        "做吧",
+        "搞起",
+        "干吧",
+      ],
+      tierPatterns: {
+        ...DEFAULT_AGENT_HARNESS_SETTINGS.tierPatterns,
+        execAction: [presets.LEGACY_V5_EXEC_ACTION_PATTERN],
+      },
+      specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) => {
+        if (s.id === "ui") {
+          return {
+            ...s,
+            matchPatterns: [...presets.LEGACY_V5_UI_MATCH_PATTERNS],
+            allowedMcpServers: [...presets.LEGACY_V5_UI_ALLOWED_MCP],
+          };
+        }
+        if (s.id === "general") {
+          return {
+            ...s,
+            allowedMcpServers: [...presets.LEGACY_V5_GENERAL_ALLOWED_MCP],
+          };
+        }
+        return s;
+      }),
+    };
+
+    const migrated = agentHarnessSettings.migrate!(
+      v5Untouched,
+      5,
+    ) as typeof DEFAULT_AGENT_HARNESS_SETTINGS;
+    const migratedUi = migrated.specialists.find((s) => s.id === "ui")!;
+    const migratedGeneral = migrated.specialists.find((s) => s.id === "general")!;
+
+    expect(migratedUi.matchPatterns[0]).toContain("dark\\s*mode");
+    expect(migratedUi.allowedMcpServers).toEqual(["playwright", "serena", "claude-mem"]);
+    expect(migratedGeneral.allowedMcpServers).toEqual([
+      "serena",
+      "claude-mem",
+      "hub",
+      "sequential-thinking",
+    ]);
+    expect(migrated.fullstackUiPattern).toContain("dark\\s*mode");
+    expect(migrated.tierPatterns.execAction[0]).toContain("服务");
+    expect(migrated.affirmativeConfirmWords).toContain("ok, continue");
+    expect(migrated.affirmativeConfirmWords).toContain("go");
+
+    // User-customized arrays and patterns must NOT be overwritten
+    const v5Customized = {
+      ...v5Untouched,
+      affirmativeConfirmWords: ["ok", "custom-confirm"],
+      specialists: v5Untouched.specialists.map((s) =>
+        s.id === "ui" ? { ...s, allowedMcpServers: ["serena", "custom-ui-mcp"] } : s,
+      ),
+    };
+    const migratedCustom = agentHarnessSettings.migrate!(
+      v5Customized,
+      5,
+    ) as typeof DEFAULT_AGENT_HARNESS_SETTINGS;
+    expect(migratedCustom.affirmativeConfirmWords).toEqual(["ok", "custom-confirm"]);
+    expect(migratedCustom.specialists.find((s) => s.id === "ui")?.allowedMcpServers).toEqual([
+      "serena",
+      "custom-ui-mcp",
+    ]);
+  });
+
+  it("migrates v6 settings cleanly to v7 for untouched built-in specialists and user-customized primarySkills", async () => {
+    const presets = await import("../shared/presets.js");
+    const v6Values = {
+      ...DEFAULT_AGENT_HARNESS_SETTINGS,
+      specialists: [
+        ...DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) => {
+          const legacySkills = presets.LEGACY_V6_SPECIALIST_PRIMARY_SKILLS[s.id];
+          if (s.id === "backend") {
+            // User customized backend primarySkills with a custom skill + legacy prefixed skills
+            return {
+              ...s,
+              primarySkills: [
+                "mattpocock-skills:codebase-design",
+                "superpowers:verification-before-completion",
+                "superpowers:subagent-driven-development",
+                "my-custom-backend-skill",
+              ],
+            };
+          }
+          return legacySkills ? { ...s, primarySkills: [...legacySkills] } : s;
+        }),
+        {
+          id: "custom-ops",
+          name: "Custom Ops",
+          shortLabel: "Ops",
+          description: "Custom ops role",
+          icon: "Server",
+          color: "slate",
+          enabled: true,
+          builtIn: false,
+          preferredProvider: "codex",
+          preferredTier: "standard",
+          modelOverride: "",
+          defaultModeId: "",
+          thinkingOptionId: "",
+          lockTierOnLabel: false,
+          handoffEnabled: true,
+          handoffPriority: 90,
+          handoffTitlePrefix: "[Ops]",
+          handoffDefaultPrompt: "Run ops checks.",
+          syncToDaemonProfile: false,
+          primarySkills: [
+            "superpowers:dispatching-parallel-agents",
+            "mattpocock-skills:grilling",
+            "k8s-triage",
+          ],
+          mandatorySkillActivation: true,
+          skillsRoot: "~/.agents/skills",
+          docsFocus: [],
+          qualityGates: [],
+          ssotOutputTarget: "",
+          rolePromptTemplate: "",
+          lazyToolSlice: "backend.yaml",
+          allowedMcpServers: [],
+          excludedMcpServers: [],
+          injectedMcpServers: [],
+          extraEnv: {},
+          aliases: [],
+          matchPatterns: [],
+          profileFilename: "custom-ops.json",
+        },
+      ],
+    };
+
+    const migrated = agentHarnessSettings.migrate!(
+      v6Values,
+      6,
+    ) as typeof DEFAULT_AGENT_HARNESS_SETTINGS;
+
+    // Untouched built-in specialists receive full v7 primarySkills (including new skills like diagnosing-bugs, pr, tdd)
+    expect(migrated.specialists.find((s) => s.id === "orchestrator")?.primarySkills).toEqual([
+      "paseo",
+      "codebase-design",
+    ]);
+    expect(migrated.specialists.find((s) => s.id === "ui")?.primarySkills).toEqual([
+      "ui-ux-pro-max",
+      "unslop",
+      "visual-verdict",
+      "diagnosing-bugs",
+      "pr",
+    ]);
+    expect(migrated.specialists.find((s) => s.id === "qa")?.primarySkills).toEqual([
+      "test-gardener",
+      "tdd",
+      "diagnosing-bugs",
+      "pm-edge-cases",
+    ]);
+    expect(migrated.specialists.find((s) => s.id === "general")?.primarySkills).toEqual([
+      "codebase-design",
+      "domain-modeling",
+      "tdd",
+      "diagnosing-bugs",
+    ]);
+    expect(migrated.specialists.find((s) => s.id === "review")?.primarySkills).toEqual([
+      "code-review",
+      "open-code-review-delegate",
+      "gitea",
+    ]);
+
+    // User-customized built-in specialist preserves custom skill while migrating superpowers:* and stripping mattpocock-skills:
+    expect(migrated.specialists.find((s) => s.id === "backend")?.primarySkills).toEqual([
+      "codebase-design",
+      "tdd",
+      "diagnosing-bugs",
+      "my-custom-backend-skill",
+    ]);
+
+    // Custom specialist normalizes primarySkills cleanly
+    expect(migrated.specialists.find((s) => s.id === "custom-ops")?.primarySkills).toEqual([
+      "codebase-design",
+      "grilling",
+      "k8s-triage",
+    ]);
   });
 });
 

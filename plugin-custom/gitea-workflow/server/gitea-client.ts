@@ -292,6 +292,37 @@ export class GiteaClient {
     if (!res.ok) {
       const text = await res.text();
       if (res.status === 409) {
+        try {
+          const listRes = await this.request("/pulls?state=open&limit=50");
+          if (listRes.ok) {
+            const pulls = await listRes.json();
+            if (Array.isArray(pulls)) {
+              const existingPr = pulls.find(
+                (pr: any) =>
+                  pr?.head?.ref === params.headBranch ||
+                  (typeof pr?.head?.label === "string" &&
+                    pr.head.label.endsWith(`:${params.headBranch}`)),
+              );
+              if (
+                existingPr &&
+                typeof existingPr.number === "number" &&
+                typeof existingPr.html_url === "string"
+              ) {
+                await this.request(`/pulls/${existingPr.number}`, {
+                  method: "PATCH",
+                  body: JSON.stringify({
+                    title: params.title,
+                    body: params.body,
+                  }),
+                }).catch(() => {});
+                return { url: existingPr.html_url };
+              }
+            }
+          }
+        } catch {
+          // fall through to regex fallback
+        }
+
         const match = text.match(/issue_id:\s*(\d+)/);
         if (match?.[1]) {
           const prNumber = match[1];

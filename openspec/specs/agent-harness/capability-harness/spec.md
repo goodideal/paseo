@@ -14,10 +14,10 @@
 - **AND** 标题文本包含后端关键词如 `"修复 RPC 协议"`
 - **THEN** `detectDomainRole` 返回角色为 `"ui"`，匹配规则为 `"label:role"`
 
-#### Scenario: 无标签时根据 UI 关键词自动识别前端专家
+#### Scenario: 无标签时根据 UI 与主题关键词自动识别前端专家
 
 - **WHEN** `labels` 为空
-- **AND** 提示词或标题包含 `"重构 QuickPrompts 弹窗组件的 Unistyles 样式与 hover 交互"`
+- **AND** 提示词或标题包含 `"重构 QuickPrompts 弹窗组件的 Unistyles 样式与 hover 交互"` 或 `"检查本项目的 dark mode 存在的问题，以及优化方案"`
 - **THEN** `detectDomainRole` 返回角色为 `"ui"`
 
 #### Scenario: 无标签时根据后端/协议关键词自动识别系统专家
@@ -106,12 +106,23 @@
 - **THEN** `resolveMatrixModel` 返回原 `currentModel` 不变，`matchedRule` 为 `"bypass_orchestrator_model"`
 - **AND** `agent.create.before` 写入旁路标记，后续 `agent.open.before` 与 `agent.turn.*` 跳过注入 `LAZY_TOOL_CONFIG`、不重写 `mcpServers` 且不执行跨轮模型降级
 
-#### Scenario: Antigravity 使用非 Orchestrator 单阶模型时启用 Gemini 4 路由与切片
+#### Scenario: Antigravity 使用非 Orchestrator 单阶模型时启用 Gemini 4 路由、Thinking 同步与切片
 
-- **WHEN** `provider` 为 `"antigravity"` 且 `currentModel` 为 `"gemini-4-hydrogen"` 或未显式指定
+- **WHEN** `provider` 为 `"antigravity"` 且 `currentModel` 为 `"gemini-4-hydrogen"`（即使预填 `thinkingOptionId: "medium"`）或未显式指定
 - **AND** 提示词为 `"你作为 CTO 设计一套完整架构方案"`（或携带 `labels: { role: "ui" }`）
-- **THEN** `resolveMatrixModel` 在规划意图下路由至 `"gemini-4-carbon"`（`tier: "deep"`, `thinkingOptionId: "high"`；或在 `labels.role="ui"` 时路由至 `standard` 档 `"gemini-4-argon"` 并注入 `ui.yaml` 切片）
+- **THEN** `resolveMatrixModel` 与 `agent.create.before` 在规划意图下路由至 `"gemini-4-carbon"`（`tier: "deep"`, `thinkingOptionId: "high"`；或在 `labels.role="ui"` 时路由至 `standard` 档 `"gemini-4-argon"`、`thinkingOptionId: "high"` 并注入 `ui.yaml` 切片）
 - **AND** 当 `currentModel` 为用户显式锁定的非默认或手动 `max` 模型（如 `"gemini-4-neon"`）且 `overrideIfDefaultOnly` 为 `true` 时，保留原模型不被改写
+
+#### Scenario: 确认执行短语（含 ok, continue）与服务启停指令自动步降至 standard
+
+- **WHEN** 非只读会话处于 `phase: "design"` 且 `planTurnCount >= 1`，用户发送 `"ok, continue"`、`"go"` 或 `"启动服务"`
+- **AND** 本轮未触发 `harness_handoff` / `mcp_paseo_create_agent`（`paseo.create_agent`）派发子代理
+- **THEN** `agent.turn.before` 自动步降至 `standard` 档（`phase: "exec"`）并追加 `harness-transition` 卡片
+
+#### Scenario: Antigravity 经 mcp_paseo_create_agent 派生专家子代理时记录父会话交接卡片
+
+- **WHEN** 父会话通过 `mcp_paseo_create_agent`（携带 `labels.role` 或 `paseo.harness-leaf: "1"`）创建子代理
+- **THEN** `agent.create.after` 向父会话追加 `transitionKind: "specialist_handoff"` 时间线卡片，且 `inspectTurnTimeline` 将 `paseo.create_agent` / `mcp_paseo_create_agent` 识别为 `handoffInvoked: true`
 
 ### Requirement: 敏捷探针 (Scout) 角色与 Pi Canonical 模型 ID 路由 (Scout & Pi Routing)
 
@@ -248,7 +259,7 @@
 
 ### Requirement: 内置审查专家默认绑定 Antigravity 与 ocr delegate 规则门禁 (Antigravity + OCR Delegate Review Gate & Schema Migration)
 
-系统 SHALL 将内置 `review` 专家角色（`Reviewer & Security Audit Gate`）的默认 `preferredProvider` 设为 `"antigravity"`，`primarySkills` 注入 `["mattpocock-skills:code-review", "open-code-review-delegate", "gitea"]`，`qualityGates` 设为 `["dual-axis-semantic-review", "open-code-review-delegate-gate"]`，并在 `phase=exec` 与 `phase=review` 阶段规则中指示采用宿主审查代理配合 LLM-Free `ocr delegate`（`ocr delegate preview` + `ocr delegate rule`）取代独立外部 LLM `ocr review`；同时当插件配置版本低于 `v4` 时，系统 SHALL 自动将内置 `review` 专家的遗留 `"claude"` / `"claude-code"` Provider、`"security-review"` 技能、`"open-code-review-cli-gate"` 门禁及遗留 `phaseRules` 平滑迁移至 `v4` 契约。
+系统 SHALL 将内置 `review` 专家角色（`Reviewer & Security Audit Gate`）的默认 `preferredProvider` 设为 `"antigravity"`，`primarySkills` 注入 `["code-review", "open-code-review-delegate", "gitea"]`，`qualityGates` 设为 `["dual-axis-semantic-review", "open-code-review-delegate-gate"]`，并在 `phase=exec` 与 `phase=review` 阶段规则中指示采用宿主审查代理配合 LLM-Free `ocr delegate`（`ocr delegate preview` + `ocr delegate rule`）取代独立外部 LLM `ocr review`；同时当插件配置版本低于 `v4` 时，系统 SHALL 自动将内置 `review` 专家的遗留 `"claude"` / `"claude-code"` Provider、`"security-review"` 技能、`"open-code-review-cli-gate"` 门禁及遗留 `phaseRules` 平滑迁移至 `v4` 契约。
 
 #### Scenario: 跨客户端交接 review 角色时默认路由至 Antigravity 审查模型并挂载委托门禁技能
 
@@ -263,13 +274,22 @@
 
 ### Requirement: 运行时外部模型切换与遗留档位自动校准 (Runtime External Model Sync & Legacy Tier Reconciliation)
 
-系统 SHALL 在 `agent.turn.before` 与 `agent.turn.after` 中读取会话运行时快照模型及 `thinkingOptionId`，当用户通过 Paseo 原生选择器切换模型或恢复带有遗留 v4 档位名（`flash | plan | review | lite`）的会话时，经 `inferTierFromModel` 与 `reconcileRuntimeHarnessMetadata` 自动同步 `currentTier`、`currentModel`、`currentThinking`、`lastBilled*` 及 `userModelLocked` 状态；当快照模型不可用时 MUST 保持原元数据不变。
+系统 SHALL 在 `agent.turn.before` 与 `agent.turn.after` 中读取会话运行时快照模型及 `thinkingOptionId`，当用户通过 Paseo 原生选择器切换模型、运行时 `thinkingOptionId` 与元数据存在漂移或恢复带有遗留 v4 档位名（`flash | plan | review | lite`）的会话时，经 `inferTierFromModel` 与 `reconcileRuntimeHarnessMetadata` 自动同步 `currentTier`、`currentModel`、`currentThinking`、`lastBilled*` 及 `userModelLocked` 状态；当快照模型不可用时 MUST 保持原元数据不变。
 
 #### Scenario: 用户在原生选择器将模型从 gemini-4-neon 切换为 gemini-4-hydrogen 后自动校准为 fast 档
 
 - **WHEN** 会话元数据记录 `currentModel: "gemini-4-neon"`、`currentTier: "flash"`、`userModelLocked: true`，且运行时快照模型变更为 `"gemini-4-hydrogen"`（`thinkingOptionId: "high"`）
 - **THEN** `agent.turn.before` 与 `agent.turn.after` 将 `currentTier` 与 `lastBilledTier` 同步更新为 `"fast"`、`currentModel` 与 `lastBilledModel` 更新为 `"gemini-4-hydrogen"`、`currentThinking` 与 `lastBilledThinking` 更新为 `"high"`
 - **AND** `userModelLocked` 重置为 `false`，`tierMatchedRule` 记录为 `"runtime_sync:external_model_change"`
+
+### Requirement: 专家提示词 Skills Root 回退、内置 MCP 保护与 v6 迁移 (Skills Root Fallback, Built-in MCP Preservation & v6 Migration)
+
+系统 SHALL 在 `buildSystemPromptBanner` 中当 `specialist.skillsRoot` 与 `defaultSkillsRoot` 不一致时显式标注 fallback `defaultSkillsRoot` 路径；`resolveSessionMcpServers` SHALL 保留内置 `"paseo"` MCP 键不被 `allowedMcpServers` 误过滤（除非显式列入 `excludedMcpServers`）；在配置版本 `SETTINGS_SCHEMA_VERSION = 6` 下，`agentHarnessSettings.migrate` SHALL 对未自定义的 `ui`/`general` 内置切片、`fullstackUiPattern`、`execAction` 与 `affirmativeConfirmWords` 执行 `v5 -> v6` 无损升级并保留用户自定义配置。
+
+#### Scenario: v5 配置升级至 v6 时刷新未自定义的 UI 暗黑模式正则与 MCP 列表并保留自定义项
+
+- **WHEN** 加载 `fromVersion = 5` 的配置，其中 `ui` 专家保持 v5 默认 `matchPatterns` 与 `allowedMcpServers`、`general` 保持 v5 默认 `allowedMcpServers`，或存在自定义 `affirmativeConfirmWords`
+- **THEN** `agentHarnessSettings.migrate` 升级未自定义的 `ui`/`general` 字段至 v6 默认值，同时完整保留用户自定义的 `affirmativeConfirmWords` 与专家覆写项
 
 ### Requirement: 共享工作树并发可写交接互斥与上下文注入 (Concurrent Writable Handoff Guard & Parent Context Injection)
 
@@ -280,3 +300,34 @@
 - **WHEN** 父会话处于 `status === "running"`，用户或客户端调用 `agent_harness.specialist.handoff.request`
 - **THEN** 派发可写专家（如 `qa`、`ui`）被拒绝并抛出明确错误，且 `HarnessPopover` 将可写专家卡片置为禁用态
 - **AND** 派发只读 `review` 专家正常放行；当未传入 `summaryOverride` 时，子会话提示词自动附带 `[Parent Session Context]`（含 `Parent Task`、最近时间线摘要及禁止盲目 `git add -A` 约束）
+
+### Requirement: 无人值守工作流契约 (`paseo.workflow.unattended`) 与 `review` 阶段只读 Shell 自动放行 (Unattended Workflow Contract & Review Read-Only Shell Auto-Approval)
+
+系统 SHALL 支持通过 `paseo.workflow.unattended: "1"`、`paseo.workflow.phase` 与 `paseo.workflow.tier` 标签识别无人值守工作流步骤会话：
+
+- 在 `phase === "design"` 且非 `review` 阶段下，不将 `config.modeId` 强制覆写为原生只读 `"plan"` 模式（保留工作流引擎传入的无人值守执行模式以允许写入规格文档与提交 Git），注入非交互式 `[Phase: Unattended Workflow Design & Spec]` 阶段规则（禁止调用交互式 `ExitPlanMode` 与派生子代理），并在 Antigravity 会话中抑制 `mcp_paseo_create_agent` 交接提示；
+- 支持识别 `agent-team` 角色后缀（`-reviewer` / `-auditor` 映射至 `phase: "review"`，`-pm` / `-architect` 映射至 `phase: "design"`）以及显式 `paseo.workflow.phase`（`design | exec | review`）与 `paseo.workflow.tier`（如 `chore:` 任务指定 `"fast"` 档优先于专家默认档位），并将 `initialMetadata.roleLockedByLabel` 置为 `true`；
+- 在 `plan-shell-policy.ts` 中放行只读 `ocr` 命令（无参、`--version`/`-V`/`--help`/`-h`、`ocr delegate preview`、`ocr delegate rule`，拒绝 `ocr review`/`ocr init`），严禁未闭合引号、引号外换行符（`\n`/`\r`）、子壳/进程替换（`(` / `)`）及读写重定向（`<>`、`>`、`>>`、`&>`），并在 `agent.permission.before` 中将只读 Shell 自动审批守卫扩展覆盖至 `meta.phase === "review"` 与 `meta.currentTier === "review"`。
+
+#### Scenario: 无人值守工作流 design 阶段保留可写 modeId 并注入非交互式规格规则
+
+- **WHEN** 创建携带 `labels: { "paseo.workflow.unattended": "1" }` 且处于 `phase === "design"` 的会话（如 `spec` 或 `plan` 阶段，传入 `modeId: "bypassPermissions"`）
+- **THEN** `agent.create.before` 保留 `config.modeId: "bypassPermissions"` 不强制改为 `"plan"`，且 `metadata.agentHarness.roleLockedByLabel` 为 `true`
+- **AND** `systemPrompt` 注入 `[Phase: Unattended Workflow Design & Spec]` 规则且不包含 `mcp_paseo_create_agent` 递归派生提示
+
+#### Scenario: review 阶段自动审批只读 ocr delegate preview/rule 命令并拦截 ocr review
+
+- **WHEN** 处于 `phase === "review"`（或 `currentTier === "review"`）的会话触发 `agent.permission.before` 请求执行 `ocr delegate preview --format json` 或 `/Users/jerry/.local/bin/ocr delegate rule --format json a.ts`
+- **THEN** `isReadOnlyShellCommand` 判定为 `true` 并自动调用 `respondToPermission` 放行（`behavior: "allow"`）
+- **AND** 当请求执行 `ocr review`、`ocr init` 或含写重定向命令时，`isReadOnlyShellCommand` 返回 `false`，不予自动放行
+
+### Requirement: 全 Provider 无前缀技能归一化与 v7 配置迁移 (Prefix-Free Primary Skills Normalization & v7 Schema Migration)
+
+系统 SHALL 将所有内置专家角色（`BUILTIN_SPECIALISTS`）的 `primarySkills` 统一为安装于 `~/.agents/skills` 的无前缀技能名（`codebase-design`、`domain-modeling`、`tdd`、`diagnosing-bugs`、`code-review`、`grilling`、`pr`、`prototype`、`scaffold-exercises`），并通过纯函数 `normalizePrimarySkills` 在所有 Provider（Claude、Codex、OpenCode、Pi、Antigravity）的系统提示词横幅、仓库覆写合并及磁盘画像（`~/.agents/profiles/*.json`）序列化中统一执行归一化：将遗留 `"superpowers:dispatching-parallel-agents"` 映射为 `"codebase-design"`、将 `"superpowers:verification-before-completion"` 映射为 `"tdd"` 与 `"diagnosing-bugs"`、剔除其余 `"superpowers:*"` 项并剥离 `"mattpocock-skills:"` 命名空间前缀；同时在配置版本 `SETTINGS_SCHEMA_VERSION = 7` 下，`agentHarnessSettings.migrate` SHALL 自动将未修改 `primarySkills` 的内置专家升级至 v7 技能列表，并对用户自定义技能列表执行无损归一化。
+
+#### Scenario: 从 v6 配置升级至 v7 时升级未改动内置专家技能并归一化用户自定义技能
+
+- **WHEN** `agentHarnessSettings.migrate` 加载 `fromVersion = 6` 的配置，其中部分内置专家保留 v6 默认 `primarySkills`，另一部分专家或自定义专家包含用户自定义技能与遗留 `"superpowers:*"` / `"mattpocock-skills:*"` 条目
+- **THEN** 未改动内置专家的 `primarySkills` 升级至完整 v7 默认列表（如 `ui` 与 `backend` 获得 `"diagnosing-bugs"`、`"pr"`，`qa` 与 `general` 获得 `"tdd"`、`"diagnosing-bugs"`）
+- **AND** 用户自定义专家保留自定义技能项，同时自动完成 `"superpowers:*"` 映射/剔除与 `"mattpocock-skills:"` 前缀剥离
+- **AND** `buildSystemPromptBanner` 对 Claude、Codex、Antigravity 等所有 Provider 输出的 `Primary Skills` 均不包含任何 `"superpowers:"` 或 `"mattpocock-skills:"` 前缀

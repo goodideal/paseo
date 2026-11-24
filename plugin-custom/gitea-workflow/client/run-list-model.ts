@@ -1,3 +1,5 @@
+import type { WorkflowHarnessExecutionInfo } from "../shared/types.js";
+
 export type WorkflowRunStatus =
   | "queued"
   | "running"
@@ -22,7 +24,9 @@ export interface WorkflowStepItem {
   failureReason: string | null;
   skipReason: string | null;
   description?: string | null;
-  agentId?: string;
+  agentId?: string | null;
+  summary?: string | null;
+  harness?: WorkflowHarnessExecutionInfo | null;
   isSubagent?: boolean;
 }
 

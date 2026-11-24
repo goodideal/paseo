@@ -9,7 +9,13 @@ import {
   hasLocalAntigravityTeamPlugin,
   loadWorkspaceAgentTeam,
 } from "../server/agent-team-loader.js";
-import { createInitialHarnessMetadata, HARNESS_LEAF_META_KEY } from "../shared/lifecycle-state.js";
+import {
+  createInitialHarnessMetadata,
+  HARNESS_LEAF_META_KEY,
+  HARNESS_WORKFLOW_PHASE_LABEL_KEY,
+  HARNESS_WORKFLOW_TIER_LABEL_KEY,
+  HARNESS_WORKFLOW_UNATTENDED_LABEL_KEY,
+} from "../shared/lifecycle-state.js";
 import { agentHarnessSettings, DEFAULT_AGENT_HARNESS_SETTINGS } from "../shared/settings.js";
 import { HARNESS_METADATA_KEY, type HarnessAgentMetadata } from "../shared/types.js";
 import {
@@ -3819,7 +3825,7 @@ describe("agent-harness server contribute", () => {
       expect(reviewSpec?.preferredProvider).toBe("antigravity");
       expect(reviewSpec?.preferredTier).toBe("deep");
       expect(reviewSpec?.primarySkills).toEqual([
-        "mattpocock-skills:code-review",
+        "code-review",
         "open-code-review-delegate",
         "gitea",
       ]);
@@ -3941,11 +3947,7 @@ describe("agent-harness server contribute", () => {
       ) as typeof DEFAULT_AGENT_HARNESS_SETTINGS;
       const review = migrated.specialists.find((s) => s.id === "review")!;
       expect(review.preferredProvider).toBe("antigravity");
-      expect(review.primarySkills).toEqual([
-        "mattpocock-skills:code-review",
-        "open-code-review-delegate",
-        "gitea",
-      ]);
+      expect(review.primarySkills).toEqual(["code-review", "open-code-review-delegate", "gitea"]);
       expect(review.qualityGates).toEqual([
         "dual-axis-semantic-review",
         "open-code-review-delegate-gate",
@@ -4183,6 +4185,500 @@ describe("agent-harness server contribute", () => {
         context,
       );
       expect(createChildMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("upgrades thinkingOptionId when router changes model tier, while preserving explicit thinking on same model", async () => {
+      const { hooks } = createTestServer();
+
+      // Pre-filled fast model + medium thinking routed to deep plan model -> upgrades thinking to high
+      const upgraded = await hooks["agent.create.before"]({
+        request: {
+          config: {
+            provider: "antigravity",
+            cwd: "/tmp/thinking-upgrade",
+            model: "gemini-4-hydrogen",
+            thinkingOptionId: "medium",
+            title: "检查系统主题设计方案",
+          },
+        },
+      });
+      expect(upgraded.config.model).toBe("gemini-4-carbon");
+      expect(upgraded.config.thinkingOptionId).toBe("high");
+      expect(upgraded.metadata?.[HARNESS_METADATA_KEY]?.currentThinking).toBe("high");
+
+      // Same model (no model change) preserves caller's explicit thinkingOptionId
+      const preserved = await hooks["agent.create.before"]({
+        request: {
+          config: {
+            provider: "antigravity",
+            cwd: "/tmp/thinking-preserve",
+            model: "gemini-4-argon",
+            thinkingOptionId: "medium",
+            title: "fix: 微调间距",
+          },
+        },
+      });
+      expect(preserved.config.model).toBe("gemini-4-argon");
+      expect(preserved.config.thinkingOptionId).toBe("medium");
+    });
+
+    it("proactively steps down from design to standard on 'ok, continue' and service startup commands", async () => {
+      const { hooks } = createTestServer();
+
+      for (const message of ["ok, continue", "启动服务"]) {
+        const meta: HarnessAgentMetadata = {
+          ...createInitialHarnessMetadata({
+            role: "ui",
+            tier: "deep",
+            phase: "design",
+            model: "gemini-4-carbon",
+            thinkingOptionId: "high",
+            roleMatchedRule: "heuristic:ui",
+            tierMatchedRule: "plan",
+          }),
+          turnCount: 1,
+          planTurnCount: 1,
+        };
+        const setModelMock = vi.fn().mockResolvedValue(undefined);
+        const setMetadataMock = vi.fn().mockResolvedValue(undefined);
+        const appendMock = vi.fn().mockResolvedValue({});
+        const handle = {
+          current: () => ({
+            id: `agt_stepdown_${message}`,
+            provider: "antigravity",
+            model: "gemini-4-carbon",
+            thinkingOptionId: "high",
+            metadata: { [HARNESS_METADATA_KEY]: meta },
+          }),
+          setModel: setModelMock,
+          setMetadata: setMetadataMock,
+          timeline: {
+            refetch: vi.fn().mockResolvedValue({
+              items: [{ type: "user_message", text: message }],
+            }),
+            append: appendMock,
+          },
+        };
+        const context = {
+          paseo: {
+            agents: { ref: vi.fn().mockReturnValue(handle) },
+          },
+        };
+
+        await hooks["agent.turn.before"](
+          {
+            agent: {
+              id: `agt_stepdown_${message}`,
+              provider: "antigravity",
+              metadata: { [HARNESS_METADATA_KEY]: meta },
+            },
+          },
+          context,
+        );
+
+        expect(setModelMock).toHaveBeenCalledWith("gemini-4-argon");
+        expect(setMetadataMock).toHaveBeenCalledWith({
+          [HARNESS_METADATA_KEY]: expect.objectContaining({
+            currentTier: "standard",
+            currentModel: "gemini-4-argon",
+            phase: "exec",
+            downgradeReason: "explicit_exec_intent",
+          }),
+        });
+      }
+    });
+
+    it("emits parent specialist_handoff timeline card on external mcp_paseo_create_agent spawn without duplicating SDK handoffs", async () => {
+      const { hooks } = createTestServer();
+      const parentAppendMock = vi.fn().mockResolvedValue({});
+      const childAppendMock = vi.fn().mockResolvedValue({});
+      const parentMeta = createInitialHarnessMetadata({
+        role: "ui",
+        tier: "deep",
+        phase: "design",
+        model: "gemini-4-carbon",
+        thinkingOptionId: "high",
+        roleMatchedRule: "heuristic:ui",
+        tierMatchedRule: "plan",
+      });
+      parentMeta.turnCount = 3;
+
+      const parentHandle = {
+        current: () => ({
+          id: "agt_parent_ext",
+          provider: "antigravity",
+          cwd: "/workspace/demo",
+          workspaceId: "ws_demo",
+          metadata: { [HARNESS_METADATA_KEY]: parentMeta },
+        }),
+        timeline: { append: parentAppendMock },
+      };
+      const childHandle = {
+        timeline: { append: childAppendMock },
+      };
+
+      const context = {
+        paseo: {
+          agents: {
+            ref: vi
+              .fn()
+              .mockImplementation((id: string) =>
+                id === "agt_parent_ext" ? parentHandle : childHandle,
+              ),
+          },
+        },
+      };
+
+      // 1. External spawn (e.g. mcp_paseo_create_agent) emits initial_route on child + specialist_handoff on parent
+      const childMeta = createInitialHarnessMetadata({
+        role: "review",
+        tier: "deep",
+        phase: "review",
+        model: "gemini-4-carbon",
+        thinkingOptionId: "high",
+        roleMatchedRule: "label:role",
+        tierMatchedRule: "role_tier:review",
+        roleLockedByLabel: true,
+      });
+
+      await hooks["agent.create.after"](
+        {
+          agent: {
+            id: "agt_child_ext_review",
+            parentAgentId: "agt_parent_ext",
+            provider: "antigravity",
+            title: "Reviewer Gate: Theme Check",
+            metadata: {
+              [HARNESS_METADATA_KEY]: childMeta,
+              [HARNESS_LEAF_META_KEY]: true,
+            },
+          },
+        },
+        context,
+      );
+
+      expect(childAppendMock).toHaveBeenCalledTimes(1);
+      expect(parentAppendMock).toHaveBeenCalledTimes(1);
+      expect(parentAppendMock.mock.calls[0]?.[0]?.data).toMatchObject({
+        transitionKind: "specialist_handoff",
+        role: "review",
+        fromTier: "deep",
+        toTier: "deep",
+        phase: "review",
+        childAgentId: "agt_child_ext_review",
+        childAgentTitle: "Reviewer Gate: Theme Check",
+        turnNumber: 3,
+      });
+
+      // 2. SDK harness_handoff spawn emits once inside spawnHarnessSpecialist and deduplicates agent.create.after
+      parentAppendMock.mockClear();
+      childAppendMock.mockClear();
+      const opened = await hooks["agent.open.before"]({
+        request: {
+          agentId: "agt_parent_ext",
+          provider: "claude",
+          cwd: "/workspace/demo",
+          reason: "create",
+          purpose: "interactive",
+          title: "执行阶段",
+          labels: {},
+          tools: [],
+          env: {},
+          mcpServers: {},
+        },
+      });
+      const handoffTool = opened.tools.find((t: any) => t.name === "harness_handoff");
+      const sdkChildMeta = createInitialHarnessMetadata({
+        role: "ui",
+        tier: "standard",
+        phase: "exec",
+        model: "flash",
+        thinkingOptionId: "medium",
+        roleMatchedRule: "label:role",
+        tierMatchedRule: "role_tier:ui",
+        roleLockedByLabel: true,
+      });
+      const createSdkChild = vi.fn().mockResolvedValue({ id: "agt_child_sdk_ui" });
+      await handoffTool.execute(
+        {
+          targetRole: "ui",
+          title: "Implement UI",
+          specPrompt: "Build theme switcher.",
+        },
+        {
+          agent: {
+            id: "agt_parent_ext",
+            provider: "claude",
+            cwd: "/workspace/demo",
+            workspaceId: "ws_demo",
+          },
+          paseo: {
+            agents: {
+              ref: context.paseo.agents.ref,
+              create: createSdkChild,
+            },
+            workspaces: {
+              ref: () => ({ agents: { create: createSdkChild } }),
+            },
+          },
+        },
+      );
+      expect(parentAppendMock).toHaveBeenCalledTimes(1);
+
+      await hooks["agent.create.after"](
+        {
+          agent: {
+            id: "agt_child_sdk_ui",
+            parentAgentId: "agt_parent_ext",
+            provider: "claude",
+            title: "[UI] Implement UI",
+            metadata: {
+              [HARNESS_METADATA_KEY]: sdkChildMeta,
+              [HARNESS_LEAF_META_KEY]: true,
+            },
+          },
+        },
+        context,
+      );
+      expect(parentAppendMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("supports unattended workflow contract (paseo.workflow.unattended=1) without forcing native plan mode in design phase while locking role and enforcing review read-only shell auto-approval", async () => {
+      const { hooks } = createTestServer({
+        specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) =>
+          s.id === "review" ? { ...s, readonly: true } : s,
+        ),
+      });
+
+      // 1. Unattended workflow design step (e.g. spec/plan without role label) preserves caller modeId (e.g. bypassPermissions) instead of forcing "plan"
+      const unattendedDesign = await hooks["agent.create.before"]({
+        request: {
+          config: {
+            provider: "claude",
+            cwd: "/workspace/workflow-demo",
+            model: "flash",
+            modeId: "bypassPermissions",
+            title: "[Workflow Spec] 设计无人值守架构规格方案",
+            labels: {
+              [HARNESS_WORKFLOW_UNATTENDED_LABEL_KEY]: "1",
+            },
+          },
+        },
+      });
+
+      expect(unattendedDesign.config.model).toBe("pro");
+      expect(unattendedDesign.config.modeId).toBe("bypassPermissions");
+      expect(unattendedDesign.config.systemPrompt).toContain(
+        "[Phase: Unattended Workflow Design & Spec]",
+      );
+      expect(unattendedDesign.config.systemPrompt).not.toContain("ExitPlanMode tool");
+      const unattendedMeta = unattendedDesign.metadata?.[
+        HARNESS_METADATA_KEY
+      ] as HarnessAgentMetadata;
+      expect(unattendedMeta.phase).toBe("design");
+      expect(unattendedMeta.roleLockedByLabel).toBe(true);
+
+      // 2. Unattended workflow review step still enforces native plan mode for readonly review specialist on claude
+      const unattendedReview = await hooks["agent.create.before"]({
+        request: {
+          config: {
+            provider: "claude",
+            cwd: "/workspace/workflow-demo",
+            model: "flash",
+            modeId: "bypassPermissions",
+            title: "[Workflow Review] 代码审查与门禁",
+            labels: {
+              role: "review",
+              [HARNESS_WORKFLOW_UNATTENDED_LABEL_KEY]: "1",
+            },
+          },
+        },
+      });
+      expect(unattendedReview.config.modeId).toBe("plan");
+      const reviewMeta = unattendedReview.metadata?.[HARNESS_METADATA_KEY] as HarnessAgentMetadata;
+      expect(reviewMeta.phase).toBe("review");
+      expect(reviewMeta.roleLockedByLabel).toBe(true);
+
+      // 3. agent.permission.before auto-approves read-only shell commands (including ocr delegate preview/rule) in phase="review"
+      const respondToPermission = vi.fn().mockResolvedValue(undefined);
+      const permContext = {
+        paseo: {
+          agents: {
+            ref: vi.fn().mockReturnValue({
+              respondToPermission,
+            }),
+          },
+        },
+      };
+      const reviewAgent = {
+        id: "agt_unattended_review",
+        provider: "claude",
+        cwd: "/workspace/workflow-demo",
+        metadata: { [HARNESS_METADATA_KEY]: reviewMeta },
+      };
+
+      await hooks["agent.permission.before"](
+        {
+          agent: reviewAgent,
+          request: {
+            id: "perm_ocr_preview",
+            kind: "shell",
+            input: {
+              command:
+                "/Users/jerry/.local/bin/ocr delegate preview --format json && git --no-pager diff",
+            },
+          },
+        },
+        permContext,
+      );
+      expect(respondToPermission).toHaveBeenCalledWith({
+        requestId: "perm_ocr_preview",
+        response: { behavior: "allow" },
+      });
+
+      // Rejects non-read-only ocr review in phase="review"
+      respondToPermission.mockClear();
+      await hooks["agent.permission.before"](
+        {
+          agent: reviewAgent,
+          request: {
+            id: "perm_ocr_review_llm",
+            kind: "shell",
+            input: {
+              command: "ocr review --format json",
+            },
+          },
+        },
+        permContext,
+      );
+      expect(respondToPermission).not.toHaveBeenCalled();
+
+      // 4. Supports agent-team suffixed roles (be-reviewer, fe-architect) and paseo.workflow.phase / paseo.workflow.tier labels
+      const teamSpecialists = [
+        {
+          ...DEFAULT_AGENT_HARNESS_SETTINGS.specialists[1],
+          id: "fe-architect",
+          name: "FE Architect",
+          shortLabel: "fe-architect",
+          builtIn: false,
+          readonly: true,
+          preferredTier: "deep",
+          rolePromptTemplate: "",
+        },
+        {
+          ...DEFAULT_AGENT_HARNESS_SETTINGS.specialists[2],
+          id: "be-developer",
+          name: "BE Developer",
+          shortLabel: "be-developer",
+          builtIn: false,
+          readonly: false,
+          preferredTier: "standard",
+          rolePromptTemplate: "",
+        },
+        {
+          ...DEFAULT_AGENT_HARNESS_SETTINGS.specialists[6],
+          id: "be-reviewer",
+          name: "BE Reviewer",
+          shortLabel: "be-reviewer",
+          builtIn: false,
+          readonly: true,
+          preferredTier: "deep",
+          rolePromptTemplate: "",
+        },
+      ];
+      const { hooks: teamHooks } = createTestServer({
+        specialists: teamSpecialists,
+      });
+
+      // 4a. fe-architect in unattended workflow resolves phase="design", skips native plan lock, and injects Unattended Workflow Design banner
+      const feArchCreated = await teamHooks["agent.create.before"]({
+        request: {
+          config: {
+            provider: "claude",
+            cwd: "/workspace/team-wf",
+            model: "flash",
+            modeId: "bypassPermissions",
+            title: "[Workflow Spec] 前端架构设计",
+            labels: {
+              role: "fe-architect",
+              [HARNESS_WORKFLOW_UNATTENDED_LABEL_KEY]: "1",
+              [HARNESS_WORKFLOW_PHASE_LABEL_KEY]: "design",
+            },
+          },
+        },
+      });
+      expect(feArchCreated.config.modeId).toBe("bypassPermissions");
+      expect(feArchCreated.config.systemPrompt).toContain(
+        "[Phase: Unattended Workflow Design & Spec]",
+      );
+      expect((feArchCreated.metadata?.[HARNESS_METADATA_KEY] as HarnessAgentMetadata).phase).toBe(
+        "design",
+      );
+
+      // 4b. be-reviewer in unattended workflow resolves phase="review" and enforces native plan mode on claude
+      const beRevCreated = await teamHooks["agent.create.before"]({
+        request: {
+          config: {
+            provider: "claude",
+            cwd: "/workspace/team-wf",
+            model: "flash",
+            modeId: "bypassPermissions",
+            title: "[Workflow Review] 后端代码审查",
+            labels: {
+              role: "be-reviewer",
+              [HARNESS_WORKFLOW_UNATTENDED_LABEL_KEY]: "1",
+            },
+          },
+        },
+      });
+      expect(beRevCreated.config.modeId).toBe("plan");
+      expect((beRevCreated.metadata?.[HARNESS_METADATA_KEY] as HarnessAgentMetadata).phase).toBe(
+        "review",
+      );
+
+      // 4c. paseo.workflow.tier="fast" overrides specialist preferredTier ("standard") for chore tasks in unattended workflow
+      const fastChoreCreated = await teamHooks["agent.create.before"]({
+        request: {
+          config: {
+            provider: "claude",
+            cwd: "/workspace/team-wf",
+            model: "flash",
+            modeId: "bypassPermissions",
+            title: "chore: update dependencies",
+            labels: {
+              role: "be-developer",
+              [HARNESS_WORKFLOW_UNATTENDED_LABEL_KEY]: "1",
+              [HARNESS_WORKFLOW_PHASE_LABEL_KEY]: "exec",
+              [HARNESS_WORKFLOW_TIER_LABEL_KEY]: "fast",
+            },
+          },
+        },
+      });
+      expect(fastChoreCreated.config.model).toBe("lite");
+      const fastChoreMeta = fastChoreCreated.metadata?.[
+        HARNESS_METADATA_KEY
+      ] as HarnessAgentMetadata;
+      expect(fastChoreMeta.currentTier).toBe("fast");
+      expect(fastChoreMeta.phase).toBe("exec");
+
+      // 5. Explicit metadata.agentHarnessBypassed=true in agent.create.before skips routing, banner, and agentHarness metadata
+      const bypassedCreate = await teamHooks["agent.create.before"]({
+        request: {
+          config: {
+            provider: "codex",
+            cwd: "/workspace/team-wf",
+            model: "flash",
+            title: "[Workflow Spec] 设计架构方案（显式关闭 Harness）",
+          },
+          metadata: {
+            agentHarnessBypassed: true,
+          },
+        },
+      });
+      expect(bypassedCreate.config.model).toBe("flash");
+      expect(bypassedCreate.config.systemPrompt).toBeUndefined();
+      expect(bypassedCreate.metadata?.agentHarnessBypassed).toBe(true);
+      expect(bypassedCreate.metadata?.[HARNESS_METADATA_KEY]).toBeUndefined();
     });
   });
 });

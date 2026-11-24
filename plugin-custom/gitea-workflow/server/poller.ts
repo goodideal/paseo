@@ -6,8 +6,30 @@ import type { PaseoWorkspaceActions } from "@getpaseo/client";
 import type { WorkflowRunsClient } from "../shared/workflow-types.js";
 import { resolveIssueWorkflowPreset } from "./preset-resolver.js";
 import { isApprovalComment } from "./adapters/dual-approval-gate.js";
-import { LIFECYCLE_LABELS } from "../shared/types.js";
+import {
+  LIFECYCLE_LABELS,
+  type GiteaTriggerMode,
+  type GiteaWorkflowPolicy,
+} from "../shared/types.js";
 import { formatWorkflowWorkspaceTitle, cleanIssueTitle } from "./workspace-title.js";
+
+export function resolvePolicyPreset(policy: GiteaWorkflowPolicy): {
+  presetId: string;
+  mode: GiteaTriggerMode;
+} {
+  switch (policy) {
+    case "grill_plan":
+    case "full_superpowers":
+      return { presetId: "gitea.issue-to-pr.plan", mode: "plan" };
+    case "issue_preapproved":
+      return { presetId: "gitea.issue-to-pr.preapproved", mode: "plan" };
+    case "unattended":
+      return { presetId: "gitea.issue-to-pr.unattended", mode: "auto" };
+    case "direct_pr":
+    default:
+      return { presetId: "gitea.issue-to-pr", mode: "auto" };
+  }
+}
 
 export interface PaseoProjectItem {
   projectId: string;
@@ -31,7 +53,7 @@ export interface MultiProjectPollerOptions {
 export const GATE_PHASE_LABELS: Record<string, string> = {
   "gate-brainstorm": "💡 方案设计与选型确认 (Brainstorm)",
   "gate-spec": "📝 架构规范确认 (Spec)",
-  "gate-plan": "📋 实施计划与测试方案确认 (Plan)",
+  "gate-plan": "📋 方案质询与实施计划确认 (Grill & Plan)",
   "gate-delivery": "🚀 最终代码交付与 PR 确认 (Delivery)",
   "design-approval": "💡 架构提案确认 (Design)",
   "spec-approval": "📝 详细规范确认 (Spec)",
@@ -331,14 +353,9 @@ export class MultiProjectPoller {
         }
         for (const issue of readyIssues) {
           const target = resolveIssueWorkflowPreset(issue.labels ?? []);
-          const presetId = target
-            ? target.presetId
-            : policy === "issue_preapproved"
-              ? "gitea.issue-to-pr.preapproved"
-              : policy === "unattended"
-                ? "gitea.issue-to-pr.unattended"
-                : "gitea.issue-to-pr";
-          const mode = target?.mode ?? (policy === "unattended" ? "auto" : "plan");
+          const policyFallback = resolvePolicyPreset(policy);
+          const presetId = target ? target.presetId : policyFallback.presetId;
+          const mode = target?.mode ?? policyFallback.mode;
           const conflictWarning = target?.conflictWarning ?? false;
 
           const existingRunId = await this.options.indexStore.getRunIdForIssue(

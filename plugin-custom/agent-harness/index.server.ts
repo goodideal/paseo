@@ -33,6 +33,9 @@ import {
   HARNESS_BYPASSED_META_KEY,
   HARNESS_LEAF_LABEL_KEY,
   HARNESS_LEAF_META_KEY,
+  HARNESS_WORKFLOW_PHASE_LABEL_KEY,
+  HARNESS_WORKFLOW_TIER_LABEL_KEY,
+  HARNESS_WORKFLOW_UNATTENDED_LABEL_KEY,
   hasExplicitExecTransitionIntent,
   hasShortAffirmativeExecConfirmation,
   inspectTurnTimeline,
@@ -68,7 +71,11 @@ import {
   invalidateWorkspaceAgentTeamCache,
   loadWorkspaceAgentTeam,
 } from "./server/agent-team-loader.js";
-import { createHarnessHandoffTool } from "./server/handoff-tool.js";
+import {
+  consumeSdkEmittedHandoffChild,
+  createHarnessHandoffTool,
+  isSdkHandoffInFlight,
+} from "./server/handoff-tool.js";
 import {
   exportSpecialistsToDisk,
   loadRepoHarnessOverride,
@@ -599,7 +606,11 @@ export default function contribute(server: PluginServerContext) {
     hookStage: string,
     mergedLabels?: Readonly<Record<string, string>>,
     parentAgentCheck?: boolean,
-    options?: { isLeaf?: boolean; isExplicitRoleSpawn?: boolean },
+    options?: {
+      isLeaf?: boolean;
+      isExplicitRoleSpawn?: boolean;
+      isUnattendedWorkflow?: boolean;
+    },
   ): Promise<RoutedAgentConfigResult<T>> {
     const effectiveConfig = getEffectiveConfig(config.cwd);
 
@@ -698,18 +709,41 @@ export default function contribute(server: PluginServerContext) {
       }
     }
 
+    const rawWorkflowPhase = mergedLabels?.[HARNESS_WORKFLOW_PHASE_LABEL_KEY]?.trim().toLowerCase();
+    const explicitWorkflowPhase: HarnessPhase | undefined =
+      rawWorkflowPhase === "design" || rawWorkflowPhase === "exec" || rawWorkflowPhase === "review"
+        ? rawWorkflowPhase
+        : undefined;
+    const normRoleId = roleDecision.role?.trim().toLowerCase() ?? "";
+    const isDesignRole =
+      normRoleId === "pm" ||
+      normRoleId.endsWith("-pm") ||
+      normRoleId === "architect" ||
+      normRoleId.endsWith("-architect");
+    const fallbackSpecialistPhase: HarnessPhase | undefined =
+      explicitWorkflowPhase ?? (specialist?.readonly && !isDesignRole ? "review" : undefined);
+
     // Role tier enforcement if specified by label or if specialist has a preferredTier / modelOverride
     if (
       (roleDecision.matchedRule.startsWith("label:") || roleDecision.role === "orchestrator") &&
       !isBypassed &&
       !decision.matchedRule.startsWith("preserve_user_choice")
     ) {
+      const explicitWorkflowTier =
+        options?.isUnattendedWorkflow && mergedLabels?.[HARNESS_WORKFLOW_TIER_LABEL_KEY]?.trim()
+          ? coerceAutoRoutingTier(mergedLabels[HARNESS_WORKFLOW_TIER_LABEL_KEY])
+          : undefined;
       const preferredTier = normalizeTierAlias(
-        specialist?.preferredTier ?? resolveSpecialistTargetTier(roleDecision.role),
+        explicitWorkflowTier ??
+          specialist?.preferredTier ??
+          resolveSpecialistTargetTier(roleDecision.role),
       );
       const tierResolved = resolveTierTarget(effectiveConfig, normalizedProvider, preferredTier);
-      const targetModel = specialist?.modelOverride?.trim() || tierResolved.model;
-      const targetThinking = specialist?.thinkingOptionId?.trim() || tierResolved.thinkingOptionId;
+      const targetModel =
+        (explicitWorkflowTier ? "" : specialist?.modelOverride?.trim()) || tierResolved.model;
+      const targetThinking =
+        (explicitWorkflowTier ? null : specialist?.thinkingOptionId?.trim()) ||
+        tierResolved.thinkingOptionId;
 
       const shouldKeepTextTier = decision.phase === "review" && roleDecision.role === "qa";
 
@@ -718,7 +752,12 @@ export default function contribute(server: PluginServerContext) {
           tier: preferredTier,
           targetModel,
           targetThinking,
-          phase: tierToPhase(preferredTier, roleDecision.role, effectiveConfig),
+          phase: tierToPhase(
+            preferredTier,
+            roleDecision.role,
+            effectiveConfig,
+            fallbackSpecialistPhase,
+          ),
           reason: `Routed to ${preferredTier} model '${targetModel}' by role '${roleDecision.role}'`,
           matchedRule: `role_tier:${roleDecision.role}`,
           previousModel: config.model ?? undefined,
@@ -730,7 +769,8 @@ export default function contribute(server: PluginServerContext) {
       decision.tier,
       roleDecision.role,
       effectiveConfig,
-      decision.matchedRule.startsWith("role_tier:") ? undefined : decision.phase,
+      fallbackSpecialistPhase ??
+        (decision.matchedRule.startsWith("role_tier:") ? undefined : decision.phase),
     );
     if (decision.phase !== resolvedPhase) {
       decision = { ...decision, phase: resolvedPhase };
@@ -755,31 +795,46 @@ export default function contribute(server: PluginServerContext) {
       typeof config.thinkingOptionId === "string" && config.thinkingOptionId.trim()
         ? config.thinkingOptionId.trim()
         : undefined;
+    const modelChangedByRouter = Boolean(
+      decision.targetModel && decision.targetModel !== config.model && !userModelLocked,
+    );
+    const explicitSpecialistThinking = Boolean(
+      roleLockedByLabel && specialist?.thinkingOptionId?.trim(),
+    );
     const nextThinkingOptionId =
-      !existingThinking && (!userModelLocked || decision.tier === "max") && decision.targetThinking
+      decision.targetThinking &&
+      (modelChangedByRouter ||
+        explicitSpecialistThinking ||
+        (!existingThinking && (!userModelLocked || decision.tier === "max")))
         ? decision.targetThinking
         : config.thinkingOptionId;
 
     // Enforce native plan mode if applicable (driven orthogonally by phase === "design" or readonly role)
     let nextModeId = config.modeId;
-    const mustEnforcePlanMode = shouldEnforceNativePlanMode({
-      phaseLifecycleEnabled: effectiveConfig.phaseLifecycleEnabled,
-      enforceNativePlanMode: effectiveConfig.enforceNativePlanMode,
-      tier: decision.tier,
-      phase: resolvedPhase,
-      role: roleDecision.role,
-      userModelLocked,
-      roleLockedByLabel,
-      hasParentAgent,
-      provider: config.provider,
-      config: effectiveConfig,
-    });
+    const skipPlanModeForUnattended = Boolean(
+      options?.isUnattendedWorkflow && resolvedPhase !== "review",
+    );
+    const mustEnforcePlanMode =
+      !skipPlanModeForUnattended &&
+      shouldEnforceNativePlanMode({
+        phaseLifecycleEnabled: effectiveConfig.phaseLifecycleEnabled,
+        enforceNativePlanMode: effectiveConfig.enforceNativePlanMode,
+        tier: decision.tier,
+        phase: resolvedPhase,
+        role: roleDecision.role,
+        userModelLocked,
+        roleLockedByLabel,
+        hasParentAgent,
+        provider: config.provider,
+        config: effectiveConfig,
+      });
 
     if (mustEnforcePlanMode) {
       if (hookStage !== "workspace.create") {
         nextModeId = "plan";
       }
     } else if (
+      !skipPlanModeForUnattended &&
       specialist?.readonly &&
       hookStage !== "workspace.create" &&
       isNativePlanModeSupported(effectiveConfig, config.provider)
@@ -813,6 +868,7 @@ export default function contribute(server: PluginServerContext) {
           mergedLabels?.role ||
           mergedLabels?.profile,
         ),
+        isUnattendedWorkflow: options?.isUnattendedWorkflow,
       });
 
       if (harnessBanner) {
@@ -891,9 +947,14 @@ export default function contribute(server: PluginServerContext) {
 
     const workspaceAgent = request.agent;
     const workspaceAgentConfig = workspaceAgent?.config;
-    let workspaceBypassed = false;
+    const explicitWorkspaceBypass = Boolean(
+      (workspaceAgent?.metadata as Record<string, unknown> | undefined)?.[
+        HARNESS_BYPASSED_META_KEY
+      ] || (request.metadata as Record<string, unknown> | undefined)?.[HARNESS_BYPASSED_META_KEY],
+    );
+    let workspaceBypassed = explicitWorkspaceBypass;
     let routedAgentConfig = workspaceAgentConfig;
-    if (workspaceAgentConfig) {
+    if (workspaceAgentConfig && !explicitWorkspaceBypass) {
       const parentAgentCheck = Boolean(
         (request as { parentAgentId?: string; callerAgentId?: string }).parentAgentId ||
         (request as { callerAgentId?: string }).callerAgentId ||
@@ -986,6 +1047,31 @@ export default function contribute(server: PluginServerContext) {
     );
     const isLeaf = mergedLabels?.[HARNESS_LEAF_LABEL_KEY] === "1";
     const isExplicitRoleSpawn = Boolean(mergedLabels?.role || mergedLabels?.profile);
+    const isUnattendedWorkflow = mergedLabels?.[HARNESS_WORKFLOW_UNATTENDED_LABEL_KEY] === "1";
+    const explicitRequestBypass = Boolean(
+      (request.metadata as Record<string, unknown> | undefined)?.[HARNESS_BYPASSED_META_KEY] ||
+      workspaceContext?.bypassed,
+    );
+
+    if (explicitRequestBypass) {
+      if (config.cwd) {
+        enqueueAgentCreationContext(config.cwd, {
+          prompt: promptOrTitle || explicitTitle,
+          labels: mergedLabels,
+          bypassed: true,
+          isLeaf,
+          title: explicitTitle || undefined,
+        });
+      }
+      return {
+        ...request,
+        metadata: {
+          ...(request.metadata ?? {}),
+          [HARNESS_BYPASSED_META_KEY]: true,
+          ...(isLeaf ? { [HARNESS_LEAF_META_KEY]: true } : {}),
+        },
+      };
+    }
 
     const {
       config: nextConfig,
@@ -1001,6 +1087,7 @@ export default function contribute(server: PluginServerContext) {
       {
         isLeaf,
         isExplicitRoleSpawn,
+        isUnattendedWorkflow,
       },
     );
 
@@ -1036,7 +1123,9 @@ export default function contribute(server: PluginServerContext) {
     if (cachedSettings.phaseLifecycleEnabled) {
       const userModelLocked = routerDecision.matchedRule.startsWith("preserve_user_choice");
       const roleLockedByLabel =
-        roleDecision.matchedRule.startsWith("label:") || Boolean(mergedLabels?.role);
+        roleDecision.matchedRule.startsWith("label:") ||
+        Boolean(mergedLabels?.role) ||
+        isUnattendedWorkflow;
 
       const resumeModeId = config.modeId && config.modeId !== "plan" ? config.modeId : null;
 
@@ -1108,8 +1197,8 @@ export default function contribute(server: PluginServerContext) {
       }
       latestMetadataByAgent.set(agent.id, meta);
 
-      if (meta.currentTier !== "standard" || meta.currentModel) {
-        if (context?.paseo?.agents) {
+      if (context?.paseo?.agents) {
+        if (meta.currentTier !== "standard" || meta.currentModel) {
           try {
             const handle = context.paseo.agents.ref(agent.id);
             await emitHarnessTimelineTransition(handle, {
@@ -1125,6 +1214,44 @@ export default function contribute(server: PluginServerContext) {
             });
           } catch {
             // Ignore timeline append failures on creation
+          }
+        }
+
+        const parentAgentId =
+          (typeof (agent as { parentAgentId?: unknown }).parentAgentId === "string" &&
+            (agent as { parentAgentId: string }).parentAgentId.trim()) ||
+          readStringLabels(agent)?.["paseo.parent-agent-id"]?.trim() ||
+          "";
+        const isLeafChild = Boolean(
+          (agent.metadata as Record<string, unknown> | undefined)?.[HARNESS_LEAF_META_KEY],
+        );
+
+        if (
+          parentAgentId &&
+          (isLeafChild || meta.roleLockedByLabel) &&
+          !isSdkHandoffInFlight(parentAgentId) &&
+          !consumeSdkEmittedHandoffChild(agent.id)
+        ) {
+          try {
+            const parentHandle = context.paseo.agents.ref(parentAgentId);
+            const parentMeta =
+              readLatestMetadata({ id: parentAgentId }) ??
+              parseHarnessMetadata(parentHandle?.current?.()?.metadata);
+            await emitHarnessTimelineTransition(parentHandle, {
+              transitionKind: "specialist_handoff",
+              role: meta.role,
+              fromTier: parentMeta?.currentTier ?? null,
+              toTier: meta.currentTier,
+              fromModel: parentMeta?.currentModel ?? null,
+              toModel: meta.currentModel,
+              phase: meta.phase,
+              reason: "specialist_handoff",
+              turnNumber: parentMeta?.turnCount ?? 0,
+              childAgentId: agent.id,
+              childAgentTitle: agent.title ?? null,
+            });
+          } catch {
+            // Ignore parent timeline append failures on creation
           }
         }
       }
@@ -1360,7 +1487,11 @@ export default function contribute(server: PluginServerContext) {
 
       if (context?.paseo?.agents) {
         const meta = readLatestMetadata(agent);
-        const isPlanOrDesign = meta?.phase === "design" || meta?.currentTier === "plan";
+        const isPlanOrDesign =
+          meta?.phase === "design" ||
+          meta?.phase === "review" ||
+          meta?.currentTier === "plan" ||
+          meta?.currentTier === "review";
         if (isPlanOrDesign) {
           let rawCommand: string | null = null;
           if (typeof request.input?.command === "string") {

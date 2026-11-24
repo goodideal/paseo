@@ -215,7 +215,58 @@ describe("GiteaClient", () => {
     expect(pr.url).toBe("http://gitea.local/owner/repo/pulls/10");
   });
 
-  it("recovers existing PR URL on 409 Conflict", async () => {
+  it("recovers existing PR URL on 409 Conflict via GET /pulls and PATCHes title/body", async () => {
+    const patchCalls: Array<{ url: string; body: any }> = [];
+    globalThis.fetch = vi
+      .fn()
+      .mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
+        const urlStr = url.toString();
+        const method = init?.method ?? "GET";
+        if (urlStr.endsWith("/pulls") && method === "POST") {
+          return new Response("Conflict", { status: 409, statusText: "Conflict" });
+        }
+        if (urlStr.includes("/pulls?state=open") && method === "GET") {
+          return new Response(
+            JSON.stringify([
+              {
+                number: 72,
+                html_url: "http://gitea.local/owner/repo/pulls/72",
+                head: { ref: "agent/issue-70", label: "owner:agent/issue-70" },
+              },
+            ]),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (urlStr.endsWith("/pulls/72") && method === "PATCH") {
+          patchCalls.push({ url: urlStr, body: JSON.parse(init?.body as string) });
+          return new Response(JSON.stringify({ number: 72 }), { status: 200 });
+        }
+        return new Response("Not found", { status: 404 });
+      });
+
+    const client = new GiteaClient({
+      giteaUrl: "http://gitea.local",
+      giteaToken: "test-token",
+      repoOwner: "owner",
+      repoName: "repo",
+    });
+
+    const pr = await client.createPullRequest({
+      title: "feat: resolve issue 70 (#70)",
+      body: "Closes #70",
+      headBranch: "agent/issue-70",
+      baseBranch: "develop",
+    });
+
+    expect(pr.url).toBe("http://gitea.local/owner/repo/pulls/72");
+    expect(patchCalls).toHaveLength(1);
+    expect(patchCalls[0]?.body).toEqual({
+      title: "feat: resolve issue 70 (#70)",
+      body: "Closes #70",
+    });
+  });
+
+  it("recovers existing PR URL on 409 Conflict via regex fallback when open PR list does not match", async () => {
     globalThis.fetch = vi.fn().mockImplementationOnce(async () => {
       return new Response(
         JSON.stringify({

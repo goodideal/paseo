@@ -4,6 +4,7 @@ import path from "node:path";
 import type { PaseoApi } from "@getpaseo/client";
 import {
   expandHomeDir,
+  normalizePrimarySkills,
   normalizeProviderName,
   normalizeTierAlias,
   resolveTierTarget,
@@ -119,7 +120,7 @@ export function exportSpecialistsToDisk(
       description: s.description || undefined,
       preferred_provider: s.preferredProvider || undefined,
       default_model: s.preferredTier || s.modelOverride || undefined,
-      primary_skills: s.primarySkills,
+      primary_skills: normalizePrimarySkills(s.primarySkills),
       skills_root: s.skillsRoot || undefined,
       mcp_servers: s.allowedMcpServers,
       excluded_mcp_servers: s.excludedMcpServers,
@@ -171,9 +172,11 @@ export function importSpecialistsFromDisk(
       (typeof raw.name === "string" && raw.name.trim()) || path.basename(entry.filename, ".json");
     const existing = specialistMap.get(id);
 
-    const primarySkills = Array.isArray(raw.primary_skills)
-      ? raw.primary_skills.filter((x): x is string => typeof x === "string")
-      : (existing?.primarySkills ?? []);
+    const primarySkills = normalizePrimarySkills(
+      Array.isArray(raw.primary_skills)
+        ? raw.primary_skills.filter((x): x is string => typeof x === "string")
+        : (existing?.primarySkills ?? []),
+    );
 
     const allowedMcp = Array.isArray(raw.mcp_servers)
       ? raw.mcp_servers.filter((x): x is string => typeof x === "string")

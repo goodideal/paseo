@@ -176,6 +176,42 @@ export const LEGACY_V4_EXEC_PHASE_RULE =
 export const LEGACY_V4_REVIEW_PHASE_RULE =
   "- [Phase: Review Gate] Rule: You are running on the review model (phase=review). Perform read-only dual-axis audit (Standards + Spec) and agy + ocr delegate gate verification (`ocr delegate preview --format json` + `ocr delegate rule --format json <paths...>`, LLM-free on OCR side — do NOT invoke standalone LLM-backed `ocr review`); do not author large feature implementations directly.";
 
+export const LEGACY_V5_UI_MATCH_PATTERNS: readonly string[] = [
+  "\\b(?:ui|ux|ui-ux-pro-max|unslop|visual-verdict|unistyles|popover|sheet|pill|hover|tailwind|expo|react\\s*native|playwright|css)\\b",
+  "前端|界面|样式|弹窗|组件|面板|视觉|移动端|手机端|响应式|布局|图标|配色|交互体验",
+];
+
+export const LEGACY_V5_UI_ALLOWED_MCP: readonly string[] = [
+  "playwright",
+  "browser-tools",
+  "serena",
+  "claude-mem",
+];
+
+export const LEGACY_V5_GENERAL_ALLOWED_MCP: readonly string[] = ["serena", "claude-mem", "hub"];
+
+export const LEGACY_V5_FULLSTACK_UI_PATTERN =
+  "(?:\\b(?:ui|ux)\\b|前端|界面|样式|组件|移动端|手机端|页面)";
+
+export const LEGACY_V5_EXEC_ACTION_PATTERN =
+  "按(?:这个|这套|上述)?(?:方案|计划)[^，。！？\\n]{0,20}?(?:改|修改|写|实现|落地)|修复|落地|编写代码|直接修改|添加测试|打包|发布|同步到|在[^，。！？\\n]{1,30}?(?:中|里)实现|给[^，。！？\\n]{1,30}?(?:增加|加上)|替换|微调";
+
+export const LEGACY_V6_SPECIALIST_PRIMARY_SKILLS: Readonly<Record<string, readonly string[]>> = {
+  orchestrator: ["paseo", "superpowers:dispatching-parallel-agents"],
+  ui: ["ui-ux-pro-max", "unslop", "visual-verdict"],
+  backend: ["mattpocock-skills:codebase-design", "mattpocock-skills:tdd", "test-gardener"],
+  pm: ["pm-prd", "pm-user-stories", "pm-edge-cases", "pm-problem", "mattpocock-skills:grilling"],
+  architect: [
+    "mattpocock-skills:codebase-design",
+    "mattpocock-skills:domain-modeling",
+    "mattpocock-skills:grilling",
+  ],
+  qa: ["test-gardener", "superpowers:verification-before-completion", "pm-edge-cases"],
+  review: ["mattpocock-skills:code-review", "open-code-review-delegate", "gitea"],
+  scout: ["prototype", "scaffold-exercises"],
+  general: ["mattpocock-skills:codebase-design", "mattpocock-skills:domain-modeling"],
+};
+
 export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
   {
     id: "orchestrator",
@@ -196,7 +232,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     handoffTitlePrefix: "[Orchestrator]",
     handoffDefaultPrompt: "Orchestrate subagents across architecture, PM, backend, and UI.",
     syncToDaemonProfile: true,
-    primarySkills: ["paseo", "superpowers:dispatching-parallel-agents"],
+    primarySkills: ["paseo", "codebase-design"],
     mandatorySkillActivation: true,
     skillsRoot: "/Users/jerry/.agents/skills",
     docsFocus: ["docs/architecture.md", "docs/agent-lifecycle.md"],
@@ -231,7 +267,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     handoffTitlePrefix: "[UI]",
     handoffDefaultPrompt: "Implement responsive and polished frontend UI components per spec.",
     syncToDaemonProfile: true,
-    primarySkills: ["ui-ux-pro-max", "unslop", "visual-verdict"],
+    primarySkills: ["ui-ux-pro-max", "unslop", "visual-verdict", "diagnosing-bugs", "pr"],
     mandatorySkillActivation: true,
     skillsRoot: "/Users/jerry/.agents/vendor/ui-ux-pro-max-skill/.claude/skills",
     docsFocus: ["docs/design.md", "docs/unistyles.md", "docs/hover.md", "docs/mobile-panels.md"],
@@ -239,14 +275,14 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     ssotOutputTarget: "",
     rolePromptTemplate: "",
     lazyToolSlice: "ui.yaml",
-    allowedMcpServers: ["playwright", "browser-tools", "serena", "claude-mem"],
+    allowedMcpServers: ["playwright", "serena", "claude-mem"],
     excludedMcpServers: ["dbx", "terminal-worker-heavy"],
     injectedMcpServers: [],
     extraEnv: {},
     aliases: ["frontend", "ui-specialist"],
     matchPatterns: [
-      "\\b(?:ui|ux|ui-ux-pro-max|unslop|visual-verdict|unistyles|popover|sheet|pill|hover|tailwind|expo|react\\s*native|playwright|css)\\b",
-      "前端|界面|样式|弹窗|组件|面板|视觉|移动端|手机端|响应式|布局|图标|配色|交互体验",
+      "\\b(?:ui|ux|ui-ux-pro-max|unslop|visual-verdict|unistyles|popover|sheet|pill|hover|tailwind|expo|react\\s*native|playwright|css|scss|sass|dark\\s*mode|light\\s*mode|color[-\\s]*scheme|theming|design[-\\s]*tokens?)\\b",
+      "前端|界面|样式|弹窗|组件|面板|视觉|移动端|手机端|响应式|布局|图标|配色|交互体验|暗黑模式|深色模式|浅色模式|亮色模式|主题切换|主题色",
     ],
     profileFilename: "ui-specialist.json",
   },
@@ -269,7 +305,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     handoffTitlePrefix: "[Backend]",
     handoffDefaultPrompt: "Implement backend service APIs, database logic, and protocol handlers.",
     syncToDaemonProfile: true,
-    primarySkills: ["mattpocock-skills:codebase-design", "mattpocock-skills:tdd", "test-gardener"],
+    primarySkills: ["codebase-design", "tdd", "diagnosing-bugs", "test-gardener", "pr"],
     mandatorySkillActivation: true,
     skillsRoot: "/Users/jerry/.agents/skills",
     docsFocus: [
@@ -312,13 +348,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     handoffTitlePrefix: "[PM]",
     handoffDefaultPrompt: "Analyze requirements and output user stories and PRD proposal.",
     syncToDaemonProfile: true,
-    primarySkills: [
-      "pm-prd",
-      "pm-user-stories",
-      "pm-edge-cases",
-      "pm-problem",
-      "mattpocock-skills:grilling",
-    ],
+    primarySkills: ["pm-prd", "pm-user-stories", "pm-edge-cases", "pm-problem", "grilling"],
     mandatorySkillActivation: true,
     skillsRoot: "/Users/jerry/.agents/vendor/pm-skills/skills",
     docsFocus: ["docs/product.md", "docs/agent-lifecycle.md", "docs/glossary.md"],
@@ -356,11 +386,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     handoffTitlePrefix: "[Architect]",
     handoffDefaultPrompt: "Design deep module interfaces, domain models, and ADR specs.",
     syncToDaemonProfile: true,
-    primarySkills: [
-      "mattpocock-skills:codebase-design",
-      "mattpocock-skills:domain-modeling",
-      "mattpocock-skills:grilling",
-    ],
+    primarySkills: ["codebase-design", "domain-modeling", "grilling"],
     mandatorySkillActivation: true,
     skillsRoot: "/Users/jerry/.agents/skills",
     docsFocus: [
@@ -404,7 +430,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     handoffDefaultPrompt:
       "Add regression tests, verify edge cases, and ensure test suite adequacy.",
     syncToDaemonProfile: true,
-    primarySkills: ["test-gardener", "superpowers:verification-before-completion", "pm-edge-cases"],
+    primarySkills: ["test-gardener", "tdd", "diagnosing-bugs", "pm-edge-cases"],
     mandatorySkillActivation: true,
     skillsRoot: "/Users/jerry/.agents/skills",
     docsFocus: ["docs/qa.md", "docs/testing.md", "docs/mobile-testing.md"],
@@ -448,7 +474,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     handoffDefaultPrompt:
       "Perform dual-axis code review (Standards + Spec) and agy + ocr delegate gate audit (ocr delegate preview + ocr delegate rule).",
     syncToDaemonProfile: true,
-    primarySkills: ["mattpocock-skills:code-review", "open-code-review-delegate", "gitea"],
+    primarySkills: ["code-review", "open-code-review-delegate", "gitea"],
     mandatorySkillActivation: true,
     skillsRoot: "/Users/jerry/.agents/skills",
     docsFocus: [
@@ -529,7 +555,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     handoffTitlePrefix: "[General]",
     handoffDefaultPrompt: "Analyze task requirements and implement robust code changes.",
     syncToDaemonProfile: false,
-    primarySkills: ["mattpocock-skills:codebase-design", "mattpocock-skills:domain-modeling"],
+    primarySkills: ["codebase-design", "domain-modeling", "tdd", "diagnosing-bugs"],
     mandatorySkillActivation: false,
     skillsRoot: "/Users/jerry/.agents/skills",
     docsFocus: [
@@ -542,7 +568,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     ssotOutputTarget: "",
     rolePromptTemplate: "",
     lazyToolSlice: "codex.yaml",
-    allowedMcpServers: ["serena", "claude-mem", "hub"],
+    allowedMcpServers: ["serena", "claude-mem", "hub", "sequential-thinking"],
     excludedMcpServers: ["playwright", "dbx"],
     injectedMcpServers: [],
     extraEnv: {},
@@ -582,11 +608,11 @@ export const BUILTIN_FAST_ACTION_PATTERNS = [
 ];
 
 export const BUILTIN_EXEC_ACTION_PATTERNS = [
-  "按(?:这个|这套|上述)?(?:方案|计划)[^，。！？\\n]{0,20}?(?:改|修改|写|实现|落地)|修复|落地|编写代码|直接修改|添加测试|打包|发布|同步到|在[^，。！？\\n]{1,30}?(?:中|里)实现|给[^，。！？\\n]{1,30}?(?:增加|加上)|替换|微调",
+  "按(?:这个|这套|上述)?(?:方案|计划)[^，。！？\\n]{0,20}?(?:改|修改|写|实现|落地)|修复|落地|编写代码|直接修改|添加测试|打包|发布|同步到|在[^，。！？\\n]{1,30}?(?:中|里)实现|给[^，。！？\\n]{1,30}?(?:增加|加上)|替换|微调|(?:启动|重启|停止)(?:一下)?(?:开发|本地|前端|后端)?服务|\\b(?:start|restart|stop)\\s+(?:the\\s+)?(?:dev\\s+)?server\\b",
 ];
 
 export const BUILTIN_FULLSTACK_UI_PATTERN =
-  "(?:\\b(?:ui|ux)\\b|前端|界面|样式|组件|移动端|手机端|页面)";
+  "(?:\\b(?:ui|ux|dark\\s*mode|light\\s*mode)\\b|前端|界面|样式|组件|移动端|手机端|页面|暗黑模式|深色模式)";
 
 export const BUILTIN_FULLSTACK_BACKEND_PATTERN =
   "(?:\\b(?:db|sqlite)\\b|后台|后端|服务|接口|数据|保存|存储|数据库|持久化|排名)";

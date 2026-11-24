@@ -1,26 +1,89 @@
 import { z } from "zod";
 import type { PluginWorkflowStepAdapterRegistration } from "../../shared/workflow-types.js";
+import { WorkflowHarnessExecutionInfoSchema } from "../../shared/types.js";
 import type { SettingsManager } from "../settings-manager.js";
 import type { IssueRunIndexStore } from "../store.js";
-import { formatWorkflowWorkspaceTitle, cleanIssueTitle } from "../workspace-title.js";
+import { cleanIssueTitle } from "../workspace-title.js";
 import { interpolatePrompt, type PromptInterpolationContext } from "../prompt-interpolator.js";
 import {
   DEFAULT_AGENT_AUTO_PROMPT,
   DEFAULT_AGENT_PLAN_PROMPT,
   DEFAULT_AGENT_REVIEW_PROMPT,
 } from "../../shared/prompts.js";
+import { resolveWorkflowAgentLaunch } from "../harness-bridge.js";
+import {
+  createWorkspaceAgent,
+  driveAgentTurn,
+  resolveReviewReadOnlyMode,
+  resolveRunWorkspaceContext,
+} from "./run-workspace.js";
 
 const PHASE_META: Record<string, { icon: string; label: string }> = {
   brainstorm: { icon: "💡", label: "方案设计" },
   spec: { icon: "📝", label: "规范制定" },
-  plan: { icon: "📋", label: "计划编写" },
+  plan: { icon: "🎯", label: "方案质询与规划" },
   auto_design: { icon: "🤖", label: "全自动交付" },
   implement: { icon: "🛠️", label: "TDD编码" },
   review: { icon: "🔍", label: "独立审查" },
 };
 
+const UPSTREAM_STAGE_STEPS: Record<string, Array<{ stepId: string; title: string }>> = {
+  spec: [{ stepId: "brainstorm-agent", title: "Brainstorm Proposal" }],
+  plan: [
+    { stepId: "brainstorm-agent", title: "Brainstorm Proposal" },
+    { stepId: "spec-agent", title: "Design Specification" },
+  ],
+  implement: [
+    { stepId: "brainstorm-agent", title: "Brainstorm Proposal" },
+    { stepId: "spec-agent", title: "Design Specification" },
+    { stepId: "plan-agent", title: "Implementation Plan" },
+  ],
+  review: [
+    { stepId: "brainstorm-agent", title: "Brainstorm Proposal" },
+    { stepId: "spec-agent", title: "Design Specification" },
+    { stepId: "plan-agent", title: "Implementation Plan" },
+    { stepId: "implement-agent", title: "Implementation Summary" },
+    { stepId: "auto-design", title: "Auto Delivery Summary" },
+  ],
+};
+
+function extractStepSummaryText(stepOut: Record<string, unknown>): string {
+  if (typeof stepOut.summary === "string" && stepOut.summary.trim().length > 0) {
+    return stepOut.summary.trim();
+  }
+  if (
+    typeof stepOut.outcome === "string" &&
+    stepOut.outcome.trim().length > 0 &&
+    stepOut.outcome.trim() !== "completed"
+  ) {
+    return stepOut.outcome.trim();
+  }
+  return "";
+}
+
+function buildUpstreamStageContextBlock(
+  phase: string,
+  stepOutputs: Record<string, unknown>,
+): string {
+  const candidates = UPSTREAM_STAGE_STEPS[phase.toLowerCase()];
+  if (!candidates || candidates.length === 0) return "";
+
+  const sections: string[] = [];
+  for (const { stepId, title } of candidates) {
+    const stepOut = stepOutputs[stepId] as Record<string, unknown> | undefined;
+    if (!stepOut || typeof stepOut !== "object") continue;
+    const summaryText = extractStepSummaryText(stepOut);
+    if (summaryText) {
+      sections.push(`### ${title} (${stepId})\n${summaryText}`);
+    }
+  }
+
+  if (sections.length === 0) return "";
+  return `\n\n## Approved Upstream Stage Context\n\n${sections.join("\n\n")}`;
+}
+
 export function normalizeAgentChangeMode(provider: string, rawMode?: string): string {
-  const p = (provider || "claude").toLowerCase();
+  const p = (provider || "claude").toLowerCase().trim();
   const m = (rawMode || "").trim();
 
   if (p.includes("claude")) {
@@ -47,6 +110,14 @@ export function normalizeAgentChangeMode(provider: string, rawMode?: string): st
     return validOpenCodeModes.includes(m) ? m : "build";
   }
 
+  if (p === "pi" || p.startsWith("pi/") || p.startsWith("pi-") || p.startsWith("pi_")) {
+    if (m === "full-access" || m === "bypassPermissions" || m === "acceptEdits" || m === "build") {
+      return "auto";
+    }
+    const validPiModes = ["auto", "plan", "read-only"];
+    return validPiModes.includes(m) ? m : "auto";
+  }
+
   return m || "auto";
 }
 
@@ -59,6 +130,7 @@ export function createAgentExecuteAdapter(
     version: "1.0.0",
     inputSchema: z.object({
       phase: z.string().default("implement"),
+      role: z.string().optional(),
       prompt: z.string().optional(),
       timeoutMs: z.number().int().positive().optional(),
     }),
@@ -67,6 +139,7 @@ export function createAgentExecuteAdapter(
       status: z.string(),
       outcome: z.string(),
       summary: z.string().optional(),
+      harness: WorkflowHarnessExecutionInfoSchema.optional(),
     }),
     executionRisk: "workspace_write",
     requiredPermissions: ["workspace.write"],
@@ -77,143 +150,50 @@ export function createAgentExecuteAdapter(
     supportedPlatforms: ["darwin", "linux", "win32"],
     resourceConflictKey: "workspace:agent",
     execute: async (rawInput, context) => {
-      const input = rawInput as { phase?: string; prompt?: string; timeoutMs?: number };
+      const input = rawInput as {
+        phase?: string;
+        role?: string;
+        prompt?: string;
+        timeoutMs?: number;
+      };
       const runId = (context as any)?.run?.runId;
       const projectId = (context as any)?.run?.projectId;
       const entry = runId ? await indexStore.getEntryByRunId(runId) : null;
-
-      // 1. Locate the worktree workspace created for this run
-      let targetCwd = (context as any)?.run?.workspaceRoot || "";
-      let targetWorkspaceId: string | undefined = undefined;
-
-      if ((context as any)?.paseo?.workspaces && projectId) {
-        try {
-          const list = await (context as any).paseo.workspaces.list({ filter: { projectId } });
-          const entries: any[] = list?.entries ?? [];
-          const wtOutput =
-            (context as any)?.stepOutputs?.["worktree-create"] ??
-            (context as any)?.run?.stepOutputs?.["worktree-create"];
-
-          if (wtOutput?.workspaceId) {
-            targetWorkspaceId = wtOutput.workspaceId;
-            const ws = entries.find((w: any) => w.id === targetWorkspaceId);
-            if (ws?.workspaceDirectory) {
-              targetCwd = ws.workspaceDirectory;
-            } else if (wtOutput?.directory || wtOutput?.cwd || wtOutput?.worktreePath) {
-              targetCwd = wtOutput.directory || wtOutput.cwd || wtOutput.worktreePath;
-            }
-          }
-
-          // Match by issue number or branch pattern in worktree workspace
-          if (!targetWorkspaceId && entry?.issueNumber) {
-            const issueTag = `issue-${entry.issueNumber}`;
-            const issueHashTag = `#${entry.issueNumber}`;
-            const match = entries.find(
-              (w: any) =>
-                w.workspaceKind === "worktree" &&
-                (w.name?.includes(issueTag) ||
-                  w.workspaceDirectory?.includes(issueTag) ||
-                  w.title?.includes(issueHashTag) ||
-                  w.title?.includes(issueTag) ||
-                  w.branch?.includes(issueTag)),
-            );
-            if (match) {
-              targetWorkspaceId = match.id;
-              targetCwd = match.workspaceDirectory || targetCwd;
-            }
-          }
-
-          // Match by runId
-          if (!targetWorkspaceId && runId) {
-            const match = entries.find(
-              (w: any) =>
-                w.workspaceDirectory?.includes(runId) ||
-                w.name?.includes(runId) ||
-                w.branch?.includes(runId),
-            );
-            if (match) {
-              targetWorkspaceId = match.id;
-              targetCwd = match.workspaceDirectory || targetCwd;
-            }
-          }
-
-          // Single worktree fallback
-          if (!targetWorkspaceId) {
-            const worktrees = entries.filter((w: any) => w.workspaceKind === "worktree");
-            if (worktrees.length === 1) {
-              targetCwd = worktrees[0].workspaceDirectory || targetCwd;
-              targetWorkspaceId = worktrees[0].id;
-            }
-          }
-
-          // Safe project fallback: NEVER fall back to process.cwd() (home directory danger!)
-          if (!targetWorkspaceId || !targetCwd) {
-            const mainWs =
-              entries.find(
-                (w: any) => w.workspaceKind === "local_checkout" || w.workspaceKind === "checkout",
-              ) || entries[0];
-            if (mainWs) {
-              targetWorkspaceId = targetWorkspaceId || mainWs.id;
-              targetCwd = targetCwd || mainWs.workspaceDirectory || mainWs.projectRootPath || "";
-            }
-          }
-
-          // Ensure the workspace has a semantic title
-          if (targetWorkspaceId) {
-            try {
-              const wsRef = (context as any).paseo.workspaces.ref(targetWorkspaceId);
-              const currentWs = typeof wsRef?.current === "function" ? wsRef.current() : null;
-              const titleToSet =
-                entry?.issueTitle && entry?.issueNumber
-                  ? formatWorkflowWorkspaceTitle({
-                      issueNumber: entry.issueNumber,
-                      rawTitle: entry.issueTitle,
-                    })
-                  : entry?.issueNumber
-                    ? `#${entry.issueNumber}`
-                    : undefined;
-              if (titleToSet && !currentWs?.title && typeof wsRef?.setTitle === "function") {
-                await wsRef.setTitle(titleToSet);
-              }
-            } catch {
-              // ignore title sync error
-            }
-          }
-        } catch {
-          // ignore lookup error
-        }
-      }
-
-      // 2. Resolve provider & model from settings
-      const rawProvider = settingsManager.getAgentProvider(projectId);
-      const provider = rawProvider.toLowerCase().includes("codex")
-        ? "codex"
-        : rawProvider.toLowerCase().includes("opencode")
-          ? "opencode"
-          : rawProvider.toLowerCase().includes("antigravity")
-            ? "antigravity"
-            : "claude";
-      const model = settingsManager.getAgentModel(projectId);
-
       const issueNum = entry?.issueNumber ?? 0;
       const issueTitle = entry?.issueTitle ?? "";
       const phase = input.phase ?? "implement";
+      const runInput = (context as any)?.run?.runInput ?? {};
+      const effectiveIssueNum = issueNum || runInput.issueNumber || 0;
+      const effectiveIssueTitle = issueTitle || runInput.issueTitle || "";
+      const effectiveIssueBody = (entry as any)?.issueBody || runInput.issueBody || "";
+      const repoOwner = entry?.repoOwner || runInput.repoOwner || "";
+      const repoName = entry?.repoName || runInput.repoName || "";
+      const allStepOutputs: Record<string, unknown> = {
+        ...((context as any)?.run?.stepOutputs ?? {}),
+        ...((context as any)?.stepOutputs ?? {}),
+      };
+      const wtOutput = allStepOutputs["worktree-create"] as Record<string, any> | undefined;
+      const branchName = wtOutput?.branch || runInput.branch || "";
+      const resolvedProjectId = projectId || entry?.projectId || runInput.projectId || "";
+      const effectiveProjectId = resolvedProjectId || projectId;
 
-      // 3. Compose prompt
+      // 1. Locate the worktree workspace created for this run
+      const workspaceCtx = await resolveRunWorkspaceContext({
+        paseo: (context as any)?.paseo,
+        projectId: effectiveProjectId,
+        runId,
+        issueNumber: effectiveIssueNum,
+        issueTitle: effectiveIssueTitle,
+        workspaceRoot: (context as any)?.run?.workspaceRoot,
+        worktreeOutput: wtOutput,
+        syncWorkspaceTitle: true,
+        requireAgentApi: true,
+      });
+      const { targetCwd, targetWorkspaceId } = workspaceCtx;
+
+      // 2. Compose prompt
       let prompt = input.prompt;
       if (!prompt) {
-        const runInput = (context as any)?.run?.runInput ?? {};
-        const effectiveIssueNum = issueNum || runInput.issueNumber || 0;
-        const effectiveIssueTitle = issueTitle || runInput.issueTitle || "";
-        const effectiveIssueBody = (entry as any)?.issueBody || runInput.issueBody || "";
-        const repoOwner = entry?.repoOwner || runInput.repoOwner || "";
-        const repoName = entry?.repoName || runInput.repoName || "";
-        const wtOutput =
-          (context as any)?.stepOutputs?.["worktree-create"] ??
-          (context as any)?.run?.stepOutputs?.["worktree-create"];
-        const branchName = runInput.branch || wtOutput?.branch || "";
-        const resolvedProjectId = projectId || entry?.projectId || runInput.projectId || "";
-
         const interpolationContext: PromptInterpolationContext = {
           issueNumber: effectiveIssueNum,
           issueTitle: effectiveIssueTitle,
@@ -233,7 +213,7 @@ export function createAgentExecuteAdapter(
             rawTemplate || DEFAULT_AGENT_AUTO_PROMPT,
             interpolationContext,
           );
-        } else if (phase === "brainstorm") {
+        } else if (phase === "plan" || phase === "brainstorm") {
           const rawTemplate =
             typeof settingsManager?.getAgentPlanPrompt === "function"
               ? settingsManager.getAgentPlanPrompt(resolvedProjectId)
@@ -250,17 +230,17 @@ Issue Context:
 ${effectiveIssueBody || "(No description provided)"}
 
 ## Workflow Instructions:
-1. **Understand & Diagnose**:
-   - Review requirements, stack traces, and relevant existing code. If additional details are needed, check Issue #${effectiveIssueNum}.
-   - For bug fixes and warnings, identify the root cause; for new features, follow the established plan or specification.
-2. **Execute via TDD**:
-   - Strictly adhere to Test-Driven Development (TDD):
-     1) Review the requirement and write unit tests proving the intended behavior;
-     2) Implement clean, focused code until all tests pass;
-     3) Verify with tests, lint, and typecheck to ensure zero regressions.
-3. **Commit & Finalize**:
-   - Commit your changes with clear conventional commit syntax.
-   - Keep the workspace clean and ready for automatic Pull Request generation.`;
+1. **Understand & Diagnose (\`codebase-design\` / \`diagnosing-bugs\`)**:
+   - Follow the approved \`plan-agent\` upstream context and inspect relevant existing code. If additional details are needed, check Issue #${effectiveIssueNum}.
+   - For bug fixes and regressions, follow \`diagnosing-bugs\` (reproduce -> isolate -> root cause); for features and refactors, follow \`codebase-design\` (deep modules with simple public interfaces).
+2. **Execute via Vertical TDD (\`tdd\`)**:
+   - Work in vertical \`Red -> Green -> Refactor\` slices at public module Seams:
+     1) Write one failing behavior test at a public Seam proving the intended behavior;
+     2) Implement minimal clean code to make the test pass;
+     3) Refactor and verify with targeted tests, lint, and typecheck (never run full monorepo test suites).
+3. **Commit & PR Summary (\`pr\`)**:
+   - Commit your changes cleanly on \`${branchName || "the current branch"}\` with conventional commit syntax (\`feat(...)\`, \`fix(...)\`) and leave a clean working tree.
+   - Conclude your final response with a structured \`pr\` skill summary containing \`## Summary\`, \`## Evidence\`, and \`## Merge Danger\`.`;
         } else if (phase === "review") {
           const rawTemplate =
             typeof settingsManager?.getAgentReviewPrompt === "function"
@@ -279,39 +259,54 @@ ${effectiveIssueBody || "(No description provided)"}
 
 First, review the issue context and requirements. Then proceed with the engineering workflow ensuring high code quality.`;
         }
+
+        const upstreamBlock = buildUpstreamStageContextBlock(phase, allStepOutputs);
+        if (upstreamBlock) {
+          prompt = `${prompt}${upstreamBlock}`;
+        }
       }
 
-      // 4. Create and drive agent with friendly title
-      if (!(context as any)?.paseo?.agents) {
-        throw new Error("Paseo Agent API is not available");
-      }
+      // 3. Resolve harness routing, provider, model, labels & metadata
+      const launch = await resolveWorkflowAgentLaunch({
+        paseo: (context as any)?.paseo,
+        settingsManager,
+        projectId: effectiveProjectId,
+        workspaceId: targetWorkspaceId,
+        cwd: targetCwd,
+        runId,
+        phase,
+        explicitRole: input.role,
+        issueTitle: effectiveIssueTitle,
+        issueBody: effectiveIssueBody,
+      });
 
-      const modelName = model || "gemini-flash[1M]";
-      const providerSelection = `${provider}/${modelName}`;
-      const rawMode = settingsManager.getAgentChangeMode
-        ? settingsManager.getAgentChangeMode(projectId)
+      const rawMode = settingsManager?.getAgentChangeMode
+        ? settingsManager.getAgentChangeMode(effectiveProjectId)
         : "auto";
-      const modeId = normalizeAgentChangeMode(provider, rawMode);
-
-      if (!targetCwd) {
-        throw new Error(
-          `Cannot resolve valid working directory for project ${projectId || "unknown"} (issue #${issueNum})`,
-        );
+      const modeId =
+        phase.toLowerCase() === "review"
+          ? resolveReviewReadOnlyMode(launch.provider)
+          : normalizeAgentChangeMode(launch.provider, rawMode);
+      const config: { provider: string; modeId: string; thinkingOptionId?: string } = {
+        provider: launch.providerSelection,
+        modeId,
+      };
+      if (launch.thinkingOptionId) {
+        config.thinkingOptionId = launch.thinkingOptionId;
       }
 
       const meta = PHASE_META[phase.toLowerCase()] || { icon: "🤖", label: phase };
-      const cleanShort = issueTitle ? cleanIssueTitle(issueTitle) : "";
+      const cleanShort = effectiveIssueTitle ? cleanIssueTitle(effectiveIssueTitle) : "";
       const shortTitle = cleanShort ? ` · ${cleanShort.slice(0, 28)}` : "";
-      const agentTitle = `${meta.icon} [#${issueNum}] ${meta.label}${shortTitle}`;
+      const agentTitle = `${meta.icon} [#${effectiveIssueNum}] ${meta.label}${shortTitle}`;
 
-      const agentHandle = await (context as any).paseo.agents.create({
-        cwd: targetCwd,
-        workspaceId: targetWorkspaceId,
+      // 4. Create and drive agent with friendly title
+      const agentHandle = await createWorkspaceAgent(workspaceCtx, (context as any)?.paseo, {
         title: agentTitle,
-        config: {
-          provider: providerSelection,
-          modeId,
-        },
+        prompt,
+        config,
+        labels: launch.labels,
+        metadata: launch.metadata,
       });
 
       const timeoutMs =
@@ -320,43 +315,15 @@ First, review the issue context and requirements. Then proceed with the engineer
         (context as any)?.definitionStep?.timeoutMs ??
         30 * 60 * 1000;
 
-      // Execute prompt and await completion
-      let outcome = "completed";
-      let summary = "";
-      if (typeof agentHandle.run === "function") {
-        const runRes = await agentHandle.run(prompt, { timeoutMs });
-        if (runRes.status !== "idle") {
-          if (typeof agentHandle.detach === "function") {
-            await agentHandle.detach().catch(() => {});
-          }
-          throw new Error(
-            `Agent run failed with status "${runRes.status}"${runRes.error ? `: ${runRes.error}` : ""}`,
-          );
-        }
-        outcome = runRes.lastMessage || outcome;
-        summary = runRes.lastMessage || "";
-      } else {
-        await agentHandle.send(prompt);
-        if (typeof agentHandle.waitForFinish === "function") {
-          const waitRes = await agentHandle.waitForFinish(timeoutMs);
-          if (waitRes.status !== "idle") {
-            if (typeof agentHandle.detach === "function") {
-              await agentHandle.detach().catch(() => {});
-            }
-            throw new Error(
-              `Agent run failed with status "${waitRes.status}"${waitRes.error ? `: ${waitRes.error}` : ""}`,
-            );
-          }
-          outcome = waitRes.lastMessage || outcome;
-          summary = waitRes.lastMessage || "";
-        }
-      }
+      const summary = await driveAgentTurn(agentHandle, prompt, timeoutMs);
+      const outcome = summary || "completed";
 
       return {
         agentId: agentHandle.id,
         status: "succeeded",
         outcome,
         summary,
+        harness: launch.harnessInfo,
       };
     },
   };

@@ -1,22 +1,21 @@
-# Superpowers Spec & Design Prompt
+# Deep Module Architecture & Plan Review Prompt
 
-The high-level design has been approved for Gitea Issue #{{ steps.fetch-issue.outputs.issueNumber }}: {{ steps.fetch-issue.outputs.title }}
+The high-level design has been reviewed for Gitea Issue #{{ steps.fetch-issue.outputs.issueNumber }}: {{ steps.fetch-issue.outputs.title }}
 
 ## Instructions
 
-1. Write the design spec to `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`.
-2. Follow the spec writing guidelines: clear boundaries, component models, data flows, and test strategies.
-3. Perform the Spec Self-Review inline (check for placeholders, internal consistency, scope, ambiguity).
-4. Commit the design spec to Git with conventional commit message `docs: add <topic> design spec`.
+1. Load and follow `codebase-design` and `grilling`.
+2. Define deep module interfaces, data flows, error modes, and behavior-level test Seams in your response without writing repository spec files.
+3. Perform an inline self-review for scope, interface depth, and edge cases.
 
 Conclude your turn with:
 
 ```paseo-workflow-handoff
 {
   "version": 1,
-  "phase": "spec_design",
-  "nextAction": "await_spec_approval",
-  "summary": "Design spec authored, self-reviewed, and committed.",
+  "phase": "plan",
+  "nextAction": "await_plan_approval",
+  "summary": "Architecture and implementation plan self-reviewed and ready for confirmation.",
   "artifactReferences": []
 }
 ```

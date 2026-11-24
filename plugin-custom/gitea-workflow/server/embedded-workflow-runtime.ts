@@ -25,6 +25,7 @@ import {
   workflowRunResumeRpc,
   workflowRunRetryRpc,
 } from "../shared/workflow-rpc-contracts.js";
+import { WorkflowHarnessExecutionInfoSchema } from "../shared/types.js";
 import { registerBuiltInWorkflowStepManifests } from "./workflow-engine/core-step-manifests.js";
 import type { WorkflowDefinition } from "./workflow-engine/definition-compiler.js";
 import { StepAdapterRegistry } from "./workflow-engine/step-adapter-registry.js";
@@ -89,18 +90,47 @@ function toRunSummary(run: WorkflowRun, sourcePreset: string = run.definitionId)
   };
 }
 
+function extractAttemptSummary(outputs: Record<string, unknown> | undefined): string | null {
+  if (!outputs) return null;
+  if (typeof outputs.summary === "string" && outputs.summary.length > 0) {
+    return outputs.summary;
+  }
+  if (
+    typeof outputs.outcome === "string" &&
+    outputs.outcome.length > 0 &&
+    outputs.outcome !== "completed"
+  ) {
+    return outputs.outcome;
+  }
+  return null;
+}
+
 function toRunDetail(run: WorkflowRun, sourcePreset?: string) {
   return {
     ...toRunSummary(run, sourcePreset),
-    stepAttempts: run.stepAttempts.map((attempt, index) => ({
-      stepId: attempt.stepId,
-      attempt: index + 1,
-      status: attempt.status,
-      startedAt: toIso(attempt.startedAt),
-      completedAt: toIso(attempt.completedAt),
-      skipReason: attempt.skipReason ?? null,
-      failureReason: attempt.failureClassification ?? null,
-    })),
+    stepAttempts: run.stepAttempts.map((attempt, index) => {
+      const outputs = attempt.declaredOutputs;
+      const agentId =
+        typeof outputs?.agentId === "string" && outputs.agentId.length > 0 ? outputs.agentId : null;
+      const summary = extractAttemptSummary(outputs);
+      const parsedHarness = outputs?.harness
+        ? WorkflowHarnessExecutionInfoSchema.safeParse(outputs.harness)
+        : null;
+      const harness = parsedHarness?.success ? parsedHarness.data : null;
+
+      return {
+        stepId: attempt.stepId,
+        attempt: index + 1,
+        status: attempt.status,
+        startedAt: toIso(attempt.startedAt),
+        completedAt: toIso(attempt.completedAt),
+        skipReason: attempt.skipReason ?? null,
+        failureReason: attempt.failureClassification ?? null,
+        agentId,
+        summary,
+        harness,
+      };
+    }),
     interactions: run.interactions ?? [],
     deliveryApprovalManifest: run.deliveryApprovalManifest ?? null,
   };

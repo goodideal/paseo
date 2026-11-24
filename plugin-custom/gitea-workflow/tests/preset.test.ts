@@ -1,89 +1,114 @@
 import { describe, it, expect } from "vitest";
 import {
+  buildDirectPrWorkflowDefinition,
   buildGiteaWorkflowDefinition,
   buildAutoWorkflowDefinition,
   buildPlanWorkflowDefinition,
+  giteaWorkflowPresets,
 } from "../server/presets/issue-to-pr.js";
 
-describe("buildGiteaWorkflowDefinition (legacy)", () => {
-  it("builds strict full_superpowers DAG with design and plan gates", () => {
-    const def = buildGiteaWorkflowDefinition("full_superpowers");
+describe("Gitea 2-Track Matt Pocock Workflow Presets", () => {
+  it("builds 0-gate direct_pr workflow definition as default", () => {
+    const def = buildGiteaWorkflowDefinition("direct_pr");
+    expect(def.id).toBe("gitea.issue-to-pr");
     const stepIds = def.steps.map((s) => s.id);
 
-    expect(stepIds).toContain("fetch-issue");
-    expect(stepIds).toContain("claim-issue");
-    expect(stepIds).toContain("worktree-create");
-    expect(stepIds).toContain("brainstorm-agent");
-    expect(stepIds).toContain("design-approval");
-    expect(stepIds).toContain("spec-agent");
-    expect(stepIds).toContain("spec-approval");
-    expect(stepIds).toContain("plan-agent");
-    expect(stepIds).toContain("plan-approval");
-    expect(stepIds).toContain("implement-agent");
-    expect(stepIds).toContain("verify-command");
-    expect(stepIds).toContain("independent-review");
-    expect(stepIds).toContain("resolve-delivery");
-    expect(stepIds).toContain("delivery-approval");
-    expect(stepIds).toContain("git-push");
-    expect(stepIds).toContain("git-create-pr");
+    expect(stepIds).toEqual([
+      "fetch-issue",
+      "claim-issue",
+      "worktree-create",
+      "implement-agent",
+      "independent-review",
+      "deliver-pr",
+    ]);
+
+    const approvalSteps = def.steps.filter((s) => s.type === "approval.wait");
+    expect(approvalSteps).toHaveLength(0);
+
+    const implementStep = def.steps.find((s) => s.id === "implement-agent");
+    expect(implementStep?.type).toBe("gitea.agent_execute");
+    expect(implementStep?.input).toEqual({
+      phase: "auto_design",
+      timeoutMs: 45 * 60 * 1000,
+    });
+
+    const reviewStep = def.steps.find((s) => s.id === "independent-review");
+    expect(reviewStep?.type).toBe("gitea.quality_gate");
+    expect(reviewStep?.timeoutMs).toBe(45 * 60 * 1000);
+
+    const deliverStep = def.steps.find((s) => s.id === "deliver-pr");
+    expect(deliverStep?.type).toBe("gitea.deliver_pr");
+    expect(deliverStep?.timeoutMs).toBe(120_000);
   });
 
-  it("skips design gates in issue_preapproved strategy", () => {
-    const def = buildGiteaWorkflowDefinition("issue_preapproved");
+  it("builds auto workflow definition matching direct_pr track", () => {
+    const def = buildAutoWorkflowDefinition();
+    expect(def.id).toBe("gitea.issue-to-pr.auto");
+    expect(def.steps.map((s) => s.id)).toEqual(
+      buildDirectPrWorkflowDefinition("gitea.issue-to-pr.auto").steps.map((s) => s.id),
+    );
+    expect(def.steps.filter((s) => s.type === "approval.wait")).toHaveLength(0);
+  });
+
+  it("builds 1-gate grill_plan workflow definition with single gate-plan confirmation", () => {
+    const def = buildPlanWorkflowDefinition();
+    expect(def.id).toBe("gitea.issue-to-pr.plan");
     const stepIds = def.steps.map((s) => s.id);
+
+    expect(stepIds).toEqual([
+      "fetch-issue",
+      "claim-issue",
+      "worktree-create",
+      "plan-agent",
+      "gate-plan",
+      "implement-agent",
+      "independent-review",
+      "deliver-pr",
+    ]);
+
+    // Exactly 1 approval.wait step (gate-plan)
+    const approvalSteps = def.steps.filter((s) => s.type === "approval.wait");
+    expect(approvalSteps).toHaveLength(1);
+    expect(approvalSteps[0]?.id).toBe("gate-plan");
+    expect(approvalSteps[0]?.approval).toBe("required");
+    expect(approvalSteps[0]?.timeoutMs).toBe(60 * 60 * 1000);
+    expect(approvalSteps[0]?.input).toEqual({
+      phase: "plan",
+      reason: "Grilling design & implementation plan requires confirmation",
+    });
 
     expect(stepIds).not.toContain("brainstorm-agent");
-    expect(stepIds).not.toContain("design-approval");
-    expect(stepIds).toContain("plan-agent");
-    expect(stepIds).toContain("delivery-approval");
+    expect(stepIds).not.toContain("spec-agent");
+    expect(stepIds).not.toContain("gate-delivery");
+    expect(stepIds).not.toContain("delivery-approval");
   });
 
-  it("skips intermediate design and plan human approval in unattended strategy", () => {
-    const def = buildGiteaWorkflowDefinition("unattended");
-    const stepIds = def.steps.map((s) => s.id);
+  it("maps legacy strategies cleanly to 0-gate direct_pr or 1-gate grill_plan tracks", () => {
+    const unattended = buildGiteaWorkflowDefinition("unattended");
+    expect(unattended.id).toBe("gitea.issue-to-pr.unattended");
+    expect(unattended.steps.filter((s) => s.type === "approval.wait")).toHaveLength(0);
 
-    expect(stepIds).not.toContain("design-approval");
-    expect(stepIds).not.toContain("spec-approval");
-    expect(stepIds).not.toContain("plan-approval");
-    // Delivery approval MUST still be present (cannot be bypassed)
-    expect(stepIds).toContain("delivery-approval");
-  });
-});
+    const preapproved = buildGiteaWorkflowDefinition("issue_preapproved");
+    expect(preapproved.id).toBe("gitea.issue-to-pr.preapproved");
+    expect(preapproved.steps.filter((s) => s.type === "approval.wait")).toHaveLength(1);
+    expect(preapproved.steps.find((s) => s.type === "approval.wait")?.id).toBe("gate-plan");
 
-describe("Gitea Workflow Presets (Auto & Plan)", () => {
-  it("builds auto workflow without intermediate approval gates but with auto-design", () => {
-    const def = buildAutoWorkflowDefinition();
-    const ids = def.steps.map((s) => s.id);
-
-    expect(ids).toContain("claim-issue");
-    expect(ids).toContain("worktree-create");
-    expect(ids).toContain("auto-design");
-    expect(ids).not.toContain("implement-agent");
-    expect(ids).toContain("verify-command");
-    expect(ids).toContain("independent-review");
-    expect(ids).toContain("resolve-delivery");
-    expect(ids).toContain("git-push");
-    expect(ids).toContain("git-create-pr");
-
-    // No approval gates in auto mode
-    expect(ids).not.toContain("gate-brainstorm");
-    expect(ids).not.toContain("gate-spec");
-    expect(ids).not.toContain("gate-plan");
-    expect(ids).not.toContain("gate-delivery");
+    const legacySuperpowers = buildGiteaWorkflowDefinition("full_superpowers");
+    expect(legacySuperpowers.id).toBe("gitea.issue-to-pr.legacy-superpowers");
+    expect(legacySuperpowers.steps.filter((s) => s.type === "approval.wait")).toHaveLength(1);
+    expect(legacySuperpowers.steps.find((s) => s.type === "approval.wait")?.id).toBe("gate-plan");
   });
 
-  it("builds plan workflow with dual approval gates at each stage", () => {
-    const def = buildPlanWorkflowDefinition();
-    const ids = def.steps.map((s) => s.id);
-
-    expect(ids).toContain("brainstorm-agent");
-    expect(ids).toContain("gate-brainstorm");
-    expect(ids).toContain("spec-agent");
-    expect(ids).toContain("gate-spec");
-    expect(ids).toContain("plan-agent");
-    expect(ids).toContain("gate-plan");
-    expect(ids).toContain("implement-agent");
-    expect(ids).toContain("gate-delivery");
-    expect(ids).toContain("git-create-pr");
+  it("exports preset catalog without Superpowers branding", () => {
+    for (const preset of giteaWorkflowPresets) {
+      expect(preset.name).not.toContain("Superpowers");
+    }
+    const presetIds = giteaWorkflowPresets.map((p) => p.workflowId);
+    expect(presetIds).toContain("gitea.issue-to-pr");
+    expect(presetIds).toContain("gitea.issue-to-pr.auto");
+    expect(presetIds).toContain("gitea.issue-to-pr.plan");
+    expect(presetIds).toContain("gitea.issue-to-pr.preapproved");
+    expect(presetIds).toContain("gitea.issue-to-pr.unattended");
+    expect(presetIds).toContain("gitea.issue-to-pr.legacy-superpowers");
   });
 });

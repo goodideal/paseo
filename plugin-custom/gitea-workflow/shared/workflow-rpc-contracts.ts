@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { defineRpc } from "@getpaseo/plugin";
+import { WorkflowHarnessExecutionInfoSchema } from "./types.js";
 
 export const WorkflowScopeSchema = z.object({
   projectId: z.string().min(1),
@@ -54,6 +55,9 @@ export const WorkflowStepAttemptSchema = z.object({
   completedAt: z.string().nullable(),
   skipReason: z.string().nullable(),
   failureReason: z.string().nullable(),
+  agentId: z.string().nullable().optional(),
+  summary: z.string().nullable().optional(),
+  harness: WorkflowHarnessExecutionInfoSchema.nullable().optional(),
 });
 
 export const WorkflowInteractionStatusSchema = z.enum([

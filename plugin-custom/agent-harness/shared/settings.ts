@@ -1,6 +1,6 @@
 import { defineSettings } from "@getpaseo/plugin";
 import { z } from "zod";
-import { canonicalizeProviderName } from "./config-resolver.js";
+import { canonicalizeProviderName, normalizePrimarySkills } from "./config-resolver.js";
 import {
   BUILTIN_BYPASS_MODELS,
   BUILTIN_CONVENTIONAL_EXEC_PREFIX,
@@ -26,9 +26,15 @@ import {
   LEGACY_V4_ORCHESTRATOR_DISPATCHER_RULE,
   LEGACY_V4_PROVIDER_MAPPINGS,
   LEGACY_V4_REVIEW_PHASE_RULE,
+  LEGACY_V5_EXEC_ACTION_PATTERN,
+  LEGACY_V5_FULLSTACK_UI_PATTERN,
+  LEGACY_V5_GENERAL_ALLOWED_MCP,
+  LEGACY_V5_UI_ALLOWED_MCP,
+  LEGACY_V5_UI_MATCH_PATTERNS,
+  LEGACY_V6_SPECIALIST_PRIMARY_SKILLS,
 } from "./presets.js";
 
-const DEFAULT_AFFIRMATIVE_CONFIRM_WORDS: readonly string[] = [
+const LEGACY_V5_AFFIRMATIVE_CONFIRM_WORDS: readonly string[] = [
   "继续",
   "好",
   "可以",
@@ -46,6 +52,12 @@ const DEFAULT_AFFIRMATIVE_CONFIRM_WORDS: readonly string[] = [
   "做吧",
   "搞起",
   "干吧",
+];
+
+const DEFAULT_AFFIRMATIVE_CONFIRM_WORDS: readonly string[] = [
+  ...LEGACY_V5_AFFIRMATIVE_CONFIRM_WORDS,
+  "ok, continue",
+  "go",
 ];
 
 function cloneBuiltinProviderMappings(): Record<string, Record<string, string>> {
@@ -259,7 +271,11 @@ export type AgentHarnessSettings = z.infer<typeof AgentHarnessSettingsSchema>;
 export const DEFAULT_AGENT_HARNESS_SETTINGS: AgentHarnessSettings =
   AgentHarnessSettingsSchema.parse({});
 
-export const SETTINGS_SCHEMA_VERSION = 5 as const;
+export const SETTINGS_SCHEMA_VERSION = 7 as const;
+
+function areStringArraysEqual(a: unknown, b: readonly string[]): boolean {
+  return Array.isArray(a) && a.length === b.length && a.every((val, idx) => val === b[idx]);
+}
 
 function migrateLegacyReviewSpecialistToV4(spec: Record<string, unknown>): Record<string, unknown> {
   const builtinReview = BUILTIN_SPECIALISTS.find((s) => s.id === "review");
@@ -678,6 +694,86 @@ function migrateLegacySettings(rawInput: Record<string, unknown>, fromVersion: n
         tp.fastAction = [...BUILTIN_FAST_ACTION_PATTERNS];
       }
       next.tierPatterns = tp;
+    }
+  }
+
+  if (fromVersion < 6) {
+    const builtinUi = BUILTIN_SPECIALISTS.find((s) => s.id === "ui");
+    const builtinGeneral = BUILTIN_SPECIALISTS.find((s) => s.id === "general");
+
+    if (Array.isArray(next.specialists)) {
+      next.specialists = next.specialists.map((entry) => {
+        if (!entry || typeof entry !== "object") return entry;
+        const spec = { ...(entry as Record<string, unknown>) };
+        if (spec.id === "ui" && spec.builtIn !== false && builtinUi) {
+          if (areStringArraysEqual(spec.matchPatterns, LEGACY_V5_UI_MATCH_PATTERNS)) {
+            spec.matchPatterns = [...builtinUi.matchPatterns];
+          }
+          if (areStringArraysEqual(spec.allowedMcpServers, LEGACY_V5_UI_ALLOWED_MCP)) {
+            spec.allowedMcpServers = [...builtinUi.allowedMcpServers];
+          }
+        }
+        if (spec.id === "general" && spec.builtIn !== false && builtinGeneral) {
+          if (areStringArraysEqual(spec.allowedMcpServers, LEGACY_V5_GENERAL_ALLOWED_MCP)) {
+            spec.allowedMcpServers = [...builtinGeneral.allowedMcpServers];
+          }
+        }
+        return spec;
+      });
+    }
+
+    if (next.fullstackUiPattern === LEGACY_V5_FULLSTACK_UI_PATTERN) {
+      next.fullstackUiPattern = BUILTIN_FULLSTACK_UI_PATTERN;
+    }
+
+    if (
+      next.tierPatterns &&
+      typeof next.tierPatterns === "object" &&
+      !Array.isArray(next.tierPatterns)
+    ) {
+      const tp = { ...(next.tierPatterns as Record<string, unknown>) };
+      if (Array.isArray(tp.execAction)) {
+        tp.execAction = tp.execAction.map((item) =>
+          item === LEGACY_V5_EXEC_ACTION_PATTERN ? BUILTIN_EXEC_ACTION_PATTERNS[0] : item,
+        );
+      }
+      next.tierPatterns = tp;
+    }
+
+    if (areStringArraysEqual(next.affirmativeConfirmWords, LEGACY_V5_AFFIRMATIVE_CONFIRM_WORDS)) {
+      next.affirmativeConfirmWords = [...DEFAULT_AFFIRMATIVE_CONFIRM_WORDS];
+    }
+  }
+
+  if (fromVersion < 7) {
+    const builtinSpecById = new Map(BUILTIN_SPECIALISTS.map((s) => [s.id, s]));
+    if (Array.isArray(next.specialists)) {
+      next.specialists = next.specialists.map((entry) => {
+        if (!entry || typeof entry !== "object") return entry;
+        const spec = { ...(entry as Record<string, unknown>) };
+        const id = typeof spec.id === "string" ? spec.id : "";
+        const builtin = builtinSpecById.get(id);
+        const rawSkills = Array.isArray(spec.primarySkills)
+          ? spec.primarySkills.filter((item): item is string => typeof item === "string")
+          : null;
+
+        if (builtin && spec.builtIn !== false) {
+          const legacyV6Skills = LEGACY_V6_SPECIALIST_PRIMARY_SKILLS[id];
+          const isUntouchedLegacy =
+            rawSkills !== null &&
+            legacyV6Skills !== undefined &&
+            (areStringArraysEqual(rawSkills, legacyV6Skills) ||
+              areStringArraysEqual(rawSkills, normalizePrimarySkills(legacyV6Skills)));
+          if (isUntouchedLegacy) {
+            spec.primarySkills = [...builtin.primarySkills];
+          } else if (rawSkills !== null) {
+            spec.primarySkills = normalizePrimarySkills(rawSkills);
+          }
+        } else if (rawSkills !== null) {
+          spec.primarySkills = normalizePrimarySkills(rawSkills);
+        }
+        return spec;
+      });
     }
   }
 

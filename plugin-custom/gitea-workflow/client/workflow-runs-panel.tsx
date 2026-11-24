@@ -14,11 +14,22 @@ import {
   workflowRunResumeRpc,
   workflowRunRetryRpc,
 } from "../shared/workflow-rpc-contracts.js";
+import type { WorkflowHarnessExecutionInfo } from "../shared/types.js";
 import {
   sortWorkflowRuns,
   type WorkflowRunItemDetail,
   type WorkflowRunItemSummary,
 } from "./run-list-model.js";
+
+function formatStepHarnessBadge(harness: WorkflowHarnessExecutionInfo): string {
+  const providerWithModel = harness.model
+    ? `${harness.provider}/${harness.model}`
+    : harness.provider;
+  if (harness.enabled) {
+    return `${harness.role} · ${harness.tier} · ${providerWithModel}`;
+  }
+  return `static · ${providerWithModel}`;
+}
 
 function statusColor(status: string, theme: PluginTheme): string {
   if (status === "succeeded") return theme.colors.statusSuccess;
@@ -43,7 +54,7 @@ export function WorkflowRunsPanelView({
   const projectId = workspace?.projectId ?? null;
 
   const [rawRuns, setRawRuns] = useState<WorkflowRunItemSummary[]>([]);
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState(null as string | null);
   const [remoteDetail, setRemoteDetail] = useState<WorkflowRunItemDetail | null>(null);
   const [approvals, setApprovals] = useState<
     Array<{ approvalId: string; stepId: string; status: string }>
@@ -91,7 +102,18 @@ export function WorkflowRunsPanelView({
             name: res.run.name,
             status: res.run.status,
             pendingInteraction: res.run.pendingInteraction,
-            stepAttempts: res.run.stepAttempts,
+            stepAttempts: res.run.stepAttempts.map((s) => {
+              const rawSummary = s.summary?.trim() || null;
+              const singleLineSummary = rawSummary ? rawSummary.split(/\r?\n/)[0] : null;
+              const existingDesc = (s as { description?: string | null }).description;
+              return {
+                ...s,
+                agentId: s.agentId ?? null,
+                summary: s.summary ?? null,
+                harness: s.harness ?? null,
+                description: existingDesc || singleLineSummary,
+              };
+            }),
           });
         }
         const appr = await approvalList({ projectId, workspaceId, runId });
@@ -483,6 +505,41 @@ export function WorkflowRunsPanelView({
                   {step.status}
                 </Text>
               </View>
+
+              {step.harness ? (
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }}>
+                  <View
+                    style={{
+                      paddingHorizontal: 8,
+                      paddingVertical: 2,
+                      borderRadius: 4,
+                      backgroundColor: theme.colors.surface2,
+                      borderWidth: 1,
+                      borderColor: theme.colors.border,
+                    }}
+                  >
+                    <Text style={{ fontSize: 11, color: theme.colors.foregroundMuted }}>
+                      {formatStepHarnessBadge(step.harness)}
+                    </Text>
+                  </View>
+                  {step.harness.enabled && step.harness.lazyToolSlice ? (
+                    <View
+                      style={{
+                        paddingHorizontal: 8,
+                        paddingVertical: 2,
+                        borderRadius: 4,
+                        backgroundColor: theme.colors.surface2,
+                        borderWidth: 1,
+                        borderColor: theme.colors.border,
+                      }}
+                    >
+                      <Text style={{ fontSize: 11, color: theme.colors.foregroundMuted }}>
+                        {step.harness.lazyToolSlice}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
 
               {step.description ? (
                 <Text

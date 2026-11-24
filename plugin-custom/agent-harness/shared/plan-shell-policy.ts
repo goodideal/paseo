@@ -89,12 +89,31 @@ function checkAndStripRedirects(cmd: string): { sanitized: string; hasWriteRedir
   sanitized = sanitized.replace(/\b2>\s*\/dev\/null\b/g, "");
   sanitized = sanitized.replace(/<\s*\/dev\/null\b/g, "");
 
-  // Now inspect if there are remaining write redirects: `>` or `>>` or `&>`
-  // Watch out for `>` inside string quotes or standard comparison `[[ a > b ]]`
-  // Simple heuristic: if unquoted > or >> exists, treat as write redirect
-  const writeRedirectRegex = /(?:^|[^<>&|])(>>?|&>)/;
-  if (writeRedirectRegex.test(sanitized)) {
-    return { sanitized, hasWriteRedirect: true };
+  // Inspect remaining characters outside quotes for any write or read-write redirect (`>`, `>>`, `&>`, `<>`, `1>`)
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let escapeNext = false;
+  for (let i = 0; i < sanitized.length; i++) {
+    const ch = sanitized[i];
+    if (escapeNext) {
+      escapeNext = false;
+      continue;
+    }
+    if (ch === "\\" && !inSingleQuote) {
+      escapeNext = true;
+      continue;
+    }
+    if (ch === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+      continue;
+    }
+    if (ch === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+      continue;
+    }
+    if (!inSingleQuote && !inDoubleQuote && ch === ">") {
+      return { sanitized, hasWriteRedirect: true };
+    }
   }
 
   return { sanitized: sanitized.trim(), hasWriteRedirect: false };
@@ -119,7 +138,7 @@ function tokenizeSegment(segment: string): string[] {
       continue;
     }
 
-    if (char === "\\") {
+    if (char === "\\" && !inSingleQuote) {
       escapeNext = true;
       continue;
     }
@@ -213,6 +232,11 @@ function isSingleSegmentReadOnly(rawSegment: string): boolean {
     return isRtkReadOnly(args);
   }
 
+  // Check ocr delegate read-only commands
+  if (command === "ocr") {
+    return isOcrReadOnly(args);
+  }
+
   // Check standard read-only commands
   if (READ_ONLY_COMMAND_ROOTS.has(command)) {
     return true;
@@ -289,6 +313,25 @@ function isRtkReadOnly(args: string[]): boolean {
 }
 
 /**
+ * Validates ocr command arguments (only LLM-Free read-only `ocr delegate preview|rule` and help/version).
+ */
+export function isOcrReadOnly(args: string[]): boolean {
+  if (args.length === 0) {
+    return true;
+  }
+  if (
+    args.length === 1 &&
+    (args[0] === "--version" || args[0] === "-V" || args[0] === "--help" || args[0] === "-h")
+  ) {
+    return true;
+  }
+  if (args[0] === "delegate" && (args[1] === "preview" || args[1] === "rule")) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Split a complex command into segments across logical and/or and pipes.
  * Returns false immediately if background (&), sequence (;), or subshells () are used in risky ways.
  */
@@ -325,7 +368,7 @@ export function isReadOnlyShellCommand(command: string): boolean {
       continue;
     }
 
-    if (char === "\\") {
+    if (char === "\\" && !inSingleQuote) {
       escapeNext = true;
       current += char;
       continue;
@@ -344,6 +387,11 @@ export function isReadOnlyShellCommand(command: string): boolean {
     }
 
     if (!inSingleQuote && !inDoubleQuote) {
+      // Reject unquoted newlines, carriage returns, subshells, or process substitutions `<(...)` / `>(...)`
+      if (char === "\n" || char === "\r" || char === "(" || char === ")") {
+        return false;
+      }
+
       // Reject semicolon chaining
       if (char === ";") {
         // If it's a semicolon, split as segment
@@ -385,6 +433,10 @@ export function isReadOnlyShellCommand(command: string): boolean {
     }
 
     current += char;
+  }
+
+  if (inSingleQuote || inDoubleQuote) {
+    return false;
   }
 
   if (current.trim().length > 0) {

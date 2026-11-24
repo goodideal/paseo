@@ -124,6 +124,30 @@ function HibernatedServiceBar() {
   );
 }
 
+function formatStaticReviewSubtitle(
+  staticReview: NonNullable<ReviewSignOff["staticReview"]>,
+): string {
+  const modelPart = staticReview.model || "antigravity/gemini-4-carbon";
+  const summaryPart = staticReview.summary || "Audited";
+  if (!staticReview.role) {
+    return `${modelPart} · ${summaryPart}`;
+  }
+  const roleLabel = staticReview.tier
+    ? `${staticReview.role} (${staticReview.tier})`
+    : staticReview.role;
+  return `${roleLabel} · ${modelPart} · ${summaryPart}`;
+}
+
+function formatStepAuditDescription(step: any): string | undefined {
+  if (step.skipReason) return step.skipReason;
+  if (step.failureReason) return step.failureReason;
+  if (!step.harness) return undefined;
+  const providerWithModel = step.harness.model
+    ? `${step.harness.provider}/${step.harness.model}`
+    : step.harness.provider;
+  return `Harness: ${step.harness.role} · ${step.harness.tier} (${providerWithModel})`;
+}
+
 function DualReviewBadgeRow({ signOff }: { signOff?: ReviewSignOff | null }) {
   if (!signOff?.staticReview && !signOff?.dynamicReview) return null;
 
@@ -135,8 +159,7 @@ function DualReviewBadgeRow({ signOff }: { signOff?: ReviewSignOff | null }) {
           <View style={styles.reviewPillContent}>
             <Text style={styles.reviewPillTitle}>Stage 1: Static Code Review</Text>
             <Text style={styles.reviewPillSub} numberOfLines={1}>
-              {signOff.staticReview.model || "codex/gpt-5.4"} ·{" "}
-              {signOff.staticReview.summary || "Audited"}
+              {formatStaticReviewSubtitle(signOff.staticReview)}
             </Text>
           </View>
         </View>
@@ -315,16 +338,16 @@ export interface ReviewPanelProps extends Partial<PluginWorkspacePanelProps> {
 
 export function ReviewPanel({ workspaceId, theme, workflowApi }: ReviewPanelProps) {
   const [tasks, setTasks] = useState<GiteaWorkflowTask[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState<string>("ALL");
-  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState("ALL");
+  const [activeTaskId, setActiveTaskId] = useState(null as string | null);
   const [activeTab, setActiveTab] = useState<"discussion" | "artifacts" | "evidence" | "audit">(
     "discussion",
   );
   const [interactionDraft, setInteractionDraft] = useState("");
-  const [activeRunDetail, setActiveRunDetail] = useState<any>(null);
+  const [activeRunDetail, setActiveRunDetail] = useState(null as any);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
-  const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const [statusMsg, setStatusMsg] = useState(null as string | null);
 
   let paseoApi: any = null;
   try {
@@ -577,11 +600,11 @@ export function ReviewPanel({ workspaceId, theme, workflowApi }: ReviewPanelProp
               timestamp: activeTask?.createdAt || new Date().toISOString(),
               status: "succeeded",
             },
-            ...(activeRunDetail?.stepAttempts?.map((s: any) => ({
-              id: s.stepId,
+            ...(activeRunDetail?.stepAttempts?.map((s: any, idx: number) => ({
+              id: `${s.stepId}-${s.attempt ?? idx + 1}`,
               type: "step",
               title: `步骤: ${s.stepId}`,
-              description: s.skipReason || s.failureReason,
+              description: formatStepAuditDescription(s),
               timestamp: s.startedAt || new Date().toISOString(),
               status: s.status,
             })) ?? []),

@@ -99,6 +99,61 @@ export function expandHomeDir(filepath: string, homeDir?: string): string {
   return filepath;
 }
 
+const MATTPOCOCK_SKILLS_PREFIX = "mattpocock-skills:";
+
+/**
+ * Normalizes specialist `primarySkills` into prefix-free bare skill names across all providers:
+ * - maps `"superpowers:dispatching-parallel-agents"` -> `"codebase-design"`
+ * - maps `"superpowers:verification-before-completion"` -> `"tdd"`, `"diagnosing-bugs"`
+ * - filters out any other `"superpowers:*"` skill
+ * - strips leading `"mattpocock-skills:"` prefix
+ * - trims and deduplicates while preserving order.
+ */
+export function normalizePrimarySkills(skills: readonly string[]): string[] {
+  if (!Array.isArray(skills)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  const pushUnique = (skill: string) => {
+    const trimmed = skill.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      return;
+    }
+    seen.add(trimmed);
+    normalized.push(trimmed);
+  };
+
+  for (const raw of skills) {
+    if (typeof raw !== "string") {
+      continue;
+    }
+    const s = raw.trim();
+    if (!s) {
+      continue;
+    }
+    if (s === "superpowers:dispatching-parallel-agents") {
+      pushUnique("codebase-design");
+      continue;
+    }
+    if (s === "superpowers:verification-before-completion") {
+      pushUnique("tdd");
+      pushUnique("diagnosing-bugs");
+      continue;
+    }
+    if (s.startsWith("superpowers:")) {
+      continue;
+    }
+    if (s.startsWith(MATTPOCOCK_SKILLS_PREFIX)) {
+      pushUnique(s.slice(MATTPOCOCK_SKILLS_PREFIX.length));
+      continue;
+    }
+    pushUnique(s);
+  }
+
+  return normalized;
+}
+
 /**
  * Merges Host Settings with optional Repo-level overrides and workspace `.agents/agent-team.json`
  * specialists into an EffectiveHarnessConfig.
@@ -132,7 +187,10 @@ export function resolveEffectiveHarnessConfig(
   const mergedSpecialists = baseSpecialists.map((orig) => {
     const override = specialistOverrides[orig.id];
     if (!override && extraDocs.length === 0 && extraGates.length === 0) {
-      return { ...orig };
+      return {
+        ...orig,
+        primarySkills: normalizePrimarySkills(orig.primarySkills),
+      };
     }
 
     const mergedDocs = Array.from(
@@ -143,9 +201,10 @@ export function resolveEffectiveHarnessConfig(
       new Set([...orig.qualityGates, ...(override?.qualityGates ?? []), ...extraGates]),
     );
 
-    const mergedSkills = Array.from(
-      new Set([...orig.primarySkills, ...(override?.primarySkills ?? [])]),
-    );
+    const mergedSkills = normalizePrimarySkills([
+      ...orig.primarySkills,
+      ...(override?.primarySkills ?? []),
+    ]);
 
     return {
       ...orig,
@@ -514,10 +573,21 @@ function resolveBannerPhase(
   if (tier === "flash") {
     return "exec";
   }
-  if (tier === "review" || specialistId === "review") {
+  const normId = specialistId?.trim().toLowerCase() ?? "";
+  if (
+    tier === "review" ||
+    normId === "review" ||
+    normId.endsWith("-reviewer") ||
+    normId.endsWith("-auditor")
+  ) {
     return "review";
   }
-  if (specialistId === "pm" || specialistId === "architect") {
+  if (
+    normId === "pm" ||
+    normId.endsWith("-pm") ||
+    normId === "architect" ||
+    normId.endsWith("-architect")
+  ) {
     return "design";
   }
   return "exec";
@@ -536,6 +606,7 @@ export function buildSystemPromptBanner(options: {
   provider?: string;
   isLeaf?: boolean;
   isSpawnedSpecialist?: boolean;
+  isUnattendedWorkflow?: boolean;
 }): string {
   const { config, specialist, tier, targetModel, roleMatchedRule, homeDir, provider } = options;
   if (!config.injectSystemPromptBanner) {
@@ -587,25 +658,35 @@ export function buildSystemPromptBanner(options: {
   }
 
   const { profilePath, lazyToolConfigPath } = resolveSpecialistPaths(config, specialist, homeDir);
-  const rawPrimarySkills = specialist.primarySkills.filter(Boolean);
-  const primarySkills = isAntigravity
-    ? rawPrimarySkills
-        .filter((s) => !s.startsWith("superpowers:"))
-        .map((s) => (s.startsWith("mattpocock-skills:") ? s.slice("mattpocock-skills:".length) : s))
-    : rawPrimarySkills;
+  const primarySkills = normalizePrimarySkills(specialist.primarySkills);
   const allowedMcp = specialist.allowedMcpServers.filter(Boolean);
   const excludedMcp = specialist.excludedMcpServers.filter(Boolean);
   const qualityGates = specialist.qualityGates.filter(Boolean);
   const docsFocus = specialist.docsFocus.filter(Boolean);
+  const rawSkillsRoot = specialist.skillsRoot?.trim() ?? "";
+  const rawDefaultSkillsRoot = config.defaultSkillsRoot?.trim() ?? "";
+  const expandedSkillsRoot = rawSkillsRoot ? expandHomeDir(rawSkillsRoot, homeDir) : "";
+  const expandedDefaultSkillsRoot = rawDefaultSkillsRoot
+    ? expandHomeDir(rawDefaultSkillsRoot, homeDir)
+    : "";
+  const hasFallbackSkillsRoot = Boolean(
+    rawSkillsRoot && rawDefaultSkillsRoot && expandedSkillsRoot !== expandedDefaultSkillsRoot,
+  );
+  const skillsRootLabel = hasFallbackSkillsRoot
+    ? `${rawSkillsRoot} (fallback: ${rawDefaultSkillsRoot})`
+    : rawSkillsRoot;
 
   const phase = resolveBannerPhase(options.phase, tier, specialist.id);
 
+  const customRolePrompt = specialist.rolePromptTemplate?.trim();
   const phaseRule =
-    specialist.rolePromptTemplate?.trim() ||
-    config.phaseRules[specialist.id]?.trim() ||
-    config.phaseRules[phase]?.trim() ||
-    config.phaseRules[tier]?.trim() ||
-    "";
+    customRolePrompt ||
+    (options.isUnattendedWorkflow && phase === "design"
+      ? "- [Phase: Unattended Workflow Design & Spec] Rule: You are running in an automated workflow stage (phase=design). Author concise architectural proposals, design specs, or implementation plans as instructed by the workflow prompt (writing spec/plan Markdown files if requested); DO NOT edit business source files in this design stage, DO NOT invoke interactive ExitPlanMode, and DO NOT spawn subagents."
+      : config.phaseRules[specialist.id]?.trim() ||
+        config.phaseRules[phase]?.trim() ||
+        config.phaseRules[tier]?.trim() ||
+        "");
 
   const lines = [
     "[Capability Harness Active Profile]",
@@ -614,7 +695,7 @@ export function buildSystemPromptBanner(options: {
     ...(profilePath ? [`- Profile Spec: ${profilePath}`] : []),
     ...(lazyToolConfigPath ? [`- Lazy-Tool Slice: ${lazyToolConfigPath}`] : []),
     ...(primarySkills.length > 0 ? [`- Primary Skills: ${primarySkills.join(", ")}`] : []),
-    ...(specialist.skillsRoot ? [`- Skills Root: ${specialist.skillsRoot}`] : []),
+    ...(skillsRootLabel ? [`- Skills Root: ${skillsRootLabel}`] : []),
     ...(docsFocus.length > 0 ? [`- Focus Documents: ${docsFocus.join(", ")}`] : []),
     ...(allowedMcp.length > 0
       ? [`- Allowed MCP Servers (via lazy-tool): ${allowedMcp.join(", ")}`]
@@ -644,8 +725,11 @@ export function buildSystemPromptBanner(options: {
 
   if (specialist.mandatorySkillActivation && primarySkills.length > 0) {
     if (isAntigravity) {
+      const skillsRootLocation = hasFallbackSkillsRoot
+        ? `from your skills root (\`${rawSkillsRoot}\`, or fallback \`${rawDefaultSkillsRoot}\`)`
+        : "from your skills root";
       lines.push(
-        `- Mandatory Skill Activation: Before authoring domain deliverables or code, you MUST read the \`SKILL.md\` file via \`read_file\` for at least one of your Primary Skills (${primarySkills.map((s) => `\`${s}\``).join(", ")}) from your skills root so its domain rules govern your implementation.`,
+        `- Mandatory Skill Activation: Before authoring domain deliverables or code, you MUST read the \`SKILL.md\` file via \`read_file\` for at least one of your Primary Skills (${primarySkills.map((s) => `\`${s}\``).join(", ")}) ${skillsRootLocation} so its domain rules govern your implementation.`,
       );
     } else {
       lines.push(
@@ -658,7 +742,7 @@ export function buildSystemPromptBanner(options: {
     lines.push(phaseRule);
   }
 
-  if (isAntigravity && !options.isLeaf) {
+  if (isAntigravity && !options.isLeaf && !options.isUnattendedWorkflow) {
     lines.push(
       `- Antigravity Specialist Handoff (\`mcp_paseo_create_agent\`): Native \`harness_handoff\` is unavailable on Antigravity (\`supportsNativePaseoTools=false\`). To hand off or spawn a Paseo specialist (e.g. \`role=review\`, \`role=backend\`, \`role=ui\`, \`role=qa\`) instead of in-process \`invoke_subagent\`, call \`mcp_paseo_create_agent\` in this workspace with \`provider: "antigravity/<targetModel>"\` (\`review\`/\`architect\`/\`pm\` -> \`gemini-4-carbon\`, \`ui\`/\`backend\`/\`qa\` -> \`gemini-4-argon\`), \`labels: { "role": "<targetRole>", "paseo.harness-leaf": "1" }\`, and a self-contained \`initialPrompt\`.`,
     );
@@ -694,7 +778,7 @@ export function resolveSessionMcpServers(options: {
     if (excludedSet.has(lowerKey)) {
       continue;
     }
-    if (allowedSet && !allowedSet.has(lowerKey)) {
+    if (lowerKey !== "paseo" && allowedSet && !allowedSet.has(lowerKey)) {
       continue;
     }
     result[key] = val;

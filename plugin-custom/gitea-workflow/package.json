@@ -2,7 +2,7 @@
   "name": "@paseo-plugin/gitea-workflow",
   "version": "0.10.1",
   "private": true,
-  "description": "Gitea Superpowers automated workflow and review workbench",
+  "description": "Gitea Issue-to-PR automated workflow and quality gate workbench",
   "devDependencies": {
     "@getpaseo/plugin": "*",
     "@tanstack/react-query": "^5.0.0",

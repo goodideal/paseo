@@ -13,6 +13,7 @@ import {
 import type { WorkflowArtifact, WorkflowRun } from "./workflow-engine/workflow-models.js";
 import type { WorkflowService } from "./workflow-engine/workflow-service.js";
 import type { WorkflowStore } from "./workflow-engine/workflow-store.js";
+import { ensureProviderModelSelection } from "./harness-bridge.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -104,9 +105,18 @@ export function createPluginStepExecutorHost(
     agentHandle: Awaited<ReturnType<PaseoApi["agents"]["create"]>>,
     prompt: string,
     run: WorkflowRun,
+    promptAlreadySent = false,
   ) => {
     const agentId = agentHandle.id;
-    const result = await agentHandle.run(prompt);
+    const waitForFinish = (
+      agentHandle as unknown as {
+        waitForFinish?: () => Promise<Awaited<ReturnType<typeof agentHandle.run>>>;
+      }
+    ).waitForFinish;
+    const result =
+      promptAlreadySent && typeof waitForFinish === "function"
+        ? await waitForFinish.call(agentHandle)
+        : await agentHandle.run(prompt);
     const lastMessage = result.lastMessage ?? "";
     const finalArtifact = await saveWorkflowArtifact(run, "agent_output", lastMessage);
 
@@ -185,7 +195,11 @@ export function createPluginStepExecutorHost(
         title: `Workflow ${promptId}`,
         prompt: promptId,
         config: {
-          provider: provider ?? "codex",
+          provider: ensureProviderModelSelection(provider ?? "codex"),
+        },
+        labels: {
+          "paseo.workflow": "gitea-workflow",
+          "paseo.workflow.unattended": "1",
         },
       };
       const handle = workspaceId
@@ -197,28 +211,38 @@ export function createPluginStepExecutorHost(
     runAgentUntilComplete: async ({ cwd, prompt, profile, mode, run, stepId }) => {
       const paseo = requirePaseo();
       let provider = "codex";
-      if (
-        typeof profile === "object" &&
-        profile &&
-        "provider" in profile &&
-        typeof (profile as { provider?: unknown }).provider === "string"
-      ) {
-        provider = (profile as { provider: string }).provider;
+      let explicitModel: string | undefined;
+      if (typeof profile === "object" && profile) {
+        if (
+          "provider" in profile &&
+          typeof (profile as { provider?: unknown }).provider === "string"
+        ) {
+          provider = (profile as { provider: string }).provider;
+        }
+        if ("model" in profile && typeof (profile as { model?: unknown }).model === "string") {
+          explicitModel = (profile as { model: string }).model;
+        }
       } else if (typeof profile === "string" && profile !== "default") {
         provider = profile;
       }
       const workspaceId = (await resolveWorkspaceIdForCwd(paseo, cwd)) ?? run.workspaceId;
       const agentOptions = {
         title: `Workflow ${run.id} - ${stepId}`,
+        prompt,
         config: {
-          provider,
+          provider: ensureProviderModelSelection(provider, "standard", explicitModel),
           ...(mode ? { modeId: mode } : {}),
+        },
+        labels: {
+          "paseo.workflow": "gitea-workflow",
+          "paseo.workflow.unattended": "1",
+          "paseo.workflow.run-id": run.id,
         },
       };
       const agentHandle = workspaceId
         ? await paseo.workspaces.ref(workspaceId).agents.create(agentOptions)
         : await paseo.agents.create({ cwd, ...agentOptions });
-      return runAgentHandle(agentHandle, prompt, run);
+      return runAgentHandle(agentHandle, prompt, run, true);
     },
 
     continueAgentUntilComplete: async ({ agentId, prompt, mode, run }) => {

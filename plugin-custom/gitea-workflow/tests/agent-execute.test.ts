@@ -77,7 +77,7 @@ describe("Agent Execute Adapter", () => {
 
     // 2. Verifies agentHandle.run was called to await execution
     expect(mockAgentHandle.run).toHaveBeenCalledWith(
-      expect.stringContaining("superpowers:brainstorming"),
+      expect.stringContaining("grilling"),
       expect.objectContaining({ timeoutMs: expect.any(Number) }),
     );
 
@@ -432,6 +432,60 @@ describe("Agent Execute Adapter", () => {
     );
   });
 
+  it("interpolates and passes custom agentPlanPrompt for plan phase with 🎯 PHASE_META", async () => {
+    const mockSettings = {
+      getAgentProvider: vi.fn().mockReturnValue("claude"),
+      getAgentModel: vi.fn().mockReturnValue("sonnet"),
+      getAgentChangeMode: vi.fn().mockReturnValue("auto"),
+      getAgentPlanPrompt: vi
+        .fn()
+        .mockReturnValue("Grill Plan for #{{issueNumber}}: {{issueTitle}}"),
+    };
+    const mockIndexStore = {
+      getEntryByRunId: vi.fn().mockResolvedValue({
+        issueNumber: 78,
+        issueTitle: "Design deep module seam",
+        repoOwner: "core-team",
+        repoName: "web-gateway",
+      }),
+    };
+    const mockAgentHandle = {
+      id: "agent-custom-plan-phase",
+      run: vi.fn().mockResolvedValue({ status: "idle", lastMessage: "Plan ready" }),
+    };
+    const mockPaseo = {
+      workspaces: {
+        list: vi.fn().mockResolvedValue({
+          entries: [
+            { id: "ws-1", workspaceDirectory: "/projects/repo", workspaceKind: "local_checkout" },
+          ],
+        }),
+        ref: vi.fn().mockReturnValue({ current: vi.fn().mockReturnValue({ id: "ws-1" }) }),
+      },
+      agents: {
+        create: vi.fn().mockResolvedValue(mockAgentHandle),
+      },
+    };
+
+    const adapter = createAgentExecuteAdapter(mockSettings as any, mockIndexStore as any);
+    await adapter.execute({ phase: "plan" }, {
+      paseo: mockPaseo as any,
+      run: { runId: "run-plan-78", projectId: "prj-core" },
+      step: { stepId: "plan-agent" },
+    } as any);
+
+    expect(mockSettings.getAgentPlanPrompt).toHaveBeenCalledWith("prj-core");
+    expect(mockPaseo.agents.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "🎯 [#78] 方案质询与规划 · Design deep module seam",
+      }),
+    );
+    expect(mockAgentHandle.run).toHaveBeenCalledWith(
+      "Grill Plan for #78: Design deep module seam",
+      expect.objectContaining({ timeoutMs: expect.any(Number) }),
+    );
+  });
+
   it("interpolates default DEFAULT_AGENT_AUTO_PROMPT with issue body, repo, and branch", async () => {
     const mockSettings = {
       getAgentProvider: vi.fn().mockReturnValue("claude"),
@@ -525,6 +579,11 @@ describe("Agent Execute Adapter", () => {
       expect(normalizeAgentChangeMode("opencode", undefined)).toBe("build");
       expect(normalizeAgentChangeMode("opencode", "invalid-mode")).toBe("build");
       expect(normalizeAgentChangeMode("antigravity", "full-access")).toBe("full-access");
+      expect(normalizeAgentChangeMode("pi", "full-access")).toBe("auto");
+      expect(normalizeAgentChangeMode("pi_custom", "full-access")).toBe("auto");
+      expect(normalizeAgentChangeMode("pi", "bypassPermissions")).toBe("auto");
+      expect(normalizeAgentChangeMode("pi", "plan")).toBe("plan");
+      expect(normalizeAgentChangeMode("pi", undefined)).toBe("auto");
     });
 
     it("passes normalized build mode when agentProvider is opencode and settings has full-access", async () => {
@@ -784,6 +843,161 @@ describe("Agent Execute Adapter", () => {
     expect(mockAgentHandle.run).toHaveBeenCalledWith(
       "Reviewing #499 in aimeeting/core-vue: Memory leak in watcher",
       expect.any(Object),
+    );
+  });
+
+  it("injects Approved Upstream Stage Context from previous stepOutputs and prefers wsRef.agents.create + waitForFinish without double sending", async () => {
+    const mockSettings = {
+      getHarnessMode: vi.fn().mockReturnValue("auto"),
+      getAgentProvider: vi.fn().mockReturnValue("codex"),
+      getAgentModel: vi.fn().mockReturnValue(""),
+      getAgentChangeMode: vi.fn().mockReturnValue("full-access"),
+    };
+    const mockIndexStore = {
+      getEntryByRunId: vi.fn().mockResolvedValue({
+        issueNumber: 512,
+        issueTitle: "Implement database connection pool",
+        issueBody: "Add pool limit and idle eviction.",
+        repoOwner: "core",
+        repoName: "service",
+      }),
+    };
+    const mockAgentHandle = {
+      id: "agent-ws-wait-1",
+      waitForFinish: vi.fn().mockResolvedValue({
+        status: "idle",
+        lastMessage: "Pool implemented with tests.",
+      }),
+      run: vi.fn(),
+      send: vi.fn(),
+    };
+    const mockWsRef = {
+      current: vi.fn().mockReturnValue({ id: "ws-wt-512", title: "#512" }),
+      setTitle: vi.fn(),
+      agents: {
+        create: vi.fn().mockResolvedValue(mockAgentHandle),
+      },
+    };
+    const mockPaseo = {
+      plugins: {
+        invoke: vi.fn().mockResolvedValue({
+          config: {
+            enabled: true,
+            specialists: {
+              backend: {
+                preferredTier: "standard",
+                preferredProvider: "codex",
+                lazyToolSlice: "/Users/jerry/.config/lazy-tool/profiles/backend.yaml",
+                matchPatterns: ["database|pool"],
+              },
+            },
+          },
+        }),
+      },
+      workspaces: {
+        list: vi.fn().mockResolvedValue({
+          entries: [
+            {
+              id: "ws-wt-512",
+              workspaceDirectory: "/tmp/worktrees/issue-512",
+              workspaceKind: "worktree",
+              name: "issue-512",
+            },
+          ],
+        }),
+        ref: vi.fn().mockReturnValue(mockWsRef),
+      },
+      agents: {
+        create: vi.fn(),
+      },
+    };
+
+    const adapter = createAgentExecuteAdapter(mockSettings as any, mockIndexStore as any);
+    const res = await adapter.execute({ phase: "implement" }, {
+      paseo: mockPaseo as any,
+      run: {
+        runId: "run_512",
+        projectId: "prj_core",
+        workspaceRoot: "/tmp/worktrees/issue-512",
+      },
+      stepOutputs: {
+        "brainstorm-agent": { summary: "Selected Option B: bounded pool." },
+        "plan-agent": { summary: "1. Add PoolConfig\n2. Add acquire/release unit tests" },
+      },
+      step: { stepId: "implement-agent" },
+    } as any);
+
+    expect(mockWsRef.agents.create).toHaveBeenCalledTimes(1);
+    expect(mockPaseo.agents.create).not.toHaveBeenCalled();
+    const createCall = mockWsRef.agents.create.mock.calls[0][0];
+    expect(createCall.prompt).toContain("## Approved Upstream Stage Context");
+    expect(createCall.prompt).toContain("Selected Option B: bounded pool.");
+    expect(createCall.prompt).toContain("1. Add PoolConfig");
+    expect(createCall.config).toEqual({
+      provider: "codex/flash",
+      modeId: "full-access",
+      thinkingOptionId: "medium",
+    });
+    expect(createCall.labels).toMatchObject({
+      role: "backend",
+      "paseo.harness-leaf": "1",
+      "paseo.workflow": "gitea-workflow",
+      "paseo.workflow.phase": "exec",
+      "paseo.workflow.unattended": "1",
+      "paseo.workflow.run-id": "run_512",
+    });
+
+    expect(mockAgentHandle.waitForFinish).toHaveBeenCalledTimes(1);
+    expect(mockAgentHandle.run).not.toHaveBeenCalled();
+    expect(mockAgentHandle.send).not.toHaveBeenCalled();
+    expect(res.harness).toMatchObject({
+      enabled: true,
+      mode: "auto",
+      role: "backend",
+      tier: "standard",
+      phase: "exec",
+      provider: "codex",
+      model: "flash",
+      thinkingOptionId: "medium",
+    });
+  });
+
+  it("uses effectiveIssueNum and effectiveIssueTitle from runInput for agentTitle even when index entry is null and explicit prompt is provided", async () => {
+    const mockSettings = {
+      getAgentProvider: vi.fn().mockReturnValue("claude"),
+      getAgentModel: vi.fn().mockReturnValue("flash"),
+      getAgentChangeMode: vi.fn().mockReturnValue("auto"),
+    };
+    const mockIndexStore = {
+      getEntryByRunId: vi.fn().mockResolvedValue(null),
+    };
+    const mockAgentHandle = {
+      id: "agent-runinput-title",
+      waitForFinish: vi.fn().mockResolvedValue({ status: "idle", lastMessage: "Done" }),
+    };
+    const mockPaseo = {
+      workspaces: { list: vi.fn().mockResolvedValue({ entries: [] }) },
+      agents: { create: vi.fn().mockResolvedValue(mockAgentHandle) },
+    };
+
+    const adapter = createAgentExecuteAdapter(mockSettings as any, mockIndexStore as any);
+    await adapter.execute({ phase: "implement", prompt: "Explicit instructions" }, {
+      paseo: mockPaseo as any,
+      run: {
+        runId: "run_601",
+        projectId: "prj_1",
+        workspaceRoot: "/tmp/wt-601",
+        runInput: {
+          issueNumber: 601,
+          issueTitle: "Fallback title from runInput",
+        },
+      },
+    } as any);
+
+    expect(mockPaseo.agents.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "🛠️ [#601] TDD编码 · Fallback title from runInput",
+      }),
     );
   });
 });

@@ -1,9 +1,34 @@
 import { describe, expect, it, vi } from "vitest";
 import contributeClient from "../../index.client.js";
-import { sortWorkflowRuns } from "../../client/run-list-model.js";
+import { sortWorkflowRuns, type WorkflowStepItem } from "../../client/run-list-model.js";
 import type { PluginClientContext } from "@getpaseo/plugin/client";
 
 describe("Gitea Workflow Embedded DAG Runs", () => {
+  it("preserves optional agentId, summary, and harness fields on WorkflowStepItem", () => {
+    const step: WorkflowStepItem = {
+      stepId: "independent-review",
+      attempt: 1,
+      status: "succeeded",
+      failureReason: null,
+      skipReason: null,
+      agentId: "agent-123",
+      summary: "All checks passed",
+      harness: {
+        enabled: true,
+        mode: "auto",
+        role: "review",
+        tier: "review",
+        phase: "review",
+        provider: "antigravity",
+        model: "gemini-4-carbon",
+        lazyToolSlice: "review.yaml",
+      },
+    };
+    expect(step.harness?.role).toBe("review");
+    expect(step.harness?.lazyToolSlice).toBe("review.yaml");
+    expect(step.summary).toBe("All checks passed");
+  });
+
   it("sorts workflow run summaries by urgency and newest creation time", () => {
     const sorted = sortWorkflowRuns([
       {

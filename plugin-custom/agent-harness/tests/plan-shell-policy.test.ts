@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isReadOnlyShellCommand } from "../shared/plan-shell-policy.js";
+import { isOcrReadOnly, isReadOnlyShellCommand } from "../shared/plan-shell-policy.js";
 
 describe("isReadOnlyShellCommand", () => {
   it("allows standard read-only commands", () => {
@@ -96,5 +96,48 @@ describe("isReadOnlyShellCommand", () => {
   it("rejects backticks and command substitutions", () => {
     expect(isReadOnlyShellCommand("cat `rm -rf /`")).toBe(false);
     expect(isReadOnlyShellCommand("echo $(whoami)")).toBe(false);
+  });
+
+  it("allows read-only ocr delegate preview/rule commands and rejects ocr review/init or redirects", () => {
+    expect(isOcrReadOnly([])).toBe(true);
+    expect(isOcrReadOnly(["--version"])).toBe(true);
+    expect(isOcrReadOnly(["-V"])).toBe(true);
+    expect(isOcrReadOnly(["--help"])).toBe(true);
+    expect(isOcrReadOnly(["-h"])).toBe(true);
+    expect(isOcrReadOnly(["delegate", "preview", "--format", "json"])).toBe(true);
+    expect(isOcrReadOnly(["delegate", "rule", "--format", "json", "a.ts"])).toBe(true);
+    expect(isOcrReadOnly(["review"])).toBe(false);
+    expect(isOcrReadOnly(["init"])).toBe(false);
+    expect(isOcrReadOnly(["delegate"])).toBe(false);
+    expect(isOcrReadOnly(["delegate", "run"])).toBe(false);
+
+    expect(isReadOnlyShellCommand("ocr")).toBe(true);
+    expect(isReadOnlyShellCommand("ocr --version")).toBe(true);
+    expect(isReadOnlyShellCommand("ocr --help")).toBe(true);
+    expect(isReadOnlyShellCommand("ocr delegate preview --format json")).toBe(true);
+    expect(
+      isReadOnlyShellCommand("/Users/jerry/.local/bin/ocr delegate rule --format json a.ts b.ts"),
+    ).toBe(true);
+    expect(
+      isReadOnlyShellCommand("ocr delegate preview --format json && git --no-pager diff"),
+    ).toBe(true);
+    expect(isReadOnlyShellCommand("ocr review --format json")).toBe(false);
+    expect(isReadOnlyShellCommand("ocr init")).toBe(false);
+    expect(isReadOnlyShellCommand("ocr delegate preview --format json > /tmp/out.json")).toBe(
+      false,
+    );
+    expect(isReadOnlyShellCommand("ocr delegate preview --format json\nrm -rf /")).toBe(false);
+    expect(isReadOnlyShellCommand("ocr delegate preview --format json\rrm -rf /")).toBe(false);
+    expect(isReadOnlyShellCommand("ocr delegate preview <(touch /tmp/x)")).toBe(false);
+    expect(isReadOnlyShellCommand("ocr delegate preview >(touch /tmp/x)")).toBe(false);
+    expect(isReadOnlyShellCommand("ocr delegate preview <>/tmp/x")).toBe(false);
+    expect(isReadOnlyShellCommand("(git status)")).toBe(false);
+    expect(isReadOnlyShellCommand("git log --grep='unclosed quote")).toBe(false);
+    expect(isReadOnlyShellCommand('git log --grep="a > b"')).toBe(true);
+    expect(isReadOnlyShellCommand("echo 'x\\' ; rm -rf / ; echo 'y\\'")).toBe(false);
+    expect(
+      isReadOnlyShellCommand("ocr delegate preview --format json 'x\\' > /tmp/pwn ; echo 'y\\'"),
+    ).toBe(false);
+    expect(isReadOnlyShellCommand("echo 'a\\b'")).toBe(true);
   });
 });

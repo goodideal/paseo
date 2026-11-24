@@ -4,10 +4,15 @@ import {
   GiteaSettingsSchema,
   GiteaHostSettingsSchema,
   GiteaTriggerModeSchema,
+  GiteaHarnessModeSchema,
+  WorkflowHarnessExecutionInfoSchema,
+  ReviewSignOffSchema,
+  GiteaProjectDiagnosticSchema,
   LIFECYCLE_LABELS,
   ResolvedProjectGiteaSchema,
   TRIGGER_LABELS,
 } from "../shared/types.js";
+import { WorkflowStepAttemptSchema } from "../shared/workflow-rpc-contracts.js";
 import {
   listTasksRpc,
   approveTaskRpc,
@@ -96,7 +101,7 @@ describe("Gitea Workflow Schemas and RPCs", () => {
   it("provides safe defaults with global automation disabled in GiteaHostSettingsSchema", () => {
     const settings = GiteaHostSettingsSchema.parse({});
     expect(settings.enabled).toBe(false);
-    expect(settings.workflowPolicy).toBe("full_superpowers");
+    expect(settings.workflowPolicy).toBe("direct_pr");
     expect(settings.pollIntervalSeconds).toBe(60);
     expect(settings.maxConcurrentRuns).toBe(3);
     expect(settings.evidenceRetentionDays).toBe(90);
@@ -176,5 +181,69 @@ describe("Trigger Mode and Label Schemas", () => {
     expect(LIFECYCLE_LABELS.WAITING_APPROVAL).toBe("agent-waiting-approval");
     expect(LIFECYCLE_LABELS.DELIVERED).toBe("agent-delivered");
     expect(LIFECYCLE_LABELS.FAILED).toBe("agent-failed");
+  });
+
+  it("validates harness schemas, diagnostic agentTeam, review sign-off metadata, and step attempt harness info", () => {
+    expect(GiteaHarnessModeSchema.parse("auto")).toBe("auto");
+    expect(GiteaHarnessModeSchema.parse("provider_locked")).toBe("provider_locked");
+    expect(GiteaHarnessModeSchema.parse("disabled")).toBe("disabled");
+
+    const harnessInfo = WorkflowHarnessExecutionInfoSchema.parse({
+      enabled: true,
+      mode: "auto",
+      role: "backend",
+      tier: "standard",
+      phase: "exec",
+      provider: "codex",
+      model: "flash",
+      thinkingOptionId: "medium",
+      lazyToolSlice: "/Users/jerry/.config/lazy-tool/profiles/backend.yaml",
+      agentTeamPreset: "fe-be-team",
+    });
+    expect(harnessInfo.role).toBe("backend");
+
+    const signOff = ReviewSignOffSchema.parse({
+      staticReview: {
+        passed: true,
+        model: "antigravity/gemini-4-carbon",
+        role: "review",
+        tier: "deep",
+        lazyToolSlice: "/Users/jerry/.config/lazy-tool/profiles/review.yaml",
+      },
+    });
+    expect(signOff.staticReview?.role).toBe("review");
+
+    const diag = GiteaProjectDiagnosticSchema.parse({
+      projectId: "proj-1",
+      projectName: "App",
+      host: "gitea.local",
+      baseUrl: "https://gitea.local",
+      repoOwner: "org",
+      repoName: "app",
+      connectionStatus: "connected",
+      authSource: "tea",
+      authorized: true,
+      readyLabel: "agent-ready",
+      agentTeam: {
+        projectSlug: "app",
+        preset: "fullstack",
+        rolesCount: 4,
+      },
+    });
+    expect(diag.agentTeam?.rolesCount).toBe(4);
+
+    const stepAttempt = WorkflowStepAttemptSchema.parse({
+      stepId: "implement-agent",
+      attempt: 1,
+      status: "succeeded",
+      startedAt: "2026-11-24T00:00:00.000Z",
+      completedAt: "2026-11-24T00:05:00.000Z",
+      skipReason: null,
+      failureReason: null,
+      agentId: "agent-123",
+      summary: "Implemented feature",
+      harness: harnessInfo,
+    });
+    expect(stepAttempt.harness?.provider).toBe("codex");
   });
 });

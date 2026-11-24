@@ -34,6 +34,19 @@ import type {
 } from "../shared/types.js";
 import { emitHarnessTimelineTransition } from "./timeline-emitter.js";
 
+const sdkHandoffInFlightParents = new Map<string, number>();
+const sdkEmittedHandoffChildren = new Set<string>();
+
+/** Returns true while `spawnHarnessSpecialist` is creating a child agent for `parentAgentId`. */
+export function isSdkHandoffInFlight(parentAgentId: string): boolean {
+  return (sdkHandoffInFlightParents.get(parentAgentId) ?? 0) > 0;
+}
+
+/** Consumes a child-agent handoff deduplication marker recorded by `spawnHarnessSpecialist`. */
+export function consumeSdkEmittedHandoffChild(childAgentId: string): boolean {
+  return sdkEmittedHandoffChildren.delete(childAgentId);
+}
+
 export interface SpawnSpecialistParams {
   paseo: PaseoApi;
   parentAgentId: string;
@@ -163,24 +176,46 @@ export async function spawnHarnessSpecialist(
     [HARNESS_LEAF_LABEL_KEY]: "1",
   };
 
+  sdkHandoffInFlightParents.set(
+    parentAgentId,
+    (sdkHandoffInFlightParents.get(parentAgentId) ?? 0) + 1,
+  );
   let childHandle;
-  if (workspaceId && paseo.workspaces) {
-    childHandle = await paseo.workspaces.ref(workspaceId).agents.create({
-      config: agentConfig,
-      parent: parentAgentId,
-      title: normalizedTitle,
-      prompt: specPrompt,
-      labels: spawnLabels,
-    });
-  } else {
-    childHandle = await paseo.agents.create({
-      config: agentConfig,
-      cwd: parentCwd,
-      parent: parentAgentId,
-      title: normalizedTitle,
-      prompt: specPrompt,
-      labels: spawnLabels,
-    });
+  try {
+    if (workspaceId && paseo.workspaces) {
+      childHandle = await paseo.workspaces.ref(workspaceId).agents.create({
+        config: agentConfig,
+        parent: parentAgentId,
+        title: normalizedTitle,
+        prompt: specPrompt,
+        labels: spawnLabels,
+      });
+    } else {
+      childHandle = await paseo.agents.create({
+        config: agentConfig,
+        cwd: parentCwd,
+        parent: parentAgentId,
+        title: normalizedTitle,
+        prompt: specPrompt,
+        labels: spawnLabels,
+      });
+    }
+    if (childHandle?.id) {
+      if (sdkEmittedHandoffChildren.size > 256) {
+        const oldest = sdkEmittedHandoffChildren.values().next().value;
+        if (oldest !== undefined) {
+          sdkEmittedHandoffChildren.delete(oldest);
+        }
+      }
+      sdkEmittedHandoffChildren.add(childHandle.id);
+    }
+  } finally {
+    const remaining = (sdkHandoffInFlightParents.get(parentAgentId) ?? 1) - 1;
+    if (remaining <= 0) {
+      sdkHandoffInFlightParents.delete(parentAgentId);
+    } else {
+      sdkHandoffInFlightParents.set(parentAgentId, remaining);
+    }
   }
 
   const childAgentId = childHandle.id;

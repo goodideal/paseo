@@ -52,6 +52,13 @@ export const diagnoseProjectsRpc = defineRpc({
   input: z.object({}),
   output: z.object({
     diagnostics: z.array(GiteaProjectDiagnosticSchema),
+    harnessStatus: z
+      .object({
+        available: z.boolean(),
+        enabled: z.boolean(),
+        specialistsCount: z.number().int().nonnegative().optional(),
+      })
+      .optional(),
   }),
 });
 

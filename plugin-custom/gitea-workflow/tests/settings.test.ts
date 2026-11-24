@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { SettingsManager } from "../server/settings-manager.js";
+import { giteaSettingsDefinition } from "../shared/settings.js";
+import type { GiteaHostSettings } from "../shared/types.js";
 
 describe("SettingsManager", () => {
   it("initializes with schema defaults and notifies on change", async () => {
@@ -255,5 +257,74 @@ describe("SettingsManager", () => {
     await emptyManager.initialize();
 
     expect(emptyManager.getAgentReviewPrompt()).toContain("Review Guidelines & Standards:");
+    expect(emptyManager.getAgentReviewPrompt()).toContain("ocr delegate preview --format json");
+  });
+
+  it("resolves harnessMode, hasExplicitProviderOverride, and reviewProviderOverride", async () => {
+    const mockPluginSettings = {
+      read: vi.fn().mockResolvedValue({
+        status: "ready",
+        values: {
+          enabled: true,
+          harnessMode: "auto",
+          agentProvider: "claude",
+          projects: {
+            "proj-default": { enabled: true },
+            "proj-locked": {
+              enabled: true,
+              harnessModeOverride: "provider_locked",
+              agentProviderOverride: "codex",
+              reviewProviderOverride: "antigravity",
+            },
+          },
+        },
+        revision: "rev-1",
+      }),
+      subscribe: vi.fn().mockReturnValue(() => {}),
+    };
+
+    const manager = new SettingsManager(mockPluginSettings as any);
+    await manager.initialize();
+
+    expect(manager.getHarnessMode()).toBe("auto");
+    expect(manager.getHarnessMode("proj-default")).toBe("auto");
+    expect(manager.getHarnessMode("proj-locked")).toBe("provider_locked");
+
+    expect(manager.getHasExplicitProviderOverride("proj-default")).toBe(false);
+    expect(manager.getHasExplicitProviderOverride("proj-locked")).toBe(true);
+
+    expect(manager.getReviewProviderOverride("proj-default")).toBeUndefined();
+    expect(manager.getReviewProviderOverride("proj-locked")).toBe("antigravity");
+  });
+
+  it("migrates v1 full_superpowers settings to v2 direct_pr while preserving other fields", () => {
+    expect(giteaSettingsDefinition.version).toBe(2);
+    const migrate = giteaSettingsDefinition.migrate!;
+    expect(typeof migrate).toBe("function");
+
+    const migrated = migrate(
+      {
+        enabled: true,
+        workflowPolicy: "full_superpowers",
+        pollIntervalSeconds: 45,
+      },
+      1,
+    ) as GiteaHostSettings;
+    expect(migrated.workflowPolicy).toBe("direct_pr");
+    expect(migrated.enabled).toBe(true);
+    expect(migrated.pollIntervalSeconds).toBe(45);
+
+    const preserved = migrate(
+      {
+        enabled: true,
+        workflowPolicy: "grill_plan",
+      },
+      1,
+    ) as GiteaHostSettings;
+    expect(preserved.workflowPolicy).toBe("grill_plan");
+
+    const fallback = migrate({ pollIntervalSeconds: -999 }, 1) as GiteaHostSettings;
+    expect(fallback.workflowPolicy).toBe("direct_pr");
+    expect(fallback.pollIntervalSeconds).toBe(60);
   });
 });

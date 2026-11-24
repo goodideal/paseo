@@ -24,6 +24,25 @@ export const GiteaTriggerModeSchema = z.enum(["auto", "plan"]);
 
 export type GiteaTriggerMode = z.infer<typeof GiteaTriggerModeSchema>;
 
+export const GiteaHarnessModeSchema = z.enum(["auto", "provider_locked", "disabled"]);
+
+export type GiteaHarnessMode = z.infer<typeof GiteaHarnessModeSchema>;
+
+export const WorkflowHarnessExecutionInfoSchema = z.object({
+  enabled: z.boolean(),
+  mode: GiteaHarnessModeSchema,
+  role: z.string(),
+  tier: z.string(),
+  phase: z.string(),
+  provider: z.string(),
+  model: z.string().nullable(),
+  thinkingOptionId: z.string().nullable().optional(),
+  lazyToolSlice: z.string().nullable().optional(),
+  agentTeamPreset: z.string().nullable().optional(),
+});
+
+export type WorkflowHarnessExecutionInfo = z.infer<typeof WorkflowHarnessExecutionInfoSchema>;
+
 // 触发标签同时支持连字符与冒号两种写法。
 // 标签匹配按小写归一化后比较，这里的常量必须保持小写。
 export const TRIGGER_LABELS = {
@@ -80,6 +99,9 @@ export const ReviewSignOffSchema = z.object({
     .object({
       passed: z.boolean(),
       model: z.string().optional(),
+      role: z.string().optional(),
+      tier: z.string().optional(),
+      lazyToolSlice: z.string().optional(),
       summary: z.string().optional(),
       reviewedAt: z.string().optional(),
     })
@@ -160,6 +182,8 @@ export const GiteaSettingsSchema = z.object({
 export type GiteaSettings = z.infer<typeof GiteaSettingsSchema>;
 
 export const GiteaWorkflowPolicySchema = z.enum([
+  "direct_pr",
+  "grill_plan",
   "full_superpowers",
   "issue_preapproved",
   "unattended",
@@ -172,7 +196,9 @@ export const GiteaProjectSettingsSchema = z.object({
   readyLabel: z.string().default("agent-ready"),
   baseBranch: z.string().trim().min(1).max(256).optional(),
   workflowPolicyOverride: GiteaWorkflowPolicySchema.optional(),
+  harnessModeOverride: GiteaHarnessModeSchema.optional(),
   agentProviderOverride: z.string().optional(),
+  reviewProviderOverride: z.string().optional(),
   agentModelOverride: z.string().optional(),
   agentChangeModeOverride: z.string().optional(),
   agentAutoPromptOverride: z.string().optional(),
@@ -188,11 +214,12 @@ export const GiteaHostSettingsSchema = z.object({
   maxConcurrentRuns: z.number().int().min(1).max(10).default(3),
   maxAutomaticRepairCycles: z.number().int().min(0).max(5).default(2),
   automationProfile: z.string().default("claude-code"),
+  harnessMode: GiteaHarnessModeSchema.default("auto"),
   agentProvider: z.string().default("claude"),
   agentModel: z.string().default(""),
   agentChangeMode: z.string().default("auto"),
   defaultBaseBranch: z.string().trim().min(1).max(256).optional(),
-  workflowPolicy: GiteaWorkflowPolicySchema.default("full_superpowers"),
+  workflowPolicy: GiteaWorkflowPolicySchema.default("direct_pr"),
   projects: z.record(z.string(), GiteaProjectSettingsSchema).default({}),
   inProgressLabel: z.string().default("agent-in-progress"),
   reviewedLabel: z.string().default("agent-reviewed"),
@@ -234,6 +261,14 @@ export const GiteaProjectDiagnosticSchema = z.object({
   readyLabel: z.string(),
   pendingIssueCount: z.number().int().nonnegative().optional(),
   errorMessage: z.string().optional(),
+  agentTeam: z
+    .object({
+      projectSlug: z.string(),
+      preset: z.string(),
+      rolesCount: z.number().int().nonnegative(),
+    })
+    .nullable()
+    .optional(),
 });
 
 export type GiteaProjectDiagnostic = z.infer<typeof GiteaProjectDiagnosticSchema>;
