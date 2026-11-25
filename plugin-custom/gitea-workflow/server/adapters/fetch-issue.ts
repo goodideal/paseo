@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { PluginWorkflowStepAdapterRegistration } from "../../shared/workflow-types.js";
 import type { GiteaClientPool } from "../client-pool.js";
 import type { IssueRunIndexStore } from "../store.js";
+import { resolveGiteaAdapterTarget } from "./run-workspace.js";
 
 export function createFetchIssueAdapter(
   clientPool: GiteaClientPool,
@@ -12,11 +13,11 @@ export function createFetchIssueAdapter(
     type: "gitea.fetch_issue",
     version: "1.0.0",
     inputSchema: z.object({
-      baseUrl: z.string().url(),
+      baseUrl: z.string().url().optional(),
       token: z.string().optional().default(""),
-      repoOwner: z.string(),
-      repoName: z.string(),
-      issueNumber: z.number().int(),
+      repoOwner: z.string().optional(),
+      repoName: z.string().optional(),
+      issueNumber: z.number().int().optional(),
     }),
     outputSchema: z.object({
       issueNumber: z.number().int(),
@@ -35,29 +36,13 @@ export function createFetchIssueAdapter(
     supportedPlatforms: ["darwin", "linux", "win32"],
     resourceConflictKey: "gitea:issue:{{issueNumber}}",
     execute: async (rawInput, context) => {
-      const input = rawInput as {
-        baseUrl: string;
-        token?: string;
-        repoOwner: string;
-        repoName: string;
-        issueNumber: number;
-      };
+      const { token, baseUrl, repoOwner, repoName, issueNumber, identityId } =
+        await resolveGiteaAdapterTarget(rawInput as Record<string, unknown>, context, indexStore);
 
-      let token = input.token || "";
-      let baseUrl = input.baseUrl;
-      let repoOwner = input.repoOwner;
-      let repoName = input.repoName;
-      let issueNumber = input.issueNumber;
-
-      if (!token && (context as any)?.run?.runId && indexStore) {
-        const entry = await indexStore.getEntryByRunId((context as any).run.runId);
-        if (entry) {
-          token = token || entry.token || "";
-          baseUrl = baseUrl || entry.baseUrl || "";
-          repoOwner = repoOwner || entry.repoOwner || "";
-          repoName = repoName || entry.repoName || "";
-          issueNumber = issueNumber || entry.issueNumber || 0;
-        }
+      if (!baseUrl || !repoOwner || !repoName || !issueNumber) {
+        throw new Error(
+          `fetch_issue missing required parameters: baseUrl=${baseUrl}, repoOwner=${repoOwner}, repoName=${repoName}, issueNumber=${issueNumber}`,
+        );
       }
 
       const client = clientPool.getClient({
@@ -65,6 +50,7 @@ export function createFetchIssueAdapter(
         giteaToken: token,
         repoOwner,
         repoName,
+        ...(identityId ? { identityId } : {}),
       });
 
       const issue = await client.getIssue(issueNumber);

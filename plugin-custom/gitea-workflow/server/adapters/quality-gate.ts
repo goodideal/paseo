@@ -11,6 +11,7 @@ import {
 import { DEFAULT_AGENT_REVIEW_PROMPT } from "../../shared/prompts.js";
 import type { SettingsManager } from "../settings-manager.js";
 import type { IssueRunIndexStore } from "../store.js";
+import type { GiteaIdentityBridge } from "../identity-bridge.js";
 import { resolveWorkflowAgentLaunch } from "../harness-bridge.js";
 import { interpolatePrompt, type PromptInterpolationContext } from "../prompt-interpolator.js";
 import { cleanIssueTitle } from "../workspace-title.js";
@@ -18,7 +19,9 @@ import { normalizeAgentChangeMode } from "./agent-execute.js";
 import {
   createWorkspaceAgent,
   driveAgentTurn,
+  enrichAgentLaunchWithIdentity,
   resolveReviewReadOnlyMode,
+  resolveRunIdentityMetadata,
   resolveRunWorkspaceContext,
   truncateAndRedactOutput,
 } from "./run-workspace.js";
@@ -33,6 +36,7 @@ export interface WorkspaceCheckResult {
 
 export interface QualityGateDeps {
   runWorkspaceCheck?: (cwd: string) => Promise<WorkspaceCheckResult>;
+  identityBridge?: GiteaIdentityBridge;
 }
 
 async function execCheckCommand(
@@ -320,6 +324,7 @@ export function createQualityGateAdapter(
       const branchName = wtOutput?.branch || runInput.branch || "";
       const resolvedProjectId = projectId || entry?.projectId || runInput.projectId || "";
       const effectiveProjectId = resolvedProjectId || projectId;
+      const runIdentity = resolveRunIdentityMetadata(entry, runInput);
 
       const workspaceCtx = await resolveRunWorkspaceContext({
         paseo: (context as any)?.paseo,
@@ -330,6 +335,8 @@ export function createQualityGateAdapter(
         workspaceRoot: (context as any)?.run?.workspaceRoot,
         worktreeOutput: wtOutput,
         requireAgentApi: true,
+        identity: runIdentity,
+        identityBridge: deps?.identityBridge,
       });
       const { targetCwd, targetWorkspaceId } = workspaceCtx;
 
@@ -444,13 +451,14 @@ export function createQualityGateAdapter(
         }
         const cycleSuffix = cycle > 0 ? ` (第${cycle + 1}轮)` : "";
         const reviewTitle = `🔍 [#${effectiveIssueNum}] 独立审查${cycleSuffix}${shortTitle}`;
+        const enrichedReviewLaunch = enrichAgentLaunchWithIdentity(reviewLaunch, runIdentity);
 
         const reviewHandle = await createWorkspaceAgent(workspaceCtx, (context as any)?.paseo, {
           title: reviewTitle,
           prompt: reviewPrompt,
           config: reviewConfig,
-          labels: reviewLaunch.labels,
-          metadata: reviewLaunch.metadata,
+          labels: enrichedReviewLaunch.labels,
+          metadata: enrichedReviewLaunch.metadata,
         });
 
         lastReviewAgentId = reviewHandle.id;
@@ -551,13 +559,14 @@ export function createQualityGateAdapter(
               repairConfig.thinkingOptionId = repairLaunch.thinkingOptionId;
             }
             const repairTitle = `🛠️ [#${effectiveIssueNum}] 自动修复 (第${cycle + 1}轮)${shortTitle}`;
+            const enrichedRepairLaunch = enrichAgentLaunchWithIdentity(repairLaunch, runIdentity);
 
             const repairHandle = await createWorkspaceAgent(workspaceCtx, (context as any)?.paseo, {
               title: repairTitle,
               prompt: repairPrompt,
               config: repairConfig,
-              labels: repairLaunch.labels,
-              metadata: repairLaunch.metadata,
+              labels: enrichedRepairLaunch.labels,
+              metadata: enrichedRepairLaunch.metadata,
             });
 
             latestCodingAgentId = repairHandle.id;

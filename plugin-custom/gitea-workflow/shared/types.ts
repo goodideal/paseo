@@ -156,6 +156,32 @@ export const GiteaWorkflowTaskSchema = z.object({
 
 export type GiteaWorkflowTask = z.infer<typeof GiteaWorkflowTaskSchema>;
 
+export const GiteaIdentitySummarySchema = z.object({
+  id: z.string(),
+  source: z.enum(["team-collab", "tea"]),
+  name: z.string(),
+  email: z.string(),
+  giteaUsername: z.string().nullable().optional(),
+  giteaUrl: z.string().nullable().optional(),
+  hasToken: z.boolean(),
+  tokenPreview: z.string().nullable().optional(),
+  hasSshKey: z.boolean(),
+  sshKeyPathPreview: z.string().nullable().optional(),
+  isDefault: z.boolean().optional(),
+});
+
+export type GiteaIdentitySummary = z.infer<typeof GiteaIdentitySummarySchema>;
+
+export const ActiveGiteaIdentitySchema = z.object({
+  id: z.string(),
+  source: z.enum(["team-collab", "tea", "env"]),
+  name: z.string(),
+  email: z.string().optional(),
+  giteaUsername: z.string().optional(),
+});
+
+export type ActiveGiteaIdentity = z.infer<typeof ActiveGiteaIdentitySchema>;
+
 export const ResolvedProjectGiteaSchema = z.object({
   projectId: z.string(),
   projectPath: z.string(),
@@ -165,7 +191,10 @@ export const ResolvedProjectGiteaSchema = z.object({
   token: z.string(),
   repoOwner: z.string(),
   repoName: z.string(),
-  authSource: z.enum(["tea", "env", "anonymous"]),
+  authSource: z.enum(["team-collab", "tea", "env", "anonymous"]),
+  activeIdentity: ActiveGiteaIdentitySchema.nullable().optional(),
+  sshKeyPath: z.string().optional(),
+  errorMessage: z.string().optional(),
 });
 
 export type ResolvedProjectGitea = z.infer<typeof ResolvedProjectGiteaSchema>;
@@ -197,6 +226,8 @@ export const GiteaProjectSettingsSchema = z.object({
   baseBranch: z.string().trim().min(1).max(256).optional(),
   workflowPolicyOverride: GiteaWorkflowPolicySchema.optional(),
   harnessModeOverride: GiteaHarnessModeSchema.optional(),
+  giteaIdentityOverride: z.string().optional(),
+  preferIssueAssigneeOverride: z.boolean().optional(),
   agentProviderOverride: z.string().optional(),
   reviewProviderOverride: z.string().optional(),
   agentModelOverride: z.string().optional(),
@@ -215,6 +246,8 @@ export const GiteaHostSettingsSchema = z.object({
   maxAutomaticRepairCycles: z.number().int().min(0).max(5).default(2),
   automationProfile: z.string().default("claude-code"),
   harnessMode: GiteaHarnessModeSchema.default("auto"),
+  giteaIdentityId: z.string().optional(),
+  preferIssueAssignee: z.boolean().default(true),
   agentProvider: z.string().default("claude"),
   agentModel: z.string().default(""),
   agentChangeMode: z.string().default("auto"),
@@ -242,6 +275,12 @@ export const IssueRunIndexEntrySchema = z.object({
   runId: z.string(),
   baseUrl: z.string().optional(),
   token: z.string().optional(),
+  identityId: z.string().optional(),
+  identitySource: z.enum(["team-collab", "tea", "env"]).optional(),
+  authorName: z.string().optional(),
+  authorEmail: z.string().optional(),
+  giteaUsername: z.string().optional(),
+  sshKeyPath: z.string().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -256,7 +295,8 @@ export const GiteaProjectDiagnosticSchema = z.object({
   repoOwner: z.string(),
   repoName: z.string(),
   connectionStatus: z.enum(["connected", "unauthorized", "unreachable", "not_gitea"]),
-  authSource: z.enum(["tea", "env", "anonymous", "none"]),
+  authSource: z.enum(["team-collab", "tea", "env", "anonymous", "none"]),
+  activeIdentity: ActiveGiteaIdentitySchema.nullable().optional(),
   authorized: z.boolean(),
   readyLabel: z.string(),
   pendingIssueCount: z.number().int().nonnegative().optional(),

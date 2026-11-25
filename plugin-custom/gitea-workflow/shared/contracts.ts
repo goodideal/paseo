@@ -1,6 +1,10 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
-import { GiteaWorkflowTaskSchema, GiteaProjectDiagnosticSchema } from "./types.js";
+import {
+  GiteaIdentitySummarySchema,
+  GiteaProjectDiagnosticSchema,
+  GiteaWorkflowTaskSchema,
+} from "./types.js";
 
 export const listTasksRpc = defineRpc({
   name: "gitea.tasks.list",
@@ -52,6 +56,13 @@ export const diagnoseProjectsRpc = defineRpc({
   input: z.object({}),
   output: z.object({
     diagnostics: z.array(GiteaProjectDiagnosticSchema),
+    identities: z.array(GiteaIdentitySummarySchema).optional(),
+    teamCollabStatus: z
+      .object({
+        available: z.boolean(),
+        membersCount: z.number().int().nonnegative(),
+      })
+      .optional(),
     harnessStatus: z
       .object({
         available: z.boolean(),
@@ -59,6 +70,15 @@ export const diagnoseProjectsRpc = defineRpc({
         specialistsCount: z.number().int().nonnegative().optional(),
       })
       .optional(),
+  }),
+});
+
+export const syncGiteaIdentitiesRpc = defineRpc({
+  name: "gitea.identities.sync",
+  input: z.object({}),
+  output: z.object({
+    syncedCount: z.number().int().nonnegative(),
+    identities: z.array(GiteaIdentitySummarySchema),
   }),
 });
 

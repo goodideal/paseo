@@ -1,6 +1,7 @@
 import type { GiteaClientPool } from "../client-pool.js";
 import type { IssueRunIndexStore } from "../store.js";
 import type { SettingsManager } from "../settings-manager.js";
+import type { GiteaIdentityBridge } from "../identity-bridge.js";
 import { createFetchIssueAdapter } from "./fetch-issue.js";
 import { createClaimIssueAdapter } from "./claim-issue.js";
 import { createUpdateStatusAdapter } from "./update-status.js";
@@ -27,6 +28,7 @@ export function createGiteaStepAdapters(
   clientPool: GiteaClientPool,
   indexStore?: IssueRunIndexStore,
   settingsManager?: SettingsManager,
+  identityBridge?: GiteaIdentityBridge,
 ) {
   const adapters = [
     createFetchIssueAdapter(clientPool, indexStore),
@@ -35,11 +37,11 @@ export function createGiteaStepAdapters(
     createPostSummaryAdapter(clientPool, indexStore),
     createResolveDeliveryAdapter(indexStore, settingsManager),
     createDualApprovalGateAdapter(clientPool, indexStore),
-    createDeliverPrAdapter(clientPool, indexStore, settingsManager),
-    createQualityGateAdapter(settingsManager, indexStore),
+    createDeliverPrAdapter(clientPool, indexStore, settingsManager, { identityBridge }),
+    createQualityGateAdapter(settingsManager, indexStore, { identityBridge }),
   ];
   if (settingsManager && indexStore) {
-    adapters.push(createAgentExecuteAdapter(settingsManager, indexStore));
+    adapters.push(createAgentExecuteAdapter(settingsManager, indexStore, identityBridge));
   }
   return adapters;
 }

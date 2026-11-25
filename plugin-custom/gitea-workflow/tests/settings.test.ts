@@ -297,6 +297,40 @@ describe("SettingsManager", () => {
     expect(manager.getReviewProviderOverride("proj-locked")).toBe("antigravity");
   });
 
+  it("resolves giteaIdentityId and preferIssueAssignee with project override precedence", async () => {
+    const mockPluginSettings = {
+      read: vi.fn().mockResolvedValue({
+        status: "ready",
+        values: {
+          enabled: true,
+          giteaIdentityId: "alice",
+          preferIssueAssignee: true,
+          projects: {
+            "proj-inherit": { enabled: true },
+            "proj-override": {
+              enabled: true,
+              giteaIdentityOverride: " bob ",
+              preferIssueAssigneeOverride: false,
+            },
+          },
+        },
+        revision: "rev-1",
+      }),
+      subscribe: vi.fn().mockReturnValue(() => {}),
+    };
+
+    const manager = new SettingsManager(mockPluginSettings as any);
+    await manager.initialize();
+
+    expect(manager.getGiteaIdentityId()).toBe("alice");
+    expect(manager.getGiteaIdentityId("proj-inherit")).toBe("alice");
+    expect(manager.getGiteaIdentityId("proj-override")).toBe("bob");
+
+    expect(manager.getPreferIssueAssignee()).toBe(true);
+    expect(manager.getPreferIssueAssignee("proj-inherit")).toBe(true);
+    expect(manager.getPreferIssueAssignee("proj-override")).toBe(false);
+  });
+
   it("migrates v1 full_superpowers settings to v2 direct_pr while preserving other fields", () => {
     expect(giteaSettingsDefinition.version).toBe(2);
     const migrate = giteaSettingsDefinition.migrate!;

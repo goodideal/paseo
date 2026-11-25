@@ -10,12 +10,14 @@ import {
   listTasksRpc,
   pruneEvidenceRpc,
   rejectTaskRpc,
+  syncGiteaIdentitiesRpc,
 } from "./shared/contracts.js";
 import { giteaSettingsDefinition } from "./shared/settings.js";
 import { SettingsManager } from "./server/settings-manager.js";
 import { DiagnosticsService } from "./server/diagnostics.js";
 import { IssueRunIndexStore, TaskStore } from "./server/store.js";
 import { GiteaClientPool } from "./server/client-pool.js";
+import { GiteaIdentityBridge } from "./server/identity-bridge.js";
 import { ProjectGiteaResolver } from "./server/resolver.js";
 import { MultiProjectPoller } from "./server/poller.js";
 import { createGiteaStepAdapters } from "./server/adapters/index.js";
@@ -82,7 +84,8 @@ export default function contribute(server: PluginServerContext) {
   const indexStore = new IssueRunIndexStore(indexPath);
 
   const clientPool = new GiteaClientPool();
-  const resolver = new ProjectGiteaResolver();
+  const identityBridge = new GiteaIdentityBridge({ paseoHome: getPaseoHome() });
+  const resolver = new ProjectGiteaResolver({ identityBridge });
   let activePaseo: PaseoApi | null = null;
   let paseoClient: PaseoClient | null = null;
   const diagnosticsService = new DiagnosticsService(
@@ -90,15 +93,23 @@ export default function contribute(server: PluginServerContext) {
     clientPool,
     settingsManager,
     () => paseoClient ?? activePaseo,
+    identityBridge,
   );
 
-  const stepAdapters = createGiteaStepAdapters(clientPool, indexStore, settingsManager);
+  const stepAdapters = createGiteaStepAdapters(
+    clientPool,
+    indexStore,
+    settingsManager,
+    identityBridge,
+  );
   const stepJobRunner = new WorkflowStepJobRunner(stepAdapters);
   const workflowRuntime = createEmbeddedWorkflowRuntime({
     paseoHome: getPaseoHome(),
     getPaseo: () => paseoClient ?? activePaseo,
     stepAdapters,
     initialPresets: giteaWorkflowPresets,
+    indexStore,
+    identityBridge,
   });
   workflowRuntime.registerRpcHandlers(server, (api) => {
     activePaseo = api;
@@ -139,6 +150,8 @@ export default function contribute(server: PluginServerContext) {
           resolver,
           clientPool,
           indexStore,
+          identityBridge,
+          getPaseo: () => paseoClient ?? activePaseo,
           getWorkflows: () => (paseoClient || activePaseo ? workflowRuntime.client : undefined),
           getProjects: async () => {
             const api = paseoClient ?? activePaseo;
@@ -196,6 +209,8 @@ export default function contribute(server: PluginServerContext) {
         resolver,
         clientPool,
         indexStore,
+        identityBridge,
+        getPaseo: () => paseoClient ?? activePaseo,
         getWorkflows: () => workflowRuntime.client,
         getProjects: async () => {
           const list = await context.paseo.projects.list();
@@ -282,11 +297,22 @@ export default function contribute(server: PluginServerContext) {
     } catch {
       // fallback if project list is pending
     }
-    const [diagnostics, harnessStatus] = await Promise.all([
+    const [diagnostics, harnessStatus, identityProbe] = await Promise.all([
       diagnosticsService.diagnoseProjects(projects, context.paseo),
       diagnosticsService.probeHarnessStatus(context.paseo),
+      diagnosticsService.probeIdentities(context.paseo),
     ]);
-    return { diagnostics, harnessStatus };
+    return {
+      diagnostics,
+      harnessStatus,
+      identities: identityProbe.identities,
+      teamCollabStatus: identityProbe.teamCollabStatus,
+    };
+  });
+
+  server.handle(syncGiteaIdentitiesRpc, async (_input, context) => {
+    activePaseo = context.paseo;
+    return await identityBridge.syncHostIdentities(context.paseo);
   });
 
   server.handle(pruneEvidenceRpc, async ({ olderThanDays }) => {

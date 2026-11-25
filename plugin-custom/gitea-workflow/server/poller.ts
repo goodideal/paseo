@@ -1,7 +1,8 @@
-import type { ProjectGiteaResolver } from "./resolver.js";
+import { buildResolveProjectOptions, type ProjectGiteaResolver } from "./resolver.js";
 import type { GiteaClientPool } from "./client-pool.js";
 import type { SettingsManager } from "./settings-manager.js";
 import type { IssueRunIndexStore } from "./store.js";
+import type { GiteaIdentityBridge, ResolvedGiteaIdentityRecord } from "./identity-bridge.js";
 import type { PaseoWorkspaceActions } from "@getpaseo/client";
 import type { WorkflowRunsClient } from "../shared/workflow-types.js";
 import { resolveIssueWorkflowPreset } from "./preset-resolver.js";
@@ -43,6 +44,8 @@ export interface MultiProjectPollerOptions {
   resolver: ProjectGiteaResolver;
   clientPool: GiteaClientPool;
   indexStore: IssueRunIndexStore;
+  identityBridge?: GiteaIdentityBridge;
+  getPaseo?: () => unknown;
   getWorkflows: () => WorkflowRunsClient | undefined;
   getProjects: () => Promise<PaseoProjectItem[]>;
   getWorkspaces?: () => PaseoWorkspaceActions | undefined;
@@ -182,7 +185,16 @@ export class MultiProjectPoller {
 
     for (const project of authorizedProjects) {
       try {
-        const resolved = await this.options.resolver.resolveProject(project);
+        const paseo = this.options.getPaseo?.();
+        const resolveOpts = buildResolveProjectOptions({
+          settings: this.options.settings,
+          projectId: project.projectId,
+          paseo,
+          identityBridge: this.options.identityBridge,
+        });
+        const resolved = resolveOpts
+          ? await this.options.resolver.resolveProject(project, resolveOpts)
+          : await this.options.resolver.resolveProject(project);
         if (!resolved || !resolved.token || resolved.authSource === "anonymous") {
           continue;
         }
@@ -198,6 +210,10 @@ export class MultiProjectPoller {
         const readyLabel = this.options.settings.getReadyLabel(project.projectId);
         const policy = this.options.settings.getWorkflowPolicy(project.projectId);
         const baseBranch = this.options.settings.getBaseBranch?.(project.projectId);
+        const preferIssueAssignee =
+          typeof this.options.settings.getPreferIssueAssignee === "function"
+            ? this.options.settings.getPreferIssueAssignee(project.projectId)
+            : true;
 
         const client = this.options.clientPool.getClient({
           giteaUrl: resolved.baseUrl,
@@ -212,6 +228,19 @@ export class MultiProjectPoller {
           (await this.options.indexStore.listEntries?.(project.projectId)) ?? [];
         for (const entry of trackedEntries) {
           try {
+            const entryToken = entry.token || resolved.token;
+            const entryBaseUrl = entry.baseUrl || resolved.baseUrl;
+            const entryClient =
+              entryToken !== resolved.token || entryBaseUrl !== resolved.baseUrl
+                ? this.options.clientPool.getClient({
+                    giteaUrl: entryBaseUrl,
+                    giteaToken: entryToken,
+                    repoOwner: resolved.repoOwner,
+                    repoName: resolved.repoName,
+                    listenLabel: readyLabel,
+                  })
+                : client;
+
             const inspected = await workflows.runInspect?.({
               projectId: project.projectId,
               workspaceId,
@@ -228,11 +257,13 @@ export class MultiProjectPoller {
                 .catch(() => null);
               const pending = approvalsRes?.approvals?.find((a: any) => a.status === "pending");
               if (pending) {
-                await client
+                await entryClient
                   .addIssueLabel(entry.issueNumber, LIFECYCLE_LABELS.WAITING_APPROVAL)
                   .catch(() => {});
 
-                const comments = await client.listIssueComments(entry.issueNumber).catch(() => []);
+                const comments = await entryClient
+                  .listIssueComments(entry.issueNumber)
+                  .catch(() => []);
                 const friendlyPhase =
                   GATE_PHASE_LABELS[pending.stepId] || `阶段确认（${pending.stepId}）`;
                 const stepPromptTitle = `### 🛑 Paseo 门禁：等待 ${friendlyPhase}`;
@@ -271,7 +302,9 @@ export class MultiProjectPoller {
                     "2. **在 Paseo 中确认**：在移动端或 Web 控制台点击通过；",
                     "3. **提出调整意见**：直接在评论中写下反馈。",
                   ].join("\n");
-                  await client.createIssueComment(entry.issueNumber, promptBody).catch(() => {});
+                  await entryClient
+                    .createIssueComment(entry.issueNumber, promptBody)
+                    .catch(() => {});
                 }
 
                 const baselineId = promptComment ? promptComment.id : 0;
@@ -292,10 +325,10 @@ export class MultiProjectPoller {
                     runId: entry.runId,
                     approvalId: pending.approvalId,
                   });
-                  await client
+                  await entryClient
                     .removeIssueLabel(entry.issueNumber, LIFECYCLE_LABELS.WAITING_APPROVAL)
                     .catch(() => {});
-                  await client
+                  await entryClient
                     .createIssueComment(
                       entry.issueNumber,
                       "✅ **Paseo Agent** 已捕获来自 Issue 评论的确认指令，门禁通过，工作流继续进入下一阶段。",
@@ -318,23 +351,23 @@ export class MultiProjectPoller {
                 inspected.run.status === "succeeded" ||
                 (inspected.run.status as string) === "completed"
               ) {
-                await client
+                await entryClient
                   .removeIssueLabel(entry.issueNumber, LIFECYCLE_LABELS.IN_PROGRESS)
                   .catch(() => {});
-                await client
+                await entryClient
                   .removeIssueLabel(entry.issueNumber, LIFECYCLE_LABELS.WAITING_APPROVAL)
                   .catch(() => {});
-                await client
+                await entryClient
                   .addIssueLabel(entry.issueNumber, LIFECYCLE_LABELS.DELIVERED)
                   .catch(() => {});
               } else if (inspected.run.status === "failed") {
-                await client
+                await entryClient
                   .removeIssueLabel(entry.issueNumber, LIFECYCLE_LABELS.IN_PROGRESS)
                   .catch(() => {});
-                await client
+                await entryClient
                   .removeIssueLabel(entry.issueNumber, LIFECYCLE_LABELS.WAITING_APPROVAL)
                   .catch(() => {});
-                await client
+                await entryClient
                   .addIssueLabel(entry.issueNumber, LIFECYCLE_LABELS.FAILED)
                   .catch(() => {});
               }
@@ -351,6 +384,8 @@ export class MultiProjectPoller {
             `[gitea-workflow] Found ${readyIssues.length} ready issue(s) in ${resolved.repoOwner}/${resolved.repoName}: ${readyIssues.map((i) => `#${i.number}`).join(", ")}`,
           );
         }
+
+        let cachedIdentities: ResolvedGiteaIdentityRecord[] | null = null;
         for (const issue of readyIssues) {
           const target = resolveIssueWorkflowPreset(issue.labels ?? []);
           const policyFallback = resolvePolicyPreset(policy);
@@ -412,6 +447,67 @@ export class MultiProjectPoller {
             );
           }
 
+          let matchedAssigneeIdentity: ResolvedGiteaIdentityRecord | null = null;
+          const issueAssignees = [
+            ...(issue.assignees ?? []),
+            ...(issue.assignee ? [issue.assignee] : []),
+          ];
+          if (preferIssueAssignee && this.options.identityBridge && issueAssignees.length > 0) {
+            if (!cachedIdentities) {
+              const loaded = await this.options.identityBridge.loadIdentities(paseo);
+              cachedIdentities = loaded.identities;
+            }
+            let effectiveHost = resolved.host || "";
+            if (!effectiveHost && resolved.baseUrl) {
+              try {
+                effectiveHost = new URL(resolved.baseUrl).hostname.toLowerCase();
+              } catch {
+                effectiveHost = "";
+              }
+            }
+            matchedAssigneeIdentity = this.options.identityBridge.matchIdentityForIssueAssignees({
+              assignees: issueAssignees,
+              effectiveHost,
+              baseUrl: resolved.baseUrl,
+              identities: cachedIdentities,
+            });
+          }
+
+          let runToken = resolved.token;
+          let runBaseUrl = resolved.baseUrl;
+          let identityId: string | undefined;
+          let identitySource: "team-collab" | "tea" | "env" | undefined;
+          let authorName: string | undefined;
+          let authorEmail: string | undefined;
+          let giteaUsername: string | undefined;
+          let sshKeyPath: string | undefined = resolved.sshKeyPath;
+
+          if (matchedAssigneeIdentity) {
+            runToken = matchedAssigneeIdentity.token || resolved.token;
+            runBaseUrl = matchedAssigneeIdentity.giteaUrl || resolved.baseUrl;
+            identityId = matchedAssigneeIdentity.id;
+            identitySource = matchedAssigneeIdentity.source;
+            authorName = matchedAssigneeIdentity.name;
+            authorEmail = matchedAssigneeIdentity.email;
+            giteaUsername = matchedAssigneeIdentity.giteaUsername ?? undefined;
+            sshKeyPath = matchedAssigneeIdentity.sshKeyPath ?? undefined;
+          } else if (resolved.activeIdentity) {
+            identityId = resolved.activeIdentity.id;
+            identitySource = resolved.activeIdentity.source;
+            authorName = resolved.activeIdentity.name;
+            authorEmail = resolved.activeIdentity.email;
+            giteaUsername = resolved.activeIdentity.giteaUsername;
+          }
+
+          const identityFields = {
+            ...(identityId ? { identityId } : {}),
+            ...(identitySource ? { identitySource } : {}),
+            ...(authorName ? { authorName } : {}),
+            ...(authorEmail ? { authorEmail } : {}),
+            ...(giteaUsername ? { giteaUsername } : {}),
+            ...(sshKeyPath ? { sshKeyPath } : {}),
+          };
+
           const semanticTitle = formatWorkflowWorkspaceTitle({
             issueNumber: issue.number,
             rawTitle: issue.title,
@@ -422,8 +518,8 @@ export class MultiProjectPoller {
             workspaceId,
             workflowId: presetId,
             input: {
-              baseUrl: resolved.baseUrl,
-              token: resolved.token,
+              baseUrl: runBaseUrl,
+              token: runToken,
               repoOwner: resolved.repoOwner,
               repoName: resolved.repoName,
               issueNumber: issue.number,
@@ -436,6 +532,7 @@ export class MultiProjectPoller {
               policy,
               mode,
               conflictWarning,
+              ...identityFields,
             },
           });
 
@@ -451,8 +548,9 @@ export class MultiProjectPoller {
               issueTitle: issue.title,
               issueBody: issue.body,
               runId: createRes.runId,
-              baseUrl: resolved.baseUrl,
-              token: resolved.token,
+              baseUrl: runBaseUrl,
+              token: runToken,
+              ...identityFields,
             });
           } else if (createRes.error) {
             console.error(

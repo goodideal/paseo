@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
   IssueRunIndexEntrySchema,
@@ -19,6 +19,7 @@ export class IssueRunIndexStore {
     if (this.initialized) return;
     try {
       const content = await readFile(this.storageFilePath, "utf8");
+      await chmod(this.storageFilePath, 0o600).catch(() => {});
       const parsed: unknown = JSON.parse(content);
       const validation = IssueRunIndexEntrySchema.array().safeParse(parsed);
       if (validation.success) {
@@ -37,12 +38,15 @@ export class IssueRunIndexStore {
   private async flush(): Promise<void> {
     this.writeLock = this.writeLock.then(async () => {
       const dir = dirname(this.storageFilePath);
-      await mkdir(dir, { recursive: true });
+      await mkdir(dir, { recursive: true, mode: 0o700 });
+      await chmod(dir, 0o700).catch(() => {});
       const tempPath = `${this.storageFilePath}.${randomUUID()}.tmp`;
       const data = JSON.stringify(Array.from(this.memoryCache.values()), null, 2);
       try {
-        await writeFile(tempPath, data, "utf8");
+        await writeFile(tempPath, data, { encoding: "utf8", mode: 0o600 });
+        await chmod(tempPath, 0o600).catch(() => {});
         await rename(tempPath, this.storageFilePath);
+        await chmod(this.storageFilePath, 0o600).catch(() => {});
       } catch (err) {
         await unlink(tempPath).catch(() => {});
         throw err;
@@ -82,6 +86,12 @@ export class IssueRunIndexStore {
     runId: string;
     baseUrl?: string;
     token?: string;
+    identityId?: string;
+    identitySource?: "team-collab" | "tea" | "env";
+    authorName?: string;
+    authorEmail?: string;
+    giteaUsername?: string;
+    sshKeyPath?: string;
   }): Promise<void> {
     await this.ensureLoaded();
     const key = this.indexKey(entry.projectId, entry.repoOwner, entry.repoName, entry.issueNumber);
@@ -97,6 +107,12 @@ export class IssueRunIndexStore {
       runId: entry.runId,
       baseUrl: entry.baseUrl,
       token: entry.token,
+      ...(entry.identityId ? { identityId: entry.identityId } : {}),
+      ...(entry.identitySource ? { identitySource: entry.identitySource } : {}),
+      ...(entry.authorName ? { authorName: entry.authorName } : {}),
+      ...(entry.authorEmail ? { authorEmail: entry.authorEmail } : {}),
+      ...(entry.giteaUsername ? { giteaUsername: entry.giteaUsername } : {}),
+      ...(entry.sshKeyPath ? { sshKeyPath: entry.sshKeyPath } : {}),
       createdAt: now,
       updatedAt: now,
     };
@@ -168,6 +184,14 @@ export class IssueRunIndexStore {
           input.repoName,
           input.issueNumber,
         );
+        let identitySource: "team-collab" | "tea" | "env" | undefined;
+        if (
+          input.identitySource === "team-collab" ||
+          input.identitySource === "tea" ||
+          input.identitySource === "env"
+        ) {
+          identitySource = input.identitySource;
+        }
         this.memoryCache.set(key, {
           id: key,
           projectId: run.projectId,
@@ -177,6 +201,14 @@ export class IssueRunIndexStore {
           issueTitle: typeof input.issueTitle === "string" ? input.issueTitle : undefined,
           issueBody: typeof input.issueBody === "string" ? input.issueBody : undefined,
           runId: run.id,
+          baseUrl: typeof input.baseUrl === "string" ? input.baseUrl : undefined,
+          token: typeof input.token === "string" ? input.token : undefined,
+          identityId: typeof input.identityId === "string" ? input.identityId : undefined,
+          identitySource,
+          authorName: typeof input.authorName === "string" ? input.authorName : undefined,
+          authorEmail: typeof input.authorEmail === "string" ? input.authorEmail : undefined,
+          giteaUsername: typeof input.giteaUsername === "string" ? input.giteaUsername : undefined,
+          sshKeyPath: typeof input.sshKeyPath === "string" ? input.sshKeyPath : undefined,
           createdAt: now,
           updatedAt: now,
         });

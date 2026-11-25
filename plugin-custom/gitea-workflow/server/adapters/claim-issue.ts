@@ -3,6 +3,7 @@ import type { PluginWorkflowStepAdapterRegistration } from "../../shared/workflo
 import type { GiteaClientPool } from "../client-pool.js";
 import type { IssueRunIndexStore } from "../store.js";
 import { TRIGGER_LABELS } from "../../shared/types.js";
+import { resolveGiteaAdapterTarget } from "./run-workspace.js";
 
 export function createClaimIssueAdapter(
   clientPool: GiteaClientPool,
@@ -32,7 +33,7 @@ export function createClaimIssueAdapter(
     supportedPlatforms: ["darwin", "linux", "win32"],
     resourceConflictKey: "gitea:claim:{{issueNumber}}",
     execute: async (rawInput, context) => {
-      const input = rawInput as {
+      const input = (rawInput ?? {}) as {
         baseUrl?: string;
         token?: string;
         repoOwner?: string;
@@ -42,26 +43,10 @@ export function createClaimIssueAdapter(
         inProgressLabel?: string;
       };
 
-      let token = input.token || "";
-      let baseUrl = input.baseUrl || "";
-      let repoOwner = input.repoOwner || "";
-      let repoName = input.repoName || "";
-      let issueNumber = input.issueNumber || 0;
-      let listenLabel = input.listenLabel || "agent-ready";
-      let inProgressLabel = input.inProgressLabel || "agent-in-progress";
-
-      if ((!token || !repoOwner || !issueNumber || !baseUrl) && (context as any)?.run?.runId) {
-        if (indexStore) {
-          const entry = await indexStore.getEntryByRunId((context as any).run.runId);
-          if (entry) {
-            token = token || entry.token || "";
-            baseUrl = baseUrl || entry.baseUrl || "";
-            repoOwner = repoOwner || entry.repoOwner || "";
-            repoName = repoName || entry.repoName || "";
-            issueNumber = issueNumber || entry.issueNumber || 0;
-          }
-        }
-      }
+      const { token, baseUrl, repoOwner, repoName, issueNumber, identityId, runInput } =
+        await resolveGiteaAdapterTarget(input, context, indexStore);
+      const listenLabel = input.listenLabel || runInput.listenLabel || "agent-ready";
+      const inProgressLabel = input.inProgressLabel || "agent-in-progress";
 
       if (!baseUrl || !repoOwner || !repoName || !issueNumber) {
         throw new Error(
@@ -76,6 +61,7 @@ export function createClaimIssueAdapter(
         repoName,
         listenLabel,
         inProgressLabel,
+        ...(identityId ? { identityId } : {}),
       });
 
       const issue = await client.getIssue(issueNumber);

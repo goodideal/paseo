@@ -10,6 +10,7 @@ import {
   type GitHubRemoteIdentity,
 } from "@getpaseo/protocol/git-remote";
 import type { ResolvedProjectGitea } from "../shared/types.js";
+import { toActiveGiteaIdentity, type GiteaIdentityBridge } from "./identity-bridge.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -20,6 +21,32 @@ export interface ProjectGiteaResolverOptions {
   probeUrl?: (url: string) => Promise<boolean>;
   readTeaConfig?: () => TeaLoginEntry[];
   env?: Record<string, string | undefined>;
+  identityBridge?: GiteaIdentityBridge;
+}
+
+export interface ResolveProjectOptions {
+  preferredIdentityId?: string;
+  paseo?: unknown;
+}
+
+export function buildResolveProjectOptions(params: {
+  settings?: { getGiteaIdentityId?: (projectId: string) => string | undefined };
+  projectId: string;
+  paseo?: unknown;
+  identityBridge?: GiteaIdentityBridge;
+}): ResolveProjectOptions | undefined {
+  const preferredIdentityId =
+    typeof params.settings?.getGiteaIdentityId === "function"
+      ? params.settings.getGiteaIdentityId(params.projectId)
+      : undefined;
+  if (
+    preferredIdentityId !== undefined ||
+    params.paseo !== undefined ||
+    params.identityBridge !== undefined
+  ) {
+    return { preferredIdentityId, paseo: params.paseo };
+  }
+  return undefined;
 }
 
 interface TeaLoginEntry {
@@ -36,9 +63,11 @@ export class ProjectGiteaResolver {
   private readonly probeUrl: (url: string) => Promise<boolean>;
   private readonly readTeaConfig?: () => TeaLoginEntry[];
   private readonly env: Record<string, string | undefined>;
+  private readonly identityBridge?: GiteaIdentityBridge;
 
   constructor(options: ProjectGiteaResolverOptions = {}) {
     this.env = options.env ?? process.env;
+    this.identityBridge = options.identityBridge;
 
     this.resolveGitRemote =
       options.resolveGitRemote ??
@@ -249,11 +278,14 @@ export class ProjectGiteaResolver {
     );
   }
 
-  async resolveProject(project: {
-    projectId: string;
-    projectRootPath: string;
-    projectDisplayName?: string;
-  }): Promise<ResolvedProjectGitea | null> {
+  async resolveProject(
+    project: {
+      projectId: string;
+      projectRootPath: string;
+      projectDisplayName?: string;
+    },
+    options?: ResolveProjectOptions,
+  ): Promise<ResolvedProjectGitea | null> {
     const remoteUrl = await this.resolveGitRemote(project.projectRootPath);
     if (!remoteUrl) return null;
 
@@ -269,6 +301,77 @@ export class ProjectGiteaResolver {
     }
 
     const matchedLogin = await this.findMatchingTeaLogin(effectiveHost, location.port);
+
+    if (this.identityBridge) {
+      const { identities } = await this.identityBridge.loadIdentities(options?.paseo);
+      const identityRes = this.identityBridge.resolveIdentityForHost({
+        effectiveHost,
+        locationPort: location.port,
+        preferredIdentityId: options?.preferredIdentityId,
+        identities,
+      });
+
+      if (identityRes.kind === "matched") {
+        let baseUrl: string | null = null;
+        if (location.transport === "http" || location.transport === "https") {
+          const portPart = location.port ? `:${location.port}` : "";
+          baseUrl = `${location.transport}://${location.host}${portPart}`;
+        } else if (identityRes.identity.giteaUrl) {
+          baseUrl = identityRes.identity.giteaUrl.replace(/\/+$/, "");
+        } else {
+          baseUrl = await this.determineBaseUrl(effectiveHost, location, matchedLogin);
+        }
+        if (!baseUrl) {
+          return null;
+        }
+        return {
+          projectId: project.projectId,
+          projectPath: project.projectRootPath,
+          projectName: project.projectDisplayName || identity.name,
+          host: effectiveHost,
+          baseUrl,
+          token: identityRes.identity.token,
+          repoOwner: identity.owner,
+          repoName: identity.name,
+          authSource: identityRes.identity.source,
+          activeIdentity: toActiveGiteaIdentity(identityRes.identity),
+          ...(identityRes.identity.sshKeyPath
+            ? { sshKeyPath: identityRes.identity.sshKeyPath }
+            : {}),
+        };
+      }
+
+      if (
+        identityRes.kind === "missing_identity" ||
+        identityRes.kind === "host_mismatch" ||
+        identityRes.kind === "missing_token"
+      ) {
+        let baseUrl = await this.determineBaseUrl(effectiveHost, location, matchedLogin);
+        if (!baseUrl && "identity" in identityRes && identityRes.identity.giteaUrl) {
+          baseUrl = identityRes.identity.giteaUrl.replace(/\/+$/, "");
+        }
+        if (!baseUrl) {
+          const portPart = location.port ? `:${location.port}` : "";
+          baseUrl = `https://${effectiveHost}${portPart}`;
+        }
+        const activeIdentity =
+          "identity" in identityRes ? toActiveGiteaIdentity(identityRes.identity) : null;
+        return {
+          projectId: project.projectId,
+          projectPath: project.projectRootPath,
+          projectName: project.projectDisplayName || identity.name,
+          host: effectiveHost,
+          baseUrl,
+          token: "",
+          repoOwner: identity.owner,
+          repoName: identity.name,
+          authSource: "anonymous",
+          activeIdentity,
+          errorMessage: identityRes.reason,
+        };
+      }
+    }
+
     if (matchedLogin?.url && matchedLogin.token) {
       return {
         projectId: project.projectId,

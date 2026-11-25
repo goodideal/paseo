@@ -64,9 +64,10 @@ vi.mock("@getpaseo/plugin/client/ui", () => ({
       )}
     </label>
   ),
-  SettingsAction: ({ label, actionLabel, onPress, disabled }: any) => (
+  SettingsAction: ({ label, hint, actionLabel, onPress, disabled }: any) => (
     <div>
       {label && <span>{label}</span>}
+      {hint && <small>{hint}</small>}
       <button type="button" disabled={disabled} onClick={onPress}>
         {actionLabel}
       </button>
@@ -539,6 +540,143 @@ describe("HostSettingsScreen", () => {
     );
   });
 
+  it("renders Gitea identity selector, preferIssueAssignee switch, sync action, and activeIdentity project hint in HostSettingsScreen", async () => {
+    const mockSave = vi.fn().mockResolvedValue(true);
+    const mockSettings = {
+      status: "ready" as const,
+      values: {
+        enabled: true,
+        pollIntervalSeconds: 60,
+        maxConcurrentRuns: 3,
+        maxAutomaticRepairCycles: 2,
+        automationProfile: "claude-code",
+        workflowPolicy: "direct_pr" as const,
+        preferIssueAssignee: true,
+        projects: {},
+        inProgressLabel: "agent-in-progress",
+        reviewedLabel: "agent-reviewed",
+        evidenceRetentionDays: 90,
+      },
+      revision: "rev-1",
+      saving: false,
+      saveError: null,
+      save: mockSave,
+      reload: vi.fn(),
+      reset: vi.fn(),
+    };
+
+    const mockDiagnoseRpc = vi.fn().mockResolvedValue({
+      diagnostics: [
+        {
+          projectId: "prj_active_user",
+          projectName: "identity-repo",
+          host: "gitea.local",
+          baseUrl: "http://gitea.local",
+          repoOwner: "team",
+          repoName: "identity-repo",
+          connectionStatus: "connected",
+          authSource: "team-collab",
+          activeIdentity: {
+            id: "bob",
+            source: "team-collab",
+            name: "Bob Chen",
+            giteaUsername: "bob",
+          },
+          authorized: true,
+          readyLabel: "agent-ready",
+          pendingIssueCount: 4,
+        },
+      ],
+      identities: [
+        {
+          id: "alice",
+          source: "team-collab",
+          name: "Alice Wang",
+          email: "alice@example.com",
+          giteaUsername: "alice",
+          hasToken: true,
+          hasSshKey: true,
+        },
+        {
+          id: "bob",
+          source: "tea",
+          name: "Bob Chen",
+          email: "bob@example.com",
+          giteaUsername: "bob",
+          hasToken: true,
+          hasSshKey: false,
+        },
+      ],
+      teamCollabStatus: {
+        available: true,
+        membersCount: 2,
+      },
+    });
+
+    const mockSyncRpc = vi.fn().mockResolvedValue({
+      syncedCount: 2,
+      identities: [
+        {
+          id: "alice",
+          source: "team-collab",
+          name: "Alice Wang",
+          email: "alice@example.com",
+          giteaUsername: "alice",
+          hasToken: true,
+          hasSshKey: true,
+        },
+        {
+          id: "bob",
+          source: "tea",
+          name: "Bob Chen",
+          email: "bob@example.com",
+          giteaUsername: "bob",
+          hasToken: true,
+          hasSshKey: false,
+        },
+      ],
+    });
+
+    const mockUseRpc = vi.fn().mockImplementation((def: { name?: string }) => {
+      if (def?.name === "gitea.identities.sync") {
+        return mockSyncRpc;
+      }
+      return mockDiagnoseRpc;
+    });
+
+    render(
+      <HostSettingsScreen
+        theme={{ colors: { foreground: "#000", surface0: "#fff" } } as any}
+        host={{ id: "h1", label: "Local" }}
+        layout={{ compact: false, platform: "web" }}
+        settingsOverride={mockSettings as any}
+        useRpcHook={mockUseRpc as any}
+      />,
+    );
+
+    expect(await screen.findByText("identity-repo")).toBeDefined();
+    expect(screen.getByText("已连接 (@bob · team-collab) · 4 个待办")).toBeDefined();
+    expect(screen.getByText("Team Collab 已连接 · 共 2 个可选 Gitea 身份")).toBeDefined();
+
+    const identitySelect = screen.getByLabelText("默认 Gitea 执行身份");
+    fireEvent.change(identitySelect, { target: { value: "bob" } });
+    expect(mockSave).toHaveBeenCalledWith(
+      expect.objectContaining({ giteaIdentityId: "bob" }),
+      "rev-1",
+    );
+
+    const assigneeSwitch = screen.getByLabelText("优先匹配 Issue 指派人 (Assignee)");
+    fireEvent.click(assigneeSwitch);
+    expect(mockSave).toHaveBeenCalledWith(
+      expect.objectContaining({ preferIssueAssignee: false }),
+      "rev-1",
+    );
+
+    const syncButton = screen.getByRole("button", { name: "同步本机账号" });
+    fireEvent.click(syncButton);
+    expect(mockSyncRpc).toHaveBeenCalledWith({});
+  });
+
   describe("ProjectDetailSettings", () => {
     it("renders trigger tag descriptions and removes readyLabel input", () => {
       const mockSettings = {
@@ -933,6 +1071,186 @@ describe("HostSettingsScreen", () => {
         }),
         "rev-1",
       );
+    });
+
+    it("renders giteaIdentityOverride, preferIssueAssigneeOverride, and activeIdentity diagnostic row in ProjectDetailSettings", () => {
+      const mockSave = vi.fn().mockResolvedValue(true);
+      const mockSettings = {
+        values: {
+          projects: {
+            "proj-1": {
+              enabled: true,
+              readyLabel: "agent-ready",
+            },
+          },
+        },
+        revision: "rev-1",
+        saving: false,
+        save: mockSave,
+      };
+
+      render(
+        <ProjectDetailSettings
+          projectId="proj-1"
+          identities={[
+            {
+              id: "alice",
+              source: "team-collab",
+              name: "Alice Wang",
+              email: "alice@example.com",
+              giteaUsername: "alice",
+              hasToken: true,
+              hasSshKey: true,
+            },
+          ]}
+          diagnostic={{
+            projectId: "proj-1",
+            projectName: "My Project",
+            host: "gitea.local",
+            baseUrl: "http://gitea.local",
+            repoOwner: "org",
+            repoName: "my-project",
+            connectionStatus: "connected",
+            authSource: "team-collab",
+            activeIdentity: {
+              id: "alice",
+              source: "team-collab",
+              name: "Alice Wang",
+              giteaUsername: "alice",
+            },
+            authorized: true,
+            readyLabel: "agent-ready",
+          }}
+          settings={mockSettings}
+          theme={
+            {
+              colors: {
+                foreground: "#000",
+                foregroundMuted: "#888",
+                statusSuccess: "green",
+                statusDanger: "red",
+              },
+            } as any
+          }
+          onBack={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByText("当前生效身份")).toBeDefined();
+      expect(screen.getByText("Alice Wang (@alice · team-collab)")).toBeDefined();
+
+      const identityOverrideSelect = screen.getByLabelText("项目 Gitea 身份覆盖 (可选)");
+      fireEvent.change(identityOverrideSelect, { target: { value: "alice" } });
+      expect(mockSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projects: expect.objectContaining({
+            "proj-1": expect.objectContaining({
+              giteaIdentityOverride: "alice",
+            }),
+          }),
+        }),
+        "rev-1",
+      );
+
+      const assigneeOverrideSelect = screen.getByLabelText("指派人动态匹配覆盖 (可选)");
+      fireEvent.change(assigneeOverrideSelect, { target: { value: "false" } });
+      expect(mockSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projects: expect.objectContaining({
+            "proj-1": expect.objectContaining({
+              preferIssueAssigneeOverride: false,
+            }),
+          }),
+        }),
+        "rev-1",
+      );
+    });
+
+    it("surfaces syncError in HostSettingsScreen when syncIdentities fails and triggers onIdentityChanged in ProjectDetailSettings", async () => {
+      const mockSave = vi.fn().mockResolvedValue(true);
+      const mockSettings = {
+        status: "ready" as const,
+        values: {
+          enabled: true,
+          pollIntervalSeconds: 60,
+          maxConcurrentRuns: 3,
+          maxAutomaticRepairCycles: 2,
+          automationProfile: "claude-code",
+          workflowPolicy: "direct_pr" as const,
+          preferIssueAssignee: true,
+          projects: {
+            "proj-1": {
+              enabled: true,
+              readyLabel: "agent-ready",
+            },
+          },
+          inProgressLabel: "agent-in-progress",
+          reviewedLabel: "agent-reviewed",
+          evidenceRetentionDays: 90,
+        },
+        revision: "rev-1",
+        saving: false,
+        saveError: null,
+        save: mockSave,
+        reload: vi.fn(),
+        reset: vi.fn(),
+      };
+
+      const mockDiagnoseRpc = vi.fn().mockResolvedValue({
+        diagnostics: [],
+        identities: [],
+      });
+      const mockFailingSyncRpc = vi.fn().mockRejectedValue(new Error("Team Collab RPC timeout"));
+
+      const mockUseRpc = vi.fn().mockImplementation((def: { name?: string }) => {
+        if (def?.name === "gitea.identities.sync") {
+          return mockFailingSyncRpc;
+        }
+        return mockDiagnoseRpc;
+      });
+
+      render(
+        <HostSettingsScreen
+          theme={{ colors: { foreground: "#000", surface0: "#fff", statusDanger: "red" } } as any}
+          host={{ id: "h1", label: "Local" }}
+          layout={{ compact: false, platform: "web" }}
+          settingsOverride={mockSettings as any}
+          useRpcHook={mockUseRpc as any}
+        />,
+      );
+
+      const syncButton = screen.getByRole("button", { name: "同步本机账号" });
+      fireEvent.click(syncButton);
+
+      expect(await screen.findByText("Team Collab RPC timeout")).toBeDefined();
+
+      cleanup();
+
+      const onIdentityChanged = vi.fn();
+      render(
+        <ProjectDetailSettings
+          projectId="proj-1"
+          identities={[]}
+          settings={mockSettings}
+          theme={
+            {
+              colors: {
+                foreground: "#000",
+                foregroundMuted: "#888",
+                statusSuccess: "green",
+                statusDanger: "red",
+              },
+            } as any
+          }
+          onBack={vi.fn()}
+          onIdentityChanged={onIdentityChanged}
+        />,
+      );
+
+      const assigneeOverrideSelect = screen.getByLabelText("指派人动态匹配覆盖 (可选)");
+      fireEvent.change(assigneeOverrideSelect, { target: { value: "true" } });
+      await Promise.resolve();
+      expect(onIdentityChanged).toHaveBeenCalledTimes(1);
     });
   });
 });

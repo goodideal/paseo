@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { PluginWorkflowStepAdapterRegistration } from "../../shared/workflow-types.js";
 import type { GiteaClientPool } from "../client-pool.js";
 import type { IssueRunIndexStore } from "../store.js";
+import { resolveGiteaAdapterTarget } from "./run-workspace.js";
 
 function sanitizeCommentBody(text: string, secrets: string[] = []): string {
   let result = text;
@@ -47,7 +48,7 @@ export function createPostSummaryAdapter(
     supportedPlatforms: ["darwin", "linux", "win32"],
     resourceConflictKey: "gitea:comment:{{issueNumber}}",
     execute: async (rawInput, context) => {
-      const input = rawInput as {
+      const input = (rawInput ?? {}) as {
         baseUrl?: string;
         token?: string;
         repoOwner?: string;
@@ -58,24 +59,8 @@ export function createPostSummaryAdapter(
         prUrl?: string;
       };
 
-      let token = input.token || "";
-      let baseUrl = input.baseUrl || "";
-      let repoOwner = input.repoOwner || "";
-      let repoName = input.repoName || "";
-      let issueNumber = input.issueNumber || 0;
-
-      if ((!token || !repoOwner || !issueNumber || !baseUrl) && (context as any)?.run?.runId) {
-        if (indexStore) {
-          const entry = await indexStore.getEntryByRunId((context as any).run.runId);
-          if (entry) {
-            token = token || entry.token || "";
-            baseUrl = baseUrl || entry.baseUrl || "";
-            repoOwner = repoOwner || entry.repoOwner || "";
-            repoName = repoName || entry.repoName || "";
-            issueNumber = issueNumber || entry.issueNumber || 0;
-          }
-        }
-      }
+      const { token, baseUrl, repoOwner, repoName, issueNumber, identityId } =
+        await resolveGiteaAdapterTarget(input, context, indexStore);
 
       if (!baseUrl || !repoOwner || !repoName || !issueNumber) {
         throw new Error(
@@ -88,6 +73,7 @@ export function createPostSummaryAdapter(
         giteaToken: token,
         repoOwner,
         repoName,
+        ...(identityId ? { identityId } : {}),
       });
 
       let comment = `### 🤖 Paseo Agent Workflow Update\n\n**Stage:** \`${input.stage}\`\n\n${input.summary}`;

@@ -3,6 +3,7 @@ import type { PluginWorkflowStepAdapterRegistration } from "../../shared/workflo
 import type { GiteaClientPool } from "../client-pool.js";
 import type { IssueRunIndexStore } from "../store.js";
 import { LIFECYCLE_LABELS } from "../../shared/types.js";
+import { resolveGiteaAdapterTarget } from "./run-workspace.js";
 
 export function isApprovalComment(text: string): boolean {
   if (!text) return false;
@@ -70,7 +71,7 @@ export function createDualApprovalGateAdapter(
     supportedPlatforms: ["darwin", "linux", "win32"],
     resourceConflictKey: "gitea:gate:{{issueNumber}}:{{phase}}",
     execute: async (rawInput, context) => {
-      const input = rawInput as {
+      const input = (rawInput ?? {}) as {
         baseUrl?: string;
         token?: string;
         repoOwner?: string;
@@ -82,28 +83,12 @@ export function createDualApprovalGateAdapter(
         maxWaitMs?: number;
       };
 
-      let token = input.token || "";
-      let baseUrl = input.baseUrl || "";
-      let repoOwner = input.repoOwner || "";
-      let repoName = input.repoName || "";
-      let issueNumber = input.issueNumber || 0;
+      const { token, baseUrl, repoOwner, repoName, issueNumber, identityId } =
+        await resolveGiteaAdapterTarget(input, context, indexStore);
       const phase = input.phase || "gate";
       const reason = input.reason || "Requires confirmation to proceed";
       const pollIntervalMs = input.pollIntervalMs || 5000;
       const maxWaitMs = input.maxWaitMs || 60_000;
-
-      if ((!token || !repoOwner || !issueNumber || !baseUrl) && (context as any)?.run?.runId) {
-        if (indexStore) {
-          const entry = await indexStore.getEntryByRunId((context as any).run.runId);
-          if (entry) {
-            token = token || entry.token || "";
-            baseUrl = baseUrl || entry.baseUrl || "";
-            repoOwner = repoOwner || entry.repoOwner || "";
-            repoName = repoName || entry.repoName || "";
-            issueNumber = issueNumber || entry.issueNumber || 0;
-          }
-        }
-      }
 
       if (!baseUrl || !repoOwner || !repoName || !issueNumber) {
         throw new Error(
@@ -116,6 +101,7 @@ export function createDualApprovalGateAdapter(
         giteaToken: token,
         repoOwner,
         repoName,
+        ...(identityId ? { identityId } : {}),
       });
 
       // 1. Mark issue with agent-waiting-approval

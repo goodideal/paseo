@@ -14,6 +14,10 @@ import type { WorkflowArtifact, WorkflowRun } from "./workflow-engine/workflow-m
 import type { WorkflowService } from "./workflow-engine/workflow-service.js";
 import type { WorkflowStore } from "./workflow-engine/workflow-store.js";
 import { ensureProviderModelSelection } from "./harness-bridge.js";
+import type { IssueRunIndexStore } from "./store.js";
+import type { GiteaIdentityBridge } from "./identity-bridge.js";
+import { resolveRunIdentityMetadata } from "./adapters/run-workspace.js";
+import { deriveBranchSlug } from "./poller.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -50,12 +54,15 @@ export interface PluginStepExecutorHostOptions {
   store: WorkflowStore;
   service: WorkflowService;
   localAdapters?: ReadonlyMap<string, PluginWorkflowStepAdapterRegistration>;
+  indexStore?: IssueRunIndexStore;
+  identityBridge?: GiteaIdentityBridge;
 }
 
 export function createPluginStepExecutorHost(
   options: PluginStepExecutorHostOptions,
 ): StepExecutorHost {
-  const { paseoHome, getPaseo, store, service, localAdapters } = options;
+  const { paseoHome, getPaseo, store, service, localAdapters, indexStore, identityBridge } =
+    options;
 
   const requirePaseo = (): PaseoApi => {
     const api = getPaseo();
@@ -166,8 +173,63 @@ export function createPluginStepExecutorHost(
   };
 
   return {
-    createWorktree: async ({ workspaceRoot, branch, baseBranch, title }) => {
+    createWorktree: async ({ workspaceId, workspaceRoot, branch, baseBranch, title }) => {
       const paseo = requirePaseo();
+
+      let matchedRun: WorkflowRun | undefined;
+      if (typeof store?.list === "function") {
+        try {
+          const allRuns = store.list();
+          matchedRun =
+            allRuns.find(
+              (r) =>
+                r.runInput?.branch === branch && (!workspaceId || r.workspaceId === workspaceId),
+            ) ?? allRuns.find((r) => r.runInput?.branch === branch);
+        } catch {
+          matchedRun = undefined;
+        }
+      }
+
+      let matchedEntry = null;
+      if (indexStore) {
+        try {
+          if (matchedRun?.id) {
+            matchedEntry = await indexStore.getEntryByRunId(matchedRun.id);
+          }
+          if (!matchedEntry) {
+            const targetProjectId = matchedRun?.projectId;
+            const entries = await indexStore.listEntries(targetProjectId);
+            matchedEntry =
+              entries.find((e) => {
+                if (targetProjectId && e.projectId !== targetProjectId) {
+                  return false;
+                }
+                if (deriveBranchSlug(e.issueNumber, e.issueTitle) === branch) {
+                  return true;
+                }
+                const exactIssueBranchPattern = new RegExp(`^agent/issue-${e.issueNumber}(?:$|-)`);
+                return exactIssueBranchPattern.test(branch);
+              }) ?? null;
+          }
+        } catch {
+          matchedEntry = null;
+        }
+      }
+
+      const runIdentity = resolveRunIdentityMetadata(matchedEntry, matchedRun?.runInput);
+      const hasIdentityMeta = Boolean(
+        runIdentity.teamCollabOwner || runIdentity.giteaUsername || runIdentity.identityId,
+      );
+      const metadata: Record<string, unknown> | undefined = hasIdentityMeta
+        ? {
+            "gitea-workflow": true,
+            ...(runIdentity.teamCollabOwner
+              ? { "team-collab.owner": runIdentity.teamCollabOwner }
+              : {}),
+            ...(runIdentity.giteaUsername ? { "gitea.assignee": runIdentity.giteaUsername } : {}),
+          }
+        : undefined;
+
       const handle = await paseo.workspaces.create({
         source: {
           kind: "worktree",
@@ -178,9 +240,22 @@ export function createPluginStepExecutorHost(
           ...(baseBranch ? { baseBranch } : {}),
         },
         ...(title ? { title } : {}),
-      });
+        ...(metadata ? { metadata } : {}),
+      } as Parameters<PaseoApi["workspaces"]["create"]>[0]);
       const current = handle.current();
       const worktreePath = current?.workspaceDirectory ?? handle.directory ?? workspaceRoot;
+
+      if (identityBridge && runIdentity.authorName && runIdentity.authorEmail) {
+        await identityBridge
+          .applyIdentityToWorktree(worktreePath, {
+            name: runIdentity.authorName,
+            email: runIdentity.authorEmail,
+            sshKeyPath: runIdentity.sshKeyPath,
+            source: runIdentity.identitySource,
+          })
+          .catch(() => {});
+      }
+
       return {
         worktreePath,
         branch: current?.gitRuntime?.currentBranch ?? branch,

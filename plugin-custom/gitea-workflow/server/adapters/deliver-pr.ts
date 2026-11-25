@@ -6,15 +6,44 @@ import type { PluginWorkflowStepAdapterRegistration } from "../../shared/workflo
 import type { GiteaClientPool } from "../client-pool.js";
 import type { IssueRunIndexStore } from "../store.js";
 import type { SettingsManager } from "../settings-manager.js";
+import {
+  buildSshCommand,
+  parseGiteaEndpoint,
+  type GiteaIdentityBridge,
+} from "../identity-bridge.js";
 import { cleanIssueTitle } from "../workspace-title.js";
-import { resolveRunWorkspaceContext, truncateAndRedactOutput } from "./run-workspace.js";
+import {
+  resolveGiteaAdapterTarget,
+  resolveRunIdentityMetadata,
+  resolveRunWorkspaceContext,
+  truncateAndRedactOutput,
+} from "./run-workspace.js";
 
 const execFileAsync = promisify(execFile);
 
+export interface PushBranchAuthOptions {
+  token?: string;
+  baseUrl?: string;
+  giteaUsername?: string;
+  sshKeyPath?: string;
+}
+
+export type PushExecFn = (
+  file: string,
+  args: readonly string[],
+  options: {
+    cwd: string;
+    timeout: number;
+    maxBuffer: number;
+    env?: NodeJS.ProcessEnv;
+  },
+) => Promise<unknown>;
+
 export interface DeliverPrDeps {
-  pushBranch?: (cwd: string, branch: string) => Promise<void>;
+  pushBranch?: (cwd: string, branch: string, auth?: PushBranchAuthOptions) => Promise<void>;
   getCurrentBranch?: (cwd: string) => Promise<string>;
   getDefaultBaseBranch?: (cwd: string) => Promise<string>;
+  identityBridge?: GiteaIdentityBridge;
 }
 
 export interface FormatPullRequestBodyParams {
@@ -142,17 +171,106 @@ export function formatPullRequestBody(params: FormatPullRequestBodyParams): stri
 export async function defaultPushBranch(
   cwd: string,
   branch: string,
-  execFn: (
-    file: string,
-    args: readonly string[],
-    options: { cwd: string; timeout: number; maxBuffer: number },
-  ) => Promise<unknown> = execFileAsync,
+  authOrExec?: PushBranchAuthOptions | PushExecFn,
+  maybeExecFn?: PushExecFn,
 ): Promise<void> {
-  await execFn("git", ["push", "-u", "origin", "--", branch], {
+  const auth = typeof authOrExec === "function" ? undefined : authOrExec;
+  const execFn: PushExecFn =
+    typeof authOrExec === "function" ? authOrExec : (maybeExecFn ?? execFileAsync);
+
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    GIT_TERMINAL_PROMPT: "0",
+  };
+
+  const pushArgs: string[] = ["push", "-u", "origin", "--", branch];
+  const secretsToRedact: string[] = [];
+  if (auth?.token) {
+    secretsToRedact.push(auth.token);
+  }
+
+  if (auth?.token || auth?.sshKeyPath) {
+    let originUrlRaw = "";
+    try {
+      const res = (await execFn("git", ["config", "--get", "remote.origin.url"], {
+        cwd,
+        timeout: 5_000,
+        maxBuffer: 1024 * 1024,
+        env,
+      })) as { stdout?: string } | undefined;
+      if (typeof res?.stdout === "string") {
+        originUrlRaw = res.stdout.trim();
+      }
+    } catch {
+      originUrlRaw = "";
+    }
+
+    const parsedOrigin = parseGiteaEndpoint(originUrlRaw);
+
+    if (parsedOrigin !== null) {
+      // Case A: HTTP(S) Remote
+      if (auth.token) {
+        const parsedBase = parseGiteaEndpoint(auth.baseUrl);
+        const originMatches = parsedBase === null || parsedOrigin.origin === parsedBase.origin;
+
+        if (originMatches) {
+          let hasWorktreeCredHelper = false;
+          try {
+            const helperRes = (await execFn(
+              "git",
+              ["config", "--worktree", "--get", "credential.helper"],
+              {
+                cwd,
+                timeout: 5_000,
+                maxBuffer: 1024 * 1024,
+                env,
+              },
+            )) as { stdout?: string } | undefined;
+            hasWorktreeCredHelper = Boolean(helperRes?.stdout?.trim());
+          } catch {
+            hasWorktreeCredHelper = false;
+          }
+
+          if (!hasWorktreeCredHelper) {
+            const basicUser = auth.giteaUsername?.trim() || "token";
+            const basicCreds = Buffer.from(`${basicUser}:${auth.token}`, "utf8").toString("base64");
+            secretsToRedact.push(basicCreds);
+            env.GIT_CONFIG_COUNT = "1";
+            env.GIT_CONFIG_KEY_0 = `http.${parsedOrigin.origin}/.extraHeader`;
+            env.GIT_CONFIG_VALUE_0 = `Authorization: Basic ${basicCreds}`;
+          }
+        }
+      }
+    } else if (auth.sshKeyPath) {
+      // Case B: SSH Remote
+      const sshCmd = buildSshCommand(auth.sshKeyPath);
+      if (sshCmd) {
+        env.GIT_SSH_COMMAND = sshCmd;
+      }
+    }
+  }
+
+  const execOptions: {
+    cwd: string;
+    timeout: number;
+    maxBuffer: number;
+    env?: NodeJS.ProcessEnv;
+  } = {
     cwd,
     timeout: 110_000,
     maxBuffer: 16 * 1024 * 1024,
-  });
+    ...(auth ? { env } : {}),
+  };
+
+  try {
+    await execFn("git", pushArgs, execOptions);
+  } catch (err) {
+    const rawMsg = err instanceof Error ? err.message : String(err);
+    const execErr = err as { stderr?: string; stdout?: string };
+    const combined = [rawMsg, execErr?.stderr, execErr?.stdout].filter(Boolean).join("\n");
+    const redacted = truncateAndRedactOutput(combined, 4_000, secretsToRedact);
+    throw new Error(redacted || "git push failed");
+  }
 }
 
 async function defaultGetCurrentBranch(cwd: string): Promise<string> {
@@ -240,8 +358,8 @@ export function createDeliverPrAdapter(
 
       const runId = (context as any)?.run?.runId;
       const projectId = (context as any)?.run?.projectId;
-      const entry = runId && indexStore ? await indexStore.getEntryByRunId(runId) : null;
-      const runInput = (context as any)?.run?.runInput ?? {};
+      const target = await resolveGiteaAdapterTarget(input, context, indexStore);
+      const { token, baseUrl, repoOwner, repoName, identityId, entry, runInput } = target;
       const allStepOutputs: Record<string, unknown> = {
         ...((context as any)?.run?.stepOutputs ?? {}),
         ...((context as any)?.stepOutputs ?? {}),
@@ -256,16 +374,9 @@ export function createDeliverPrAdapter(
         | Record<string, any>
         | undefined;
 
-      const baseUrl = input.baseUrl || runInput.baseUrl || entry?.baseUrl || "";
-      const token = input.token || runInput.token || entry?.token || "";
-      const repoOwner = input.repoOwner || runInput.repoOwner || entry?.repoOwner || "";
-      const repoName = input.repoName || runInput.repoName || entry?.repoName || "";
       const issueNumber =
-        input.issueNumber ||
-        runInput.issueNumber ||
-        entry?.issueNumber ||
-        fetchOut?.issueNumber ||
-        0;
+        target.issueNumber ||
+        (typeof fetchOut?.issueNumber === "number" ? fetchOut.issueNumber : 0);
       const issueTitle =
         input.issueTitle || runInput.issueTitle || entry?.issueTitle || fetchOut?.title || "";
       const resolvedProjectId = projectId || entry?.projectId || runInput.projectId || "";
@@ -291,6 +402,8 @@ export function createDeliverPrAdapter(
         workspaceRoot: (context as any)?.run?.workspaceRoot,
         worktreeOutput: wtOutput,
         requireDirectoryExists: true,
+        identity: resolveRunIdentityMetadata(entry, runInput),
+        identityBridge: deps?.identityBridge,
       });
       const { targetCwd } = workspaceCtx;
       if (!existsSync(targetCwd)) {
@@ -331,8 +444,23 @@ export function createDeliverPrAdapter(
         );
       }
 
+      const runIdentity = resolveRunIdentityMetadata(entry, runInput);
+      const pushAuth: PushBranchAuthOptions = {
+        token,
+        baseUrl,
+        ...(runIdentity.giteaUsername ? { giteaUsername: runIdentity.giteaUsername } : {}),
+        ...(runIdentity.sshKeyPath ? { sshKeyPath: runIdentity.sshKeyPath } : {}),
+      };
+
       // 1. Push branch to remote
-      await pushBranch(targetCwd, headBranch);
+      const hasExplicitIdentityAuth = Boolean(
+        runIdentity.identityId || runIdentity.giteaUsername || runIdentity.sshKeyPath,
+      );
+      if (!deps?.pushBranch || hasExplicitIdentityAuth) {
+        await pushBranch(targetCwd, headBranch, pushAuth);
+      } else {
+        await pushBranch(targetCwd, headBranch);
+      }
 
       // 2. Format PR title and body
       const wip = qualityGateOut?.passed === false;
@@ -399,6 +527,7 @@ export function createDeliverPrAdapter(
         listenLabel,
         inProgressLabel,
         reviewedLabel,
+        ...(identityId ? { identityId } : {}),
       });
 
       const created = await client.createPullRequest({

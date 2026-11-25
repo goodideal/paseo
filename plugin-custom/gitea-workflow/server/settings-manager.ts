@@ -66,6 +66,30 @@ export class SettingsManager {
     return this._current.harnessMode || "auto";
   }
 
+  getGiteaIdentityId(projectId?: string): string | undefined {
+    if (projectId) {
+      const override = this._current.projects[projectId]?.giteaIdentityOverride?.trim();
+      if (override) {
+        return override;
+      }
+    }
+    const hostId = this._current.giteaIdentityId?.trim();
+    if (hostId) {
+      return hostId;
+    }
+    return undefined;
+  }
+
+  getPreferIssueAssignee(projectId?: string): boolean {
+    if (projectId) {
+      const override = this._current.projects[projectId]?.preferIssueAssigneeOverride;
+      if (typeof override === "boolean") {
+        return override;
+      }
+    }
+    return this._current.preferIssueAssignee ?? true;
+  }
+
   getHasExplicitProviderOverride(projectId?: string): boolean {
     if (!projectId) return false;
     const override = this._current.projects[projectId]?.agentProviderOverride;

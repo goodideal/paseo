@@ -6,6 +6,9 @@ import {
   GiteaTriggerModeSchema,
   GiteaHarnessModeSchema,
   WorkflowHarnessExecutionInfoSchema,
+  GiteaIdentitySummarySchema,
+  ActiveGiteaIdentitySchema,
+  IssueRunIndexEntrySchema,
   ReviewSignOffSchema,
   GiteaProjectDiagnosticSchema,
   LIFECYCLE_LABELS,
@@ -18,6 +21,7 @@ import {
   approveTaskRpc,
   rejectTaskRpc,
   diagnoseProjectsRpc,
+  syncGiteaIdentitiesRpc,
   pruneEvidenceRpc,
 } from "../shared/contracts.js";
 
@@ -95,7 +99,67 @@ describe("Gitea Workflow Schemas and RPCs", () => {
     expect(approveTaskRpc.name).toBe("gitea.tasks.approve");
     expect(rejectTaskRpc.name).toBe("gitea.tasks.reject");
     expect(diagnoseProjectsRpc.name).toBe("gitea.diagnostics.list");
+    expect(syncGiteaIdentitiesRpc.name).toBe("gitea.identities.sync");
     expect(pruneEvidenceRpc.name).toBe("gitea.evidence.prune");
+  });
+
+  it("validates GiteaIdentitySummarySchema, ActiveGiteaIdentitySchema, and identity fields on settings and index entry", () => {
+    const summary = GiteaIdentitySummarySchema.parse({
+      id: "jerry",
+      source: "team-collab",
+      name: "Jerry",
+      email: "jerry@example.com",
+      giteaUsername: "jerry",
+      giteaUrl: "https://git.example.com",
+      hasToken: true,
+      tokenPreview: "••••1234",
+      hasSshKey: true,
+      sshKeyPathPreview: "~/.ssh/id_ed25519",
+      isDefault: true,
+    });
+    expect(summary.id).toBe("jerry");
+
+    const active = ActiveGiteaIdentitySchema.parse({
+      id: "jerry",
+      source: "team-collab",
+      name: "Jerry",
+      email: "jerry@example.com",
+      giteaUsername: "jerry",
+    });
+    expect(active.source).toBe("team-collab");
+
+    const hostSettings = GiteaHostSettingsSchema.parse({
+      giteaIdentityId: "jerry",
+      preferIssueAssignee: true,
+      projects: {
+        "proj-1": {
+          enabled: true,
+          giteaIdentityOverride: "tea:ops",
+          preferIssueAssigneeOverride: false,
+        },
+      },
+    });
+    expect(hostSettings.giteaIdentityId).toBe("jerry");
+    expect(hostSettings.preferIssueAssignee).toBe(true);
+    expect(hostSettings.projects["proj-1"].giteaIdentityOverride).toBe("tea:ops");
+    expect(hostSettings.projects["proj-1"].preferIssueAssigneeOverride).toBe(false);
+
+    const indexEntry = IssueRunIndexEntrySchema.parse({
+      id: "proj-1::org/repo#42",
+      projectId: "proj-1",
+      repoOwner: "org",
+      repoName: "repo",
+      issueNumber: 42,
+      runId: "run-42",
+      identityId: "jerry",
+      identitySource: "team-collab",
+      authorName: "Jerry",
+      authorEmail: "jerry@example.com",
+      giteaUsername: "jerry",
+      createdAt: "2026-11-25T00:00:00.000Z",
+      updatedAt: "2026-11-25T00:00:00.000Z",
+    });
+    expect(indexEntry.identityId).toBe("jerry");
   });
 
   it("provides safe defaults with global automation disabled in GiteaHostSettingsSchema", () => {

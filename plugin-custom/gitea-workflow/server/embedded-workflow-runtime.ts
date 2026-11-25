@@ -36,6 +36,8 @@ import { createWorkflowPresetRegistry } from "./workflow-engine/workflow-preset-
 import { WorkflowService } from "./workflow-engine/workflow-service.js";
 import { WorkflowStore } from "./workflow-engine/workflow-store.js";
 import { createPluginStepExecutorHost } from "./workflow-executor-runtime.js";
+import type { IssueRunIndexStore } from "./store.js";
+import type { GiteaIdentityBridge } from "./identity-bridge.js";
 
 const DEFAULT_PERMISSIONS = new Set<string>([
   "workspace.read",
@@ -175,6 +177,8 @@ export interface EmbeddedWorkflowRuntimeOptions {
   getPaseo: () => PaseoApi | null;
   stepAdapters: readonly PluginWorkflowStepAdapterRegistration[];
   initialPresets: readonly PluginWorkflowPreset[];
+  indexStore?: IssueRunIndexStore;
+  identityBridge?: GiteaIdentityBridge;
 }
 
 export interface EmbeddedWorkflowRuntime {
@@ -190,7 +194,7 @@ export interface EmbeddedWorkflowRuntime {
 export function createEmbeddedWorkflowRuntime(
   options: EmbeddedWorkflowRuntimeOptions,
 ): EmbeddedWorkflowRuntime {
-  const { paseoHome, getPaseo, stepAdapters, initialPresets } = options;
+  const { paseoHome, getPaseo, stepAdapters, initialPresets, indexStore, identityBridge } = options;
   const store = new WorkflowStore({ paseoHome });
   const registry = new StepAdapterRegistry();
   registerBuiltInWorkflowStepManifests(registry);
@@ -241,6 +245,8 @@ export function createEmbeddedWorkflowRuntime(
       store,
       service,
       localAdapters,
+      indexStore,
+      identityBridge,
     }),
   );
 

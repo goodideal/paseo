@@ -3,6 +3,7 @@ import type { PluginWorkflowStepAdapterRegistration } from "../../shared/workflo
 import { WorkflowHarnessExecutionInfoSchema } from "../../shared/types.js";
 import type { SettingsManager } from "../settings-manager.js";
 import type { IssueRunIndexStore } from "../store.js";
+import type { GiteaIdentityBridge } from "../identity-bridge.js";
 import { cleanIssueTitle } from "../workspace-title.js";
 import { interpolatePrompt, type PromptInterpolationContext } from "../prompt-interpolator.js";
 import {
@@ -14,7 +15,9 @@ import { resolveWorkflowAgentLaunch } from "../harness-bridge.js";
 import {
   createWorkspaceAgent,
   driveAgentTurn,
+  enrichAgentLaunchWithIdentity,
   resolveReviewReadOnlyMode,
+  resolveRunIdentityMetadata,
   resolveRunWorkspaceContext,
 } from "./run-workspace.js";
 
@@ -124,6 +127,7 @@ export function normalizeAgentChangeMode(provider: string, rawMode?: string): st
 export function createAgentExecuteAdapter(
   settingsManager: SettingsManager,
   indexStore: IssueRunIndexStore,
+  identityBridge?: GiteaIdentityBridge,
 ): PluginWorkflowStepAdapterRegistration {
   return {
     type: "gitea.agent_execute",
@@ -176,6 +180,7 @@ export function createAgentExecuteAdapter(
       const branchName = wtOutput?.branch || runInput.branch || "";
       const resolvedProjectId = projectId || entry?.projectId || runInput.projectId || "";
       const effectiveProjectId = resolvedProjectId || projectId;
+      const runIdentity = resolveRunIdentityMetadata(entry, runInput);
 
       // 1. Locate the worktree workspace created for this run
       const workspaceCtx = await resolveRunWorkspaceContext({
@@ -188,6 +193,8 @@ export function createAgentExecuteAdapter(
         worktreeOutput: wtOutput,
         syncWorkspaceTitle: true,
         requireAgentApi: true,
+        identity: runIdentity,
+        identityBridge,
       });
       const { targetCwd, targetWorkspaceId } = workspaceCtx;
 
@@ -301,12 +308,13 @@ First, review the issue context and requirements. Then proceed with the engineer
       const agentTitle = `${meta.icon} [#${effectiveIssueNum}] ${meta.label}${shortTitle}`;
 
       // 4. Create and drive agent with friendly title
+      const enrichedLaunch = enrichAgentLaunchWithIdentity(launch, runIdentity);
       const agentHandle = await createWorkspaceAgent(workspaceCtx, (context as any)?.paseo, {
         title: agentTitle,
         prompt,
         config,
-        labels: launch.labels,
-        metadata: launch.metadata,
+        labels: enrichedLaunch.labels,
+        metadata: enrichedLaunch.metadata,
       });
 
       const timeoutMs =

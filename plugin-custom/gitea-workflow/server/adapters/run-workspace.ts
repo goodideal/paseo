@@ -1,5 +1,177 @@
 import { existsSync } from "node:fs";
+import type { IssueRunIndexEntry } from "../../shared/types.js";
+import {
+  buildTeamCollabOwnerMetadata,
+  type GiteaIdentityBridge,
+  type TeamCollabOwnerMetadata,
+} from "../identity-bridge.js";
+import type { IssueRunIndexStore } from "../store.js";
 import { formatWorkflowWorkspaceTitle } from "../workspace-title.js";
+
+export interface ResolvedGiteaAdapterTarget {
+  token: string;
+  baseUrl: string;
+  repoOwner: string;
+  repoName: string;
+  issueNumber: number;
+  identityId?: string;
+  entry: IssueRunIndexEntry | null;
+  runInput: Record<string, any>;
+}
+
+export async function resolveGiteaAdapterTarget(
+  rawInput: Record<string, any> | null | undefined,
+  context: unknown,
+  indexStore?: IssueRunIndexStore,
+): Promise<ResolvedGiteaAdapterTarget> {
+  const input = rawInput ?? {};
+  const runCtx = (context as any)?.run ?? {};
+  const runId = typeof runCtx.runId === "string" ? runCtx.runId : "";
+  const runInput: Record<string, any> =
+    runCtx.runInput && typeof runCtx.runInput === "object" ? runCtx.runInput : {};
+  const entry = runId && indexStore ? await indexStore.getEntryByRunId(runId) : null;
+
+  const pickNonEmptyString = (...candidates: unknown[]): string => {
+    for (const candidate of candidates) {
+      if (typeof candidate === "string" && candidate.trim()) {
+        return candidate.trim();
+      }
+    }
+    return "";
+  };
+
+  const pickPositiveInt = (...candidates: unknown[]): number => {
+    for (const candidate of candidates) {
+      if (typeof candidate === "number" && Number.isFinite(candidate) && candidate > 0) {
+        return candidate;
+      }
+    }
+    return 0;
+  };
+
+  const token = pickNonEmptyString(input.token, runInput.token, entry?.token);
+  const baseUrl = pickNonEmptyString(input.baseUrl, runInput.baseUrl, entry?.baseUrl);
+  const repoOwner = pickNonEmptyString(input.repoOwner, runInput.repoOwner, entry?.repoOwner);
+  const repoName = pickNonEmptyString(input.repoName, runInput.repoName, entry?.repoName);
+  const issueNumber = pickPositiveInt(input.issueNumber, runInput.issueNumber, entry?.issueNumber);
+  const identityId =
+    pickNonEmptyString(input.identityId, runInput.identityId, entry?.identityId) || undefined;
+
+  if (identityId && !token) {
+    throw new Error(`Selected Gitea identity (${identityId}) has no valid token for this run`);
+  }
+
+  return {
+    token,
+    baseUrl,
+    repoOwner,
+    repoName,
+    issueNumber,
+    ...(identityId ? { identityId } : {}),
+    entry,
+    runInput,
+  };
+}
+
+export interface RunIdentityMetadata {
+  identityId?: string;
+  identitySource?: "team-collab" | "tea" | "env";
+  authorName?: string;
+  authorEmail?: string;
+  giteaUsername?: string;
+  sshKeyPath?: string;
+  token?: string;
+  baseUrl?: string;
+  teamCollabOwner: TeamCollabOwnerMetadata | null;
+}
+
+export function resolveRunIdentityMetadata(
+  entry?: Partial<IssueRunIndexEntry> | null,
+  runInput?: Record<string, unknown> | null,
+): RunIdentityMetadata {
+  const input = runInput ?? {};
+  const rawIdentityId =
+    (typeof entry?.identityId === "string" && entry.identityId.trim()) ||
+    (typeof input.identityId === "string" && input.identityId.trim()) ||
+    undefined;
+
+  let identitySource: "team-collab" | "tea" | "env" | undefined;
+  const candidateSource = entry?.identitySource ?? input.identitySource;
+  if (candidateSource === "team-collab" || candidateSource === "tea" || candidateSource === "env") {
+    identitySource = candidateSource;
+  }
+
+  const authorName =
+    (typeof entry?.authorName === "string" && entry.authorName.trim()) ||
+    (typeof input.authorName === "string" && input.authorName.trim()) ||
+    undefined;
+  const authorEmail =
+    (typeof entry?.authorEmail === "string" && entry.authorEmail.trim()) ||
+    (typeof input.authorEmail === "string" && input.authorEmail.trim()) ||
+    undefined;
+  const giteaUsername =
+    (typeof entry?.giteaUsername === "string" && entry.giteaUsername.trim()) ||
+    (typeof input.giteaUsername === "string" && input.giteaUsername.trim()) ||
+    undefined;
+  const sshKeyPath =
+    (typeof entry?.sshKeyPath === "string" && entry.sshKeyPath.trim()) ||
+    (typeof input.sshKeyPath === "string" && input.sshKeyPath.trim()) ||
+    undefined;
+  const token =
+    (typeof entry?.token === "string" && entry.token.trim()) ||
+    (typeof input.token === "string" && input.token.trim()) ||
+    undefined;
+  const baseUrl =
+    (typeof entry?.baseUrl === "string" && entry.baseUrl.trim()) ||
+    (typeof input.baseUrl === "string" && input.baseUrl.trim()) ||
+    undefined;
+
+  const teamCollabOwner = buildTeamCollabOwnerMetadata({
+    id: rawIdentityId,
+    source: identitySource,
+    name: authorName,
+    email: authorEmail,
+  });
+
+  return {
+    ...(rawIdentityId ? { identityId: rawIdentityId } : {}),
+    ...(identitySource ? { identitySource } : {}),
+    ...(authorName ? { authorName } : {}),
+    ...(authorEmail ? { authorEmail } : {}),
+    ...(giteaUsername ? { giteaUsername } : {}),
+    ...(sshKeyPath ? { sshKeyPath } : {}),
+    ...(token ? { token } : {}),
+    ...(baseUrl ? { baseUrl } : {}),
+    teamCollabOwner,
+  };
+}
+
+export function enrichAgentLaunchWithIdentity<
+  T extends {
+    labels?: Record<string, string>;
+    metadata?: Record<string, unknown>;
+  },
+>(launch: T, identity: RunIdentityMetadata): T {
+  if (!identity.teamCollabOwner && !identity.giteaUsername) {
+    return launch;
+  }
+  const labels: Record<string, string> = {
+    ...(launch.labels ?? {}),
+    ...(identity.giteaUsername ? { "gitea.assignee": identity.giteaUsername } : {}),
+  };
+  const hasMetadata = Boolean(launch.metadata || identity.teamCollabOwner);
+  const metadata: Record<string, unknown> | undefined = hasMetadata
+    ? {
+        ...(launch.metadata ?? {}),
+        ...(identity.teamCollabOwner ? { "team-collab.owner": identity.teamCollabOwner } : {}),
+      }
+    : undefined;
+  return {
+    ...launch,
+    labels,
+    ...(metadata ? { metadata } : {}),
+  };
+}
 
 export interface ResolveRunWorkspaceParams {
   paseo?: any;
@@ -13,6 +185,8 @@ export interface ResolveRunWorkspaceParams {
   syncWorkspaceTitle?: boolean;
   requireAgentApi?: boolean;
   requireDirectoryExists?: boolean;
+  identity?: RunIdentityMetadata;
+  identityBridge?: GiteaIdentityBridge;
 }
 
 export interface RunWorkspaceContext {
@@ -49,6 +223,8 @@ export async function resolveRunWorkspaceContext(
     syncWorkspaceTitle = false,
     requireAgentApi = false,
     requireDirectoryExists = false,
+    identity,
+    identityBridge,
   } = params;
 
   let targetWorkspaceId: string | undefined = worktreeOutput?.workspaceId;
@@ -151,6 +327,23 @@ export async function resolveRunWorkspaceContext(
   if (targetWorkspaceId && typeof paseo?.workspaces?.ref === "function") {
     wsRef = paseo.workspaces.ref(targetWorkspaceId);
   }
+  if (targetWorkspaceId && identity?.teamCollabOwner && wsRef) {
+    try {
+      const currentWs = typeof wsRef.current === "function" ? wsRef.current() : null;
+      const isWorktreeWorkspace =
+        Boolean(worktreeOutput?.workspaceId && targetWorkspaceId === worktreeOutput.workspaceId) ||
+        currentWs?.workspaceKind === "worktree";
+      const existingOwner = currentWs?.metadata?.["team-collab.owner"];
+      if (isWorktreeWorkspace && !existingOwner && typeof wsRef.setMetadata === "function") {
+        await wsRef.setMetadata({
+          ...(currentWs?.metadata ?? {}),
+          "team-collab.owner": identity.teamCollabOwner,
+        });
+      }
+    } catch {
+      // ignore metadata sync error
+    }
+  }
   const canCreateOnWorkspaceRef = Boolean(
     targetWorkspaceId && wsRef && typeof wsRef.agents?.create === "function",
   );
@@ -170,6 +363,17 @@ export async function resolveRunWorkspaceContext(
     throw new Error(
       `Resolved working directory does not exist for project ${projectId || "unknown"} (issue #${issueNumber}): ${trimmedCwd}`,
     );
+  }
+
+  if (identityBridge && identity?.authorName && identity?.authorEmail) {
+    await identityBridge
+      .applyIdentityToWorktree(trimmedCwd, {
+        name: identity.authorName,
+        email: identity.authorEmail,
+        sshKeyPath: identity.sshKeyPath,
+        source: identity.identitySource,
+      })
+      .catch(() => {});
   }
 
   return {
@@ -282,7 +486,8 @@ export function truncateAndRedactOutput(
   result = result
     .replace(/(https?:\/\/)([^\s/@:]+(?::[^\s/@]+)?)(@)/gi, "$1[redacted]$3")
     .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/-]+=*/gi, "$1[redacted]")
-    .replace(/\b(Authorization\s*[:=]\s*(?:token|Bearer)?\s*)[^\s"',;]+/gi, "$1[redacted]")
+    .replace(/\b(Basic\s+)[A-Za-z0-9+/=]{6,}/gi, "$1[redacted]")
+    .replace(/\b(Authorization\s*[:=]\s*(?:token|Bearer|Basic)?\s*)[^\s"',;]+/gi, "$1[redacted]")
     .replace(
       /\b((?:access_|gitea_|api_|auth_)?(?:token|key|secret|password)\s*[=:]\s*)["']?[A-Za-z0-9._~+/-]{6,}["']?/gi,
       "$1[redacted]",

@@ -1,11 +1,20 @@
 import { TRIGGER_LABELS } from "../shared/types.js";
 
+export interface GiteaIssueAssigneeDto {
+  login?: string;
+  username?: string;
+  full_name?: string;
+  email?: string;
+}
+
 export interface GiteaIssueDto {
   number: number;
   title: string;
   body: string;
   html_url: string;
   labels: Array<{ id?: number; name: string }>;
+  assignee?: GiteaIssueAssigneeDto | null;
+  assignees?: GiteaIssueAssigneeDto[];
 }
 
 export interface FetchIssuesOptions {

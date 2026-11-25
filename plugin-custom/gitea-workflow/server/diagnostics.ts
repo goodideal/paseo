@@ -1,8 +1,9 @@
-import type { ProjectGiteaResolver } from "./resolver.js";
+import { buildResolveProjectOptions, type ProjectGiteaResolver } from "./resolver.js";
 import type { GiteaClientPool } from "./client-pool.js";
 import type { SettingsManager } from "./settings-manager.js";
 import type { PaseoProjectItem } from "./poller.js";
-import type { GiteaProjectDiagnostic } from "../shared/types.js";
+import type { GiteaIdentitySummary, GiteaProjectDiagnostic } from "../shared/types.js";
+import type { GiteaIdentityBridge } from "./identity-bridge.js";
 import {
   countHarnessSpecialists,
   extractAgentTeamDiagnostic,
@@ -15,13 +16,40 @@ export interface DiagnosticsHarnessStatus {
   specialistsCount?: number;
 }
 
+export interface DiagnosticsIdentityProbeResult {
+  identities: GiteaIdentitySummary[];
+  teamCollabStatus: {
+    available: boolean;
+    membersCount: number;
+  };
+}
+
 export class DiagnosticsService {
   constructor(
     private readonly resolver: ProjectGiteaResolver,
     private readonly clientPool: GiteaClientPool,
     private readonly settings: SettingsManager,
     private readonly getPaseo?: () => unknown,
+    private readonly identityBridge?: GiteaIdentityBridge,
   ) {}
+
+  async probeIdentities(paseoOverride?: unknown): Promise<DiagnosticsIdentityProbeResult> {
+    if (!this.identityBridge) {
+      return {
+        identities: [],
+        teamCollabStatus: { available: false, membersCount: 0 },
+      };
+    }
+    const paseo = paseoOverride ?? this.getPaseo?.();
+    const loaded = await this.identityBridge.loadIdentities(paseo);
+    return {
+      identities: loaded.identities.map((item) => this.identityBridge!.toIdentitySummary(item)),
+      teamCollabStatus: {
+        available: loaded.teamCollabAvailable,
+        membersCount: loaded.teamCollabMembersCount,
+      },
+    };
+  }
 
   async probeHarnessStatus(paseoOverride?: unknown): Promise<DiagnosticsHarnessStatus> {
     const paseo = paseoOverride ?? this.getPaseo?.();
@@ -56,7 +84,15 @@ export class DiagnosticsService {
             })
           : null;
         try {
-          const resolved = await this.resolver.resolveProject(project);
+          const resolveOpts = buildResolveProjectOptions({
+            settings: this.settings,
+            projectId: project.projectId,
+            paseo,
+            identityBridge: this.identityBridge,
+          });
+          const resolved = resolveOpts
+            ? await this.resolver.resolveProject(project, resolveOpts)
+            : await this.resolver.resolveProject(project);
           const agentTeam = extractAgentTeamDiagnostic(
             effectiveHarness,
             resolved?.repoName || project.projectDisplayName || project.projectId,
@@ -88,9 +124,14 @@ export class DiagnosticsService {
               repoName: resolved.repoName,
               connectionStatus: "unauthorized",
               authSource: "none",
+              ...(resolved.activeIdentity !== undefined
+                ? { activeIdentity: resolved.activeIdentity }
+                : {}),
               authorized,
               readyLabel,
-              errorMessage: "No Gitea authentication token found via tea or environment",
+              errorMessage:
+                resolved.errorMessage ||
+                "No Gitea authentication token found via tea or environment",
               ...(agentTeam ? { agentTeam } : {}),
             };
           }
@@ -123,6 +164,9 @@ export class DiagnosticsService {
             repoName: resolved.repoName,
             connectionStatus,
             authSource: resolved.authSource,
+            ...(resolved.activeIdentity !== undefined
+              ? { activeIdentity: resolved.activeIdentity }
+              : {}),
             authorized,
             readyLabel,
             pendingIssueCount,

@@ -10,8 +10,13 @@ import {
   SettingsRow,
   SettingsAction,
 } from "@getpaseo/plugin/client/ui";
-import type { GiteaProjectDiagnostic } from "../shared/types.js";
-import { getAgentChangeModeOptions, isLegacyWorkflowPolicy } from "./host-settings.js";
+import type { GiteaIdentitySummary, GiteaProjectDiagnostic } from "../shared/types.js";
+import {
+  buildGiteaIdentityOptions,
+  getAgentChangeModeOptions,
+  isLegacyWorkflowPolicy,
+  type SelectOption,
+} from "./host-settings.js";
 import { PromptEditorField } from "./prompt-editor-field.js";
 import {
   DEFAULT_AGENT_AUTO_PROMPT,
@@ -35,20 +40,42 @@ function getProjectWorkflowPolicyOptions(currentValue?: string) {
   return options;
 }
 
+const preferIssueAssigneeOverrideOptions: SelectOption[] = [
+  { label: "继承全局默认", value: "" },
+  { label: "开启 (优先按 Issue 指派人切换身份)", value: "true" },
+  { label: "关闭 (严格固定使用项目/全局所选身份)", value: "false" },
+];
+
+function getPreferIssueAssigneeOverrideValue(override?: boolean): string {
+  if (override === true) return "true";
+  if (override === false) return "false";
+  return "";
+}
+
+function parsePreferIssueAssigneeOverrideValue(val: string): boolean | undefined {
+  if (val === "true") return true;
+  if (val === "false") return false;
+  return undefined;
+}
+
 export interface ProjectDetailSettingsProps {
   projectId: string;
   diagnostic?: GiteaProjectDiagnostic;
+  identities?: GiteaIdentitySummary[];
   settings: any;
   theme: PluginSurfaceProps["theme"];
   onBack: () => void;
+  onIdentityChanged?: () => void;
 }
 
 export function ProjectDetailSettings({
   projectId,
   diagnostic,
+  identities,
   settings,
   theme,
   onBack,
+  onIdentityChanged,
 }: ProjectDetailSettingsProps) {
   const values = settings.values;
   const projectSettings = values.projects[projectId] ?? {
@@ -94,6 +121,52 @@ export function ProjectDetailSettings({
                 },
               };
               void settings.save({ ...values, projects: updated }, settings.revision);
+            }}
+          />
+          <SettingsSelect
+            label="项目 Gitea 身份覆盖 (可选)"
+            hint="留空继承全局默认 Gitea 执行身份；指定后该项目固定优先使用此账号拉取与交付"
+            value={projectSettings.giteaIdentityOverride || ""}
+            options={buildGiteaIdentityOptions(
+              identities ?? [],
+              projectSettings.giteaIdentityOverride,
+              true,
+            )}
+            disabled={settings.saving}
+            onValueChange={(val: string) => {
+              const updated = {
+                ...values.projects,
+                [projectId]: {
+                  ...projectSettings,
+                  giteaIdentityOverride: val || undefined,
+                },
+              };
+              void Promise.resolve(
+                settings.save({ ...values, projects: updated }, settings.revision),
+              ).then(() => {
+                onIdentityChanged?.();
+              });
+            }}
+          />
+          <SettingsSelect
+            label="指派人动态匹配覆盖 (可选)"
+            hint="留空继承全局“优先匹配 Issue 指派人”开关"
+            value={getPreferIssueAssigneeOverrideValue(projectSettings.preferIssueAssigneeOverride)}
+            options={preferIssueAssigneeOverrideOptions}
+            disabled={settings.saving}
+            onValueChange={(val: string) => {
+              const updated = {
+                ...values.projects,
+                [projectId]: {
+                  ...projectSettings,
+                  preferIssueAssigneeOverride: parsePreferIssueAssigneeOverrideValue(val),
+                },
+              };
+              void Promise.resolve(
+                settings.save({ ...values, projects: updated }, settings.revision),
+              ).then(() => {
+                onIdentityChanged?.();
+              });
             }}
           />
           <SettingsSelect
@@ -392,6 +465,18 @@ export function ProjectDetailSettings({
               {diagnostic?.connectionStatus || "unknown"}
             </Text>
           </SettingsRow>
+          {diagnostic?.activeIdentity ? (
+            <SettingsRow label="当前生效身份">
+              <Text style={mutedColor}>
+                {`${diagnostic.activeIdentity.name} (@${diagnostic.activeIdentity.giteaUsername || diagnostic.activeIdentity.id} · ${diagnostic.activeIdentity.source})`}
+              </Text>
+            </SettingsRow>
+          ) : null}
+          {diagnostic?.errorMessage ? (
+            <SettingsRow label="诊断详情">
+              <Text style={{ color: theme.colors.statusDanger }}>{diagnostic.errorMessage}</Text>
+            </SettingsRow>
+          ) : null}
           {diagnostic?.agentTeam ? (
             <SettingsRow label="工作区 Agent Team">
               <Text style={mutedColor}>

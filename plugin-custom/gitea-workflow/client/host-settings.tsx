@@ -54,8 +54,12 @@ import {
   SettingsAction,
 } from "@getpaseo/plugin/client/ui";
 import { giteaSettingsDefinition } from "../shared/settings.js";
-import { diagnoseProjectsRpc } from "../shared/contracts.js";
-import type { GiteaHostSettings, GiteaProjectDiagnostic } from "../shared/types.js";
+import { diagnoseProjectsRpc, syncGiteaIdentitiesRpc } from "../shared/contracts.js";
+import type {
+  GiteaHostSettings,
+  GiteaIdentitySummary,
+  GiteaProjectDiagnostic,
+} from "../shared/types.js";
 import { ProjectDetailSettings } from "./project-detail-settings.js";
 import { PromptEditorField } from "./prompt-editor-field.js";
 import {
@@ -119,18 +123,86 @@ function formatHarnessStatusHint(harnessStatus: {
   return "未启用 · 自动回退静态引擎配置";
 }
 
-function formatProjectDiagnosticHint(proj: GiteaProjectDiagnostic): string {
+export function formatIdentityOptionLabel(item: GiteaIdentitySummary): string {
+  const sourceTag = item.source === "team-collab" ? "Team Collab" : "tea";
+  const usernameTag = item.giteaUsername ? `@${item.giteaUsername}` : `@${item.id}`;
+  let credStatus = "未配凭据";
+  if (item.hasToken && item.hasSshKey) {
+    credStatus = "Token + SSH";
+  } else if (item.hasToken) {
+    credStatus = "Token 就绪";
+  } else if (item.hasSshKey) {
+    credStatus = "仅 SSH (缺 API Token)";
+  }
+  return `${item.name} (${usernameTag} · ${sourceTag} · ${credStatus})`;
+}
+
+export type SelectOption = React.ComponentProps<typeof SettingsSelect>["options"][number];
+
+export function buildGiteaIdentityOptions(
+  identities: readonly GiteaIdentitySummary[],
+  currentValue?: string,
+  isProjectOverride = false,
+): SelectOption[] {
+  const defaultLabel = isProjectOverride
+    ? "继承全局默认身份"
+    : "自动匹配 (优先 Team Collab / tea 默认)";
+  const options: SelectOption[] = [{ label: defaultLabel, value: "" }];
+  for (const item of identities) {
+    options.push({
+      label: formatIdentityOptionLabel(item),
+      value: item.id,
+    });
+  }
+  if (currentValue && !identities.some((i) => i.id === currentValue)) {
+    options.push({
+      label: `当前已选 (${currentValue})`,
+      value: currentValue,
+    });
+  }
+  return options;
+}
+
+export function formatIdentityRosterHint(
+  identities: readonly GiteaIdentitySummary[],
+  teamCollabStatus: { available: boolean; membersCount: number } | null,
+): string {
+  if (teamCollabStatus?.available) {
+    return `Team Collab 已连接 · 共 ${identities.length} 个可选 Gitea 身份`;
+  }
+  return `本机探测到 ${identities.length} 个 tea 登录身份`;
+}
+
+export const formatTeamCollabHint = formatIdentityRosterHint;
+
+export function formatProjectDiagnosticHint(proj: GiteaProjectDiagnostic): string {
   if (proj.connectionStatus === "connected") {
-    let baseText = `已连接 (${proj.authSource}) · ${proj.pendingIssueCount ?? 0} 个待办`;
+    const authLabel = proj.activeIdentity
+      ? `@${proj.activeIdentity.giteaUsername || proj.activeIdentity.id} · ${proj.authSource}`
+      : proj.authSource;
+    let baseText = `已连接 (${authLabel}) · ${proj.pendingIssueCount ?? 0} 个待办`;
     if (proj.agentTeam && proj.agentTeam.rolesCount > 0) {
       baseText += ` · Team: ${proj.agentTeam.preset} (${proj.agentTeam.rolesCount})`;
     }
     return baseText;
   }
   if (proj.connectionStatus === "unauthorized") {
-    return "未找到 Gitea Token";
+    return proj.errorMessage || "未找到 Gitea Token";
   }
   return "非 Gitea 远端";
+}
+
+function useOptionalPluginRpc<TInput, TOutput>(
+  rpcDef: any,
+  useRpcHook: typeof useRpc | undefined,
+  fallbackCaller: (input: TInput) => Promise<TOutput>,
+): (input: TInput) => Promise<TOutput> {
+  const hook = useRpcHook ?? useRpc;
+  try {
+    return hook(rpcDef) as (input: TInput) => Promise<TOutput>;
+  } catch {
+    return fallbackCaller;
+  }
 }
 
 export interface HostSettingsScreenProps extends PluginSurfaceProps {
@@ -138,6 +210,7 @@ export interface HostSettingsScreenProps extends PluginSurfaceProps {
   useRpcHook?: typeof useRpc;
   settingsOverride?: any;
   diagnosticsOverride?: GiteaProjectDiagnostic[];
+  identitiesOverride?: GiteaIdentitySummary[];
 }
 
 export function HostSettingsScreen({
@@ -146,6 +219,7 @@ export function HostSettingsScreen({
   useRpcHook,
   settingsOverride,
   diagnosticsOverride,
+  identitiesOverride,
 }: HostSettingsScreenProps) {
   const settings = useSettingsHook
     ? useSettingsHook(giteaSettingsDefinition)
@@ -156,26 +230,46 @@ export function HostSettingsScreen({
       _input: Record<string, never> = {},
     ): Promise<{
       diagnostics: GiteaProjectDiagnostic[];
+      identities?: GiteaIdentitySummary[];
+      teamCollabStatus?: { available: boolean; membersCount: number };
       harnessStatus?: { available: boolean; enabled: boolean; specialistsCount?: number };
     }> => ({
       diagnostics: diagnosticsOverride ?? [],
+      identities: identitiesOverride,
     }),
-    [diagnosticsOverride],
+    [diagnosticsOverride, identitiesOverride],
   );
-  let rpcFunc: (input: Record<string, never>) => Promise<{
-    diagnostics: GiteaProjectDiagnostic[];
-    harnessStatus?: { available: boolean; enabled: boolean; specialistsCount?: number };
-  }> = defaultRpcCaller;
-  try {
-    rpcFunc = (useRpcHook ?? useRpc)(diagnoseProjectsRpc);
-  } catch {
-    rpcFunc = defaultRpcCaller;
-  }
+  const rpcFunc = useOptionalPluginRpc(diagnoseProjectsRpc, useRpcHook, defaultRpcCaller);
   const diagnoseProjects = diagnosticsOverride ? defaultRpcCaller : rpcFunc;
+
+  const defaultSyncRpcCaller = useCallback(
+    async (
+      _input: Record<string, never> = {},
+    ): Promise<{
+      syncedCount: number;
+      identities: GiteaIdentitySummary[];
+    }> => ({
+      syncedCount: (identitiesOverride ?? []).length,
+      identities: identitiesOverride ?? [],
+    }),
+    [identitiesOverride],
+  );
+  const syncIdentities = useOptionalPluginRpc(
+    syncGiteaIdentitiesRpc,
+    useRpcHook,
+    defaultSyncRpcCaller,
+  );
 
   const [diagnostics, setDiagnostics] = useState<GiteaProjectDiagnostic[]>(
     diagnosticsOverride ?? [],
   );
+  const [identities, setIdentities] = useState<GiteaIdentitySummary[]>(identitiesOverride ?? []);
+  const [teamCollabStatus, setTeamCollabStatus] = useState<{
+    available: boolean;
+    membersCount: number;
+  } | null>(null);
+  const [syncingIdentities, setSyncingIdentities] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [harnessStatus, setHarnessStatus] = useState<{
     available: boolean;
     enabled: boolean;
@@ -188,11 +282,33 @@ export function HostSettingsScreen({
     try {
       const res = await diagnoseProjects({});
       setDiagnostics(res?.diagnostics ?? []);
+      if (res?.identities) {
+        setIdentities(res.identities);
+      } else if (identitiesOverride) {
+        setIdentities(identitiesOverride);
+      }
+      setTeamCollabStatus(res?.teamCollabStatus ?? null);
       setHarnessStatus(res?.harnessStatus ?? null);
     } catch {
       // ignore
     }
-  }, [diagnoseProjects, diagnosticsOverride]);
+  }, [diagnoseProjects, diagnosticsOverride, identitiesOverride]);
+
+  const handleSyncIdentities = useCallback(async () => {
+    setSyncingIdentities(true);
+    setSyncError(null);
+    try {
+      const res = await syncIdentities({});
+      if (res?.identities) {
+        setIdentities(res.identities);
+      }
+      await refreshDiagnostics();
+    } catch (err) {
+      setSyncError((err as Error)?.message || "同步本机账号失败");
+    } finally {
+      setSyncingIdentities(false);
+    }
+  }, [syncIdentities, refreshDiagnostics]);
 
   React.useEffect(() => {
     void refreshDiagnostics();
@@ -286,9 +402,11 @@ export function HostSettingsScreen({
       <ProjectDetailSettings
         projectId={selectedProjectId}
         diagnostic={projDiag}
+        identities={identities}
         settings={settings}
         theme={theme}
         onBack={() => setSelectedProjectId(null)}
+        onIdentityChanged={() => void refreshDiagnostics()}
       />
     );
   }
@@ -340,6 +458,46 @@ export function HostSettingsScreen({
               );
             }}
           />
+        </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection title="Gitea 身份与归属 (Gitea Identity)">
+        <SettingsCard>
+          <SettingsSelect
+            label="默认 Gitea 执行身份"
+            hint="用于拉取 Issue、写入 Worktree Git 提交作者、推送分支及创建 PR；凭据统一复用 Team Collab 名录与本机 tea 登录项"
+            value={values.giteaIdentityId || ""}
+            options={buildGiteaIdentityOptions(identities, values.giteaIdentityId, false)}
+            disabled={settings.saving}
+            onValueChange={(val: string) => {
+              void Promise.resolve(
+                settings.save({ ...values, giteaIdentityId: val || undefined }, settings.revision),
+              ).then(() => {
+                void refreshDiagnostics();
+              });
+            }}
+          />
+          <SettingsSwitch
+            label="优先匹配 Issue 指派人 (Assignee)"
+            hint="开启后，若 Issue 指派人匹配本机已启用且具备有效 Token 的成员身份，自动以该成员身份认领、提交与提 PR；未指派或未匹配时回退至默认身份"
+            value={values.preferIssueAssignee ?? true}
+            disabled={settings.saving}
+            onValueChange={(preferIssueAssignee: boolean) => {
+              void Promise.resolve(
+                settings.save({ ...values, preferIssueAssignee }, settings.revision),
+              ).then(() => {
+                void refreshDiagnostics();
+              });
+            }}
+          />
+          <SettingsAction
+            label="成员名录同步"
+            hint={formatIdentityRosterHint(identities, teamCollabStatus)}
+            actionLabel={syncingIdentities ? "同步中..." : "同步本机账号"}
+            disabled={settings.saving || syncingIdentities}
+            onPress={() => void handleSyncIdentities()}
+          />
+          {syncError ? <Text style={{ color: theme.colors.statusDanger }}>{syncError}</Text> : null}
         </SettingsCard>
       </SettingsSection>
 

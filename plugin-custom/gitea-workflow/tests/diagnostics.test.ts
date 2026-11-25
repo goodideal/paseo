@@ -181,4 +181,54 @@ describe("DiagnosticsService", () => {
 
     expect(results.map((r) => r.projectId)).toEqual(["proj-slow", "proj-fast"]);
   });
+
+  it("surfaces activeIdentity and preserves specific identity errorMessage on unauthorized projects", async () => {
+    const mockResolver = {
+      resolveProject: vi.fn().mockResolvedValue({
+        projectId: "proj-unauth",
+        projectName: "My App",
+        host: "git.example.com",
+        baseUrl: "https://git.example.com",
+        token: "",
+        repoOwner: "org",
+        repoName: "repo",
+        authSource: "anonymous",
+        activeIdentity: {
+          id: "bob",
+          source: "team-collab",
+          name: "Bob Wang",
+          email: "bob@example.com",
+        },
+        errorMessage: "所选身份 Bob Wang (@bob) 未配置 Gitea HTTP Token，无法拉取 Issue 或创建 PR",
+      }),
+    };
+    const mockPool = { getClient: vi.fn() };
+    const mockSettings = {
+      isProjectAuthorized: vi.fn().mockReturnValue(true),
+      getReadyLabel: vi.fn().mockReturnValue("agent-ready"),
+      getGiteaIdentityId: vi.fn().mockReturnValue("bob"),
+    };
+
+    const service = new DiagnosticsService(
+      mockResolver as any,
+      mockPool as any,
+      mockSettings as any,
+    );
+    const results = await service.diagnoseProjects([
+      { projectId: "proj-unauth", projectRootPath: "/app" } as any,
+    ]);
+
+    expect(results[0]).toMatchObject({
+      projectId: "proj-unauth",
+      connectionStatus: "unauthorized",
+      authSource: "none",
+      activeIdentity: {
+        id: "bob",
+        source: "team-collab",
+        name: "Bob Wang",
+        email: "bob@example.com",
+      },
+      errorMessage: "所选身份 Bob Wang (@bob) 未配置 Gitea HTTP Token，无法拉取 Issue 或创建 PR",
+    });
+  });
 });
