@@ -40,6 +40,11 @@ describe("all custom plugins end-to-end daemon verification", () => {
       rpc: "gitea.tasks.list",
       input: {},
     },
+    {
+      name: "team-collab",
+      rpc: "team_collab.roster.status.request",
+      input: {},
+    },
   ];
 
   it.each(customPluginCases)(

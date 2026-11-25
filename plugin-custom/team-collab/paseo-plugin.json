@@ -1,0 +1,8 @@
+{
+  "id": "team-collab",
+  "name": "Team Collab",
+  "description": "Multi-developer Git worktree identity isolation, secret credential routing, and per-member usage ledger",
+  "requirements": {
+    "paseo": ">=0.16.0"
+  }
+}
