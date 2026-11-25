@@ -9,6 +9,9 @@ import {
 } from "../shared/config-resolver.js";
 import {
   formatSpecialistRolePrefix,
+  harnessDebugClearRpc,
+  harnessDebugStatusRpc,
+  harnessDebugToggleRpc,
   harnessEffectiveConfigRpc,
   harnessHandoffRpc,
   harnessInspectEnvironmentRpc,
@@ -37,6 +40,7 @@ import type {
   MatrixTier,
 } from "../shared/types.js";
 import { applyAgentModeOption, applyAgentThinkingOption } from "./agent-controls.js";
+import type { HarnessDebugLogger } from "./debug-logger.js";
 import { spawnHarnessSpecialist } from "./handoff-tool.js";
 import {
   exportSpecialistsToDisk,
@@ -81,6 +85,8 @@ export interface RpcHandlerDependencies {
   resolveWorkspaceDir?: WorkspaceDirResolver;
   resolveCompiler?: typeof resolveHostCompiler;
   runTeamCompiler?: CompilerRunner;
+  debugLogger?: HarnessDebugLogger;
+  toggleDebugLogs?: (enabled: boolean) => Promise<void | { enabled: boolean; logFilePath: string }>;
 }
 
 function isReadOnlyHandoffRole(role: string, specialist?: { readonly?: boolean } | null): boolean {
@@ -418,6 +424,7 @@ export function registerHarnessRpcHandlers(
       config: effectiveConfig,
       getLatestMetadata: deps.readLatestMetadata,
       shouldEmitTimeline: deps.emitTimelineTransitionsEnabled,
+      onHandoffLog: (entry) => deps.debugLogger?.record(entry),
     });
 
     return {
@@ -568,6 +575,7 @@ export function registerHarnessRpcHandlers(
         success: true,
         message: `Imported ${importedCount} profiles from ${profilesDir}`,
         importedCount,
+        specialists: importedSpecialists,
       };
     }
 
@@ -676,5 +684,61 @@ export function registerHarnessRpcHandlers(
       await deps.onTeamUpdated?.(result.checkoutRoot);
     }
     return result;
+  });
+
+  // 11. harnessDebugStatusRpc
+  server.handle(harnessDebugStatusRpc, async (input) => {
+    if (!deps.debugLogger) {
+      return {
+        enabled: Boolean(deps.getConfig?.().debugLogs),
+        logFilePath: "",
+        totalLines: 0,
+        fileSizeBytes: 0,
+        rotatedExists: false,
+        entries: [],
+      };
+    }
+    return deps.debugLogger.getStatus(input.limit);
+  });
+
+  // 12. harnessDebugToggleRpc
+  server.handle(harnessDebugToggleRpc, async (input) => {
+    if (deps.toggleDebugLogs) {
+      const toggled = await deps.toggleDebugLogs(input.enabled);
+      if (toggled && typeof toggled === "object" && "enabled" in toggled) {
+        return toggled;
+      }
+      return {
+        enabled: deps.debugLogger ? deps.debugLogger.isEnabled() : input.enabled,
+        logFilePath: deps.debugLogger?.logFilePath ?? "",
+      };
+    }
+    if (deps.debugLogger) {
+      deps.debugLogger.setEnabled(input.enabled);
+      deps.debugLogger.record(
+        {
+          event: "debug.toggled",
+          level: "info",
+          detail: { enabled: input.enabled },
+        },
+        { force: true },
+      );
+      return {
+        enabled: deps.debugLogger.isEnabled(),
+        logFilePath: deps.debugLogger.logFilePath,
+      };
+    }
+    return {
+      enabled: input.enabled,
+      logFilePath: "",
+    };
+  });
+
+  // 13. harnessDebugClearRpc
+  server.handle(harnessDebugClearRpc, async () => {
+    if (!deps.debugLogger) {
+      return { cleared: true, removedBytes: 0 };
+    }
+    return deps.debugLogger.clear();
   });
 }

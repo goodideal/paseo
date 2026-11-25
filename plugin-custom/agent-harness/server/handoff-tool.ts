@@ -32,6 +32,7 @@ import type {
   HarnessTransitionKind,
   MatrixTier,
 } from "../shared/types.js";
+import type { HarnessDebugLogInput } from "./debug-logger.js";
 import { emitHarnessTimelineTransition } from "./timeline-emitter.js";
 
 const sdkHandoffInFlightParents = new Map<string, number>();
@@ -74,6 +75,7 @@ export interface SpawnSpecialistParams {
     childAgentId?: string | null;
     childAgentTitle?: string | null;
   }) => Promise<void>;
+  onHandoffLog?: (entry: HarnessDebugLogInput) => void;
 }
 
 export interface SpawnSpecialistResult {
@@ -236,6 +238,27 @@ export async function spawnHarnessSpecialist(
   const turnNumber = parentMeta?.turnCount ?? 0;
   const targetPhase = tierToPhase(targetTier, targetRole, config);
 
+  params.onHandoffLog?.({
+    event: "handoff.spawn",
+    level: "info",
+    agentId: childAgentId,
+    role: targetRole,
+    phase: targetPhase,
+    provider: normalizedProvider,
+    model: targetModel,
+    detail: {
+      source: "sdk_handoff",
+      parentAgentId,
+      parentProvider,
+      childAgentId,
+      childTitle: normalizedTitle,
+      targetTier,
+      execModeId,
+      thinkingOptionId: effectiveThinkingOptionId ?? null,
+      waitForCompletion: Boolean(waitForCompletion),
+    },
+  });
+
   const timelineEnabled = !shouldEmitTimeline || shouldEmitTimeline();
   if (timelineEnabled && parentHandle) {
     try {
@@ -342,6 +365,7 @@ export function createHarnessHandoffTool(options: {
       childAgentTitle?: string | null;
     },
   ) => Promise<void>;
+  onHandoffLog?: (entry: HarnessDebugLogInput) => void;
 }): AgentToolDefinition {
   const currentConfig = options.getConfig ? options.getConfig() : null;
   const enabledHandoffIds = currentConfig
@@ -374,6 +398,7 @@ export function createHarnessHandoffTool(options: {
         emitTimelineEvent: options.emitTimelineEvent
           ? (ev) => options.emitTimelineEvent!(agent.id, ev)
           : undefined,
+        onHandoffLog: options.onHandoffLog,
       });
 
       return {

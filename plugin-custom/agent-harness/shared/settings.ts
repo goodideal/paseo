@@ -32,6 +32,9 @@ import {
   LEGACY_V5_UI_ALLOWED_MCP,
   LEGACY_V5_UI_MATCH_PATTERNS,
   LEGACY_V6_SPECIALIST_PRIMARY_SKILLS,
+  LEGACY_V7_BACKEND_MATCH_PATTERNS,
+  LEGACY_V7_PM_PRIMARY_SKILLS,
+  LEGACY_V7_UI_MATCH_PATTERNS,
 } from "./presets.js";
 
 const LEGACY_V5_AFFIRMATIVE_CONFIRM_WORDS: readonly string[] = [
@@ -271,7 +274,122 @@ export type AgentHarnessSettings = z.infer<typeof AgentHarnessSettingsSchema>;
 export const DEFAULT_AGENT_HARNESS_SETTINGS: AgentHarnessSettings =
   AgentHarnessSettingsSchema.parse({});
 
-export const SETTINGS_SCHEMA_VERSION = 7 as const;
+export const SETTINGS_SCHEMA_VERSION = 8 as const;
+
+function migrateCodexSliceToV8(roleId: string, rawSlice: unknown): string | undefined {
+  if (typeof rawSlice !== "string") {
+    return undefined;
+  }
+  const slice = rawSlice.trim();
+  if (slice === "codex.yaml") {
+    switch (roleId) {
+      case "general":
+        return "general.yaml";
+      case "architect":
+        return "architect.yaml";
+      case "qa":
+        return "qa.yaml";
+      case "scout":
+        return "scout.yaml";
+      case "ui":
+        return "ui.yaml";
+      case "backend":
+        return "backend.yaml";
+      case "pm":
+        return "pm.yaml";
+      case "review":
+        return "review.yaml";
+      default:
+        return "general.yaml";
+    }
+  }
+  if (roleId === "architect" && slice === "backend.yaml") {
+    return "architect.yaml";
+  }
+  if (roleId === "qa" && slice === "ui.yaml") {
+    return "qa.yaml";
+  }
+  if (roleId === "scout" && slice === "pm.yaml") {
+    return "scout.yaml";
+  }
+  return undefined;
+}
+
+function stripBareTokenFromRegex(pattern: string, token: string): string {
+  let out = pattern;
+  out = out.replace(new RegExp(`\\|${token}(?=\\||\\)|$)`, "gi"), "");
+  out = out.replace(new RegExp(`(^|\\(\\?:|\\(|\\|)${token}\\|`, "gi"), "$1");
+  if (new RegExp(`^(?:\\\\b)?${token}(?:\\\\b)?$`, "i").test(out.trim())) {
+    return "";
+  }
+  if (/^(?:\\b)?\(\?:\)(?:\\b)?$/.test(out.trim())) {
+    return "";
+  }
+  try {
+    new RegExp(out, "i");
+    return out;
+  } catch {
+    return pattern;
+  }
+}
+
+function upgradeUiMatchPatternsToV8(
+  rawPatterns: readonly string[],
+  builtinUiPatterns: readonly string[],
+): string[] {
+  const mapped: string[] = [];
+  let replacedLegacyEn = false;
+  let replacedLegacyZh = false;
+
+  for (const pat of rawPatterns) {
+    if (pat === LEGACY_V7_UI_MATCH_PATTERNS[0] || pat === LEGACY_V5_UI_MATCH_PATTERNS[0]) {
+      if (!replacedLegacyEn && builtinUiPatterns[0]) {
+        mapped.push(builtinUiPatterns[0]);
+        replacedLegacyEn = true;
+      }
+      continue;
+    }
+    if (pat === LEGACY_V7_UI_MATCH_PATTERNS[1] || pat === LEGACY_V5_UI_MATCH_PATTERNS[1]) {
+      if (!replacedLegacyZh && builtinUiPatterns[1]) {
+        mapped.push(builtinUiPatterns[1]);
+        replacedLegacyZh = true;
+      }
+      continue;
+    }
+    mapped.push(pat);
+  }
+
+  if (!replacedLegacyEn && builtinUiPatterns[0] && !mapped.includes(builtinUiPatterns[0])) {
+    // Only append missing new UI terms if user had totally custom patterns without legacy defaults
+    const combined = mapped.join("\n");
+    if (!/\bmodal\b/i.test(combined) || !/颜色/.test(combined)) {
+      mapped.push(builtinUiPatterns[0], builtinUiPatterns[1]);
+    }
+  }
+
+  return Array.from(new Set(mapped.filter(Boolean)));
+}
+
+function upgradeBackendMatchPatternsToV8(
+  rawPatterns: readonly string[],
+  builtinBackendPatterns: readonly string[],
+): string[] {
+  const result: string[] = [];
+  for (const pat of rawPatterns) {
+    if (pat === LEGACY_V7_BACKEND_MATCH_PATTERNS[0]) {
+      if (builtinBackendPatterns[0]) {
+        result.push(builtinBackendPatterns[0]);
+      }
+      continue;
+    }
+    let cleaned = stripBareTokenFromRegex(pat, "worktree");
+    cleaned = cleaned ? stripBareTokenFromRegex(cleaned, "provider") : "";
+    if (cleaned.trim()) {
+      result.push(cleaned);
+    }
+  }
+  return Array.from(new Set(result));
+}
 
 function areStringArraysEqual(a: unknown, b: readonly string[]): boolean {
   return Array.isArray(a) && a.length === b.length && a.every((val, idx) => val === b[idx]);
@@ -772,6 +890,104 @@ function migrateLegacySettings(rawInput: Record<string, unknown>, fromVersion: n
         } else if (rawSkills !== null) {
           spec.primarySkills = normalizePrimarySkills(rawSkills);
         }
+        return spec;
+      });
+    }
+  }
+
+  if (fromVersion < 8) {
+    const builtinSpecById = new Map(BUILTIN_SPECIALISTS.map((s) => [s.id, s]));
+    const builtinUi = builtinSpecById.get("ui");
+    const builtinBackend = builtinSpecById.get("backend");
+    const builtinPm = builtinSpecById.get("pm");
+
+    if (Array.isArray(next.specialists)) {
+      next.specialists = next.specialists.map((entry) => {
+        if (!entry || typeof entry !== "object") return entry;
+        const spec = { ...(entry as Record<string, unknown>) };
+        const id = typeof spec.id === "string" ? spec.id : "";
+        const isBuiltin = spec.builtIn !== false && builtinSpecById.has(id);
+
+        // 1. Split codex.yaml & migrate builtin slices (general/architect/qa/scout)
+        const nextSlice =
+          typeof spec.lazyToolSlice === "string" &&
+          (spec.lazyToolSlice.trim() === "codex.yaml" || isBuiltin)
+            ? migrateCodexSliceToV8(id, spec.lazyToolSlice)
+            : undefined;
+        if (nextSlice !== undefined) {
+          spec.lazyToolSlice = nextSlice;
+        }
+
+        // 2. Populate scout.allowedMcpServers if empty
+        if (
+          id === "scout" &&
+          spec.builtIn !== false &&
+          (!Array.isArray(spec.allowedMcpServers) || spec.allowedMcpServers.length === 0)
+        ) {
+          spec.allowedMcpServers = ["claude-mem"];
+        }
+
+        // 3. Unify ui & pm skillsRoot from vendor paths to ~/.agents/skills
+        if (
+          id === "ui" &&
+          typeof spec.skillsRoot === "string" &&
+          spec.skillsRoot.trim() ===
+            "/Users/jerry/.agents/vendor/ui-ux-pro-max-skill/.claude/skills"
+        ) {
+          spec.skillsRoot = "/Users/jerry/.agents/skills";
+        }
+        if (
+          id === "pm" &&
+          typeof spec.skillsRoot === "string" &&
+          spec.skillsRoot.trim() === "/Users/jerry/.agents/vendor/pm-skills/skills"
+        ) {
+          spec.skillsRoot = "/Users/jerry/.agents/skills";
+        }
+
+        // 4. Normalize pm-* primarySkills (and upgrade untouched v7 pm skill list order)
+        const rawSkills = Array.isArray(spec.primarySkills)
+          ? spec.primarySkills.filter((item): item is string => typeof item === "string")
+          : null;
+        if (rawSkills !== null) {
+          if (
+            id === "pm" &&
+            spec.builtIn !== false &&
+            builtinPm &&
+            areStringArraysEqual(rawSkills, LEGACY_V7_PM_PRIMARY_SKILLS)
+          ) {
+            spec.primarySkills = [...builtinPm.primarySkills];
+          } else {
+            spec.primarySkills = normalizePrimarySkills(rawSkills);
+          }
+        }
+
+        // 5. Upgrade ui / backend matchPatterns while preserving user custom regexes
+        if (
+          id === "ui" &&
+          spec.builtIn !== false &&
+          builtinUi &&
+          Array.isArray(spec.matchPatterns)
+        ) {
+          const patterns = spec.matchPatterns.filter(
+            (item): item is string => typeof item === "string",
+          );
+          spec.matchPatterns = upgradeUiMatchPatternsToV8(patterns, builtinUi.matchPatterns);
+        }
+        if (
+          id === "backend" &&
+          spec.builtIn !== false &&
+          builtinBackend &&
+          Array.isArray(spec.matchPatterns)
+        ) {
+          const patterns = spec.matchPatterns.filter(
+            (item): item is string => typeof item === "string",
+          );
+          spec.matchPatterns = upgradeBackendMatchPatternsToV8(
+            patterns,
+            builtinBackend.matchPatterns,
+          );
+        }
+
         return spec;
       });
     }

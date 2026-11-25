@@ -1,9 +1,23 @@
-import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import contribute from "../index.server.js";
+
+const trackedDataDirs = new Set<string>();
+
+afterEach(() => {
+  for (const dir of Array.from(trackedDataDirs)) {
+    trackedDataDirs.delete(dir);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 function setupServer() {
   let workspaceHook: any = null;
   let agentHook: any = null;
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-harness-ws-test-"));
+  trackedDataDirs.add(dataDir);
   const mockServer: any = {
     registerSettings: vi.fn().mockReturnValue({
       read: vi.fn().mockResolvedValue({
@@ -19,7 +33,7 @@ function setupServer() {
       return () => {};
     }),
   };
-  contribute(mockServer);
+  contribute(mockServer, { dataDir, disableAutoDiskSync: true });
   return { workspaceHook, agentHook };
 }
 

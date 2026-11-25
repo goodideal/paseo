@@ -1444,7 +1444,21 @@ export function WorkspaceTeamEditor({
                         <SettingsSelect
                           label={`${roleId} lazy-tool slice`}
                           value={binding.lazyToolSlice ?? ""}
-                          options={sliceOptions}
+                          options={
+                            binding.lazyToolSlice &&
+                            !sliceOptions.some((o) => o.value === binding.lazyToolSlice)
+                              ? [
+                                  ...sliceOptions,
+                                  {
+                                    label:
+                                      binding.lazyToolSlice === "codex.yaml"
+                                        ? "codex.yaml (legacy)"
+                                        : binding.lazyToolSlice,
+                                    value: binding.lazyToolSlice,
+                                  },
+                                ]
+                              : sliceOptions
+                          }
                           onValueChange={(val) =>
                             handleUpdateBinding(roleId, { lazyToolSlice: val || undefined })
                           }

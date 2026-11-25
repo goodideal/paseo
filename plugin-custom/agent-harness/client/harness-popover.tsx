@@ -1,10 +1,11 @@
-import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { View, Text, Pressable, StyleSheet } from "react-native";
 import type { PluginButtonContentProps } from "@getpaseo/plugin/client";
 import { useAgent, useComposers, useRpc, useSettings } from "@getpaseo/plugin/client";
 import { Icon, useToast } from "@getpaseo/plugin/client/ui";
 import { normalizeTierAlias } from "../shared/config-resolver.js";
 import {
+  harnessDebugToggleRpc,
   harnessEffectiveConfigRpc,
   harnessHandoffRpc,
   harnessSwitchTierRpc,
@@ -79,6 +80,34 @@ function resolveModeGateBadgeLabel(
   return null;
 }
 
+function formatTierWithThinking(tierLabel: string, thinking?: string | null): string {
+  if (thinking) {
+    return `${tierLabel} · ${thinking}`;
+  }
+  return tierLabel;
+}
+
+function resolveNextTurnDisplay(
+  isBypassedSession: boolean,
+  currentTier: MatrixTier,
+  currentThinking?: string | null,
+): string {
+  if (isBypassedSession) {
+    return "Native";
+  }
+  return formatTierWithThinking(capitalize(currentTier), currentThinking);
+}
+
+function resolveLastBilledDisplay(
+  lastBilledTier: MatrixTier | null,
+  lastBilledThinking?: string | null,
+): string {
+  if (!lastBilledTier) {
+    return "—";
+  }
+  return formatTierWithThinking(capitalize(lastBilledTier), lastBilledThinking);
+}
+
 function chunkIntoPairs<T>(items: readonly T[]): Array<readonly [T, T | null]> {
   const pairs: Array<readonly [T, T | null]> = [];
   for (let i = 0; i < items.length; i += 2) {
@@ -108,7 +137,16 @@ export const HarnessPopover = memo(function HarnessPopover({
   const switchTierRpc = useRpc(harnessSwitchTierRpc);
   const handoffRpc = useRpc(harnessHandoffRpc);
   const effectiveConfigRpc = useRpc(harnessEffectiveConfigRpc);
+  const debugToggleRpc = useRpc(harnessDebugToggleRpc);
   const settings = useSettings(agentHarnessSettings);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const agent = useAgent(agentId, (a) => ({
     status: a.status,
@@ -207,6 +245,19 @@ export const HarnessPopover = memo(function HarnessPopover({
 
   const [isSwitching, setIsSwitching] = useState(false);
   const [isHandoffRunning, setIsHandoffRunning] = useState(false);
+  const settingsDebugEnabled =
+    settings.status === "ready" ? Boolean(settings.values?.debugLogs) : false;
+  const [localDebugEnabled, setLocalDebugEnabled] = useState<boolean>(settingsDebugEnabled);
+  const [isDebugToggling, setIsDebugToggling] = useState(false);
+  const debugToggleLockRef = useRef(false);
+  const [settingsHovered, setSettingsHovered] = useState(false);
+  const [debugHovered, setDebugHovered] = useState(false);
+
+  useEffect(() => {
+    if (settings.status === "ready") {
+      setLocalDebugEnabled(settingsDebugEnabled);
+    }
+  }, [settings.status, settingsDebugEnabled]);
 
   const rawTier: MatrixTier = meta?.currentTier ?? "standard";
   const currentTier: MatrixTier = normalizeTierAlias(rawTier);
@@ -281,6 +332,49 @@ export const HarnessPopover = memo(function HarnessPopover({
     [agentId, close, handoffRpc, isHandoffRunning, toast, workspaceId],
   );
 
+  // Handle persistent Debug Trace quick toggle
+  const handleToggleDebug = useCallback(async () => {
+    if (debugToggleLockRef.current || isDebugToggling) return;
+    if (settings.status !== "ready") {
+      toast.error("Agent Harness settings are not ready");
+      return;
+    }
+    if (settings.saving) return;
+
+    const nextEnabled = !localDebugEnabled;
+    debugToggleLockRef.current = true;
+    setIsDebugToggling(true);
+    try {
+      if (typeof settings.save === "function") {
+        const ok = await settings.save(
+          { ...settings.values, debugLogs: nextEnabled },
+          settings.revision,
+        );
+        if (ok === false) {
+          toast.error(settings.saveError || "Failed to save debug trace setting");
+          return;
+        }
+      }
+      const res = await debugToggleRpc({ enabled: nextEnabled });
+      const confirmedEnabled = typeof res?.enabled === "boolean" ? res.enabled : nextEnabled;
+      if (isMountedRef.current) {
+        setLocalDebugEnabled(confirmedEnabled);
+      }
+      toast.show(confirmedEnabled ? "Debug trace enabled" : "Debug trace disabled", {
+        variant: "success",
+      });
+    } catch (err) {
+      toast.error(
+        `Failed to toggle debug trace: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      debugToggleLockRef.current = false;
+      if (isMountedRef.current) {
+        setIsDebugToggling(false);
+      }
+    }
+  }, [debugToggleRpc, isDebugToggling, localDebugEnabled, settings, toast]);
+
   const pillIcon = useMemo(() => resolveHarnessPillIcon(meta), [meta]);
   const specialistRows = useMemo(() => chunkIntoPairs(handoffSpecialists), [handoffSpecialists]);
 
@@ -338,8 +432,8 @@ export const HarnessPopover = memo(function HarnessPopover({
         },
         phaseBadge: {
           backgroundColor: theme.colors.surface2,
-          paddingHorizontal: 5,
-          paddingVertical: 1,
+          paddingHorizontal: 8,
+          paddingVertical: 4,
           borderRadius: 4,
           borderWidth: StyleSheet.hairlineWidth,
           borderColor: theme.colors.border,
@@ -565,9 +659,10 @@ export const HarnessPopover = memo(function HarnessPopover({
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "center",
-          gap: 5,
-          minHeight: layout.compact ? 40 : 32,
-          paddingVertical: layout.compact ? 9 : 6,
+          gap: 6,
+          minHeight: layout.compact ? 44 : 32,
+          paddingHorizontal: 10,
+          paddingVertical: layout.compact ? 8 : 6,
           borderRadius: 6,
           backgroundColor: theme.colors.surface1,
           borderWidth: 1,
@@ -577,6 +672,55 @@ export const HarnessPopover = memo(function HarnessPopover({
           fontSize: 11,
           fontWeight: "500",
           color: theme.colors.foregroundMuted,
+          flexShrink: 1,
+        },
+        footerRow: {
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 8,
+        },
+        footerLinkWrap: {
+          position: "relative",
+          flex: 1,
+          minWidth: 0,
+        },
+        debugButtonWrap: {
+          position: "relative",
+          flexShrink: 0,
+        },
+        debugButton: {
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 6,
+          minHeight: layout.compact ? 44 : 32,
+          paddingHorizontal: 10,
+          paddingVertical: layout.compact ? 8 : 6,
+          borderRadius: 6,
+          backgroundColor: theme.colors.surface0,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+        },
+        debugButtonActive: {
+          backgroundColor: theme.colors.surface2,
+          borderColor: theme.colors.accent ?? theme.colors.border,
+        },
+        debugDot: {
+          width: 6,
+          height: 6,
+          borderRadius: 3,
+          backgroundColor: theme.colors.foregroundMuted,
+        },
+        debugDotActive: {
+          backgroundColor: theme.colors.accent ?? theme.colors.foreground,
+        },
+        debugButtonText: {
+          fontSize: 11,
+          fontWeight: "500",
+          color: theme.colors.foregroundMuted,
+        },
+        debugButtonTextActive: {
+          color: theme.colors.accent ?? theme.colors.foreground,
         },
       }),
     [theme, layout.compact, layout.platform],
@@ -587,6 +731,15 @@ export const HarnessPopover = memo(function HarnessPopover({
   const isDesignPhase = meta?.phase === "design";
   const phaseBadgeText = resolvePhaseBadgeText(meta, isBypassedSession);
   const modeGateLabel = resolveModeGateBadgeLabel(isPlanMode, isBypassedSession, currentTier);
+  const nextTurnDisplay = resolveNextTurnDisplay(
+    isBypassedSession,
+    currentTier,
+    meta?.currentThinking,
+  );
+  const lastBilledDisplay = resolveLastBilledDisplay(lastBilledTier, meta?.lastBilledThinking);
+  const isDebugButtonDisabled =
+    settings.status !== "ready" || Boolean(settings.saving) || isDebugToggling;
+  const headerSettingsIconSize = layout.compact ? 15 : 12;
 
   return (
     <View style={styles.container}>
@@ -615,7 +768,7 @@ export const HarnessPopover = memo(function HarnessPopover({
           >
             <Icon
               name="Settings"
-              size={layout.compact ? 15 : 12}
+              size={headerSettingsIconSize}
               color={theme.colors.foregroundMuted}
             />
           </Pressable>
@@ -629,11 +782,7 @@ export const HarnessPopover = memo(function HarnessPopover({
           <View style={styles.metricCol}>
             <Text style={styles.metricLabel}>Next Turn</Text>
             <View style={styles.metricTierRow}>
-              <Text style={styles.metricTier}>
-                {isBypassedSession
-                  ? "Native"
-                  : `${capitalize(currentTier)}${meta?.currentThinking ? ` · ${meta.currentThinking}` : ""}`}
-              </Text>
+              <Text style={styles.metricTier}>{nextTurnDisplay}</Text>
             </View>
             <Text style={styles.metricModel} numberOfLines={1}>
               {meta?.currentModel ?? agent?.model ?? "—"}
@@ -649,11 +798,7 @@ export const HarnessPopover = memo(function HarnessPopover({
           <View style={styles.metricCol}>
             <Text style={styles.metricLabel}>Last Billed</Text>
             <View style={styles.metricTierRow}>
-              <Text style={styles.metricTier}>
-                {lastBilledTier
-                  ? `${capitalize(lastBilledTier)}${meta?.lastBilledThinking ? ` · ${meta.lastBilledThinking}` : ""}`
-                  : "—"}
-              </Text>
+              <Text style={styles.metricTier}>{lastBilledDisplay}</Text>
             </View>
             <Text style={styles.metricModel} numberOfLines={1}>
               {meta?.lastBilledModel ?? "Not billed yet"}
@@ -804,45 +949,85 @@ export const HarnessPopover = memo(function HarnessPopover({
         ))}
       </View>
 
-      {/* Open Workspace Team & Settings Footer */}
-      {[
-        onOpenTeamEditor
-          ? {
-              key: "workspace-team",
-              label: "Configure workspace team",
-              accessibilityLabel: "Configure workspace team",
-              icon: "Users",
-              iconColor: theme.colors.accent,
-              onPress: onOpenTeamEditor,
-            }
-          : null,
-        onOpenSettings
-          ? {
-              key: "harness-settings",
-              label: "Configure Harness Settings",
-              accessibilityLabel: "Open Harness Settings",
-              icon: "Settings",
-              iconColor: theme.colors.foregroundMuted,
-              onPress: onOpenSettings,
-            }
-          : null,
-      ]
-        .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
-        .map((entry) => (
+      {/* Open Workspace Team & Settings + Debug Footer */}
+      {onOpenTeamEditor ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Configure workspace team"
+          onPress={() => runAfterClose(onOpenTeamEditor)}
+          style={({ pressed }) => [
+            styles.settingsLink,
+            pressed && { opacity: 0.7, backgroundColor: theme.colors.surface2 },
+          ]}
+        >
+          <Icon name="Users" size={12} color={theme.colors.accent} />
+          <Text style={styles.settingsLinkText} numberOfLines={1}>
+            Configure workspace team
+          </Text>
+        </Pressable>
+      ) : null}
+
+      <View style={styles.footerRow}>
+        {onOpenSettings ? (
+          <View
+            style={styles.footerLinkWrap}
+            onPointerEnter={() => setSettingsHovered(true)}
+            onPointerLeave={() => setSettingsHovered(false)}
+          >
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Open Harness Settings"
+              onPress={() => runAfterClose(onOpenSettings)}
+              style={({ pressed }) => [
+                styles.settingsLink,
+                settingsHovered && { backgroundColor: theme.colors.surface2 },
+                pressed && { opacity: 0.7, backgroundColor: theme.colors.surface2 },
+              ]}
+            >
+              <Icon name="Settings" size={12} color={theme.colors.foregroundMuted} />
+              <Text style={styles.settingsLinkText} numberOfLines={1}>
+                Configure Harness Settings
+              </Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        <View
+          style={onOpenSettings ? styles.debugButtonWrap : styles.footerLinkWrap}
+          onPointerEnter={() => setDebugHovered(true)}
+          onPointerLeave={() => setDebugHovered(false)}
+        >
           <Pressable
-            key={entry.key}
             accessibilityRole="button"
-            accessibilityLabel={entry.accessibilityLabel}
-            onPress={() => runAfterClose(entry.onPress)}
+            accessibilityLabel={localDebugEnabled ? "Debug: ON" : "Debug: OFF"}
+            accessibilityHint="Toggle persistent agent harness debug trace"
+            accessibilityState={{
+              checked: localDebugEnabled,
+              disabled: isDebugButtonDisabled,
+              busy: isDebugToggling,
+            }}
+            disabled={isDebugButtonDisabled}
+            onPress={() => void handleToggleDebug()}
             style={({ pressed }) => [
-              styles.settingsLink,
-              pressed && { opacity: 0.7, backgroundColor: theme.colors.surface2 },
+              styles.debugButton,
+              localDebugEnabled && styles.debugButtonActive,
+              debugHovered &&
+                !isDebugButtonDisabled &&
+                !localDebugEnabled && { backgroundColor: theme.colors.surface1 },
+              isDebugButtonDisabled && { opacity: 0.5 },
+              pressed && !isDebugButtonDisabled && { opacity: 0.7 },
             ]}
           >
-            <Icon name={entry.icon} size={12} color={entry.iconColor} />
-            <Text style={styles.settingsLinkText}>{entry.label}</Text>
+            <View style={[styles.debugDot, localDebugEnabled && styles.debugDotActive]} />
+            <Text
+              style={[styles.debugButtonText, localDebugEnabled && styles.debugButtonTextActive]}
+              numberOfLines={1}
+            >
+              {localDebugEnabled ? "Debug: ON" : "Debug: OFF"}
+            </Text>
           </Pressable>
-        ))}
+        </View>
+      </View>
     </View>
   );
 });

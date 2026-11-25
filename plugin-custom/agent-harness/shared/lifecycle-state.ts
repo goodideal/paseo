@@ -19,16 +19,32 @@ import {
 } from "./types.js";
 
 const WRITE_TOOL_NAME_PATTERN =
-  /^(?:edit|multiedit|write|notebookedit|apply_patch|write_file|edit_file|replace_in_files|replace_symbol_body|replace_content|patch)$/i;
+  /^(?:edit|multiedit|write|notebookedit|apply_patch|write_file|edit_file|write_to_file|replace_file_content|multi_replace_file_content|replace_in_files|replace_symbol_body|replace_content|patch)$/i;
 
 const PASEO_CREATE_AGENT_TOOL_PATTERN =
   /^(?:paseo\.create_agent|mcp_+paseo_+create_agent|paseo__create_agent)$/i;
 
+const EXIT_PLAN_MODE_TOOL_PATTERN = /^(?:exit_plan_mode|exitplanmode)$/i;
+const INVOKE_SUBAGENT_TOOL_PATTERN = /^invoke_subagent$/i;
+
+const READONLY_SUBAGENT_TYPES = new Set([
+  "research",
+  "spec-critic",
+  "code-reviewer",
+  "qa-verifier",
+  "explore",
+  "plan",
+  "architect",
+]);
+
 const DEFAULT_DOC_WHITELIST_PATTERN = /\.(?:md|mdx|txt)$/i;
-const OPENSPEC_WHITELIST_PATTERN = /(?:^|[\\/])openspec[\\/]/i;
+const OPENSPEC_WHITELIST_PATTERN = /(?:^|\/)openspec\//i;
+const ANTIGRAVITY_BRAIN_WHITELIST_PATTERN =
+  /^(?:\/Users\/[^/]+|\/home\/[^/]+|~)\/\.gemini\/antigravity-cli\/brain\/.+/;
 
 const NEGATIVE_DISCUSSION_PATTERNS: RegExp[] = [
   /不要改|先别写|别改代码|别改|先不要|再想想|再对比|再讨论|还有其他方案|还有别的方法|不急着改|暂不修改/i,
+  /\b(?:no|not|don't|dont|wait|stop|hold\s+on|never|cancel)\b/i,
 ];
 
 const EXPLICIT_EXEC_PATTERNS: RegExp[] = [
@@ -44,15 +60,39 @@ const EXPLICIT_EXEC_PATTERNS: RegExp[] = [
 
 const SHORT_AFFIRMATIVE_EXEC_WORDS = new Set([
   "yes",
+  "yes, go",
+  "yes go",
+  "yes please",
+  "yes, please",
+  "yes proceed",
+  "yes, proceed",
+  "yes do it",
   "yes, continue",
   "yes continue",
   "continue",
   "ok",
+  "ok go",
+  "ok, go",
+  "ok proceed",
+  "ok, proceed",
+  "ok please",
+  "ok, please",
   "ok, continue",
   "ok continue",
   "okay",
+  "okay go",
+  "okay, go",
+  "okay proceed",
+  "okay, proceed",
   "okay, continue",
   "okay continue",
+  "sure",
+  "sure go",
+  "sure, go",
+  "sure proceed",
+  "sure, proceed",
+  "sure please",
+  "sure, please",
   "sure, continue",
   "sure continue",
   "go",
@@ -60,16 +100,25 @@ const SHORT_AFFIRMATIVE_EXEC_WORDS = new Set([
   "let's go",
   "lets go",
   "proceed",
+  "please proceed",
+  "please go",
   "do it",
   "ship it",
   "sounds good",
+  "sounds good, go",
+  "sounds good go",
+  "sounds good, proceed",
   "lgtm",
+  "lgtm, go",
+  "lgtm go",
   "好",
   "好的",
   "好，继续",
   "好的，继续",
   "好，开始",
   "好的，开始",
+  "好，开始执行",
+  "好的，开始执行",
   "好开始",
   "好的开始",
   "继续",
@@ -80,13 +129,28 @@ const SHORT_AFFIRMATIVE_EXEC_WORDS = new Set([
   "写吧",
   "开始",
   "开始吧",
+  "开始执行",
+  "动手吧",
   "可以",
   "可以，开始吧",
+  "可以，动手",
+  "可以动手",
+  "可以，继续",
+  "可以继续",
+  "同意，继续",
+  "同意继续",
+  "同意，开始",
+  "同意开始",
   "好的继续",
   "好继续",
   "行",
   "行，改吧",
+  "行，开始",
+  "行，继续",
   "行改吧",
+  "没问题",
+  "没问题，开始",
+  "没问题，继续",
   "可以开始吧",
   "好改吧",
   "好的改吧",
@@ -115,6 +179,9 @@ export function hasShortAffirmativeExecConfirmation(
   }
   const trimmed = userText.trim();
   if (trimmed.length > 32) {
+    return false;
+  }
+  if (/[?？]\s*$/.test(trimmed)) {
     return false;
   }
   for (const pattern of NEGATIVE_DISCUSSION_PATTERNS) {
@@ -331,87 +398,96 @@ function isExemptDocPath(p: string, docPatternRegex?: RegExp | null): boolean {
   if (!trimmed) {
     return false;
   }
-  if (docPatternRegex && docPatternRegex.test(trimmed)) {
+  const slashNormalized = trimmed.replace(/\\/g, "/");
+  if (slashNormalized.split("/").includes("..")) {
+    return false;
+  }
+  const normalized = slashNormalized.replace(/\/+/g, "/");
+  if (docPatternRegex && docPatternRegex.test(normalized)) {
     return true;
   }
-  return DEFAULT_DOC_WHITELIST_PATTERN.test(trimmed) || OPENSPEC_WHITELIST_PATTERN.test(trimmed);
+  return (
+    DEFAULT_DOC_WHITELIST_PATTERN.test(normalized) ||
+    OPENSPEC_WHITELIST_PATTERN.test(normalized) ||
+    ANTIGRAVITY_BRAIN_WHITELIST_PATTERN.test(normalized)
+  );
 }
 
-function extractPathsFromTool(item: Record<string, unknown>): string[] {
-  const paths: string[] = [];
-  const detail =
-    typeof item.detail === "object" && item.detail !== null
-      ? (item.detail as Record<string, unknown>)
-      : null;
-  if (detail) {
-    if (typeof detail.filePath === "string") {
-      paths.push(detail.filePath);
-    }
-    if (typeof detail.path === "string") {
-      paths.push(detail.path);
-    }
-  }
+const PATH_STRING_KEYS = new Set([
+  "file_path",
+  "filepath",
+  "path",
+  "relative_path",
+  "relativepath",
+  "target_file",
+  "targetfile",
+  "destination",
+  "dest",
+  "target_dir",
+  "targetdir",
+  "target_path",
+  "targetpath",
+  "file",
+]);
 
-  let input =
-    typeof item.input === "object" && item.input !== null
-      ? (item.input as Record<string, unknown>)
-      : null;
-  if (!input && typeof item.input === "string") {
-    try {
-      const parsed = JSON.parse(item.input) as unknown;
-      if (typeof parsed === "object" && parsed !== null) {
-        input = parsed as Record<string, unknown>;
-      }
-    } catch {
-      // Ignore unparseable JSON string input
-    }
-  }
+const PATH_ARRAY_KEYS = new Set([
+  "paths",
+  "files",
+  "target_files",
+  "targetfiles",
+  "file_paths",
+  "filepaths",
+]);
 
-  let args =
-    typeof item.args === "object" && item.args !== null
-      ? (item.args as Record<string, unknown>)
-      : null;
-  if (!args && typeof item.args === "string") {
-    try {
-      const parsed = JSON.parse(item.args) as unknown;
-      if (typeof parsed === "object" && parsed !== null) {
-        args = parsed as Record<string, unknown>;
+function parseJsonRecord(val: unknown): Record<string, unknown> | null {
+  if (typeof val === "object" && val !== null && !Array.isArray(val)) {
+    return val as Record<string, unknown>;
+  }
+  if (typeof val === "string") {
+    const trimmed = val.trim();
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+          return parsed as Record<string, unknown>;
+        }
+      } catch {
+        return null;
       }
-    } catch {
-      // Ignore unparseable JSON string args
     }
   }
-  if (!args && typeof item.arguments === "object" && item.arguments !== null) {
-    args = item.arguments as Record<string, unknown>;
-  }
-  if (!args && typeof item.arguments === "string") {
-    try {
-      const parsed = JSON.parse(item.arguments) as unknown;
-      if (typeof parsed === "object" && parsed !== null) {
-        args = parsed as Record<string, unknown>;
-      }
-    } catch {
-      // Ignore unparseable JSON string arguments
-    }
-  }
+  return null;
+}
 
-  for (const src of [input, args]) {
-    if (!src) {
-      continue;
-    }
-    for (const key of ["file_path", "path", "filePath", "relative_path", "target_file"]) {
-      if (typeof src[key] === "string") {
-        paths.push(src[key] as string);
-      }
-    }
-    if (Array.isArray(src.paths)) {
-      for (const p of src.paths) {
-        if (typeof p === "string") {
-          paths.push(p);
+function collectPathsFromRecord(src: Record<string, unknown> | null, out: string[]): void {
+  if (!src) {
+    return;
+  }
+  for (const [key, val] of Object.entries(src)) {
+    const lowerKey = key.toLowerCase();
+    if (typeof val === "string" && PATH_STRING_KEYS.has(lowerKey) && val.trim()) {
+      out.push(val);
+    } else if (Array.isArray(val) && PATH_ARRAY_KEYS.has(lowerKey)) {
+      for (const item of val) {
+        if (typeof item === "string" && item.trim()) {
+          out.push(item);
         }
       }
     }
   }
+}
+
+function extractPathsFromTool(item: Record<string, unknown>): string[] {
+  const paths: string[] = [];
+  const detail = parseJsonRecord(item.detail);
+  const detailInput = detail ? parseJsonRecord(detail.input) : null;
+  const input = parseJsonRecord(item.input);
+  const args = parseJsonRecord(item.args) ?? parseJsonRecord(item.arguments);
+
+  collectPathsFromRecord(detail, paths);
+  collectPathsFromRecord(detailInput, paths);
+  collectPathsFromRecord(input, paths);
+  collectPathsFromRecord(args, paths);
 
   return paths;
 }
@@ -422,12 +498,61 @@ function resolveFallbackToolName(value: unknown): string {
 
 function resolveAutoDowngradeReason(
   shouldDowngrade: boolean,
-  detectedCodeWrite: boolean,
+  inspection: {
+    detectedCodeWrite: boolean;
+    planExitInvoked?: boolean;
+    writableSubagentInvoked?: boolean;
+  },
 ): HarnessDowngradeReason | null {
   if (!shouldDowngrade) {
     return null;
   }
-  return detectedCodeWrite ? "write_tool_in_plan" : "explicit_exec_intent";
+  if (inspection.detectedCodeWrite) {
+    return "write_tool_in_plan";
+  }
+  if (inspection.planExitInvoked) {
+    return "plan_approved";
+  }
+  if (inspection.writableSubagentInvoked) {
+    return "write_tool_in_plan";
+  }
+  return "explicit_exec_intent";
+}
+
+function extractSubagentTypeName(records: ReadonlyArray<Record<string, unknown> | null>): string {
+  for (const rec of records) {
+    if (!rec) continue;
+    for (const [key, val] of Object.entries(rec)) {
+      const lower = key.toLowerCase();
+      if (
+        (lower === "typename" ||
+          lower === "type_name" ||
+          lower === "subagent_type" ||
+          lower === "agenttype" ||
+          lower === "agent_type") &&
+        typeof val === "string" &&
+        val.trim()
+      ) {
+        return val.trim().toLowerCase();
+      }
+    }
+  }
+  return "";
+}
+
+function isReadOnlySubagentType(typeName: string): boolean {
+  if (!typeName) {
+    return true;
+  }
+  if (READONLY_SUBAGENT_TYPES.has(typeName)) {
+    return true;
+  }
+  return (
+    typeName.endsWith("-reviewer") ||
+    typeName.endsWith("-auditor") ||
+    typeName.endsWith("-critic") ||
+    typeName.endsWith("-verifier")
+  );
 }
 
 export function inspectTurnTimeline(
@@ -437,6 +562,8 @@ export function inspectTurnTimeline(
   latestUserText: string;
   detectedCodeWrite: boolean;
   handoffInvoked: boolean;
+  planExitInvoked: boolean;
+  writableSubagentInvoked: boolean;
 } {
   let lastUserIndex = -1;
   let latestUserText = "";
@@ -464,6 +591,8 @@ export function inspectTurnTimeline(
 
   let detectedCodeWrite = false;
   let handoffInvoked = false;
+  let planExitInvoked = false;
+  let writableSubagentInvoked = false;
   const docRegex = docWhitelistPattern ? compileSafeRegex(docWhitelistPattern) : null;
 
   for (const rawItem of currentTurnItems) {
@@ -471,39 +600,20 @@ export function inspectTurnTimeline(
       continue;
     }
     const item = rawItem as Record<string, unknown>;
-    const detail =
-      typeof item.detail === "object" && item.detail !== null
-        ? (item.detail as Record<string, unknown>)
-        : null;
+    const detail = parseJsonRecord(item.detail);
+    const detailInputObj = detail ? parseJsonRecord(detail.input) : null;
 
     const toolName =
       typeof item.name === "string" ? item.name : resolveFallbackToolName(item.toolName);
     const detailType = detail && typeof detail.type === "string" ? detail.type : "";
+    const status = typeof item.status === "string" ? item.status.toLowerCase() : "";
+    const isFailedCall =
+      status === "error" || status === "failed" || status === "denied" || status === "rejected";
 
-    // 1. Check handoff invocation
-    const parseRecord = (val: unknown): Record<string, unknown> | null => {
-      if (typeof val === "object" && val !== null && !Array.isArray(val)) {
-        return val as Record<string, unknown>;
-      }
-      if (typeof val === "string") {
-        const trimmed = val.trim();
-        if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-          try {
-            const parsed = JSON.parse(trimmed) as unknown;
-            if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-              return parsed as Record<string, unknown>;
-            }
-          } catch {
-            return null;
-          }
-        }
-      }
-      return null;
-    };
-
+    // 1. Check handoff invocation & plan exit / writable subagent calls
     const isSkillCall = /^(?:skill)$/i.test(toolName);
-    const inputObj = parseRecord(item.input);
-    const argsObj = parseRecord(item.args) ?? parseRecord(item.arguments);
+    const inputObj = parseJsonRecord(item.input);
+    const argsObj = parseJsonRecord(item.args) ?? parseJsonRecord(item.arguments);
     const skillName =
       (inputObj && typeof inputObj.skill === "string" ? inputObj.skill : "") ||
       (argsObj && typeof argsObj.skill === "string" ? argsObj.skill : "") ||
@@ -519,9 +629,8 @@ export function inspectTurnTimeline(
     }
 
     if (PASEO_CREATE_AGENT_TOOL_PATTERN.test(toolName)) {
-      const detailInputObj = detail ? parseRecord(detail.input) : null;
       const candidateInput = detailInputObj ?? inputObj ?? argsObj;
-      const labelsObj = candidateInput ? parseRecord(candidateInput.labels) : null;
+      const labelsObj = candidateInput ? parseJsonRecord(candidateInput.labels) : null;
       if (
         !candidateInput ||
         Boolean(labelsObj?.role) ||
@@ -529,6 +638,20 @@ export function inspectTurnTimeline(
         labelsObj?.[HARNESS_LEAF_LABEL_KEY] === "1"
       ) {
         handoffInvoked = true;
+      }
+    }
+
+    if (
+      !isFailedCall &&
+      (EXIT_PLAN_MODE_TOOL_PATTERN.test(toolName) || detailType === "exit_plan_mode")
+    ) {
+      planExitInvoked = true;
+    }
+
+    if (!isFailedCall && INVOKE_SUBAGENT_TOOL_PATTERN.test(toolName)) {
+      const subagentType = extractSubagentTypeName([detailInputObj, detail, inputObj, argsObj]);
+      if (!isReadOnlySubagentType(subagentType)) {
+        writableSubagentInvoked = true;
       }
     }
 
@@ -564,6 +687,8 @@ export function inspectTurnTimeline(
     latestUserText,
     detectedCodeWrite,
     handoffInvoked,
+    planExitInvoked,
+    writableSubagentInvoked,
   };
 }
 
@@ -606,6 +731,8 @@ export interface EvaluateTurnAfterTransitionParams {
     latestUserText: string;
     detectedCodeWrite: boolean;
     handoffInvoked: boolean;
+    planExitInvoked?: boolean;
+    writableSubagentInvoked?: boolean;
   };
   providerStandardModel?: string;
   providerStandardThinking?: string | null;
@@ -674,11 +801,16 @@ export function evaluateTurnAfterTransition(
       hasShortAffirmativeExecConfirmation(timelineInspection.latestUserText, meta.planTurnCount));
 
   const shouldDowngrade =
-    isPlanDesign && canAutoDowngrade && (timelineInspection.detectedCodeWrite || hasExecIntent);
+    isPlanDesign &&
+    canAutoDowngrade &&
+    (timelineInspection.detectedCodeWrite ||
+      Boolean(timelineInspection.planExitInvoked) ||
+      Boolean(timelineInspection.writableSubagentInvoked) ||
+      hasExecIntent);
 
   const downgradeReason: HarnessDowngradeReason | null = resolveAutoDowngradeReason(
     shouldDowngrade,
-    timelineInspection.detectedCodeWrite,
+    timelineInspection,
   );
 
   const standardModel = providerStandardModel ?? providerFlashModel ?? "flash";

@@ -71,6 +71,7 @@ import {
   invalidateWorkspaceAgentTeamCache,
   loadWorkspaceAgentTeam,
 } from "./server/agent-team-loader.js";
+import { HarnessDebugLogger, resolveAgentHarnessDataDir } from "./server/debug-logger.js";
 import {
   consumeSdkEmittedHandoffChild,
   createHarnessHandoffTool,
@@ -127,10 +128,29 @@ interface RoutedAgentConfigResult<T> {
   isBypassed: boolean;
 }
 
-export default function contribute(server: PluginServerContext) {
+export interface AgentHarnessContributeOptions {
+  dataDir?: string;
+  disableAutoDiskSync?: boolean;
+}
+
+export { resolveAgentHarnessDataDir };
+
+export default function contribute(
+  server: PluginServerContext,
+  options?: AgentHarnessContributeOptions,
+) {
+  const dataDir = resolveAgentHarnessDataDir(options?.dataDir);
+  const disableAutoDiskSync = options?.disableAutoDiskSync === true;
   const settings = server.registerSettings(agentHarnessSettings);
   let cachedSettings: AgentHarnessSettings = { ...DEFAULT_AGENT_HARNESS_SETTINGS };
+  const debugLogger = new HarnessDebugLogger({
+    dataDir,
+    enabled: cachedSettings.debugLogs,
+  });
   let hasSubscriptionUpdate = false;
+  let hasInitializedDebugState = false;
+  let lastRecordedDebugState: boolean | null = null;
+  let runtimeDebugOverride: boolean | null = null;
   let latestPaseo: PaseoApi | null = null;
   let lastSyncedDaemonProfileSignature = "";
 
@@ -146,7 +166,7 @@ export default function contribute(server: PluginServerContext) {
   }
 
   async function syncDaemonProfilesIfNeeded(settingsValues: AgentHarnessSettings): Promise<void> {
-    if (!settingsValues.autoSyncDaemonAgentProfiles || !latestPaseo) {
+    if (disableAutoDiskSync || !settingsValues.autoSyncDaemonAgentProfiles || !latestPaseo) {
       return;
     }
     const effective = resolveEffectiveHarnessConfig(settingsValues);
@@ -190,7 +210,7 @@ export default function contribute(server: PluginServerContext) {
     }
     const isFirstCapture = latestPaseo === null;
     latestPaseo = paseo;
-    if (isFirstCapture && cachedSettings.autoSyncDaemonAgentProfiles) {
+    if (isFirstCapture && !disableAutoDiskSync && cachedSettings.autoSyncDaemonAgentProfiles) {
       void syncDaemonProfilesIfNeeded(cachedSettings);
     }
   }
@@ -198,11 +218,37 @@ export default function contribute(server: PluginServerContext) {
   function applySettings(state: Awaited<ReturnType<typeof settings.read>>) {
     if (state.status === "ready") {
       cachedSettings = { ...cachedSettings, ...state.values };
-      if (cachedSettings.autoSyncDiskProfiles && cachedSettings.specialists?.length > 0) {
-        exportSpecialistsToDisk(cachedSettings.specialists, cachedSettings.profilesDir);
+      debugLogger.setEnabled(cachedSettings.debugLogs);
+      if (!hasInitializedDebugState) {
+        hasInitializedDebugState = true;
+        lastRecordedDebugState = cachedSettings.debugLogs;
+      } else if (lastRecordedDebugState !== cachedSettings.debugLogs) {
+        debugLogger.record(
+          {
+            event: "debug.toggled",
+            level: "info",
+            detail: { enabled: cachedSettings.debugLogs, source: "settings" },
+          },
+          { force: true },
+        );
+        lastRecordedDebugState = cachedSettings.debugLogs;
       }
-      if (hasSubscriptionUpdate && cachedSettings.autoSyncDaemonAgentProfiles) {
-        void syncDaemonProfilesIfNeeded(cachedSettings);
+      debugLogger.record({
+        event: "plugin.settings",
+        level: "info",
+        detail: {
+          enabled: cachedSettings.enabled,
+          debugLogs: cachedSettings.debugLogs,
+          disableAutoDiskSync,
+        },
+      });
+      if (!disableAutoDiskSync) {
+        if (cachedSettings.autoSyncDiskProfiles && cachedSettings.specialists?.length > 0) {
+          exportSpecialistsToDisk(cachedSettings.specialists, cachedSettings.profilesDir);
+        }
+        if (hasSubscriptionUpdate && cachedSettings.autoSyncDaemonAgentProfiles) {
+          void syncDaemonProfilesIfNeeded(cachedSettings);
+        }
       }
     }
   }
@@ -210,6 +256,7 @@ export default function contribute(server: PluginServerContext) {
   const unsubscribeSettings = settings.subscribe((state) => {
     if (state.status === "ready") {
       hasSubscriptionUpdate = true;
+      runtimeDebugOverride = null;
     }
     applySettings(state);
   });
@@ -218,10 +265,25 @@ export default function contribute(server: PluginServerContext) {
     .read()
     .then((state) => {
       if (!hasSubscriptionUpdate) {
-        applySettings(state);
+        const nextState =
+          state.status === "ready" && runtimeDebugOverride !== null
+            ? {
+                ...state,
+                values: {
+                  ...state.values,
+                  debugLogs: runtimeDebugOverride,
+                },
+              }
+            : state;
+        applySettings(nextState);
       }
     })
     .catch((error) => {
+      debugLogger.record({
+        event: "plugin.settings.error",
+        level: "error",
+        detail: { error: error instanceof Error ? error.message : String(error) },
+      });
       console.error("[AgentHarness] Failed to read settings", error);
     });
 
@@ -641,6 +703,20 @@ export default function contribute(server: PluginServerContext) {
       isModelBypassed(config.model, effectiveConfig.bypassModels);
 
     if (isBypassed) {
+      debugLogger.record({
+        event: "harness.route",
+        level: "info",
+        role: roleDecision.role,
+        phase: decision.phase,
+        provider: config.provider,
+        model: config.model ?? undefined,
+        detail: {
+          hookStage,
+          bypassed: true,
+          roleMatchedRule: roleDecision.matchedRule,
+          tierMatchedRule: decision.matchedRule,
+        },
+      });
       return {
         config,
         roleDecision,
@@ -895,6 +971,24 @@ export default function contribute(server: PluginServerContext) {
             ...(nextSystemPrompt !== undefined ? { systemPrompt: nextSystemPrompt } : {}),
           }
         : config;
+
+    debugLogger.record({
+      event: "harness.route",
+      level: "info",
+      role: roleDecision.role,
+      phase: resolvedPhase,
+      provider: config.provider,
+      model: nextModel ?? undefined,
+      detail: {
+        hookStage,
+        bypassed: false,
+        fromModel: config.model ?? null,
+        toModel: nextModel ?? null,
+        tier: decision.tier,
+        roleMatchedRule: roleDecision.matchedRule,
+        tierMatchedRule: decision.matchedRule,
+      },
+    });
 
     if (cachedSettings.debugLogs && nextModel !== config.model) {
       console.log(
@@ -1197,6 +1291,24 @@ export default function contribute(server: PluginServerContext) {
       }
       latestMetadataByAgent.set(agent.id, meta);
 
+      debugLogger.record({
+        event: "agent.create.after",
+        level: "info",
+        agentId: agent.id,
+        role: meta.role,
+        phase: meta.phase,
+        provider: agent.provider,
+        model: meta.currentModel ?? undefined,
+        detail: {
+          tier: meta.currentTier,
+          roleMatchedRule: meta.roleMatchedRule,
+          tierMatchedRule: meta.tierMatchedRule,
+          isLeaf: Boolean(
+            (agent.metadata as Record<string, unknown> | undefined)?.[HARNESS_LEAF_META_KEY],
+          ),
+        },
+      });
+
       if (context?.paseo?.agents) {
         if (meta.currentTier !== "standard" || meta.currentModel) {
           try {
@@ -1249,6 +1361,21 @@ export default function contribute(server: PluginServerContext) {
               turnNumber: parentMeta?.turnCount ?? 0,
               childAgentId: agent.id,
               childAgentTitle: agent.title ?? null,
+            });
+            debugLogger.record({
+              event: "handoff.spawn",
+              level: "info",
+              agentId: parentAgentId,
+              role: meta.role,
+              phase: meta.phase,
+              provider: agent.provider,
+              model: meta.currentModel ?? undefined,
+              detail: {
+                source: "agent.create.after",
+                childAgentId: agent.id,
+                toTier: meta.currentTier,
+                childAgentTitle: agent.title ?? null,
+              },
             });
           } catch {
             // Ignore parent timeline append failures on creation
@@ -1426,7 +1553,8 @@ export default function contribute(server: PluginServerContext) {
     }
 
     let nextTools = request.tools;
-    if (isLeaf) {
+    let injectedHandoffTool = false;
+    if (isLeaf || normalizedProvider === "antigravity") {
       if (Array.isArray(request.tools)) {
         nextTools = request.tools.filter((t: any) => t?.name !== "harness_handoff");
       }
@@ -1437,10 +1565,57 @@ export default function contribute(server: PluginServerContext) {
           getConfig: (cwd) => getEffectiveConfig(cwd ?? request.cwd),
           getLatestMetadata: (id) => latestMetadataByAgent.get(id) ?? null,
           shouldEmitTimeline: () => effectiveConfig.emitTimelineTransitions,
+          onHandoffLog: (entry) => debugLogger.record(entry),
         });
         nextTools = [...(request.tools ?? []), handoffTool];
+        injectedHandoffTool = true;
       }
     }
+
+    const inputMcpKeys =
+      request.mcpServers &&
+      typeof request.mcpServers === "object" &&
+      !Array.isArray(request.mcpServers)
+        ? Object.keys(request.mcpServers)
+        : [];
+    const outputMcpKeys =
+      nextMcpServers && typeof nextMcpServers === "object" && !Array.isArray(nextMcpServers)
+        ? Object.keys(nextMcpServers)
+        : [];
+    const hasLazyToolConfig = Boolean(nextEnv.LAZY_TOOL_CONFIG);
+    const relyingOnLazyToolIsolation =
+      inputMcpKeys.length === 0 && outputMcpKeys.length === 0 && hasLazyToolConfig;
+    const isolationMode =
+      inputMcpKeys.length === 0
+        ? hasLazyToolConfig
+          ? "lazy_tool_config_only"
+          : "none"
+        : isFederatedLocalSession
+          ? "federated_local_passthrough"
+          : effectiveConfig.enforceSessionMcpFiltering
+            ? "session_mcp_and_lazy_tool_config"
+            : "lazy_tool_config_and_existing_mcp";
+
+    debugLogger.record({
+      event: "env.inject",
+      level: "info",
+      agentId: request.agentId,
+      role: roleDecision.role,
+      phase: existingMeta?.phase,
+      provider: request.provider,
+      model: existingMeta?.currentModel ?? undefined,
+      detail: {
+        reason: request.reason,
+        purpose: request.purpose,
+        roleMatchedRule: roleDecision.matchedRule,
+        lazyToolConfig: nextEnv.LAZY_TOOL_CONFIG ?? null,
+        inputMcpCount: inputMcpKeys.length,
+        outputMcpCount: outputMcpKeys.length,
+        relyingOnLazyToolIsolation,
+        isolationMode,
+        injectedHandoffTool,
+      },
+    });
 
     if (effectiveConfig.debugLogs) {
       console.log(
@@ -1485,42 +1660,89 @@ export default function contribute(server: PluginServerContext) {
         });
       }
 
-      if (context?.paseo?.agents) {
-        const meta = readLatestMetadata(agent);
-        const isPlanOrDesign =
-          meta?.phase === "design" ||
-          meta?.phase === "review" ||
-          meta?.currentTier === "plan" ||
-          meta?.currentTier === "review";
-        if (isPlanOrDesign) {
-          let rawCommand: string | null = null;
-          if (typeof request.input?.command === "string") {
-            rawCommand = request.input.command;
-          } else if (typeof request.input?.cmd === "string") {
-            rawCommand = request.input.cmd;
-          }
+      const meta = readLatestMetadata(agent);
+      const isPlanOrDesign =
+        meta?.phase === "design" ||
+        meta?.phase === "review" ||
+        meta?.currentTier === "plan" ||
+        meta?.currentTier === "review";
+      if (isPlanOrDesign) {
+        let rawCommand: string | null = null;
+        if (typeof request.input?.command === "string") {
+          rawCommand = request.input.command;
+        } else if (typeof request.input?.cmd === "string") {
+          rawCommand = request.input.cmd;
+        }
 
-          if (rawCommand && isReadOnlyShellCommand(rawCommand)) {
-            try {
-              const handle = context.paseo.agents.ref(agent.id);
-              await handle.respondToPermission({
+        if (rawCommand && isReadOnlyShellCommand(rawCommand) && context?.paseo?.agents) {
+          try {
+            const handle = context.paseo.agents.ref(agent.id);
+            await handle.respondToPermission({
+              requestId: request.id,
+              response: { behavior: "allow" },
+            });
+            debugLogger.record({
+              event: "permission.allow",
+              level: "info",
+              agentId: agent.id,
+              role: meta?.role,
+              phase: meta?.phase,
+              provider: agent.provider,
+              detail: {
                 requestId: request.id,
-                response: { behavior: "allow" },
-              });
-              if (cachedSettings.debugLogs) {
-                console.log(
-                  `[AgentHarness] (permission.before) Auto-approved read-only shell in plan mode: "${rawCommand}" for agent ${agent.id}`,
-                );
-              }
-            } catch (error) {
-              if (cachedSettings.debugLogs) {
-                console.error(
-                  `[AgentHarness] (permission.before) Failed to auto-approve read-only shell: "${rawCommand}"`,
-                  error,
-                );
-              }
+                kind: request.kind,
+                toolName: request.name,
+                command: rawCommand,
+                reason: "readonly_shell_in_plan_mode",
+              },
+            });
+            if (cachedSettings.debugLogs) {
+              console.log(
+                `[AgentHarness] (permission.before) Auto-approved read-only shell in plan mode: "${rawCommand}" for agent ${agent.id}`,
+              );
+            }
+          } catch (error) {
+            debugLogger.record({
+              event: "permission.block",
+              level: "error",
+              agentId: agent.id,
+              role: meta?.role,
+              phase: meta?.phase,
+              provider: agent.provider,
+              detail: {
+                requestId: request.id,
+                kind: request.kind,
+                toolName: request.name,
+                command: rawCommand,
+                reason: "auto_approve_failed",
+                error: error instanceof Error ? error.message : String(error),
+              },
+            });
+            if (cachedSettings.debugLogs) {
+              console.error(
+                `[AgentHarness] (permission.before) Failed to auto-approve read-only shell: "${rawCommand}"`,
+                error,
+              );
             }
           }
+        } else {
+          debugLogger.record({
+            event: "permission.block",
+            level: "warn",
+            agentId: agent.id,
+            role: meta?.role,
+            phase: meta?.phase,
+            provider: agent.provider,
+            detail: {
+              requestId: request.id,
+              kind: request.kind,
+              toolName: request.name,
+              command: rawCommand ?? undefined,
+              reason: rawCommand
+                ? "non_readonly_command_requires_approval"
+                : "permission_requires_user_approval",
+            },
+          });
         }
       }
     },
@@ -1660,6 +1882,22 @@ export default function contribute(server: PluginServerContext) {
           switchedFirstTurnAgents.add(agent.id);
         }
         await updateAgentMetadata(agent.id, meta, handle);
+        debugLogger.record({
+          event: "turn.transition",
+          level: "info",
+          agentId: agent.id,
+          role: meta.role,
+          phase: meta.phase,
+          provider: agent.provider,
+          model: meta.currentModel ?? undefined,
+          detail: {
+            hook: "agent.turn.before",
+            kind: "runtime_reconcile",
+            toTier: meta.currentTier,
+            matchedRule: meta.tierMatchedRule,
+            turnCount: meta.turnCount,
+          },
+        });
       }
     }
     const specialist = meta ? findSpecialist(effectiveConfig, meta.role) : undefined;
@@ -1725,6 +1963,25 @@ export default function contribute(server: PluginServerContext) {
           };
 
           await updateAgentMetadata(agent.id, nextMeta, handle);
+          debugLogger.record({
+            event: "turn.transition",
+            level: "info",
+            agentId: agent.id,
+            role: nextMeta.role,
+            phase: nextMeta.phase,
+            provider: agent.provider,
+            model: standardModel,
+            detail: {
+              hook: "agent.turn.before",
+              kind: "pre_turn_step_down",
+              fromTier: meta.currentTier,
+              toTier: "standard",
+              fromModel: meta.currentModel,
+              toModel: standardModel,
+              downgradeReason: nextMeta.downgradeReason,
+              turnCount: nextMeta.turnCount,
+            },
+          });
           return;
         }
       } catch {
@@ -1775,6 +2032,25 @@ export default function contribute(server: PluginServerContext) {
             };
             await updateAgentMetadata(agent.id, updatedMeta, handle);
           }
+          debugLogger.record({
+            event: "turn.transition",
+            level: "info",
+            agentId: agent.id,
+            role: meta?.role,
+            phase:
+              effectiveConfig.phaseLifecycleEnabled && meta
+                ? tierToPhase(decision.tier, meta.role, effectiveConfig, decision.phase)
+                : decision.phase,
+            provider: agent.provider,
+            model: decision.targetModel,
+            detail: {
+              hook: "agent.turn.before",
+              kind: "first_turn_route",
+              toTier: decision.tier,
+              toModel: decision.targetModel,
+              matchedRule: decision.matchedRule,
+            },
+          });
         } catch {
           // Ignore mid-turn switch rejection
         }
@@ -1880,7 +2156,11 @@ export default function contribute(server: PluginServerContext) {
         ));
 
     const shouldDowngrade =
-      canAutoDowngrade && (timelineInspection.detectedCodeWrite || hasExecIntent);
+      canAutoDowngrade &&
+      (timelineInspection.detectedCodeWrite ||
+        timelineInspection.planExitInvoked ||
+        timelineInspection.writableSubagentInvoked ||
+        hasExecIntent);
 
     const billedTier = meta.currentTier;
     const billedModel = meta.currentModel;
@@ -1895,7 +2175,11 @@ export default function contribute(server: PluginServerContext) {
     if (shouldDowngrade) {
       const reason: HarnessDowngradeReason = timelineInspection.detectedCodeWrite
         ? "write_tool_in_plan"
-        : "explicit_exec_intent";
+        : timelineInspection.planExitInvoked
+          ? "plan_approved"
+          : timelineInspection.writableSubagentInvoked
+            ? "write_tool_in_plan"
+            : "explicit_exec_intent";
 
       try {
         const { targetModel: standardModel, targetThinking: standardThinking } =
@@ -1906,7 +2190,7 @@ export default function contribute(server: PluginServerContext) {
             meta,
             effectiveConfig,
             handle,
-            transitionKind: "auto_downgrade",
+            transitionKind: reason === "plan_approved" ? "plan_approved" : "auto_downgrade",
             reasonText: `Auto stepped down ${meta.currentTier} -> standard (reason: ${reason})`,
             turnNumber: nextTurnCount,
           });
@@ -1951,6 +2235,27 @@ export default function contribute(server: PluginServerContext) {
     };
 
     await updateAgentMetadata(agent.id, nextMeta, handle);
+    if (shouldDowngrade) {
+      debugLogger.record({
+        event: "turn.transition",
+        level: "info",
+        agentId: agent.id,
+        role: nextMeta.role,
+        phase: nextMeta.phase,
+        provider: agent.provider,
+        model: nextMeta.currentModel ?? undefined,
+        detail: {
+          hook: "agent.turn.after",
+          kind: "auto_downgrade",
+          fromTier: meta.currentTier,
+          toTier: nextMeta.currentTier,
+          fromModel: meta.currentModel,
+          toModel: nextMeta.currentModel,
+          downgradeReason: nextMeta.downgradeReason,
+          turnCount: nextMeta.turnCount,
+        },
+      });
+    }
   });
 
   // Hook 6: Cleanup on agent close / archive
@@ -1970,6 +2275,22 @@ export default function contribute(server: PluginServerContext) {
     bypassedAgentIds.delete(agent.id);
   });
 
+  async function saveSettings(
+    nextSettings: AgentHarnessSettings,
+    syncOptions?: { syncProfiles?: boolean },
+  ): Promise<void> {
+    cachedSettings = nextSettings;
+    debugLogger.setEnabled(nextSettings.debugLogs);
+    if (!disableAutoDiskSync && syncOptions?.syncProfiles) {
+      if (nextSettings.autoSyncDiskProfiles && nextSettings.specialists?.length > 0) {
+        exportSpecialistsToDisk(nextSettings.specialists, nextSettings.profilesDir);
+      }
+      if (nextSettings.autoSyncDaemonAgentProfiles) {
+        await syncDaemonProfilesIfNeeded(nextSettings);
+      }
+    }
+  }
+
   // Register Client RPC handlers
   registerHarnessRpcHandlers(server, {
     readLatestMetadata: async (id) => latestMetadataByAgent.get(id) ?? null,
@@ -1985,16 +2306,7 @@ export default function contribute(server: PluginServerContext) {
         ...cachedSettings,
         specialists: normalizedSpecialists,
       };
-      cachedSettings = nextSettings;
-      const settingsWithOptionalSave = settings as unknown as {
-        save?: (values: AgentHarnessSettings) => Promise<void>;
-      };
-      if (typeof settingsWithOptionalSave.save === "function") {
-        await settingsWithOptionalSave.save(nextSettings);
-      }
-      if (cachedSettings.autoSyncDaemonAgentProfiles) {
-        await syncDaemonProfilesIfNeeded(nextSettings);
-      }
+      await saveSettings(nextSettings, { syncProfiles: true });
     },
     emitTimelineTransitionsEnabled: () => cachedSettings.emitTimelineTransitions,
     onPaseoAvailable: (paseo) => capturePaseoApi(paseo),
@@ -2003,9 +2315,37 @@ export default function contribute(server: PluginServerContext) {
       lastSyncedDaemonProfileSignature = "";
       await syncDaemonProfilesIfNeeded(cachedSettings);
     },
+    debugLogger,
+    toggleDebugLogs: async (enabled) => {
+      runtimeDebugOverride = enabled;
+      const nextSettings: AgentHarnessSettings = {
+        ...cachedSettings,
+        debugLogs: enabled,
+      };
+      await saveSettings(nextSettings, { syncProfiles: false });
+      if (lastRecordedDebugState !== enabled) {
+        debugLogger.record(
+          {
+            event: "debug.toggled",
+            level: "info",
+            detail: { enabled, source: "rpc" },
+          },
+          { force: true },
+        );
+        lastRecordedDebugState = enabled;
+      }
+      return {
+        enabled: debugLogger.isEnabled(),
+        logFilePath: debugLogger.logFilePath,
+      };
+    },
   });
 
   return () => {
+    debugLogger.record({
+      event: "plugin.cleanup",
+      level: "info",
+    });
     unsubscribeSettings();
     removeWorkspaceHook();
     removeWorktreeHook();

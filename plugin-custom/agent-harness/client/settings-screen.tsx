@@ -5,6 +5,7 @@ import { usePaseo, useRpc, useSettings, useWorkspaces } from "@getpaseo/plugin/c
 import {
   SettingsAction,
   SettingsCard,
+  SettingsRow,
   SettingsSection,
   SettingsSwitch,
   SettingsSelect,
@@ -31,8 +32,13 @@ import {
   resolveEffectiveHarnessConfig,
 } from "../shared/config-resolver.js";
 import {
+  harnessDebugClearRpc,
+  harnessDebugStatusRpc,
+  harnessDebugToggleRpc,
   harnessInspectEnvironmentRpc,
   harnessSyncProfilesRpc,
+  type HarnessDebugLogEntry,
+  type HarnessDebugStatusOutput,
   type HarnessInspectEnvironmentOutput,
 } from "../shared/contracts.js";
 import { subscribeWorkspaceTeamUpdated } from "./team-events.js";
@@ -87,13 +93,219 @@ const TIER_BUDGET_HINTS: Record<string, string> = {
   max: "Manual peak effort (inherits Deep + xhigh when unset)",
 };
 
-const BUILTIN_LAZY_TOOL_SLICES = [
+export const BUILTIN_LAZY_TOOL_SLICES = [
+  "general.yaml",
   "ui.yaml",
   "backend.yaml",
+  "architect.yaml",
   "pm.yaml",
+  "qa.yaml",
   "review.yaml",
-  "codex.yaml",
+  "scout.yaml",
 ] as const;
+
+const DEBUG_TRACE_FETCH_LIMIT = 20;
+
+function formatByteSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return "0 B";
+  }
+  if (bytes < 1024) {
+    return `${Math.round(bytes)} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function formatTraceTimestamp(ts: string): string {
+  const trimmed = ts.trim();
+  const match = /T(\d{2}:\d{2}:\d{2}(?:\.\d{3})?)/.exec(trimmed);
+  if (match?.[1]) {
+    return match[1];
+  }
+  return trimmed;
+}
+
+function truncateDetailValue(strVal: string): string {
+  if (strVal.length > 36) {
+    return `${strVal.slice(0, 33)}...`;
+  }
+  return strVal;
+}
+
+function formatTraceEntryMeta(entry: HarnessDebugLogEntry): string {
+  const parts: string[] = [];
+  if (entry.role) parts.push(`role=${entry.role}`);
+  if (entry.phase) parts.push(`phase=${entry.phase}`);
+  if (entry.agentId) parts.push(`agent=${entry.agentId}`);
+  if (entry.provider && entry.model) {
+    parts.push(`${entry.provider}/${entry.model}`);
+  } else if (entry.provider) {
+    parts.push(entry.provider);
+  } else if (entry.model) {
+    parts.push(entry.model);
+  }
+  if (entry.detail && typeof entry.detail === "object") {
+    let detailCount = 0;
+    for (const [k, v] of Object.entries(entry.detail)) {
+      if (v === undefined || v === null) continue;
+      if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+        parts.push(`${k}=${truncateDetailValue(String(v))}`);
+        detailCount += 1;
+      }
+      if (detailCount >= 3) break;
+    }
+  }
+  return parts.join(" · ");
+}
+
+function buildTraceEntryKey(entry: HarnessDebugLogEntry, seenCounts: Map<string, number>): string {
+  const baseKey = [
+    entry.ts,
+    entry.level,
+    entry.event,
+    entry.agentId ?? "",
+    entry.role ?? "",
+    entry.phase ?? "",
+  ].join("|");
+  const nextCount = (seenCounts.get(baseKey) ?? 0) + 1;
+  seenCounts.set(baseKey, nextCount);
+  return `${baseKey}#${nextCount}`;
+}
+
+function buildNextDebugStatusOnToggle(
+  prev: HarnessDebugStatusOutput | null,
+  enabled: boolean,
+  logFilePath?: string,
+): HarnessDebugStatusOutput | null {
+  if (prev) {
+    return {
+      ...prev,
+      enabled,
+      logFilePath: logFilePath || prev.logFilePath,
+    };
+  }
+  if (logFilePath) {
+    return {
+      enabled,
+      logFilePath,
+      totalLines: 0,
+      fileSizeBytes: 0,
+      rotatedExists: false,
+      entries: [],
+    };
+  }
+  return null;
+}
+
+function resolveTraceStatusHint(params: {
+  debugStatus: HarnessDebugStatusOutput | null;
+  debugStatusError: string | null;
+  isLoadingDebugStatus: boolean;
+  totalTraceLines: number;
+  formattedTraceSize: string;
+  debugRotatedExists: boolean;
+}): string {
+  if (params.debugStatusError && !params.debugStatus) {
+    return params.debugStatusError;
+  }
+  if (params.isLoadingDebugStatus && !params.debugStatus) {
+    return "Loading trace status...";
+  }
+  const rotationLabel = params.debugRotatedExists
+    ? "Rotated backup present (debug-trace.1.jsonl)"
+    : "No rotated backup";
+  return `${params.totalTraceLines} entries · ${params.formattedTraceSize} · ${rotationLabel}`;
+}
+
+function resolveRecentEntriesHint(entryCount: number, debugTraceEnabled: boolean): string {
+  if (entryCount > 0) {
+    const unit = entryCount === 1 ? "entry" : "entries";
+    return `Showing latest ${entryCount} ${unit} (newest first)`;
+  }
+  if (debugTraceEnabled) {
+    return "No trace entries recorded yet";
+  }
+  return "Debug trace is off";
+}
+
+function formatAvailableProvidersSummary(availableProviders: unknown): string {
+  if (!Array.isArray(availableProviders) || availableProviders.length === 0) {
+    return "Not inspected";
+  }
+  return availableProviders
+    .map((p: { provider: string; enabled: boolean; models?: string[] }) => {
+      const stateLabel = p.enabled ? "enabled" : "off";
+      return `${p.provider} (${stateLabel}, ${p.models?.length ?? 0} models)`;
+    })
+    .join(", ");
+}
+
+function resolveLazySliceHint(lazyToolSlice?: string): string {
+  if (lazyToolSlice?.trim() === "codex.yaml") {
+    return "Legacy shared slice — choose a role-specific slice to migrate";
+  }
+  return "MCP capability slice injected via LAZY_TOOL_CONFIG";
+}
+
+function formatRepoOverrideLabel(inspectInfo: any): string {
+  if (inspectInfo?.hasRepoOverride) {
+    return `Active (${inspectInfo.repoOverridePath})`;
+  }
+  return "None";
+}
+
+function formatWorkspaceAgentTeamLabel(inspectInfo: any): string {
+  if (inspectInfo?.agentTeam) {
+    return formatAgentTeamLabel(inspectInfo.agentTeam);
+  }
+  return "None";
+}
+
+function resolveTraceLevelBadgeStyle<T>(
+  level: HarnessDebugLogEntry["level"],
+  styles: { traceLevelInfo: T; traceLevelWarn: T; traceLevelError: T },
+): T {
+  if (level === "error") {
+    return styles.traceLevelError;
+  }
+  if (level === "warn") {
+    return styles.traceLevelWarn;
+  }
+  return styles.traceLevelInfo;
+}
+
+function normalizeDebugStatusResponse(
+  raw: unknown,
+  fallbackEnabled: boolean,
+): HarnessDebugStatusOutput | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const obj = raw as Partial<HarnessDebugStatusOutput>;
+  if (
+    typeof obj.logFilePath !== "string" &&
+    typeof obj.totalLines !== "number" &&
+    typeof obj.fileSizeBytes !== "number" &&
+    !Array.isArray(obj.entries)
+  ) {
+    return null;
+  }
+  return {
+    enabled: typeof obj.enabled === "boolean" ? obj.enabled : fallbackEnabled,
+    logFilePath: typeof obj.logFilePath === "string" ? obj.logFilePath : "",
+    totalLines:
+      typeof obj.totalLines === "number" && Number.isFinite(obj.totalLines) ? obj.totalLines : 0,
+    fileSizeBytes:
+      typeof obj.fileSizeBytes === "number" && Number.isFinite(obj.fileSizeBytes)
+        ? obj.fileSizeBytes
+        : 0,
+    rotatedExists: Boolean(obj.rotatedExists),
+    entries: Array.isArray(obj.entries) ? obj.entries : [],
+  };
+}
 
 function formatProviderDisplayLabel(providerId: string): string {
   switch (providerId) {
@@ -178,6 +390,7 @@ export interface HarnessSettingsScreenProps extends PluginSurfaceProps {
 
 export function HarnessSettingsScreen({
   theme,
+  layout,
   settingsOverride,
   onOpenWorkspaceTeam,
 }: HarnessSettingsScreenProps) {
@@ -186,6 +399,9 @@ export function HarnessSettingsScreen({
   const toast = useToast();
   const inspectRpc = useRpc(harnessInspectEnvironmentRpc);
   const syncProfilesRpc = useRpc(harnessSyncProfilesRpc);
+  const debugStatusRpc = useRpc(harnessDebugStatusRpc);
+  const debugToggleRpc = useRpc(harnessDebugToggleRpc);
+  const debugClearRpc = useRpc(harnessDebugClearRpc);
   const workspaceRefs = useWorkspaces();
   const paseo = usePaseo();
 
@@ -195,6 +411,11 @@ export function HarnessSettingsScreen({
   const [selectedProvider, setSelectedProvider] = useState<string>("antigravity");
   const [selectedSpecialistId, setSelectedSpecialistId] = useState<string>("ui");
   const [customModelOpenByTier, setCustomModelOpenByTier] = useState<Record<string, boolean>>({});
+  const [debugStatus, setDebugStatus] = useState<HarnessDebugStatusOutput | null>(null);
+  const [debugStatusError, setDebugStatusError] = useState<string | null>(null);
+  const [isLoadingDebugStatus, setIsLoadingDebugStatus] = useState(false);
+  const [isDebugToggling, setIsDebugToggling] = useState(false);
+  const [isClearingDebugLogs, setIsClearingDebugLogs] = useState(false);
 
   const latestSettingsRef = useRef(settings);
   const toastRef = useRef(toast);
@@ -202,12 +423,68 @@ export function HarnessSettingsScreen({
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRefs = useRef<Record<string, SettingsInputHandle | null>>({});
   const inspectRpcRef = useRef(inspectRpc);
+  const debugStatusRpcRef = useRef(debugStatusRpc);
+  const debugToggleRpcRef = useRef(debugToggleRpc);
+  const debugClearRpcRef = useRef(debugClearRpc);
+  const debugToggleLockRef = useRef(false);
+  const debugClearLockRef = useRef(false);
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
   useEffect(() => {
     latestSettingsRef.current = settings;
     toastRef.current = toast;
     inspectRpcRef.current = inspectRpc;
-  }, [inspectRpc, settings, toast]);
+    debugStatusRpcRef.current = debugStatusRpc;
+    debugToggleRpcRef.current = debugToggleRpc;
+    debugClearRpcRef.current = debugClearRpc;
+  }, [debugClearRpc, debugStatusRpc, debugToggleRpc, inspectRpc, settings, toast]);
   const inspectSeqRef = useRef(0);
+  const debugStatusSeqRef = useRef(0);
+
+  const refreshDebugStatus = useCallback(async (options?: { showErrorToast?: boolean }) => {
+    const seq = ++debugStatusSeqRef.current;
+    if (isMountedRef.current) {
+      setIsLoadingDebugStatus(true);
+      setDebugStatusError(null);
+    }
+    try {
+      const raw = await debugStatusRpcRef.current({ limit: DEBUG_TRACE_FETCH_LIMIT });
+      if (!isMountedRef.current || seq !== debugStatusSeqRef.current) {
+        return null;
+      }
+      const fallbackEnabled = Boolean(latestSettingsRef.current?.values?.debugLogs);
+      const normalized = normalizeDebugStatusResponse(raw, fallbackEnabled);
+      if (normalized) {
+        setDebugStatus(normalized);
+        return normalized;
+      }
+      const invalidMsg = "Invalid debug trace status response";
+      setDebugStatusError(invalidMsg);
+      if (options?.showErrorToast) {
+        toastRef.current.error(invalidMsg);
+      }
+      return null;
+    } catch (err) {
+      if (!isMountedRef.current || seq !== debugStatusSeqRef.current) {
+        return null;
+      }
+      const msg = err instanceof Error ? err.message : String(err);
+      setDebugStatusError(`Unable to load debug trace: ${msg}`);
+      if (options?.showErrorToast) {
+        toastRef.current.error(`Failed to load debug trace: ${msg}`);
+      }
+      return null;
+    } finally {
+      if (isMountedRef.current && seq === debugStatusSeqRef.current) {
+        setIsLoadingDebugStatus(false);
+      }
+    }
+  }, []);
 
   const runInspect = useCallback(
     (params: { workspaceId?: string; cwd?: string }, options?: { throwOnError?: boolean }) => {
@@ -254,6 +531,23 @@ export function HarnessSettingsScreen({
   React.useEffect(() => {
     void runInspect({});
   }, [runInspect]);
+
+  const settingsReady = settings.status === "ready";
+  const settingsDebugLogs = settingsReady ? Boolean(settings.values?.debugLogs) : false;
+  const prevSettingsDebugLogsRef = useRef(settingsDebugLogs);
+
+  useEffect(() => {
+    if (settingsReady) {
+      void refreshDebugStatus();
+    }
+  }, [refreshDebugStatus, settingsReady]);
+
+  useEffect(() => {
+    if (settingsReady && prevSettingsDebugLogsRef.current !== settingsDebugLogs) {
+      prevSettingsDebugLogsRef.current = settingsDebugLogs;
+      void refreshDebugStatus();
+    }
+  }, [refreshDebugStatus, settingsDebugLogs, settingsReady]);
 
   const workspaceOptions = useMemo(() => {
     const byId = new Map<string, { label: string; value: string; cwd?: string }>();
@@ -324,47 +618,6 @@ export function HarnessSettingsScreen({
     });
   }, [inspectSelectedWorkspace, selectedWorkspaceId]);
 
-  const handleSync = useCallback(
-    async (action: "import_from_disk" | "export_to_disk" | "sync_daemon_profiles") => {
-      if (isSyncing) return;
-      setIsSyncing(true);
-      try {
-        const res = await syncProfilesRpc({ action });
-        await inspectSelectedWorkspace({ throwOnError: true });
-        toast.show(res.message, { variant: res.success ? "success" : "error" });
-      } catch (err) {
-        toast.error(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
-      } finally {
-        setIsSyncing(false);
-      }
-    },
-    [inspectSelectedWorkspace, isSyncing, syncProfilesRpc, toast],
-  );
-
-  const styles = useMemo(
-    () =>
-      StyleSheet.create({
-        content: {
-          gap: 16,
-        },
-        loadingContainer: {
-          padding: 24,
-          alignItems: "center",
-          justifyContent: "center",
-        },
-        loadingText: {
-          fontSize: 13,
-          color: theme.colors.foregroundMuted,
-        },
-        infoText: {
-          fontSize: 12,
-          color: theme.colors.foreground,
-          lineHeight: 18,
-        },
-      }),
-    [theme],
-  );
-
   const flushPatch = useCallback(async (patchToSave: Partial<AgentHarnessSettings>) => {
     const cur = latestSettingsRef.current;
     if (cur?.status !== "ready" || typeof cur.save !== "function") {
@@ -402,6 +655,203 @@ export function HarnessSettingsScreen({
       );
     }
   }, []);
+
+  const handleSync = useCallback(
+    async (action: "import_from_disk" | "export_to_disk" | "sync_daemon_profiles") => {
+      if (isSyncing) return;
+      setIsSyncing(true);
+      try {
+        const res = await syncProfilesRpc({ action });
+        if (action === "import_from_disk" && res.success && Array.isArray(res.specialists)) {
+          await flushPatch({ specialists: res.specialists });
+        }
+        await inspectSelectedWorkspace({ throwOnError: true });
+        toast.show(res.message, { variant: res.success ? "success" : "error" });
+      } catch (err) {
+        toast.error(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        setIsSyncing(false);
+      }
+    },
+    [flushPatch, inspectSelectedWorkspace, isSyncing, syncProfilesRpc, toast],
+  );
+
+  const handleToggleDebugTrace = useCallback(
+    async (nextEnabled: boolean) => {
+      if (debugToggleLockRef.current || isDebugToggling) return;
+      const cur = latestSettingsRef.current;
+      if (cur?.status !== "ready") {
+        toastRef.current.error("Agent Harness settings are not ready");
+        return;
+      }
+      if (cur.saving) return;
+
+      debugToggleLockRef.current = true;
+      setIsDebugToggling(true);
+      try {
+        const baseValues: AgentHarnessSettings = cur.values ?? DEFAULT_AGENT_HARNESS_SETTINGS;
+        if (typeof cur.save === "function") {
+          const ok = await cur.save({ ...baseValues, debugLogs: nextEnabled }, cur.revision);
+          if (ok === false) {
+            toastRef.current.error(cur.saveError || "Failed to save debug trace setting");
+            return;
+          }
+        }
+        prevSettingsDebugLogsRef.current = nextEnabled;
+        const res = await debugToggleRpcRef.current({ enabled: nextEnabled });
+        const confirmedEnabled = typeof res?.enabled === "boolean" ? res.enabled : nextEnabled;
+        if (isMountedRef.current) {
+          setDebugStatusError(null);
+          setDebugStatus((prev) =>
+            buildNextDebugStatusOnToggle(prev, confirmedEnabled, res?.logFilePath),
+          );
+        }
+        await refreshDebugStatus();
+        toastRef.current.show(confirmedEnabled ? "Debug trace enabled" : "Debug trace disabled", {
+          variant: "success",
+        });
+      } catch (err) {
+        toastRef.current.error(
+          `Failed to toggle debug trace: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      } finally {
+        debugToggleLockRef.current = false;
+        if (isMountedRef.current) {
+          setIsDebugToggling(false);
+        }
+      }
+    },
+    [isDebugToggling, refreshDebugStatus],
+  );
+
+  const handleClearDebugTrace = useCallback(async () => {
+    if (debugClearLockRef.current || isClearingDebugLogs) return;
+    debugClearLockRef.current = true;
+    setIsClearingDebugLogs(true);
+    try {
+      const res = await debugClearRpcRef.current({});
+      await refreshDebugStatus();
+      if (res?.cleared === false) {
+        toastRef.current.error("Failed to remove all debug trace files");
+      } else {
+        const removedLabel = formatByteSize(
+          typeof res?.removedBytes === "number" ? res.removedBytes : 0,
+        );
+        toastRef.current.show(`Cleared debug trace (${removedLabel} removed)`, {
+          variant: "success",
+        });
+      }
+    } catch (err) {
+      toastRef.current.error(
+        `Failed to clear debug trace: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      debugClearLockRef.current = false;
+      if (isMountedRef.current) {
+        setIsClearingDebugLogs(false);
+      }
+    }
+  }, [isClearingDebugLogs, refreshDebugStatus]);
+
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        content: {
+          gap: 16,
+        },
+        loadingContainer: {
+          padding: 24,
+          alignItems: "center",
+          justifyContent: "center",
+        },
+        loadingText: {
+          fontSize: 13,
+          color: theme.colors.foregroundMuted,
+        },
+        infoText: {
+          fontSize: 12,
+          color: theme.colors.foreground,
+          lineHeight: 18,
+        },
+        traceStatusBadge: {
+          fontSize: 12,
+          fontWeight: "500",
+          paddingHorizontal: 8,
+          paddingVertical: 2,
+          borderRadius: 4,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          backgroundColor: theme.colors.surface2,
+          overflow: "hidden",
+        },
+        traceStatusActive: {
+          color: theme.colors.accent ?? theme.colors.foreground,
+          borderColor: theme.colors.accent ?? theme.colors.border,
+        },
+        traceStatusIdle: {
+          color: theme.colors.foregroundMuted,
+        },
+        traceEntryRow: {
+          paddingHorizontal: 16,
+          paddingVertical: 12,
+          gap: 4,
+        },
+        traceEntryHeader: {
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
+        },
+        traceEntryEventGroup: {
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 8,
+          flex: 1,
+          minWidth: 0,
+        },
+        traceLevelBadge: {
+          fontSize: 11,
+          fontWeight: "500",
+          paddingHorizontal: 8,
+          paddingVertical: 4,
+          borderRadius: 4,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          backgroundColor: theme.colors.surface2,
+          flexShrink: 0,
+        },
+        traceLevelInfo: {
+          color: theme.colors.foregroundMuted,
+        },
+        traceLevelWarn: {
+          color: theme.colors.statusWarning ?? theme.colors.foreground,
+        },
+        traceLevelError: {
+          color: theme.colors.statusDanger ?? theme.colors.foreground,
+        },
+        traceEventText: {
+          fontSize: 13,
+          fontWeight: "500",
+          color: theme.colors.foreground,
+          flexShrink: 1,
+          minWidth: 0,
+        },
+        traceTimestamp: {
+          fontSize: 11,
+          color: theme.colors.foregroundMuted,
+          fontFamily: layout?.platform === "ios" ? "Menlo" : "monospace",
+          fontVariant: ["tabular-nums"],
+          flexShrink: 0,
+        },
+        traceMetaText: {
+          fontSize: 12,
+          color: theme.colors.foregroundMuted,
+          lineHeight: 16,
+          fontFamily: layout?.platform === "ios" ? "Menlo" : "monospace",
+        },
+      }),
+    [layout?.platform, theme],
+  );
 
   const commitPatch = useCallback(
     (patch: Partial<AgentHarnessSettings>) => {
@@ -766,18 +1216,42 @@ export function HarnessSettingsScreen({
     { label: "Default (None)", value: "" },
     ...Array.from(lazySliceSet)
       .sort()
-      .map((s) => ({ label: s, value: s })),
+      .map((s) => ({
+        label: s === "codex.yaml" ? "codex.yaml (legacy)" : s,
+        value: s,
+      })),
   ];
 
-  const availableProvidersSummary =
-    Array.isArray(inspectInfo?.availableProviders) && inspectInfo.availableProviders.length > 0
-      ? inspectInfo.availableProviders
-          .map(
-            (p: { provider: string; enabled: boolean; models?: string[] }) =>
-              `${p.provider} (${p.enabled ? "enabled" : "off"}, ${p.models?.length ?? 0} models)`,
-          )
-          .join(", ")
-      : "Not inspected";
+  const debugTraceEnabled = debugStatus ? debugStatus.enabled : Boolean(values.debugLogs);
+  const resolvedLogPath = debugStatus?.logFilePath || "Resolving daemon log path...";
+  const totalTraceLines = debugStatus?.totalLines ?? 0;
+  const formattedTraceSize = formatByteSize(debugStatus?.fileSizeBytes ?? 0);
+  const debugRotatedExists = Boolean(debugStatus?.rotatedExists);
+  const debugEntries = debugStatus?.entries ?? [];
+  const traceStatusHint = resolveTraceStatusHint({
+    debugStatus,
+    debugStatusError,
+    isLoadingDebugStatus,
+    totalTraceLines,
+    formattedTraceSize,
+    debugRotatedExists,
+  });
+  const recentEntriesHint = resolveRecentEntriesHint(debugEntries.length, debugTraceEnabled);
+  const seenTraceKeys = new Map<string, number>();
+  const hasTraceData = Boolean(
+    debugStatus &&
+    (debugStatus.totalLines > 0 ||
+      debugStatus.fileSizeBytes > 0 ||
+      debugStatus.rotatedExists ||
+      debugStatus.entries.length > 0),
+  );
+
+  const availableProvidersSummary = formatAvailableProvidersSummary(
+    inspectInfo?.availableProviders,
+  );
+  const lazySliceHint = resolveLazySliceHint(activeSpecialist?.lazyToolSlice);
+  const repoOverrideLabel = formatRepoOverrideLabel(inspectInfo);
+  const workspaceAgentTeamLabel = formatWorkspaceAgentTeamLabel(inspectInfo);
 
   return (
     <View style={styles.content}>
@@ -803,13 +1277,6 @@ export function HarnessSettingsScreen({
             value={values.honorSpecialistPreferredProvider}
             disabled={isSaving}
             onValueChange={handleToggle("honorSpecialistPreferredProvider")}
-          />
-          <SettingsSwitch
-            label="Debug Logs"
-            hint="Log harness routing decisions and turn lifecycle transitions to daemon log"
-            value={values.debugLogs}
-            disabled={isSaving}
-            onValueChange={handleToggle("debugLogs")}
           />
           <SettingsSwitch
             label="Enable Repo-level Overrides"
@@ -994,7 +1461,7 @@ export function HarnessSettingsScreen({
             />
             <SettingsSelect
               label="Lazy-Tool Slice"
-              hint="MCP capability slice injected via LAZY_TOOL_CONFIG"
+              hint={lazySliceHint}
               value={activeSpecialist.lazyToolSlice ?? ""}
               options={lazySliceOptions}
               disabled={isSaving}
@@ -1204,15 +1671,84 @@ export function HarnessSettingsScreen({
               Host Environment Status:{"\n"}• Available Providers: {availableProvidersSummary}
               {"\n"}• Disk Profiles Found: {inspectInfo.diskProfiles?.length ?? 0}
               {"\n"}• Lazy-Tool Slices Found: {inspectInfo.lazyToolSlices?.length ?? 0}
-              {"\n"}• Workspace Repo Override:{" "}
-              {inspectInfo.hasRepoOverride
-                ? "Active (" + inspectInfo.repoOverridePath + ")"
-                : "None"}
-              {"\n"}• Workspace Agent Team:{" "}
-              {inspectInfo.agentTeam ? formatAgentTeamLabel(inspectInfo.agentTeam) : "None"}
+              {"\n"}• Workspace Repo Override: {repoOverrideLabel}
+              {"\n"}• Workspace Agent Team: {workspaceAgentTeamLabel}
             </Text>
           </SettingsCard>
         ) : null}
+      </SettingsSection>
+
+      <SettingsSection title="Debug Trace & Diagnostics">
+        <SettingsCard>
+          <SettingsSwitch
+            label="Enable Debug Trace"
+            hint="Record redacted routing, permission, and turn events to debug-trace.jsonl"
+            value={debugTraceEnabled}
+            disabled={isDebugToggling || isSaving || !settingsReady}
+            onValueChange={(next) => void handleToggleDebugTrace(next)}
+          />
+          <SettingsRow label="Log File Path" hint={resolvedLogPath} />
+          <SettingsRow label="Trace Status" hint={traceStatusHint}>
+            <Text
+              style={[
+                styles.traceStatusBadge,
+                debugTraceEnabled ? styles.traceStatusActive : styles.traceStatusIdle,
+              ]}
+              numberOfLines={1}
+            >
+              {debugTraceEnabled ? "Active" : "Off"}
+            </Text>
+          </SettingsRow>
+          <SettingsAction
+            label="Refresh Logs"
+            hint="Reload debug trace status and recent entries"
+            actionLabel={isLoadingDebugStatus ? "Refreshing..." : "Refresh Logs"}
+            disabled={isLoadingDebugStatus || isClearingDebugLogs}
+            onPress={() => void refreshDebugStatus({ showErrorToast: true })}
+          />
+          <SettingsAction
+            label="Clear Trace"
+            hint={
+              hasTraceData
+                ? "Delete active and rotated debug trace files"
+                : "No debug trace files to clear"
+            }
+            actionLabel={isClearingDebugLogs ? "Clearing..." : "Clear Trace"}
+            disabled={isClearingDebugLogs || isLoadingDebugStatus || !hasTraceData}
+            onPress={() => void handleClearDebugTrace()}
+          />
+        </SettingsCard>
+
+        <SettingsCard>
+          <SettingsRow label="Recent Trace Entries" hint={recentEntriesHint} />
+          {debugEntries.map((entry) => {
+            const entryKey = buildTraceEntryKey(entry, seenTraceKeys);
+            const metaSummary = formatTraceEntryMeta(entry);
+            const levelStyle = resolveTraceLevelBadgeStyle(entry.level, styles);
+            return (
+              <View key={entryKey} style={styles.traceEntryRow}>
+                <View style={styles.traceEntryHeader}>
+                  <View style={styles.traceEntryEventGroup}>
+                    <Text style={[styles.traceLevelBadge, levelStyle]} numberOfLines={1}>
+                      {entry.level}
+                    </Text>
+                    <Text style={styles.traceEventText} numberOfLines={1}>
+                      {entry.event}
+                    </Text>
+                  </View>
+                  <Text style={styles.traceTimestamp} numberOfLines={1}>
+                    {formatTraceTimestamp(entry.ts)}
+                  </Text>
+                </View>
+                {metaSummary ? (
+                  <Text style={styles.traceMetaText} numberOfLines={2}>
+                    {metaSummary}
+                  </Text>
+                ) : null}
+              </View>
+            );
+          })}
+        </SettingsCard>
       </SettingsSection>
     </View>
   );

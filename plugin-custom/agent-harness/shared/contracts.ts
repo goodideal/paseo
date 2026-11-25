@@ -1,5 +1,6 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
+import { HarnessSpecialistConfigSchema } from "./settings.js";
 import type {
   DomainRole,
   HandoffTargetRole,
@@ -298,6 +299,7 @@ export const harnessSyncProfilesRpc = defineRpc({
     importedCount: z.number().int().optional(),
     exportedCount: z.number().int().optional(),
     syncedCount: z.number().int().optional(),
+    specialists: z.array(HarnessSpecialistConfigSchema).optional(),
     errors: z.array(z.string()).optional(),
   }),
 });
@@ -514,6 +516,71 @@ export const harnessTeamCleanRpc = defineRpc({
 
 export type HarnessTeamCleanInput = z.infer<typeof harnessTeamCleanRpc.input>;
 export type HarnessTeamCleanOutput = z.infer<typeof harnessTeamCleanRpc.output>;
+
+// ============================================================================
+// Debug Trace Engine RPC Contracts
+// ============================================================================
+
+export const HarnessDebugLogLevelSchema = z.enum(["info", "warn", "error"]);
+
+export const HarnessDebugLogEntrySchema = z.object({
+  ts: z.string(),
+  event: z.string(),
+  level: HarnessDebugLogLevelSchema,
+  agentId: z.string().optional(),
+  role: z.string().optional(),
+  phase: z.string().optional(),
+  provider: z.string().optional(),
+  model: z.string().optional(),
+  detail: z.record(z.string(), z.unknown()).optional(),
+});
+
+export type HarnessDebugLogLevel = z.infer<typeof HarnessDebugLogLevelSchema>;
+export type HarnessDebugLogEntry = z.infer<typeof HarnessDebugLogEntrySchema>;
+
+export const harnessDebugStatusRpc = defineRpc({
+  name: "agent_harness.debug.status.request",
+  input: z.object({
+    limit: z.number().int().min(1).optional(),
+  }),
+  output: z.object({
+    enabled: z.boolean(),
+    logFilePath: z.string(),
+    totalLines: z.number().int(),
+    fileSizeBytes: z.number().int(),
+    rotatedExists: z.boolean(),
+    entries: z.array(HarnessDebugLogEntrySchema),
+  }),
+});
+
+export type HarnessDebugStatusInput = z.infer<typeof harnessDebugStatusRpc.input>;
+export type HarnessDebugStatusOutput = z.infer<typeof harnessDebugStatusRpc.output>;
+
+export const harnessDebugToggleRpc = defineRpc({
+  name: "agent_harness.debug.toggle.request",
+  input: z.object({
+    enabled: z.boolean(),
+  }),
+  output: z.object({
+    enabled: z.boolean(),
+    logFilePath: z.string(),
+  }),
+});
+
+export type HarnessDebugToggleInput = z.infer<typeof harnessDebugToggleRpc.input>;
+export type HarnessDebugToggleOutput = z.infer<typeof harnessDebugToggleRpc.output>;
+
+export const harnessDebugClearRpc = defineRpc({
+  name: "agent_harness.debug.clear.request",
+  input: z.object({}),
+  output: z.object({
+    cleared: z.boolean(),
+    removedBytes: z.number().int(),
+  }),
+});
+
+export type HarnessDebugClearInput = z.infer<typeof harnessDebugClearRpc.input>;
+export type HarnessDebugClearOutput = z.infer<typeof harnessDebugClearRpc.output>;
 
 // ============================================================================
 // Shared Pure Helpers (Provider Plan Mode & Specialist Tier Mapping)

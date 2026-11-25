@@ -212,6 +212,24 @@ export const LEGACY_V6_SPECIALIST_PRIMARY_SKILLS: Readonly<Record<string, readon
   general: ["mattpocock-skills:codebase-design", "mattpocock-skills:domain-modeling"],
 };
 
+export const LEGACY_V7_UI_MATCH_PATTERNS: readonly string[] = [
+  "\\b(?:ui|ux|ui-ux-pro-max|unslop|visual-verdict|unistyles|popover|sheet|pill|hover|tailwind|expo|react\\s*native|playwright|css|scss|sass|dark\\s*mode|light\\s*mode|color[-\\s]*scheme|theming|design[-\\s]*tokens?)\\b",
+  "前端|界面|样式|弹窗|组件|面板|视觉|移动端|手机端|响应式|布局|图标|配色|交互体验|暗黑模式|深色模式|浅色模式|亮色模式|主题切换|主题色",
+];
+
+export const LEGACY_V7_BACKEND_MATCH_PATTERNS: readonly string[] = [
+  "\\b(?:daemon|websocket|rpc|sqlite|dbx|terminal-worker|worktree|protocol|zod-aot|relay|noise\\s*nk|quota|proxy|gateway|scheduler|provider)\\b",
+  "后端|协议兼容|数据库|进程通信|服务端|配额|网关|代理服务|限流|中间件",
+];
+
+export const LEGACY_V7_PM_PRIMARY_SKILLS: readonly string[] = [
+  "pm-prd",
+  "pm-user-stories",
+  "pm-edge-cases",
+  "pm-problem",
+  "grilling",
+];
+
 export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
   {
     id: "orchestrator",
@@ -269,7 +287,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     syncToDaemonProfile: true,
     primarySkills: ["ui-ux-pro-max", "unslop", "visual-verdict", "diagnosing-bugs", "pr"],
     mandatorySkillActivation: true,
-    skillsRoot: "/Users/jerry/.agents/vendor/ui-ux-pro-max-skill/.claude/skills",
+    skillsRoot: "/Users/jerry/.agents/skills",
     docsFocus: ["docs/design.md", "docs/unistyles.md", "docs/hover.md", "docs/mobile-panels.md"],
     qualityGates: ["visual-verdict", "platform-gating: isWeb vs isNative"],
     ssotOutputTarget: "",
@@ -281,8 +299,8 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     extraEnv: {},
     aliases: ["frontend", "ui-specialist"],
     matchPatterns: [
-      "\\b(?:ui|ux|ui-ux-pro-max|unslop|visual-verdict|unistyles|popover|sheet|pill|hover|tailwind|expo|react\\s*native|playwright|css|scss|sass|dark\\s*mode|light\\s*mode|color[-\\s]*scheme|theming|design[-\\s]*tokens?)\\b",
-      "前端|界面|样式|弹窗|组件|面板|视觉|移动端|手机端|响应式|布局|图标|配色|交互体验|暗黑模式|深色模式|浅色模式|亮色模式|主题切换|主题色",
+      "\\b(?:ui|ux|ui-ux-pro-max|unslop|visual-verdict|unistyles|popover|modal|sheet|pill|hover|tailwind|expo|react\\s*native|playwright|css|scss|sass|dark\\s*mode|light\\s*mode|color[-\\s]*scheme|color|palette|typography|theme|theming|design[-\\s]*tokens?)\\b",
+      "前端|界面|样式|弹窗|组件|面板|视觉|移动端|手机端|响应式|布局|图标|配色|颜色|色板|标签颜色|按钮|卡片|字号|间距|交互体验|暗黑模式|深色模式|浅色模式|亮色模式|主题切换|主题色",
     ],
     profileFilename: "ui-specialist.json",
   },
@@ -324,7 +342,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     extraEnv: {},
     aliases: ["server", "backend-specialist"],
     matchPatterns: [
-      "\\b(?:daemon|websocket|rpc|sqlite|dbx|terminal-worker|worktree|protocol|zod-aot|relay|noise\\s*nk|quota|proxy|gateway|scheduler|provider)\\b",
+      "\\b(?:daemon|websocket|rpc|sqlite|dbx|terminal-worker|(?:git\\s+)?worktree\\s+manager|git\\s+worktree|worktree\\s+(?:sync|lifecycle|isolation|cleanup)|protocol|zod-aot|relay|noise\\s*nk|quota|proxy|gateway|scheduler|provider\\s+(?:adapter|config|registry|routing|snapshot|fallback|quota))\\b",
       "后端|协议兼容|数据库|进程通信|服务端|配额|网关|代理服务|限流|中间件",
     ],
     profileFilename: "backend-specialist.json",
@@ -348,9 +366,15 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     handoffTitlePrefix: "[PM]",
     handoffDefaultPrompt: "Analyze requirements and output user stories and PRD proposal.",
     syncToDaemonProfile: true,
-    primarySkills: ["pm-prd", "pm-user-stories", "pm-edge-cases", "pm-problem", "grilling"],
+    primarySkills: [
+      "grilling",
+      "deliver-prd",
+      "deliver-user-stories",
+      "deliver-edge-cases",
+      "define-problem-statement",
+    ],
     mandatorySkillActivation: true,
-    skillsRoot: "/Users/jerry/.agents/vendor/pm-skills/skills",
+    skillsRoot: "/Users/jerry/.agents/skills",
     docsFocus: ["docs/product.md", "docs/agent-lifecycle.md", "docs/glossary.md"],
     qualityGates: [],
     ssotOutputTarget: "openspec/changes/<change-name>/proposal.md",
@@ -362,7 +386,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     extraEnv: {},
     aliases: ["product", "product-specialist"],
     matchPatterns: [
-      "\\b(?:pm-prd|pm-user-stories|pm-edge-cases|pm-problem|prd|user\\s*stories|jtbd)\\b",
+      "\\b(?:pm-prd|pm-user-stories|pm-edge-cases|pm-problem|deliver-prd|deliver-user-stories|deliver-edge-cases|define-problem-statement|prd|user\\s*stories|jtbd)\\b",
       "痛点|用户故事|产品需求|验收条件",
     ],
     profileFilename: "product-specialist.json",
@@ -398,7 +422,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     qualityGates: [],
     ssotOutputTarget: "openspec/changes/<change-name>/design.md",
     rolePromptTemplate: "",
-    lazyToolSlice: "backend.yaml",
+    lazyToolSlice: "architect.yaml",
     allowedMcpServers: ["serena", "claude-mem", "hub"],
     excludedMcpServers: ["playwright", "dbx"],
     injectedMcpServers: [],
@@ -430,7 +454,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     handoffDefaultPrompt:
       "Add regression tests, verify edge cases, and ensure test suite adequacy.",
     syncToDaemonProfile: true,
-    primarySkills: ["test-gardener", "tdd", "diagnosing-bugs", "pm-edge-cases"],
+    primarySkills: ["test-gardener", "tdd", "diagnosing-bugs", "deliver-edge-cases"],
     mandatorySkillActivation: true,
     skillsRoot: "/Users/jerry/.agents/skills",
     docsFocus: ["docs/qa.md", "docs/testing.md", "docs/mobile-testing.md"],
@@ -441,7 +465,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     ],
     ssotOutputTarget: "",
     rolePromptTemplate: "",
-    lazyToolSlice: "ui.yaml",
+    lazyToolSlice: "qa.yaml",
     allowedMcpServers: ["serena", "claude-mem", "playwright"],
     excludedMcpServers: ["dbx"],
     injectedMcpServers: [],
@@ -524,8 +548,8 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     qualityGates: [],
     ssotOutputTarget: "",
     rolePromptTemplate: "",
-    lazyToolSlice: "pm.yaml",
-    allowedMcpServers: [],
+    lazyToolSlice: "scout.yaml",
+    allowedMcpServers: ["claude-mem"],
     excludedMcpServers: ["dbx", "playwright"],
     injectedMcpServers: [],
     extraEnv: {},
@@ -567,7 +591,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     qualityGates: [],
     ssotOutputTarget: "",
     rolePromptTemplate: "",
-    lazyToolSlice: "codex.yaml",
+    lazyToolSlice: "general.yaml",
     allowedMcpServers: ["serena", "claude-mem", "hub", "sequential-thinking"],
     excludedMcpServers: ["playwright", "dbx"],
     injectedMcpServers: [],

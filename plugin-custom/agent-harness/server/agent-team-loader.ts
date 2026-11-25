@@ -5,8 +5,10 @@ import {
   FEDERATED_AGENT_PROBE_SPECS,
   VALID_FEDERATED_TARGET_IDS,
   canonicalizeProviderName,
+  normalizePrimarySkills,
   normalizeTierAlias,
 } from "../shared/config-resolver.js";
+import { BUILTIN_SPECIALISTS } from "../shared/presets.js";
 import type { AgentTeamSummary, HarnessSpecialistConfig } from "../shared/types.js";
 
 export interface AgentTeamRoleBinding {
@@ -42,6 +44,18 @@ interface CatalogRoleEntry {
   title: string;
   readonly: boolean;
   recommended_model: string;
+  core_skills?: string[];
+  requires_mcp?: string[];
+}
+
+interface CatalogCapabilityEntry {
+  requires_mcp?: string[];
+  role_skills?: Record<string, string[]>;
+}
+
+interface LoadedAgentTeamCatalog {
+  roles: Record<string, CatalogRoleEntry>;
+  capabilities: Record<string, CatalogCapabilityEntry>;
 }
 
 const BUILTIN_AGENT_TEAM_CATALOG: Record<string, CatalogRoleEntry> = {
@@ -50,74 +64,93 @@ const BUILTIN_AGENT_TEAM_CATALOG: Record<string, CatalogRoleEntry> = {
     title: "Product Manager (Spec & Story Mapping)",
     readonly: false,
     recommended_model: "inherit",
+    core_skills: ["deliver-prd", "deliver-user-stories", "deliver-edge-cases"],
+    requires_mcp: ["serena"],
   },
   "fe-uiux": {
     team: "fe",
     title: "UI/UX & Design System Lead",
     readonly: false,
     recommended_model: "inherit",
+    core_skills: ["unslop", "ui-ux-pro-max"],
+    requires_mcp: ["serena"],
   },
   "fe-architect": {
     team: "fe",
     title: "Frontend Architect (Read-Only)",
     readonly: true,
     recommended_model: "pro",
+    core_skills: ["codebase-design", "domain-modeling"],
+    requires_mcp: ["serena"],
   },
   "fe-developer": {
     team: "fe",
     title: "Frontend Engineer (TDD + unslop)",
     readonly: false,
     recommended_model: "inherit",
+    core_skills: ["implement", "tdd", "unslop"],
+    requires_mcp: ["serena"],
   },
   "fe-qa": {
     team: "fe",
     title: "Frontend QA & 4-Viewport Verifier (Read-Only)",
     readonly: true,
     recommended_model: "inherit",
+    core_skills: ["test-gardener", "playwright-cli"],
+    requires_mcp: ["serena", "playwright"],
   },
   "be-architect": {
     team: "be",
     title: "Backend & Data Architect",
     readonly: false,
     recommended_model: "pro",
+    core_skills: ["domain-modeling", "codebase-design"],
+    requires_mcp: ["serena"],
   },
   "be-developer": {
     team: "be",
     title: "Backend Engineer (TDD + Serena AST)",
     readonly: false,
     recommended_model: "inherit",
+    core_skills: ["implement", "tdd"],
+    requires_mcp: ["serena"],
   },
   "be-reviewer": {
     team: "be",
     title: "Backend Two-Axis Code Reviewer (Read-Only)",
     readonly: true,
     recommended_model: "pro",
+    core_skills: ["code-review", "codebase-design"],
+    requires_mcp: ["serena"],
   },
   "ops-ci": {
     team: "ops",
     title: "CI/CD & Containerization Engineer",
     readonly: false,
     recommended_model: "inherit",
+    core_skills: ["docker-gitea-reviewdog-ci", "pr"],
+    requires_mcp: ["serena"],
   },
   "ops-sre": {
     team: "ops",
     title: "Site Reliability & Diagnostics Engineer",
     readonly: false,
     recommended_model: "inherit",
+    core_skills: ["k8s-prometheus-triage", "diagnosing-bugs"],
+    requires_mcp: ["serena", "kubernetes-ro", "prometheus"],
   },
   "ops-auditor": {
     team: "ops",
     title: "Security, Infra & Compliance Auditor (Read-Only)",
     readonly: true,
     recommended_model: "pro",
+    core_skills: ["code-review", "retro"],
+    requires_mcp: ["serena"],
   },
 };
 
 const manifestCache = new Map<string, { mtimeMs: number; data: RawAgentTeamManifest }>();
-const catalogCache = new Map<
-  string,
-  { mtimeMs: number; entries: Record<string, CatalogRoleEntry> }
->();
+const catalogCache = new Map<string, { mtimeMs: number; data: LoadedAgentTeamCatalog }>();
 const markdownCache = new Map<string, { mtimeMs: number; body: string }>();
 const HEADER_PROBE_BYTES = 8192;
 const MANAGED_MARKER_PATTERN = /generated_by:\s*agent-team:([a-zA-Z0-9][a-zA-Z0-9_-]*)?/;
@@ -384,7 +417,25 @@ export function detectLocalFederatedTargets(
   return detected;
 }
 
-function loadAgentTeamCatalog(homeDir: string): Record<string, CatalogRoleEntry> {
+function extractSkillNames(rawSkills: unknown): string[] {
+  if (!Array.isArray(rawSkills)) return [];
+  const names: string[] = [];
+  for (const item of rawSkills) {
+    if (typeof item === "string" && item.trim()) {
+      names.push(item.trim());
+    } else if (
+      item &&
+      typeof item === "object" &&
+      typeof (item as { name?: unknown }).name === "string" &&
+      (item as { name: string }).name.trim()
+    ) {
+      names.push((item as { name: string }).name.trim());
+    }
+  }
+  return names;
+}
+
+function loadAgentTeamCatalog(homeDir: string): LoadedAgentTeamCatalog {
   const candidates = [
     path.join(homeDir, ".agents", "skills", "gitea", "agent-team", "manifests", "catalog.json"),
     path.join(homeDir, ".agents", "skills", "agent-team", "manifests", "catalog.json"),
@@ -395,16 +446,27 @@ function loadAgentTeamCatalog(homeDir: string): Record<string, CatalogRoleEntry>
       const stat = fs.statSync(catalogPath);
       const cached = catalogCache.get(catalogPath);
       if (cached && cached.mtimeMs === stat.mtimeMs) {
-        return cached.entries;
+        return cached.data;
       }
       const raw = JSON.parse(fs.readFileSync(catalogPath, "utf8")) as {
-        roles?: Record<string, Partial<CatalogRoleEntry>>;
+        roles?: Record<string, Partial<CatalogRoleEntry> & { core_skills?: unknown }>;
+        capabilities?: Record<
+          string,
+          { requires_mcp?: unknown; role_skills?: Record<string, unknown> }
+        >;
       };
       if (raw?.roles && typeof raw.roles === "object") {
         const entries: Record<string, CatalogRoleEntry> = { ...BUILTIN_AGENT_TEAM_CATALOG };
         for (const [roleId, info] of Object.entries(raw.roles)) {
           if (!info || typeof info !== "object") continue;
           const inferredTeam = inferTeamFromRoleId(roleId);
+          const builtinFallback = BUILTIN_AGENT_TEAM_CATALOG[roleId];
+          const parsedCoreSkills = extractSkillNames(info.core_skills);
+          const parsedRequiresMcp = Array.isArray(info.requires_mcp)
+            ? info.requires_mcp.filter(
+                (m): m is string => typeof m === "string" && m.trim().length > 0,
+              )
+            : [];
           entries[roleId] = {
             team:
               info.team === "fe" || info.team === "be" || info.team === "ops"
@@ -416,16 +478,46 @@ function loadAgentTeamCatalog(homeDir: string): Record<string, CatalogRoleEntry>
               typeof info.recommended_model === "string" && info.recommended_model.trim()
                 ? info.recommended_model
                 : "inherit",
+            core_skills:
+              parsedCoreSkills.length > 0 ? parsedCoreSkills : builtinFallback?.core_skills,
+            requires_mcp:
+              parsedRequiresMcp.length > 0 ? parsedRequiresMcp : builtinFallback?.requires_mcp,
           };
         }
-        catalogCache.set(catalogPath, { mtimeMs: stat.mtimeMs, entries });
-        return entries;
+
+        const capabilities: Record<string, CatalogCapabilityEntry> = {};
+        if (raw.capabilities && typeof raw.capabilities === "object") {
+          for (const [capId, capInfo] of Object.entries(raw.capabilities)) {
+            if (!capInfo || typeof capInfo !== "object") continue;
+            const roleSkills: Record<string, string[]> = {};
+            if (capInfo.role_skills && typeof capInfo.role_skills === "object") {
+              for (const [rId, skillsList] of Object.entries(capInfo.role_skills)) {
+                const extracted = extractSkillNames(skillsList);
+                if (extracted.length > 0) {
+                  roleSkills[rId] = extracted;
+                }
+              }
+            }
+            capabilities[capId] = {
+              requires_mcp: Array.isArray(capInfo.requires_mcp)
+                ? capInfo.requires_mcp.filter(
+                    (m): m is string => typeof m === "string" && m.trim().length > 0,
+                  )
+                : [],
+              role_skills: roleSkills,
+            };
+          }
+        }
+
+        const data: LoadedAgentTeamCatalog = { roles: entries, capabilities };
+        catalogCache.set(catalogPath, { mtimeMs: stat.mtimeMs, data });
+        return data;
       }
     } catch {
       // Try next candidate
     }
   }
-  return BUILTIN_AGENT_TEAM_CATALOG;
+  return { roles: BUILTIN_AGENT_TEAM_CATALOG, capabilities: {} };
 }
 
 function inferTeamFromRoleId(roleId: string): "fe" | "be" | "ops" {
@@ -489,11 +581,38 @@ function inferDefaultTier(roleId: string, cat?: CatalogRoleEntry): string {
   return "standard";
 }
 
+function resolveMappedBuiltinRole(roleId: string, team: "fe" | "be" | "ops"): string {
+  const norm = roleId.trim().toLowerCase();
+  if (norm === "pm" || norm.endsWith("-pm")) return "pm";
+  if (norm === "review" || norm.includes("reviewer") || norm.includes("auditor")) return "review";
+  if (norm.includes("architect")) return "architect";
+  if (norm.includes("qa")) return "qa";
+  if (norm.includes("scout")) return "scout";
+  if (team === "fe") return "ui";
+  if (team === "be") return "backend";
+  return "general";
+}
+
 function inferDefaultLazySlice(roleId: string, team: "fe" | "be" | "ops"): string {
-  if (roleId === "fe-pm") return "pm.yaml";
-  if (roleId.includes("reviewer") || roleId.includes("auditor")) return "review.yaml";
-  if (team === "fe") return "ui.yaml";
-  return "backend.yaml";
+  const mappedRole = resolveMappedBuiltinRole(roleId, team);
+  switch (mappedRole) {
+    case "pm":
+      return "pm.yaml";
+    case "review":
+      return "review.yaml";
+    case "architect":
+      return "architect.yaml";
+    case "qa":
+      return "qa.yaml";
+    case "scout":
+      return "scout.yaml";
+    case "ui":
+      return "ui.yaml";
+    case "backend":
+      return "backend.yaml";
+    default:
+      return "general.yaml";
+  }
 }
 
 function extractRoleMarkdownBody(filePath: string, homeDir: string): string {
@@ -678,7 +797,7 @@ function inferRoleMatchPatterns(roleId: string, team: "fe" | "be" | "ops"): stri
   }
   return [
     idPattern,
-    "\\b(?:backend|daemon|websocket|rpc|sqlite|postgres|redis|dbx|worktree|protocol|zod-aot|relay|gateway|scheduler|rest\\s*api|endpoint|database|sql)\\b",
+    "\\b(?:backend|daemon|websocket|rpc|sqlite|postgres|redis|dbx|(?:git\\s+)?worktree\\s+manager|git\\s+worktree|protocol|zod-aot|relay|gateway|scheduler|rest\\s*api|endpoint|database|sql)\\b",
     "后端|协议兼容|数据库|进程通信|服务端|网关|接口实现|数据存储",
   ];
 }
@@ -731,7 +850,19 @@ export function loadWorkspaceAgentTeam(
       ? (manifest.bindings as Record<string, AgentTeamRoleBinding>)
       : {};
 
-  const catalog = loadAgentTeamCatalog(homeDir);
+  const catalogData = loadAgentTeamCatalog(homeDir);
+  const catalog = catalogData.roles;
+  const builtinById = new Map(BUILTIN_SPECIALISTS.map((s) => [s.id, s]));
+  const manifestMcpSources = Array.isArray(manifest.mcp_sources)
+    ? manifest.mcp_sources
+        .filter((m): m is string => typeof m === "string" && isSafePathIdentifier(m.trim()))
+        .map((m) => m.trim())
+    : [];
+  const manifestCapabilities = Array.isArray(manifest.capabilities)
+    ? manifest.capabilities
+        .filter((c): c is string => typeof c === "string" && isSafePathIdentifier(c.trim()))
+        .map((c) => c.trim())
+    : [];
   const aliasesByRole = assignCoarseAliases(roles);
   const localFederatedTargets = detectLocalFederatedTargets(checkoutRoot, projectSlug);
   const hasLocalPlugin = localFederatedTargets.includes("antigravity");
@@ -752,6 +883,8 @@ export function loadWorkspaceAgentTeam(
     const readonly = Boolean(cat?.readonly);
     const defaultTier = inferDefaultTier(roleId, cat);
     const defaultSlice = inferDefaultLazySlice(roleId, team);
+    const mappedBuiltinId = resolveMappedBuiltinRole(roleId, team);
+    const builtinSpec = builtinById.get(mappedBuiltinId) ?? builtinById.get("general");
     const binding = rawBindings[roleId];
 
     const rawProvider = typeof binding?.provider === "string" ? binding.provider.trim() : "";
@@ -779,6 +912,42 @@ export function loadWorkspaceAgentTeam(
       homeDir,
     );
 
+    const capRoleSkills: string[] = [];
+    const capRequiredMcp: string[] = [];
+    for (const capId of manifestCapabilities) {
+      const capDef = catalogData.capabilities[capId];
+      if (!capDef) continue;
+      if (capDef.role_skills?.[roleId]) {
+        capRoleSkills.push(...capDef.role_skills[roleId]);
+      }
+      if (capDef.requires_mcp) {
+        capRequiredMcp.push(...capDef.requires_mcp);
+      }
+    }
+
+    const primarySkills = normalizePrimarySkills([
+      ...(builtinSpec?.primarySkills ?? []),
+      ...(cat?.core_skills ?? []),
+      ...capRoleSkills,
+    ]);
+    const docsFocus = Array.from(new Set([...(builtinSpec?.docsFocus ?? [])]));
+    const qualityGates = Array.from(new Set([...(builtinSpec?.qualityGates ?? [])]));
+    const excludedMcpServers = Array.from(new Set([...(builtinSpec?.excludedMcpServers ?? [])]));
+    const excludedSet = new Set(excludedMcpServers.map((s) => s.toLowerCase()));
+    const allowedMcpServers = Array.from(
+      new Set([
+        ...(builtinSpec?.allowedMcpServers ?? []),
+        ...(cat?.requires_mcp ?? []),
+        ...capRequiredMcp.filter((m) => !excludedSet.has(m.toLowerCase())),
+        ...manifestMcpSources.filter((m) => !excludedSet.has(m.toLowerCase())),
+      ]),
+    );
+    const mandatorySkillActivation = Boolean(
+      builtinSpec?.mandatorySkillActivation ||
+      (cat?.core_skills && cat.core_skills.length > 0) ||
+      capRoleSkills.length > 0,
+    );
+
     return {
       id: roleId,
       name: cat?.title || roleId,
@@ -799,18 +968,18 @@ export function loadWorkspaceAgentTeam(
       handoffTitlePrefix: `[${roleId}]`,
       handoffDefaultPrompt: `Act as workspace role ${roleId} (${cat?.title || roleId}).`,
       syncToDaemonProfile: false,
-      primarySkills: [],
-      mandatorySkillActivation: false,
+      primarySkills,
+      mandatorySkillActivation,
       skillsRoot: `${homeDir}/.agents/skills`,
-      docsFocus: [],
-      qualityGates: [],
-      ssotOutputTarget: "",
+      docsFocus,
+      qualityGates,
+      ssotOutputTarget: builtinSpec?.ssotOutputTarget ?? "",
       rolePromptTemplate: markdownBody,
       lazyToolSlice,
-      allowedMcpServers: [],
-      excludedMcpServers: [],
-      injectedMcpServers: [],
-      extraEnv: {},
+      allowedMcpServers,
+      excludedMcpServers,
+      injectedMcpServers: [...(builtinSpec?.injectedMcpServers ?? [])],
+      extraEnv: { ...(builtinSpec?.extraEnv ?? {}) },
       aliases: aliasesByRole.get(roleId) ?? [],
       matchPatterns: inferRoleMatchPatterns(roleId, team),
       profileFilename: `${roleId}.json`,

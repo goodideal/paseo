@@ -930,11 +930,25 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
     });
     expect(leafBanner).not.toContain("mcp_paseo_create_agent");
 
-    // UI specialist with vendor skillsRoot includes fallback defaultSkillsRoot in banner
-    expect(rootBanner).toContain("fallback: ~/.agents/skills");
-    expect(rootBanner).toContain("or fallback `~/.agents/skills`");
+    // UI specialist with custom vendor skillsRoot includes fallback defaultSkillsRoot in banner
+    const customVendorUi = {
+      ...uiSpec,
+      skillsRoot: "/Users/jerry/.agents/vendor/ui-ux-pro-max-skill/.claude/skills",
+    };
+    const customVendorBanner = buildSystemPromptBanner({
+      config: effective,
+      specialist: customVendorUi,
+      tier: "standard",
+      targetModel: "gemini-4-argon",
+      roleMatchedRule: "heuristic:ui",
+      homeDir: "/tmp/mock-home",
+      provider: "antigravity",
+      isLeaf: false,
+    });
+    expect(customVendorBanner).toContain("fallback: ~/.agents/skills");
+    expect(customVendorBanner).toContain("or fallback `~/.agents/skills`");
 
-    // Backend specialist whose expanded skillsRoot equals defaultSkillsRoot omits fallback
+    // Backend & UI specialists whose expanded skillsRoot equals defaultSkillsRoot omit fallback
     const backendSpec = findSpecialist(effective, "backend")!;
     const backendBanner = buildSystemPromptBanner({
       config: effective,
@@ -947,6 +961,79 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
       isLeaf: true,
     });
     expect(backendBanner).not.toContain("fallback:");
+    expect(backendBanner).toContain("/Users/jerry/.agents/skills/codebase-design/SKILL.md");
+
+    // Antigravity banners use dynamic configured models, mention invoke_subagent + mcp_paseo_create_agent, and never mention harness_handoff
+    const customAgEffective = resolveEffectiveHarnessConfig({
+      ...DEFAULT_AGENT_HARNESS_SETTINGS,
+      providerMappings: {
+        ...DEFAULT_AGENT_HARNESS_SETTINGS.providerMappings,
+        antigravity: {
+          fast: "custom-ag-fast",
+          standard: "custom-ag-std",
+          deep: "custom-ag-deep",
+          max: "custom-ag-max",
+        },
+      },
+    });
+    const agDesignBanner = buildSystemPromptBanner({
+      config: customAgEffective,
+      specialist: findSpecialist(customAgEffective, "ui")!,
+      tier: "deep",
+      targetModel: "custom-ag-deep",
+      phase: "design",
+      roleMatchedRule: "heuristic:ui",
+      homeDir: "/Users/jerry",
+      provider: "antigravity",
+      isLeaf: false,
+    });
+    expect(agDesignBanner).toContain("custom-ag-deep");
+    expect(agDesignBanner).toContain("custom-ag-std");
+    expect(agDesignBanner).not.toContain("gemini-4-hydrogen-high");
+    expect(agDesignBanner).not.toContain("gemini-4-argon-high");
+    expect(agDesignBanner).not.toContain("gemini-4-carbon");
+    expect(agDesignBanner).toContain("invoke_subagent");
+    expect(agDesignBanner).toContain("mcp_paseo_create_agent");
+    expect(agDesignBanner).not.toContain("harness_handoff");
+    expect(agDesignBanner).toContain("exit_plan_mode");
+    expect(agDesignBanner).not.toContain("ExitPlanMode");
+
+    const agExecBanner = buildSystemPromptBanner({
+      config: customAgEffective,
+      specialist: findSpecialist(customAgEffective, "backend")!,
+      tier: "standard",
+      targetModel: "custom-ag-std",
+      phase: "exec",
+      roleMatchedRule: "label:role",
+      homeDir: "/Users/jerry",
+      provider: "antigravity",
+      isLeaf: false,
+    });
+    expect(agExecBanner).toContain("invoke_subagent");
+    expect(agExecBanner).toContain("mcp_paseo_create_agent");
+    expect(agExecBanner).not.toContain("harness_handoff");
+    expect(agExecBanner).not.toContain("paseo-handoff");
+    expect(agExecBanner).not.toContain("ExitPlanMode");
+
+    // Expands tilde (~/) skillsRoot when homeDir is passed to buildSystemPromptBanner
+    const tildeUiSpec = {
+      ...findSpecialist(effective, "ui")!,
+      skillsRoot: "~/.agents/skills",
+    };
+    const expandedSkillsBanner = buildSystemPromptBanner({
+      config: effective,
+      specialist: tildeUiSpec,
+      tier: "standard",
+      targetModel: "gemini-4-argon",
+      roleMatchedRule: "heuristic:ui",
+      homeDir: "/Users/jerry",
+      provider: "antigravity",
+      isLeaf: true,
+    });
+    expect(expandedSkillsBanner).toContain("/Users/jerry/.agents/skills/ui-ux-pro-max/SKILL.md");
+    expect(expandedSkillsBanner).not.toContain("`~/.agents/skills/ui-ux-pro-max/SKILL.md`");
+    expect(expandedSkillsBanner).not.toContain("mcp_paseo_create_agent");
+    expect(expandedSkillsBanner).not.toContain("harness_handoff");
   });
 
   it("injects unattended workflow design phaseRule and suppresses Antigravity handoff prompt when isUnattendedWorkflow=true", () => {
@@ -1197,7 +1284,7 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
       "test-gardener",
       "tdd",
       "diagnosing-bugs",
-      "pm-edge-cases",
+      "deliver-edge-cases",
     ]);
     expect(migrated.specialists.find((s) => s.id === "general")?.primarySkills).toEqual([
       "codebase-design",
@@ -1225,6 +1312,187 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
       "grilling",
       "k8s-triage",
     ]);
+  });
+
+  it("splits codex.yaml, unifies skillsRoot/pm skills, and migrates v7 -> v8 losslessly while preserving user overrides", async () => {
+    const { SETTINGS_SCHEMA_VERSION } = await import("../shared/settings.js");
+    expect(SETTINGS_SCHEMA_VERSION).toBe(8);
+
+    // Built-in presets have zero codex.yaml and unified skillsRoot
+    for (const s of DEFAULT_AGENT_HARNESS_SETTINGS.specialists) {
+      expect(s.lazyToolSlice).not.toBe("codex.yaml");
+    }
+    expect(
+      DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "general")?.lazyToolSlice,
+    ).toBe("general.yaml");
+    expect(
+      DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "architect")?.lazyToolSlice,
+    ).toBe("architect.yaml");
+    expect(
+      DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "qa")?.lazyToolSlice,
+    ).toBe("qa.yaml");
+    expect(
+      DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "scout")?.lazyToolSlice,
+    ).toBe("scout.yaml");
+    expect(
+      DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "scout")?.allowedMcpServers,
+    ).toEqual(["claude-mem"]);
+    expect(DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "ui")?.skillsRoot).toBe(
+      "/Users/jerry/.agents/skills",
+    );
+    expect(DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "pm")?.skillsRoot).toBe(
+      "/Users/jerry/.agents/skills",
+    );
+    expect(
+      DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "pm")?.primarySkills,
+    ).toEqual([
+      "grilling",
+      "deliver-prd",
+      "deliver-user-stories",
+      "deliver-edge-cases",
+      "define-problem-statement",
+    ]);
+
+    expect(
+      normalizePrimarySkills([
+        "pm-prd",
+        "pm-user-stories",
+        "pm-edge-cases",
+        "pm-problem",
+        "pm-prd",
+        "grilling",
+      ]),
+    ).toEqual([
+      "deliver-prd",
+      "deliver-user-stories",
+      "deliver-edge-cases",
+      "define-problem-statement",
+      "grilling",
+    ]);
+
+    const v7Values = {
+      ...DEFAULT_AGENT_HARNESS_SETTINGS,
+      debugLogs: true,
+      providerMappings: {
+        ...DEFAULT_AGENT_HARNESS_SETTINGS.providerMappings,
+        claude: { fast: "claude-haiku-custom", standard: "flash", deep: "pro", max: "plan" },
+      },
+      specialists: [
+        ...DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) => {
+          if (s.id === "general") {
+            return { ...s, lazyToolSlice: "codex.yaml", preferredProvider: "codex" };
+          }
+          if (s.id === "architect") {
+            return { ...s, lazyToolSlice: "backend.yaml", modelOverride: "custom-arch-model" };
+          }
+          if (s.id === "qa") {
+            return {
+              ...s,
+              lazyToolSlice: "ui.yaml",
+              primarySkills: ["test-gardener", "pm-edge-cases"],
+            };
+          }
+          if (s.id === "scout") {
+            return { ...s, lazyToolSlice: "pm.yaml", allowedMcpServers: [] };
+          }
+          if (s.id === "ui") {
+            return {
+              ...s,
+              skillsRoot: "/Users/jerry/.agents/vendor/ui-ux-pro-max-skill/.claude/skills",
+              matchPatterns: [
+                "\\b(?:ui|ux|ui-ux-pro-max|unslop|visual-verdict|unistyles|popover|sheet|pill|hover|tailwind|expo|react\\s*native|playwright|css|scss|sass|dark\\s*mode|light\\s*mode|color[-\\s]*scheme|theming|design[-\\s]*tokens?)\\b",
+                "前端|界面|样式|弹窗|组件|面板|视觉|移动端|手机端|响应式|布局|图标|配色|交互体验|暗黑模式|深色模式|浅色模式|亮色模式|主题切换|主题色",
+                "my-custom-ui-widget",
+              ],
+            };
+          }
+          if (s.id === "pm") {
+            return {
+              ...s,
+              skillsRoot: "/Users/jerry/.agents/vendor/pm-skills/skills",
+              primarySkills: [
+                "pm-prd",
+                "pm-user-stories",
+                "pm-edge-cases",
+                "pm-problem",
+                "grilling",
+              ],
+            };
+          }
+          if (s.id === "backend") {
+            return {
+              ...s,
+              matchPatterns: [
+                "\\b(?:daemon|websocket|rpc|sqlite|dbx|terminal-worker|worktree|protocol|zod-aot|relay|noise\\s*nk|quota|proxy|gateway|scheduler|provider)\\b",
+                "后端|协议兼容|数据库|进程通信|服务端|配额|网关|代理服务|限流|中间件",
+                "my-custom-grpc-service",
+              ],
+            };
+          }
+          return s;
+        }),
+        {
+          ...DEFAULT_AGENT_HARNESS_SETTINGS.specialists[8],
+          id: "legacy-custom",
+          name: "Legacy Custom",
+          shortLabel: "Legacy",
+          builtIn: false,
+          lazyToolSlice: "codex.yaml",
+          primarySkills: ["pm-prd", "custom-skill"],
+        },
+      ],
+    };
+
+    const migrated = agentHarnessSettings.migrate!(
+      v7Values,
+      7,
+    ) as typeof DEFAULT_AGENT_HARNESS_SETTINGS;
+
+    expect(migrated.debugLogs).toBe(true);
+    expect(migrated.providerMappings.claude.fast).toBe("claude-haiku-custom");
+
+    const mGeneral = migrated.specialists.find((s) => s.id === "general")!;
+    expect(mGeneral.lazyToolSlice).toBe("general.yaml");
+    expect(mGeneral.preferredProvider).toBe("codex");
+
+    const mArch = migrated.specialists.find((s) => s.id === "architect")!;
+    expect(mArch.lazyToolSlice).toBe("architect.yaml");
+    expect(mArch.modelOverride).toBe("custom-arch-model");
+
+    const mQa = migrated.specialists.find((s) => s.id === "qa")!;
+    expect(mQa.lazyToolSlice).toBe("qa.yaml");
+    expect(mQa.primarySkills).toEqual(["test-gardener", "deliver-edge-cases"]);
+
+    const mScout = migrated.specialists.find((s) => s.id === "scout")!;
+    expect(mScout.lazyToolSlice).toBe("scout.yaml");
+    expect(mScout.allowedMcpServers).toEqual(["claude-mem"]);
+
+    const mUi = migrated.specialists.find((s) => s.id === "ui")!;
+    expect(mUi.skillsRoot).toBe("/Users/jerry/.agents/skills");
+    expect(mUi.matchPatterns).toContain("my-custom-ui-widget");
+    expect(mUi.matchPatterns.join("\n")).toContain("颜色");
+    expect(mUi.matchPatterns.join("\n")).toContain("modal");
+
+    const mPm = migrated.specialists.find((s) => s.id === "pm")!;
+    expect(mPm.skillsRoot).toBe("/Users/jerry/.agents/skills");
+    expect(mPm.primarySkills).toEqual([
+      "grilling",
+      "deliver-prd",
+      "deliver-user-stories",
+      "deliver-edge-cases",
+      "define-problem-statement",
+    ]);
+
+    const mBackend = migrated.specialists.find((s) => s.id === "backend")!;
+    expect(mBackend.matchPatterns).toContain("my-custom-grpc-service");
+    expect(new RegExp(mBackend.matchPatterns[0], "i").test("WorkTree 标签")).toBe(false);
+    expect(new RegExp(mBackend.matchPatterns[0], "i").test("Provider 名称")).toBe(false);
+    expect(new RegExp(mBackend.matchPatterns[0], "i").test("git worktree status")).toBe(true);
+    expect(new RegExp(mBackend.matchPatterns[0], "i").test("provider adapter config")).toBe(true);
+
+    const mLegacyCustom = migrated.specialists.find((s) => s.id === "legacy-custom")!;
+    expect(mLegacyCustom.lazyToolSlice).toBe("general.yaml");
+    expect(mLegacyCustom.primarySkills).toEqual(["deliver-prd", "custom-skill"]);
   });
 });
 

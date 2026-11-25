@@ -172,7 +172,7 @@ import {
 } from "../client/metadata-utils.js";
 import { HarnessTransitionCard } from "../client/transition-card.js";
 import { HarnessPopover } from "../client/harness-popover.js";
-import { HarnessSettingsScreen } from "../client/settings-screen.js";
+import { BUILTIN_LAZY_TOOL_SLICES, HarnessSettingsScreen } from "../client/settings-screen.js";
 import { AgentTeamFilePanelHost, WorkspaceTeamEditor } from "../client/team-editor-panel.js";
 import { notifyWorkspaceTeamUpdated } from "../client/team-events.js";
 import { DEFAULT_AGENT_HARNESS_SETTINGS } from "../shared/settings.js";
@@ -2074,5 +2074,580 @@ describe("Agent Harness Phase 3 - WorkspaceTeamEditor & Entry Points", () => {
         targetRole: "review",
       });
     });
+  });
+});
+
+describe("Agent Harness Debug Trace UI & Role Lazy-Tool Slices", () => {
+  const fullTheme = {
+    colors: {
+      surface0: "#000000",
+      surface1: "#111111",
+      surface2: "#222222",
+      border: "#333333",
+      foreground: "#ffffff",
+      foregroundMuted: "#888888",
+      accent: "#00aaff",
+      accentForeground: "#ffffff",
+      statusSuccess: "#00aa44",
+      statusWarning: "#ffaa00",
+      statusDanger: "#cc2222",
+    },
+  } as any;
+
+  it("exports 8 role-semantic BUILTIN_LAZY_TOOL_SLICES without codex.yaml and safely displays legacy codex.yaml if unmigrated", () => {
+    expect(BUILTIN_LAZY_TOOL_SLICES).not.toContain("codex.yaml");
+    expect(Array.from(BUILTIN_LAZY_TOOL_SLICES)).toEqual([
+      "general.yaml",
+      "ui.yaml",
+      "backend.yaml",
+      "architect.yaml",
+      "pm.yaml",
+      "qa.yaml",
+      "review.yaml",
+      "scout.yaml",
+    ]);
+
+    const legacySettings = {
+      ...DEFAULT_AGENT_HARNESS_SETTINGS,
+      specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) =>
+        s.id === "ui" ? { ...s, lazyToolSlice: "codex.yaml" } : s,
+      ),
+    };
+    const noopRpc = vi.fn().mockResolvedValue({});
+    mockUseRpc.mockImplementation(() => noopRpc);
+
+    render(
+      React.createElement(HarnessSettingsScreen, {
+        theme: fullTheme,
+        host: { id: "h1", label: "Local" },
+        layout: { compact: false, platform: "web" },
+        settingsOverride: {
+          status: "ready",
+          values: legacySettings,
+          revision: "rev-legacy",
+          saving: false,
+          save: vi.fn(),
+        },
+      }),
+    );
+
+    const sliceSelect = screen.getByLabelText("Lazy-Tool Slice") as HTMLSelectElement;
+    expect(sliceSelect.value).toBe("codex.yaml");
+    const optionValues = Array.from(sliceSelect.options).map((o) => o.value);
+    expect(optionValues).toContain("codex.yaml");
+    expect(optionValues).toContain("general.yaml");
+    expect(optionValues).toContain("architect.yaml");
+    expect(optionValues).toContain("qa.yaml");
+    expect(optionValues).toContain("scout.yaml");
+    expect(screen.getByText("codex.yaml (legacy)")).toBeDefined();
+  });
+
+  it("persists debugLogs via settings.save before harnessDebugToggleRpc in HarnessPopover, enforces sync lock, and rolls back when save returns false", async () => {
+    const callOrder: string[] = [];
+    let resolveToggle: ((val: any) => void) | null = null;
+    const toggleRpcMock = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            callOrder.push("rpc:true");
+            resolveToggle = resolve;
+          }),
+      )
+      .mockRejectedValueOnce(new Error("Daemon offline"))
+      .mockResolvedValueOnce({
+        enabled: false,
+        logFilePath: "/Users/test/.paseo/plugin-data/agent-harness/debug-trace.jsonl",
+      });
+    const effectiveRpcMock = vi.fn().mockResolvedValue({
+      config: {
+        specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists,
+        agentTeam: null,
+      },
+    });
+
+    mockUseRpc.mockImplementation((contract: any) => {
+      if (contract?.name === "agent_harness.debug.toggle.request") return toggleRpcMock;
+      if (contract?.name === "agent_harness.config.effective.request") return effectiveRpcMock;
+      return vi.fn().mockResolvedValue({});
+    });
+    mockUseAgent.mockReturnValue({
+      status: "idle",
+      provider: "claude",
+      model: "flash",
+      cwd: "/repos/demo",
+      currentModeId: "acceptEdits",
+      metadata: {},
+    } as any);
+
+    const saveMock = vi.fn().mockImplementation(async (nextValues: any, revision: string) => {
+      callOrder.push(`save:${String(nextValues.debugLogs)}:${revision}`);
+      return true;
+    });
+    const reloadMock = vi.fn().mockResolvedValue(undefined);
+    const initialValues = { ...DEFAULT_AGENT_HARNESS_SETTINGS, debugLogs: false };
+    mockUseSettings.mockReturnValue({
+      status: "ready",
+      revision: "rev-pop-1",
+      saving: false,
+      saveError: null,
+      values: initialValues,
+      save: saveMock,
+      reload: reloadMock,
+    } as any);
+
+    render(
+      React.createElement(HarnessPopover, {
+        context: "agent" as const,
+        host: { id: "h1", label: "Local" },
+        workspaceId: "ws-dbg",
+        agentId: "agt-dbg",
+        theme: fullTheme,
+        layout: { compact: false, platform: "web" },
+        close: vi.fn(),
+        onOpenSettings: vi.fn(),
+      }),
+    );
+
+    expect(screen.queryByTestId("plugin-scroll-view")).toBeNull();
+    const offButton = screen.getByRole("button", { name: "Debug: OFF" });
+    expect(screen.getByRole("button", { name: "Open Harness Settings" })).toBeDefined();
+
+    // Same-frame double-click is blocked by synchronous lock ref before save resolves
+    fireEvent.click(offButton);
+    fireEvent.click(offButton);
+    await vi.waitFor(() => {
+      expect(toggleRpcMock).toHaveBeenCalledTimes(1);
+    });
+    expect(saveMock).toHaveBeenCalledTimes(1);
+    expect(saveMock).toHaveBeenCalledWith(
+      expect.objectContaining({ debugLogs: true }),
+      "rev-pop-1",
+    );
+    expect(toggleRpcMock).toHaveBeenCalledWith({ enabled: true });
+    expect(callOrder).toEqual(["save:true:rev-pop-1", "rpc:true"]);
+
+    resolveToggle!({
+      enabled: true,
+      logFilePath: "/Users/test/.paseo/plugin-data/agent-harness/debug-trace.jsonl",
+    });
+
+    const onButton = await screen.findByRole("button", { name: "Debug: ON" });
+    expect(onButton).toBeDefined();
+    expect(reloadMock).not.toHaveBeenCalled();
+    expect(mockToast.show).toHaveBeenCalledWith("Debug trace enabled", {
+      variant: "success",
+    });
+
+    // Next click fails at RPC -> stays Debug: ON and shows error toast
+    fireEvent.click(onButton);
+    await vi.waitFor(() => {
+      expect(mockToast.error).toHaveBeenCalledWith(expect.stringContaining("Daemon offline"));
+    });
+    expect(screen.getByRole("button", { name: "Debug: ON" })).toBeDefined();
+
+    // Third click succeeds turning OFF
+    fireEvent.click(screen.getByRole("button", { name: "Debug: ON" }));
+    expect(await screen.findByRole("button", { name: "Debug: OFF" })).toBeDefined();
+    expect(toggleRpcMock).toHaveBeenLastCalledWith({ enabled: false });
+    expect(mockToast.show).toHaveBeenLastCalledWith("Debug trace disabled", { variant: "success" });
+
+    // Fourth click: settings.save returns false -> aborts, shows error toast, does NOT call RPC
+    saveMock.mockResolvedValueOnce(false);
+    mockUseSettings.mockReturnValue({
+      status: "ready",
+      revision: "rev-pop-2",
+      saving: false,
+      saveError: "Revision conflict",
+      values: initialValues,
+      save: saveMock,
+      reload: reloadMock,
+    } as any);
+
+    const callsBeforeFailedSave = toggleRpcMock.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "Debug: OFF" }));
+    await vi.waitFor(() => {
+      expect(mockToast.error).toHaveBeenCalledWith("Failed to save debug trace setting");
+    });
+    expect(toggleRpcMock).toHaveBeenCalledTimes(callsBeforeFailedSave);
+    expect(screen.getByRole("button", { name: "Debug: OFF" })).toBeDefined();
+  });
+
+  it("disables HarnessPopover Debug toggle button when settings are not ready", () => {
+    const toggleRpcMock = vi.fn();
+    mockUseRpc.mockImplementation((contract: any) => {
+      if (contract?.name === "agent_harness.debug.toggle.request") return toggleRpcMock;
+      return vi.fn().mockResolvedValue({});
+    });
+    mockUseAgent.mockReturnValue({
+      status: "idle",
+      provider: "claude",
+      model: "flash",
+      cwd: "/repos/demo",
+      currentModeId: "acceptEdits",
+      metadata: {},
+    } as any);
+    mockUseSettings.mockReturnValue({
+      status: "loading",
+      saving: false,
+    } as any);
+
+    render(
+      React.createElement(HarnessPopover, {
+        context: "agent" as const,
+        host: { id: "h1", label: "Local" },
+        workspaceId: "ws-loading",
+        agentId: "agt-loading",
+        theme: fullTheme,
+        layout: { compact: false, platform: "web" },
+        close: vi.fn(),
+      }),
+    );
+
+    const debugBtn = screen.getByRole("button", { name: "Debug: OFF" });
+    expect(debugBtn.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(debugBtn);
+    expect(toggleRpcMock).not.toHaveBeenCalled();
+  });
+
+  it("renders Debug Trace & Diagnostics section in HarnessSettingsScreen with save-before-toggle, status, refresh, clear, and recent entries", async () => {
+    const sampleEntries = [
+      {
+        ts: "2026-11-25T08:15:30.123Z",
+        event: "harness.route",
+        level: "info" as const,
+        agentId: "agt-ui-1",
+        role: "ui",
+        phase: "design",
+        provider: "claude",
+        model: "pro",
+        detail: { matchedRule: "rule_ui_keyword" },
+      },
+      {
+        ts: "2026-11-25T08:14:10.000Z",
+        event: "permission.block",
+        level: "warn" as const,
+        agentId: "agt-ui-1",
+        role: "ui",
+        phase: "design",
+        detail: { toolName: "Edit" },
+      },
+    ];
+
+    const callOrder: string[] = [];
+    const debugStatusMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        enabled: true,
+        logFilePath: "/Users/test/.paseo/plugin-data/agent-harness/debug-trace.jsonl",
+        totalLines: 2,
+        fileSizeBytes: 1536,
+        rotatedExists: true,
+        entries: sampleEntries,
+      })
+      .mockResolvedValueOnce({
+        enabled: false,
+        logFilePath: "/Users/test/.paseo/plugin-data/agent-harness/debug-trace.jsonl",
+        totalLines: 3,
+        fileSizeBytes: 2048,
+        rotatedExists: true,
+        entries: [
+          {
+            ts: "2026-11-25T08:16:00.000Z",
+            event: "debug.toggled",
+            level: "info" as const,
+            detail: { enabled: false },
+          },
+          ...sampleEntries,
+        ],
+      })
+      .mockResolvedValueOnce({
+        enabled: false,
+        logFilePath: "/Users/test/.paseo/plugin-data/agent-harness/debug-trace.jsonl",
+        totalLines: 4,
+        fileSizeBytes: 2560,
+        rotatedExists: true,
+        entries: [
+          {
+            ts: "2026-11-25T08:17:00.000Z",
+            event: "harness.turn.after",
+            level: "error" as const,
+            role: "backend",
+            phase: "exec",
+            agentId: "agt-be-2",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        enabled: false,
+        logFilePath: "/Users/test/.paseo/plugin-data/agent-harness/debug-trace.jsonl",
+        totalLines: 0,
+        fileSizeBytes: 0,
+        rotatedExists: false,
+        entries: [],
+      });
+
+    const debugToggleMock = vi.fn().mockImplementation(async (input: any) => {
+      callOrder.push(`rpc:${String(input.enabled)}`);
+      return {
+        enabled: false,
+        logFilePath: "/Users/test/.paseo/plugin-data/agent-harness/debug-trace.jsonl",
+      };
+    });
+    const debugClearMock = vi.fn().mockResolvedValue({
+      cleared: true,
+      removedBytes: 2560,
+    });
+    const inspectEnvMock = vi.fn().mockResolvedValue({
+      availableProviders: [],
+      diskProfiles: [],
+      lazyToolSlices: ["ui.yaml", "general.yaml"],
+      hasRepoOverride: false,
+      repoOverridePath: null,
+      agentTeam: null,
+      workspaces: [],
+    });
+
+    mockUseRpc.mockImplementation((contract: any) => {
+      if (contract?.name === "agent_harness.debug.status.request") return debugStatusMock;
+      if (contract?.name === "agent_harness.debug.toggle.request") return debugToggleMock;
+      if (contract?.name === "agent_harness.debug.clear.request") return debugClearMock;
+      if (contract?.name === "agent_harness.environment.inspect.request") return inspectEnvMock;
+      return vi.fn().mockResolvedValue({});
+    });
+
+    const saveSpy = vi.fn().mockImplementation(async (nextValues: any, revision: string) => {
+      callOrder.push(`save:${String(nextValues.debugLogs)}:${revision}`);
+      return true;
+    });
+    const reloadSpy = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      React.createElement(HarnessSettingsScreen, {
+        theme: fullTheme,
+        host: { id: "h1", label: "Local" },
+        layout: { compact: false, platform: "web" },
+        settingsOverride: {
+          status: "ready",
+          values: { ...DEFAULT_AGENT_HARNESS_SETTINGS, debugLogs: true },
+          revision: "rev-dbg-1",
+          saving: false,
+          save: saveSpy,
+          reload: reloadSpy,
+        },
+      }),
+    );
+
+    expect(screen.getByText("Debug Trace & Diagnostics")).toBeDefined();
+    expect(
+      await screen.findByText("/Users/test/.paseo/plugin-data/agent-harness/debug-trace.jsonl"),
+    ).toBeDefined();
+    expect(debugStatusMock).toHaveBeenCalledWith({ limit: 20 });
+    expect(
+      screen.getByText("2 entries · 1.5 KB · Rotated backup present (debug-trace.1.jsonl)"),
+    ).toBeDefined();
+    expect(screen.getByText("harness.route")).toBeDefined();
+    expect(screen.getByText("08:15:30.123")).toBeDefined();
+    expect(
+      screen.getByText(
+        "role=ui · phase=design · agent=agt-ui-1 · claude/pro · matchedRule=rule_ui_keyword",
+      ),
+    ).toBeDefined();
+    expect(screen.getByText("permission.block")).toBeDefined();
+    expect(
+      screen.getByText("role=ui · phase=design · agent=agt-ui-1 · toolName=Edit"),
+    ).toBeDefined();
+
+    // Toggle Enable Debug Trace persists via settings.save FIRST, then calls harnessDebugToggleRpc
+    const debugSwitch = screen.getByLabelText("Enable Debug Trace") as HTMLInputElement;
+    expect(debugSwitch.checked).toBe(true);
+    fireEvent.click(debugSwitch);
+
+    await vi.waitFor(() => {
+      expect(debugToggleMock).toHaveBeenCalledWith({ enabled: false });
+    });
+    expect(saveSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ debugLogs: false }),
+      "rev-dbg-1",
+    );
+    expect(callOrder).toEqual(["save:false:rev-dbg-1", "rpc:false"]);
+    expect(reloadSpy).not.toHaveBeenCalled();
+    expect(await screen.findByText("debug.toggled")).toBeDefined();
+    expect(mockToast.show).toHaveBeenCalledWith("Debug trace disabled", { variant: "success" });
+
+    // Refresh Logs fetches updated status & entries
+    const refreshBtn = screen.getByRole("button", { name: "Refresh Logs" });
+    fireEvent.click(refreshBtn);
+    expect(await screen.findByText("harness.turn.after")).toBeDefined();
+    expect(screen.getByText(/role=backend · phase=exec · agent=agt-be-2/)).toBeDefined();
+
+    // Clear Trace clears logs, refreshes status, shows empty message, and disables Clear Trace
+    const clearBtn = screen.getByRole("button", { name: "Clear Trace" }) as HTMLButtonElement;
+    expect(clearBtn.disabled).toBe(false);
+    fireEvent.click(clearBtn);
+
+    await vi.waitFor(() => {
+      expect(debugClearMock).toHaveBeenCalledWith({});
+    });
+    expect(await screen.findByText("Debug trace is off")).toBeDefined();
+    expect(screen.getByText("0 entries · 0 B · No rotated backup")).toBeDefined();
+    expect(mockToast.show).toHaveBeenCalledWith(
+      expect.stringContaining("Cleared debug trace (2.5 KB removed)"),
+      { variant: "success" },
+    );
+    expect(
+      (screen.getByRole("button", { name: "Clear Trace" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it("shows error toast, reverts state, and skips debugToggleRpc when settings.save returns false in HarnessSettingsScreen", async () => {
+    const debugStatusMock = vi.fn().mockResolvedValue({
+      enabled: false,
+      logFilePath: "/Users/test/.paseo/plugin-data/agent-harness/debug-trace.jsonl",
+      totalLines: 0,
+      fileSizeBytes: 0,
+      rotatedExists: false,
+      entries: [],
+    });
+    const debugToggleMock = vi.fn();
+    mockUseRpc.mockImplementation((contract: any) => {
+      if (contract?.name === "agent_harness.debug.status.request") return debugStatusMock;
+      if (contract?.name === "agent_harness.debug.toggle.request") return debugToggleMock;
+      return vi.fn().mockResolvedValue({});
+    });
+
+    const saveSpy = vi.fn().mockResolvedValue(false);
+    render(
+      React.createElement(HarnessSettingsScreen, {
+        theme: fullTheme,
+        host: { id: "h1", label: "Local" },
+        layout: { compact: false, platform: "web" },
+        settingsOverride: {
+          status: "ready",
+          values: { ...DEFAULT_AGENT_HARNESS_SETTINGS, debugLogs: false },
+          revision: "rev-fail-1",
+          saving: false,
+          saveError: "Store write rejected",
+          save: saveSpy,
+        },
+      }),
+    );
+
+    expect(await screen.findByText("Debug trace is off")).toBeDefined();
+    const debugSwitch = screen.getByLabelText("Enable Debug Trace") as HTMLInputElement;
+    expect(debugSwitch.checked).toBe(false);
+
+    fireEvent.click(debugSwitch);
+    await vi.waitFor(() => {
+      expect(saveSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ debugLogs: true }),
+        "rev-fail-1",
+      );
+    });
+    expect(mockToast.error).toHaveBeenCalledWith("Store write rejected");
+    expect(debugToggleMock).not.toHaveBeenCalled();
+    expect((screen.getByLabelText("Enable Debug Trace") as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("persists imported specialists via settings.save on import_from_disk and reports malformed debug status responses", async () => {
+    const importedSpecialists = DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) =>
+      s.id === "ui" ? { ...s, preferredTier: "deep" } : s,
+    );
+    const syncProfilesMock = vi.fn().mockResolvedValue({
+      success: true,
+      message: "Imported 9 profiles from disk",
+      importedCount: 9,
+      specialists: importedSpecialists,
+    });
+    const debugStatusMock = vi.fn().mockResolvedValue({ unexpected: true });
+    const inspectEnvMock = vi.fn().mockResolvedValue({
+      availableProviders: [],
+      diskProfiles: [],
+      lazyToolSlices: [],
+      hasRepoOverride: false,
+      repoOverridePath: null,
+      agentTeam: null,
+      workspaces: [],
+    });
+
+    mockUseRpc.mockImplementation((contract: any) => {
+      if (contract?.name === "agent_harness.profiles.sync.request") return syncProfilesMock;
+      if (contract?.name === "agent_harness.debug.status.request") return debugStatusMock;
+      if (contract?.name === "agent_harness.environment.inspect.request") return inspectEnvMock;
+      return vi.fn().mockResolvedValue({});
+    });
+
+    const saveSpy = vi.fn().mockResolvedValue(true);
+    render(
+      React.createElement(HarnessSettingsScreen, {
+        theme: fullTheme,
+        host: { id: "h1", label: "Local" },
+        layout: { compact: false, platform: "web" },
+        settingsOverride: {
+          status: "ready",
+          values: DEFAULT_AGENT_HARNESS_SETTINGS,
+          revision: "rev-import-1",
+          saving: false,
+          save: saveSpy,
+        },
+      }),
+    );
+
+    // Malformed debug status response surfaces inline error and placeholder path without hardcoding ~/.paseo
+    expect(await screen.findByText("Invalid debug trace status response")).toBeDefined();
+    expect(screen.getByText("Resolving daemon log path...")).toBeDefined();
+
+    // Clicking Refresh Logs with malformed response also pops error toast
+    fireEvent.click(screen.getByRole("button", { name: "Refresh Logs" }));
+    await vi.waitFor(() => {
+      expect(mockToast.error).toHaveBeenCalledWith("Invalid debug trace status response");
+    });
+
+    // Clicking Import persists imported specialists via settings.save
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+    await vi.waitFor(() => {
+      expect(saveSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ specialists: importedSpecialists }),
+        "rev-import-1",
+      );
+    });
+    expect(mockToast.show).toHaveBeenCalledWith("Imported 9 profiles from disk", {
+      variant: "success",
+    });
+  });
+
+  it("shows empty recorded state and disables Clear Trace when Debug Trace is ON with zero entries", async () => {
+    const debugStatusMock = vi.fn().mockResolvedValue({
+      enabled: true,
+      logFilePath: "/Users/test/.paseo/plugin-data/agent-harness/debug-trace.jsonl",
+      totalLines: 0,
+      fileSizeBytes: 0,
+      rotatedExists: false,
+      entries: [],
+    });
+    mockUseRpc.mockImplementation((contract: any) => {
+      if (contract?.name === "agent_harness.debug.status.request") return debugStatusMock;
+      return vi.fn().mockResolvedValue({});
+    });
+
+    render(
+      React.createElement(HarnessSettingsScreen, {
+        theme: fullTheme,
+        host: { id: "h1", label: "Local" },
+        layout: { compact: false, platform: "web" },
+        settingsOverride: {
+          status: "ready",
+          values: { ...DEFAULT_AGENT_HARNESS_SETTINGS, debugLogs: true },
+          revision: "rev-empty",
+          saving: false,
+          save: vi.fn(),
+        },
+      }),
+    );
+
+    expect(await screen.findByText("No trace entries recorded yet")).toBeDefined();
+    expect(
+      (screen.getByRole("button", { name: "Clear Trace" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
   });
 });

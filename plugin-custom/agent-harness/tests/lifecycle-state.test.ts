@@ -328,6 +328,99 @@ describe("lifecycle-state", () => {
       ];
       expect(inspectTurnTimeline(nonHarnessSpawn).handoffInvoked).toBe(false);
     });
+
+    it("supports mixed-case path keys and exempts .gemini/antigravity-cli/brain/ planning docs", () => {
+      const brainDocCall = [
+        { type: "user_message", text: "write brain artifact" },
+        {
+          type: "tool_call",
+          name: "write_to_file",
+          input: {
+            TargetFile:
+              "/Users/jerry/.gemini/antigravity-cli/brain/conv-123/implementation_plan.json",
+          },
+        },
+        {
+          type: "tool_call",
+          name: "Write",
+          input: {
+            Path: "/Users/jerry/.gemini/antigravity-cli/brain/conv-123/scratch/notes.ts",
+          },
+        },
+      ];
+      expect(inspectTurnTimeline(brainDocCall).detectedCodeWrite).toBe(false);
+
+      for (const [key, val] of [
+        ["Path", "src/app.ts"],
+        ["TargetFile", "src/server.ts"],
+        ["filepath", "src/util.ts"],
+        ["destination", "src/dest.ts"],
+        ["TargetDir", "src/out"],
+      ] as const) {
+        const writeCall = [
+          { type: "user_message", text: "edit code" },
+          {
+            type: "tool_call",
+            name: "write_to_file",
+            input: { [key]: val },
+          },
+        ];
+        expect(
+          inspectTurnTimeline(writeCall).detectedCodeWrite,
+          `Key ${key} should detect code write`,
+        ).toBe(true);
+      }
+
+      const arrayPathsCall = [
+        { type: "user_message", text: "edit files" },
+        {
+          type: "tool_call",
+          name: "replace_in_files",
+          args: { files: ["/Users/jerry/.gemini/antigravity-cli/brain/c1/a.md", "src/b.ts"] },
+        },
+      ];
+      expect(inspectTurnTimeline(arrayPathsCall).detectedCodeWrite).toBe(true);
+    });
+
+    it("detects Antigravity exit_plan_mode as planExitInvoked and writable invoke_subagent as writableSubagentInvoked", () => {
+      const exitPlanTimeline = [
+        { type: "user_message", text: "design plan" },
+        { type: "tool_call", name: "exit_plan_mode", input: {} },
+      ];
+      const exitInspected = inspectTurnTimeline(exitPlanTimeline);
+      expect(exitInspected.planExitInvoked).toBe(true);
+      expect(exitInspected.writableSubagentInvoked).toBe(false);
+
+      for (const writableType of ["impl-worker", "ui-specialist", "ops-specialist", "self"]) {
+        const writableSubagentTimeline = [
+          { type: "user_message", text: "delegate implementation" },
+          {
+            type: "tool_call",
+            name: "invoke_subagent",
+            input: { TypeName: writableType, Task: "Implement module" },
+          },
+        ];
+        const res = inspectTurnTimeline(writableSubagentTimeline);
+        expect(res.writableSubagentInvoked, `TypeName=${writableType} should be writable`).toBe(
+          true,
+        );
+      }
+
+      for (const readonlyType of ["research", "spec-critic", "code-reviewer", "qa-verifier"]) {
+        const readonlySubagentTimeline = [
+          { type: "user_message", text: "inspect codebase" },
+          {
+            type: "tool_call",
+            name: "invoke_subagent",
+            input: { TypeName: readonlyType, Task: "Inspect files" },
+          },
+        ];
+        const res = inspectTurnTimeline(readonlySubagentTimeline);
+        expect(res.writableSubagentInvoked, `TypeName=${readonlyType} should NOT be writable`).toBe(
+          false,
+        );
+      }
+    });
   });
 
   describe("hasExplicitExecTransitionIntent", () => {
@@ -824,6 +917,32 @@ describe("lifecycle-state", () => {
       }
     });
 
+    it("matches composite English and Chinese two-word affirmative phrases while rejecting questions and negations", () => {
+      const compositePhrases = [
+        "yes, go",
+        "yes go",
+        "yes please",
+        "ok go",
+        "ok proceed",
+        "sure go",
+        "go ahead",
+        "sounds good, go",
+        "好，开始",
+        "好的，继续",
+        "好的，开始执行",
+        "可以，动手",
+        "同意，继续",
+      ];
+      for (const phrase of compositePhrases) {
+        expect(hasShortAffirmativeExecConfirmation(phrase, 1), `Failed: ${phrase}`).toBe(true);
+      }
+
+      expect(hasShortAffirmativeExecConfirmation("yes, go?", 1)).toBe(false);
+      expect(hasShortAffirmativeExecConfirmation("好，开始？", 1)).toBe(false);
+      expect(hasShortAffirmativeExecConfirmation("no, don't go", 1)).toBe(false);
+      expect(hasShortAffirmativeExecConfirmation("not yet", 1)).toBe(false);
+    });
+
     it("rejects negative phrases even if they contain affirmative words", () => {
       expect(hasShortAffirmativeExecConfirmation("先别写，再想想", 1)).toBe(false);
       expect(hasShortAffirmativeExecConfirmation("不要改代码", 1)).toBe(false);
@@ -994,6 +1113,106 @@ describe("lifecycle-state", () => {
 
       expect(reconciled.changed).toBe(true);
       expect(reconciled.meta.currentThinking).toBe("medium");
+    });
+
+    it("downgrades design -> exec on planExitInvoked or writableSubagentInvoked, but stays in design on readonly subagent", () => {
+      const designMeta = createInitialHarnessMetadata({
+        role: "general",
+        tier: "deep",
+        phase: "design",
+        model: "gemini-4-carbon",
+        thinkingOptionId: "high",
+        roleMatchedRule: "default_general",
+        tierMatchedRule: "plan",
+      });
+
+      const exitEval = evaluateTurnAfterTransition({
+        meta: designMeta,
+        turnId: "turn_exit_plan",
+        settings: { planTurnSoftLimit: 3, autoDowngradePlanOnExec: true },
+        timelineInspection: {
+          latestUserText: "设计架构方案",
+          detectedCodeWrite: false,
+          handoffInvoked: false,
+          planExitInvoked: true,
+          writableSubagentInvoked: false,
+        },
+        providerStandardModel: "gemini-4-argon",
+        providerStandardThinking: "high",
+      });
+      expect(exitEval.shouldDowngrade).toBe(true);
+      expect(exitEval.downgradeReason).toBe("plan_approved");
+      expect(exitEval.nextMeta.phase).toBe("exec");
+      expect(exitEval.nextMeta.currentTier).toBe("standard");
+
+      const writableEval = evaluateTurnAfterTransition({
+        meta: designMeta,
+        turnId: "turn_writable_sub",
+        settings: { planTurnSoftLimit: 3, autoDowngradePlanOnExec: true },
+        timelineInspection: {
+          latestUserText: "设计架构方案",
+          detectedCodeWrite: false,
+          handoffInvoked: false,
+          planExitInvoked: false,
+          writableSubagentInvoked: true,
+        },
+        providerStandardModel: "gemini-4-argon",
+        providerStandardThinking: "high",
+      });
+      expect(writableEval.shouldDowngrade).toBe(true);
+      expect(writableEval.downgradeReason).toBe("write_tool_in_plan");
+      expect(writableEval.nextMeta.phase).toBe("exec");
+      expect(writableEval.nextMeta.currentTier).toBe("standard");
+
+      const readonlyEval = evaluateTurnAfterTransition({
+        meta: designMeta,
+        turnId: "turn_readonly_sub",
+        settings: { planTurnSoftLimit: 3, autoDowngradePlanOnExec: true },
+        timelineInspection: {
+          latestUserText: "设计架构方案",
+          detectedCodeWrite: false,
+          handoffInvoked: false,
+          planExitInvoked: false,
+          writableSubagentInvoked: false,
+        },
+        providerStandardModel: "gemini-4-argon",
+        providerStandardThinking: "high",
+      });
+      expect(readonlyEval.shouldDowngrade).toBe(false);
+      expect(readonlyEval.nextMeta.phase).toBe("design");
+    });
+
+    it("rejects path traversal (..) and non-home .gemini/antigravity-cli/brain directories as exempt docs", () => {
+      const traversalCases = [
+        "openspec/../../src/app.ts",
+        "docs/../src/secret.ts",
+        "/Users/jerry/.gemini/antigravity-cli/brain/../../../projects/ai/paseo/src/index.ts",
+        ".gemini\\antigravity-cli\\brain\\..\\..\\src\\index.ts",
+        "/tmp/.gemini/antigravity-cli/brain/evil.ts",
+        "/Users/jerry/repo/.gemini/antigravity-cli/brain/fake.ts",
+        "repo/.gemini/antigravity-cli/brain/fake.ts",
+        "/Users/jerry/.gemini/antigravity-cli/brain/",
+      ];
+
+      for (const filePath of traversalCases) {
+        const res = inspectTurnTimeline([
+          { type: "tool_call", name: "write_to_file", input: { TargetFile: filePath } },
+        ]);
+        expect(res.detectedCodeWrite, `expected detectedCodeWrite=true for ${filePath}`).toBe(true);
+      }
+
+      const validHomeCases = [
+        "/home/alice/.gemini/antigravity-cli/brain/conv-1/plan.ts",
+        "~/.gemini/antigravity-cli/brain/conv-2/scratch.ts",
+      ];
+      for (const filePath of validHomeCases) {
+        const res = inspectTurnTimeline([
+          { type: "tool_call", name: "write_to_file", input: { TargetFile: filePath } },
+        ]);
+        expect(res.detectedCodeWrite, `expected detectedCodeWrite=false for ${filePath}`).toBe(
+          false,
+        );
+      }
     });
   });
 });

@@ -331,3 +331,38 @@
 - **THEN** 未改动内置专家的 `primarySkills` 升级至完整 v7 默认列表（如 `ui` 与 `backend` 获得 `"diagnosing-bugs"`、`"pr"`，`qa` 与 `general` 获得 `"tdd"`、`"diagnosing-bugs"`）
 - **AND** 用户自定义专家保留自定义技能项，同时自动完成 `"superpowers:*"` 映射/剔除与 `"mattpocock-skills:"` 前缀剥离
 - **AND** `buildSystemPromptBanner` 对 Claude、Codex、Antigravity 等所有 Provider 输出的 `Primary Skills` 均不包含任何 `"superpowers:"` 或 `"mattpocock-skills:"` 前缀
+
+### Requirement: 角色独立切片拆分、统一技能根路径、路由纠偏与 v8 无损迁移 (Role Lazy-Slice Split, Unified Skills Root, Routing Refinements & v8 Migration)
+
+系统 SHALL 彻底解除内置专家与 `agent-team-loader` 对共享 `codex.yaml` 的复用绑定，使 `general` -> `general.yaml`、`architect` -> `architect.yaml`、`qa` -> `qa.yaml`、`scout` -> `scout.yaml`（且 `scout.allowedMcpServers` 默认 `["claude-mem"]`）；统一 `ui` 与 `pm` 专家的 `skillsRoot` 为 `"/Users/jerry/.agents/skills"`，规范 `pm.primarySkills` 为 `["grilling", "deliver-prd", "deliver-user-stories", "deliver-edge-cases", "define-problem-statement"]` 并通过 `normalizePrimarySkills` 映射遗留 `pm-*` 技能名后去重保序；扩展 `ui.matchPatterns`（覆盖颜色、色板、主题色、按钮、卡片、字号、间距、图标、样式、组件、弹窗、`popover`/`modal`/`theme`/`color`/`palette`/`typography`）并从 `backend.matchPatterns` 移除误伤 UI 标签的裸词 `"worktree"` 与 `"provider"`；`buildSystemPromptBanner` SHALL 按实际目标模型动态渲染提示（禁止写死历史模型 ID），并在 `mandatorySkillActivation` 生效时要求先读取 `<skillsRoot>/<skill>/SKILL.md`；在配置版本 `SETTINGS_SCHEMA_VERSION = 8` 下，`agentHarnessSettings.migrate` SHALL 无损升级 `fromVersion < 8` 配置同时保留用户覆写。
+
+#### Scenario: 视觉标签与颜色图标请求准确路由至 UI 专家并兼容 v8 迁移
+
+- **WHEN** 用户提交提示词 `"配置 WorkTree 和 Local 这两个标签的颜色和图标"`（无显式标签）
+- **THEN** `detectDomainRole` 返回角色 `ui`，不会因 `"WorkTree"` 被误路由至 `backend`
+- **AND** 当 `agentHarnessSettings.migrate` 加载 `fromVersion = 7` 的配置（含 `codex.yaml`、旧 `ui`/`pm` vendor `skillsRoot`、`pm-*` 技能与用户自定义 `preferredProvider` / `preferredModel` / `debugLogs` / `tierRoutes`）时，全部角色切片与技能根路径无损迁移至 v8 默认值且用户覆写项保持不变
+
+### Requirement: Antigravity 工具隔离、产物白名单豁免与复合确认降级 (Antigravity Tool Isolation, Brain Path Exemption & Downgrade Hardening)
+
+系统 MUST 在 `agent.open.before` 对归一化 Provider 为 `"antigravity"` 的会话停止追加并剥离预置的 `harness_handoff` 自定义工具，并在 `buildSystemPromptBanner` 中针对 Antigravity `design` / `exec` 阶段规则使用 `exit_plan_mode`、`invoke_subagent` 与 `mcp_paseo_create_agent`（消除冲突的 `ExitPlanMode` 与 `harness_handoff` / `paseo-handoff` 引用，且支持传入 `homeDir` 展开 `~/` 技能路径，叶子与无人值守会话维持严格隔离）；同时 `shared/lifecycle-state.ts` SHALL：
+
+- 在 `extractPathsFromTool` 中兼容大小写多键名（如 `Path`、`TargetFile`、`filePath`、`filepath`、`destination`、`TargetDir`）及数组路径参数；`isExemptDocPath` 统一将 `\` 转为 `/` 后拦截任何含 `".."` 分段的路径穿越，并将主目录 `.gemini/antigravity-cli/brain/`（`^(?:\/Users\/[^/]+|\/home\/[^/]+|~)\/\.gemini\/antigravity-cli\/brain\/.+`）下的产物/计划路径列入只读规划期文档安全豁免白名单；
+- 在 `hasShortAffirmativeExecConfirmation` 中在保持排除疑问句、否定句及长指令的前提下支持常见英文/中文两词复合确认短语（如 `"yes, go"`、`"ok proceed"`、`"go ahead"`、`"好，开始"`、`"好的，继续"`、`"可以，动手"`）；
+- 在 `inspectTurnTimeline` 中将 `exit_plan_mode` 识别为 `planExitInvoked = true`，并将携带写入职责的 `invoke_subagent`（如 `impl-worker`、`ui-specialist`、`ops-specialist`，排除 `research`、`spec-critic`、`code-reviewer`、`qa-verifier` 等只读角色）识别为 `writableSubagentInvoked = true`，以驱动 `agent.turn.after` 完成 `design -> exec` 自动步降。
+
+#### Scenario: Antigravity 打开时不注入 harness_handoff 且在 exit_plan_mode 与可写 invoke_subagent 时步降
+
+- **WHEN** `provider` 为 `"antigravity"` 的交互会话打开，且在 `design` 阶段将计划写入 `/Users/jerry/.gemini/antigravity-cli/brain/session-1/plan.md`（或调用只读 `invoke_subagent(TypeName="research")`）
+- **THEN** `agent.open.before` 返回的 `tools` 不包含 `harness_handoff`，且 `evaluateTurnAfterTransition` 保持 `design` 阶段不降级
+- **AND** 若工具路径含 `".."` 穿越（如 `openspec/../../src/app.ts`）或非主目录同名路径（如 `/tmp/.gemini/antigravity-cli/brain/evil.ts`），`isExemptDocPath` 拒绝豁免并识别为代码写入
+- **AND** 当会话调用 `exit_plan_mode` 或可写 `invoke_subagent(TypeName="impl-worker")` 时，`agent.turn.after` 将其自动步降至 `standard` 档与 `exec` 阶段
+
+### Requirement: 持久化 Debug Trace 调试引擎与测试磁盘隔离 (Persistent Debug Trace Engine & Test Isolation)
+
+系统 SHALL 为 `contribute(server, options?: { dataDir?: string; disableAutoDiskSync?: boolean })` 提供可选数据目录与磁盘同步隔离开关（测试夹具默认隔离 `os.tmpdir()` 并跳过宿主 `~/.agents/profiles/*.json` 同步）；并在 `server/debug-logger.ts` 实现 `HarnessDebugLogger`（写入 `${dataDir}/debug-trace.jsonl`，目录权限 `0o700`、文件权限 `0o600` 并缓存目录就绪状态与 `ENOENT` 重试、单文件达 `5 MiB` 自动轮转为 `debug-trace.1.jsonl`，`!enabled && !force` 时零磁盘 I/O；通过词法分词与复合键名识别递归脱敏 camelCase/snake_case/kebab-case 敏感键以及环境变量、HTTP 头、URL Query 与引号包裹的秘密值并截断超长预览；对 `> 64 KiB` 日志采用分块字节计数 `totalLines` 与末尾窗口倒序读取）；在 `shared/contracts.ts` 注册纯 Zod 契约 `agent_harness.debug.status.request`、`agent_harness.debug.toggle.request` 与 `agent_harness.debug.clear.request`，同时为 `agent_harness.profiles.sync.request`（`import_from_disk`）返回 `specialists` 字段以供客户端通过 `useSettings().save()` 将设置持久化至 `agent-harness-settings.json`；服务端通过 `settings.subscribe` 与 `harnessDebugToggleRpc` 同步运行时调试状态（避免慢速初始 `settings.read()` 覆写已触发的运行时开关，并防止 `subscribe` 与 RPC 双重写入 `debug.toggled`），强制以 `{ force: true }` 记录 `debug.toggled`，并在生命周期各核心节点（`plugin.settings`、`harness.route`、`agent.create.after`、`env.inject` 含无 `mcpServers` 时对 `LAZY_TOOL_CONFIG` 隔离依赖标注、`permission.block`/`permission.allow`、`turn.transition`、`handoff.spawn`、`plugin.cleanup`）统一接入调试日志记录。
+
+#### Scenario: Debug 模式开关控制零 I/O 短路、敏感字段脱敏与 RPC 读写清理
+
+- **WHEN** `debugLogs` 为 `false` 时触发路由与打开钩子，随后在慢速初始 `read()` 完成前或就绪后通过 `agent_harness.debug.toggle.request` 切换为 `true` 并配合 `settings.subscribe` 推送，再执行生命周期与权限事件，最后调用 `status` 与 `clear`
+- **THEN** 开关关闭期间不会创建或写入 `debug-trace.jsonl`；开启后保留运行时状态不被慢速初始 `read()` 回滚，且对同状态的 `subscribe` + RPC 不重复落盘 `debug.toggled`
+- **AND** `status` 按倒序返回含 `harness.route`、`env.inject`（含 `isolationMode: "lazy_tool_config_only"`）、`permission.block`、`turn.transition` 与 `handoff.spawn` 的脱敏记录，`clear` 清空主文件与轮转文件并返还清理字节数

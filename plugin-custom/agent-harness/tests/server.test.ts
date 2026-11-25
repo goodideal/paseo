@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import contribute from "../index.server.js";
 import { applyAgentModeOption, applyAgentThinkingOption } from "../server/agent-controls.js";
 import {
@@ -19,6 +19,9 @@ import {
 import { agentHarnessSettings, DEFAULT_AGENT_HARNESS_SETTINGS } from "../shared/settings.js";
 import { HARNESS_METADATA_KEY, type HarnessAgentMetadata } from "../shared/types.js";
 import {
+  harnessDebugClearRpc,
+  harnessDebugStatusRpc,
+  harnessDebugToggleRpc,
   harnessInspectEnvironmentRpc,
   harnessTeamCleanRpc,
   harnessTeamDetectRpc,
@@ -29,7 +32,19 @@ import {
 import { registerHarnessRpcHandlers } from "../server/rpc-handlers.js";
 import { getActiveCheckoutLockCount, withCheckoutLock } from "../server/team-editor-service.js";
 
-function createTestServer(settingsOverride?: Record<string, unknown>) {
+const trackedTestDataDirs = new Set<string>();
+
+function createIsolatedTestDataDir(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-harness-test-data-"));
+  trackedTestDataDirs.add(dir);
+  return dir;
+}
+
+function createTestServer(
+  settingsOverride?: Record<string, unknown>,
+  contributeOptions?: { dataDir?: string; disableAutoDiskSync?: boolean },
+) {
+  const dataDir = contributeOptions?.dataDir ?? createIsolatedTestDataDir();
   const hooks: Record<string, any> = {};
   const mockServer: any = {
     registerSettings: vi.fn().mockReturnValue({
@@ -54,8 +69,17 @@ function createTestServer(settingsOverride?: Record<string, unknown>) {
       return () => {};
     }),
   };
-  const cleanup = contribute(mockServer);
-  return { mockServer, hooks, cleanup };
+  const rawCleanup = contribute(mockServer, {
+    dataDir,
+    disableAutoDiskSync: true,
+    ...contributeOptions,
+  });
+  const cleanup = () => {
+    rawCleanup();
+    trackedTestDataDirs.delete(dataDir);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  };
+  return { mockServer, hooks, cleanup, dataDir };
 }
 
 function createMockContext(options?: { timelineItems?: unknown[]; throwOnSetModel?: boolean }) {
@@ -90,7 +114,56 @@ function createMockContext(options?: { timelineItems?: unknown[]; throwOnSetMode
   return { context, handle };
 }
 
+afterEach(() => {
+  for (const dir of Array.from(trackedTestDataDirs)) {
+    trackedTestDataDirs.delete(dir);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 describe("agent-harness server contribute", () => {
+  it("isolates createTestServer with disableAutoDiskSync so host ~/.agents/profiles/*.json and profilesDir are never modified", async () => {
+    const isolatedProfilesDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-profiles-iso-"));
+    const hostProfilesDir = "/Users/jerry/.agents/profiles";
+    const beforeHostMtimes = new Map<string, number>();
+    if (fs.existsSync(hostProfilesDir)) {
+      for (const file of fs.readdirSync(hostProfilesDir)) {
+        if (file.endsWith(".json")) {
+          beforeHostMtimes.set(file, fs.statSync(path.join(hostProfilesDir, file)).mtimeMs);
+        }
+      }
+    }
+
+    try {
+      const { cleanup, dataDir } = createTestServer({
+        autoSyncDiskProfiles: true,
+        autoSyncDaemonAgentProfiles: true,
+        profilesDir: isolatedProfilesDir,
+      });
+
+      // Wait for async settings.read() promise in contribute() to flush
+      await Promise.resolve();
+      await Promise.resolve();
+
+      await vi.waitFor(() => {
+        expect(fs.existsSync(dataDir)).toBe(true);
+      });
+      expect(fs.readdirSync(isolatedProfilesDir)).toEqual([]);
+
+      // Also verify real host ~/.agents/profiles/*.json timestamps were untouched
+      if (fs.existsSync(hostProfilesDir)) {
+        for (const [file, prevMtime] of beforeHostMtimes.entries()) {
+          const curMtime = fs.statSync(path.join(hostProfilesDir, file)).mtimeMs;
+          expect(curMtime).toBe(prevMtime);
+        }
+      }
+
+      cleanup();
+      expect(fs.existsSync(dataDir)).toBe(false);
+    } finally {
+      fs.rmSync(isolatedProfilesDir, { recursive: true, force: true });
+    }
+  });
   it("registers hook on agent.create.before and routes plan intent", async () => {
     const { mockServer, hooks } = createTestServer();
     expect(mockServer.addHook).toHaveBeenCalledWith("agent.create.before", expect.any(Function));
@@ -383,7 +456,45 @@ describe("agent-harness server contribute", () => {
 
     expect(opened.env.PASEO_HARNESS_ROLE).toBe("ui");
     expect(opened.env.LAZY_TOOL_CONFIG).toContain("profiles/ui.yaml");
-    expect(opened.tools.some((t: any) => t.name === "harness_handoff")).toBe(true);
+    expect(opened.tools.some((t: any) => t.name === "harness_handoff")).toBe(false);
+
+    // Pre-existing harness_handoff passed in request.tools must also be stripped for antigravity
+    const openedWithPreexistingTool = await hooks["agent.open.before"]({
+      request: {
+        agentId: "agt_ag_strip",
+        workspaceId: "wks_1",
+        provider: "antigravity",
+        cwd: "/Users/jerry/projects/ai/paseo/ag-strip-test",
+        reason: "create",
+        purpose: "interactive",
+        title: "设计一个多视口响应式 UI 布局方案",
+        labels: {},
+        tools: [{ name: "harness_handoff" }, { name: "other_tool" }],
+        env: {},
+        mcpServers: {},
+      },
+    });
+    expect(openedWithPreexistingTool.tools.map((t: any) => t.name)).toEqual(["other_tool"]);
+
+    // Claude & Codex interactive root sessions still receive harness_handoff
+    for (const supportedProvider of ["claude", "codex"]) {
+      const supportedOpened = await hooks["agent.open.before"]({
+        request: {
+          agentId: `agt_${supportedProvider}_root`,
+          workspaceId: "wks_1",
+          provider: supportedProvider,
+          cwd: "/Users/jerry/projects/ai/paseo/supported-root",
+          reason: "create",
+          purpose: "interactive",
+          title: "重构按钮组件",
+          labels: {},
+          tools: [],
+          env: {},
+          mcpServers: {},
+        },
+      });
+      expect(supportedOpened.tools.some((t: any) => t.name === "harness_handoff")).toBe(true);
+    }
   });
 
   describe("Step 1: System Prompt decoupled by phase and tier", () => {
@@ -1498,13 +1609,13 @@ describe("agent-harness server contribute", () => {
 
     it("handles harnessSwitchTierRpc request via real PaseoApi contract and returns recommendedModeId + recommendedThinkingOptionId", async () => {
       const registeredRpcHandlers: Record<string, any> = {};
-      const { mockServer } = createTestServer();
+      const { mockServer, dataDir } = createTestServer();
       mockServer.handle.mockImplementation((contract: any, handler: any) => {
         registeredRpcHandlers[contract.name] = handler;
       });
 
       // Re-trigger contribute with our spy handle
-      contribute(mockServer);
+      contribute(mockServer, { dataDir, disableAutoDiskSync: true });
 
       const switchHandler = registeredRpcHandlers["agent_harness.tier.switch.request"];
       expect(switchHandler).toBeDefined();
@@ -1608,11 +1719,11 @@ describe("agent-harness server contribute", () => {
 
     it("restores metadata from agent snapshot and backfills cache on cache miss during harnessSwitchTierRpc", async () => {
       const registeredRpcHandlers: Record<string, any> = {};
-      const { mockServer } = createTestServer();
+      const { mockServer, dataDir } = createTestServer();
       mockServer.handle.mockImplementation((contract: any, handler: any) => {
         registeredRpcHandlers[contract.name] = handler;
       });
-      contribute(mockServer);
+      contribute(mockServer, { dataDir, disableAutoDiskSync: true });
 
       const switchHandler = registeredRpcHandlers["agent_harness.tier.switch.request"];
       expect(switchHandler).toBeDefined();
@@ -1682,11 +1793,11 @@ describe("agent-harness server contribute", () => {
 
     it("handles harnessHandoffRpc request, spawns specialist child agent, and appends timeline transition", async () => {
       const registeredRpcHandlers: Record<string, any> = {};
-      const { mockServer } = createTestServer();
+      const { mockServer, dataDir } = createTestServer();
       mockServer.handle.mockImplementation((contract: any, handler: any) => {
         registeredRpcHandlers[contract.name] = handler;
       });
-      contribute(mockServer);
+      contribute(mockServer, { dataDir, disableAutoDiskSync: true });
 
       const handoffHandler = registeredRpcHandlers["agent_harness.specialist.handoff.request"];
       expect(handoffHandler).toBeDefined();
@@ -2047,7 +2158,8 @@ describe("agent-harness server contribute", () => {
           llmFallbackApiKey: "test-key",
           llmFallbackApplyRole: true,
         });
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await Promise.resolve();
+        await Promise.resolve();
 
         const created = await hooks["agent.create.before"]({
           request: {
@@ -2097,7 +2209,11 @@ describe("agent-harness server contribute", () => {
         registerSettings: vi.fn().mockReturnValue({
           read: vi.fn().mockResolvedValue({
             status: "ready",
-            values: { enabled: true, autoSyncDaemonAgentProfiles: true },
+            values: {
+              enabled: true,
+              autoSyncDiskProfiles: false,
+              autoSyncDaemonAgentProfiles: true,
+            },
           }),
           subscribe: vi.fn().mockImplementation((cb) => {
             subscriber = cb;
@@ -2110,7 +2226,7 @@ describe("agent-harness server contribute", () => {
         addHook: vi.fn().mockReturnValue(() => {}),
       };
 
-      contribute(mockServer);
+      contribute(mockServer, { dataDir: createIsolatedTestDataDir() });
 
       const inspectHandler = registeredRpcHandlers["agent_harness.environment.inspect.request"];
       expect(inspectHandler).toBeDefined();
@@ -2148,6 +2264,7 @@ describe("agent-harness server contribute", () => {
         status: "ready",
         values: {
           ...DEFAULT_AGENT_HARNESS_SETTINGS,
+          autoSyncDiskProfiles: false,
           autoSyncDaemonAgentProfiles: true,
           specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) =>
             s.id === "ui" ? { ...s, preferredProvider: "antigravity" } : s,
@@ -2155,8 +2272,9 @@ describe("agent-harness server contribute", () => {
         },
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      expect(patchMock).toHaveBeenCalledTimes(2);
+      await vi.waitFor(() => {
+        expect(patchMock).toHaveBeenCalledTimes(2);
+      });
       const patchedProfiles = patchMock.mock.calls[1][0].agentProfiles;
       const uiProfile = patchedProfiles.find((p: any) => p.id === "harness-ui");
       expect(uiProfile?.provider).toBe("antigravity");
@@ -2166,11 +2284,11 @@ describe("agent-harness server contribute", () => {
 
     it("bypasses resumed untracked gemini-pro-orchestrator via snapshot and rejects harnessSwitchTierRpc", async () => {
       const registeredRpcHandlers: Record<string, any> = {};
-      const { mockServer, hooks } = createTestServer();
+      const { mockServer, hooks, dataDir } = createTestServer();
       mockServer.handle.mockImplementation((contract: any, handler: any) => {
         registeredRpcHandlers[contract.name] = handler;
       });
-      contribute(mockServer);
+      contribute(mockServer, { dataDir, disableAutoDiskSync: true });
 
       const switchHandler = registeredRpcHandlers["agent_harness.tier.switch.request"];
       const setModelMock = vi.fn();
@@ -2264,7 +2382,11 @@ describe("agent-harness server contribute", () => {
         registerSettings: vi.fn().mockReturnValue({
           read: vi.fn().mockResolvedValue({
             status: "ready",
-            values: { enabled: true, autoSyncDaemonAgentProfiles: true },
+            values: {
+              enabled: true,
+              autoSyncDiskProfiles: false,
+              autoSyncDaemonAgentProfiles: true,
+            },
           }),
           subscribe: vi.fn().mockImplementation((cb) => {
             subscriber = cb;
@@ -2280,7 +2402,7 @@ describe("agent-harness server contribute", () => {
         }),
       };
 
-      contribute(mockServer);
+      contribute(mockServer, { dataDir: createIsolatedTestDataDir() });
 
       const mockPaseo = {
         providers: { snapshot: vi.fn().mockResolvedValue({ entries: [] }) },
@@ -2301,10 +2423,15 @@ describe("agent-harness server contribute", () => {
       const { DEFAULT_AGENT_HARNESS_SETTINGS } = await import("../shared/settings.js");
       subscriber?.({
         status: "ready",
-        values: { ...DEFAULT_AGENT_HARNESS_SETTINGS, autoSyncDaemonAgentProfiles: true },
+        values: {
+          ...DEFAULT_AGENT_HARNESS_SETTINGS,
+          autoSyncDiskProfiles: false,
+          autoSyncDaemonAgentProfiles: true,
+        },
       });
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      expect(patchMock).toHaveBeenCalledTimes(2);
+      await vi.waitFor(() => {
+        expect(patchMock).toHaveBeenCalledTimes(2);
+      });
 
       // Bypassed orchestrator created in /shared-cwd must NOT bleed bypassed=true to next empty-prompt session
       const bypassedRes = await hooks["agent.create.before"]({
@@ -2471,11 +2598,11 @@ describe("agent-harness server contribute", () => {
         );
 
         const registeredRpcHandlers: Record<string, any> = {};
-        const { mockServer, hooks } = createTestServer();
+        const { mockServer, hooks, dataDir } = createTestServer();
         mockServer.handle.mockImplementation((contract: any, handler: any) => {
           registeredRpcHandlers[contract.name] = handler;
         });
-        contribute(mockServer);
+        contribute(mockServer, { dataDir, disableAutoDiskSync: true });
 
         const inspectHandler = registeredRpcHandlers["agent_harness.environment.inspect.request"];
         const effectiveHandler = registeredRpcHandlers["agent_harness.config.effective.request"];
@@ -2529,6 +2656,7 @@ describe("agent-harness server contribute", () => {
         });
         expect(agOpened.env.LAZY_TOOL_CONFIG).toBeUndefined();
         expect(agOpened.mcpServers).toEqual({ serena: { command: "serena" } });
+        expect(agOpened.tools.some((t: any) => t.name === "harness_handoff")).toBe(false);
 
         // Worktree antigravity lacks local plugin -> still injects LAZY_TOOL_CONFIG
         const wtOpened = await hooks["agent.open.before"]({
@@ -2547,7 +2675,7 @@ describe("agent-harness server contribute", () => {
         });
         expect(wtOpened.env.LAZY_TOOL_CONFIG).toContain("ui.yaml");
 
-        // Codex session in mainRepo still injects LAZY_TOOL_CONFIG
+        // Codex session in mainRepo still injects LAZY_TOOL_CONFIG and attaches harness_handoff
         const codexOpened = await hooks["agent.open.before"]({
           request: {
             agentId: "agt_main_codex",
@@ -2564,8 +2692,8 @@ describe("agent-harness server contribute", () => {
         });
         expect(codexOpened.env.LAZY_TOOL_CONFIG).toContain("backend.yaml");
 
-        // Root interactive handoff spawns be-developer onto codex/flash with leaf label + hides harness_handoff in child
-        const handoffTool = agOpened.tools.find((t: any) => t.name === "harness_handoff");
+        // Root interactive handoff (from codex/claude) spawns be-developer onto codex/flash with leaf label + hides harness_handoff in child
+        const handoffTool = codexOpened.tools.find((t: any) => t.name === "harness_handoff");
         expect(handoffTool).toBeDefined();
 
         const createdPayloads: any[] = [];
@@ -2794,10 +2922,11 @@ describe("agent-harness server contribute", () => {
           phaseLifecycleEnabled: true,
         });
         cleanup();
+        const isolatedDir = createIsolatedTestDataDir();
         mockServer.handle.mockImplementation((contract: any, handler: any) => {
           registeredRpcHandlers[contract.name] = handler;
         });
-        contribute(mockServer);
+        contribute(mockServer, { dataDir: isolatedDir, disableAutoDiskSync: true });
 
         const created = await hooks["agent.create.before"]({
           request: {
@@ -3237,6 +3366,74 @@ describe("agent-harness server contribute", () => {
           },
         });
         expect(wtOpened.env.LAZY_TOOL_CONFIG).toContain("backend.yaml");
+      } finally {
+        fs.rmSync(tmpBase, { recursive: true, force: true });
+      }
+    });
+
+    it("populates role-accurate lazyToolSlice and non-empty skills, docsFocus, allowedMcpServers, and mandatorySkillActivation for synthesized agent-team specialists", () => {
+      const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), "harness-team-defaults-"));
+      try {
+        const mockHome = path.join(tmpBase, "home");
+        const repoDir = path.join(tmpBase, "repo");
+        fs.mkdirSync(path.join(repoDir, ".agents"), { recursive: true });
+        fs.mkdirSync(mockHome, { recursive: true });
+
+        fs.writeFileSync(
+          path.join(repoDir, ".agents", "agent-team.json"),
+          JSON.stringify({
+            schema_version: "1.0.0",
+            project_slug: "defaults-demo",
+            preset: "fullstack-monorepo",
+            roles: [
+              "fe-pm",
+              "fe-architect",
+              "fe-developer",
+              "fe-qa",
+              "be-developer",
+              "be-reviewer",
+              "ops-ci",
+              "be-scout",
+            ],
+            mcp_sources: ["serena", "postgres-ro"],
+            capabilities: ["pm-discovery", "matt-sdd"],
+          }),
+        );
+
+        const loaded = loadWorkspaceAgentTeam(repoDir, mockHome);
+        expect(loaded).not.toBeNull();
+        const byId = new Map(loaded!.specialists.map((s) => [s.id, s]));
+
+        expect(byId.get("fe-pm")?.lazyToolSlice).toBe("pm.yaml");
+        expect(byId.get("fe-architect")?.lazyToolSlice).toBe("architect.yaml");
+        expect(byId.get("fe-developer")?.lazyToolSlice).toBe("ui.yaml");
+        expect(byId.get("fe-qa")?.lazyToolSlice).toBe("qa.yaml");
+        expect(byId.get("be-developer")?.lazyToolSlice).toBe("backend.yaml");
+        expect(byId.get("be-reviewer")?.lazyToolSlice).toBe("review.yaml");
+        expect(byId.get("ops-ci")?.lazyToolSlice).toBe("general.yaml");
+        expect(byId.get("be-scout")?.lazyToolSlice).toBe("scout.yaml");
+
+        for (const roleId of [
+          "fe-pm",
+          "fe-architect",
+          "fe-developer",
+          "fe-qa",
+          "be-developer",
+          "be-reviewer",
+        ]) {
+          const spec = byId.get(roleId)!;
+          expect(spec.lazyToolSlice).not.toBe("codex.yaml");
+          expect(spec.primarySkills.length, `${roleId} primarySkills`).toBeGreaterThan(0);
+          expect(spec.docsFocus.length, `${roleId} docsFocus`).toBeGreaterThan(0);
+          expect(spec.allowedMcpServers.length, `${roleId} allowedMcpServers`).toBeGreaterThan(0);
+          expect(spec.allowedMcpServers).toContain("postgres-ro");
+          expect(spec.mandatorySkillActivation, `${roleId} mandatorySkillActivation`).toBe(true);
+        }
+
+        expect(byId.get("ops-ci")?.primarySkills.length).toBeGreaterThan(0);
+        expect(byId.get("ops-ci")?.docsFocus.length).toBeGreaterThan(0);
+        expect(byId.get("ops-ci")?.allowedMcpServers).toContain("serena");
+        expect(byId.get("be-scout")?.allowedMcpServers).toContain("claude-mem");
       } finally {
         fs.rmSync(tmpBase, { recursive: true, force: true });
       }
@@ -4102,11 +4299,11 @@ describe("agent-harness server contribute", () => {
 
     it("blocks concurrent writable specialist handoff while parent is running, allows readonly review, and injects parent context", async () => {
       const registeredRpcHandlers: Record<string, any> = {};
-      const { mockServer } = createTestServer();
+      const { mockServer, dataDir } = createTestServer();
       mockServer.handle.mockImplementation((contract: any, handler: any) => {
         registeredRpcHandlers[contract.name] = handler;
       });
-      contribute(mockServer);
+      contribute(mockServer, { dataDir, disableAutoDiskSync: true });
 
       const handoffHandler = registeredRpcHandlers["agent_harness.specialist.handoff.request"];
       expect(handoffHandler).toBeDefined();
@@ -4679,6 +4876,444 @@ describe("agent-harness server contribute", () => {
       expect(bypassedCreate.config.systemPrompt).toBeUndefined();
       expect(bypassedCreate.metadata?.agentHarnessBypassed).toBe(true);
       expect(bypassedCreate.metadata?.[HARNESS_METADATA_KEY]).toBeUndefined();
+    });
+
+    it("steps down antigravity design -> exec in agent.turn.after on exit_plan_mode and writable invoke_subagent while ignoring readonly subagent", async () => {
+      const { hooks } = createTestServer();
+
+      // 1. exit_plan_mode triggers plan_approved step-down
+      const meta1 = createInitialHarnessMetadata({
+        role: "general",
+        tier: "deep",
+        phase: "design",
+        model: "gemini-4-carbon",
+        thinkingOptionId: "high",
+        roleMatchedRule: "plan",
+        tierMatchedRule: "plan",
+      });
+      const { context: ctx1, handle: handle1 } = createMockContext({
+        timelineItems: [
+          { type: "user_message", text: "设计模块接口方案" },
+          { type: "tool_call", name: "exit_plan_mode", input: {} },
+        ],
+      });
+      await hooks["agent.turn.after"](
+        {
+          agent: {
+            id: "agt_agy_exit_plan",
+            provider: "antigravity",
+            metadata: { [HARNESS_METADATA_KEY]: meta1 },
+          },
+          turnId: "turn_exit_1",
+          outcome: { kind: "completed" },
+        },
+        ctx1,
+      );
+      expect(handle1.setModel).toHaveBeenCalledWith("gemini-4-argon");
+      expect(handle1.setMetadata).toHaveBeenCalledWith({
+        [HARNESS_METADATA_KEY]: expect.objectContaining({
+          phase: "exec",
+          currentTier: "standard",
+          downgradeReason: "plan_approved",
+        }),
+      });
+
+      // 2. writable invoke_subagent (TypeName="impl-worker") triggers step-down
+      const meta2 = createInitialHarnessMetadata({
+        role: "general",
+        tier: "deep",
+        phase: "design",
+        model: "gemini-4-carbon",
+        thinkingOptionId: "high",
+        roleMatchedRule: "plan",
+        tierMatchedRule: "plan",
+      });
+      const { context: ctx2, handle: handle2 } = createMockContext({
+        timelineItems: [
+          { type: "user_message", text: "设计并分析模块" },
+          {
+            type: "tool_call",
+            name: "invoke_subagent",
+            input: { TypeName: "impl-worker", Task: "Write handler" },
+          },
+        ],
+      });
+      await hooks["agent.turn.after"](
+        {
+          agent: {
+            id: "agt_agy_writable_sub",
+            provider: "antigravity",
+            metadata: { [HARNESS_METADATA_KEY]: meta2 },
+          },
+          turnId: "turn_sub_1",
+          outcome: { kind: "completed" },
+        },
+        ctx2,
+      );
+      expect(handle2.setModel).toHaveBeenCalledWith("gemini-4-argon");
+      expect(handle2.setMetadata).toHaveBeenCalledWith({
+        [HARNESS_METADATA_KEY]: expect.objectContaining({
+          phase: "exec",
+          currentTier: "standard",
+          downgradeReason: "write_tool_in_plan",
+        }),
+      });
+
+      // 3. readonly invoke_subagent (TypeName="research") stays in design phase
+      const meta3 = createInitialHarnessMetadata({
+        role: "general",
+        tier: "deep",
+        phase: "design",
+        model: "gemini-4-carbon",
+        thinkingOptionId: "high",
+        roleMatchedRule: "plan",
+        tierMatchedRule: "plan",
+      });
+      const { context: ctx3, handle: handle3 } = createMockContext({
+        timelineItems: [
+          { type: "user_message", text: "设计方案" },
+          {
+            type: "tool_call",
+            name: "invoke_subagent",
+            input: { TypeName: "research", Task: "Inspect docs" },
+          },
+        ],
+      });
+      await hooks["agent.turn.after"](
+        {
+          agent: {
+            id: "agt_agy_readonly_sub",
+            provider: "antigravity",
+            metadata: { [HARNESS_METADATA_KEY]: meta3 },
+          },
+          turnId: "turn_ro_1",
+          outcome: { kind: "completed" },
+        },
+        ctx3,
+      );
+      expect(handle3.setModel).not.toHaveBeenCalled();
+      expect(handle3.setMetadata).toHaveBeenCalledWith({
+        [HARNESS_METADATA_KEY]: expect.objectContaining({
+          phase: "design",
+          currentTier: "deep",
+        }),
+      });
+    });
+
+    it("supports debug trace RPCs (status/toggle/clear), avoids duplicate debug.toggled on subscribe, preserves pre-read toggle, and returns imported specialists", async () => {
+      const dataDir = createIsolatedTestDataDir();
+      const profilesDir = createIsolatedTestDataDir();
+      const hooks: Record<string, any> = {};
+      const handlers: Record<string, any> = {};
+      const subscriberRef: { fn?: (state: any) => void } = {};
+      let resolveInitialRead: ((state: any) => void) | null = null;
+
+      const mockServer: any = {
+        registerSettings: vi.fn().mockReturnValue({
+          read: vi.fn(
+            () =>
+              new Promise((resolve) => {
+                resolveInitialRead = resolve;
+              }),
+          ),
+          subscribe: vi.fn().mockImplementation((cb) => {
+            subscriberRef.fn = cb;
+            return () => {};
+          }),
+        }),
+        handle: vi.fn().mockImplementation((contract: any, handler: any) => {
+          handlers[contract.name] = handler;
+        }),
+        addHook: vi.fn().mockImplementation((name, handler) => {
+          hooks[name] = handler;
+          return () => {};
+        }),
+      };
+
+      const rawCleanup = contribute(mockServer, { dataDir, disableAutoDiskSync: true });
+
+      const statusHandler = handlers[harnessDebugStatusRpc.name];
+      const toggleHandler = handlers[harnessDebugToggleRpc.name];
+      const clearHandler = handlers[harnessDebugClearRpc.name];
+      const syncHandler = handlers["agent_harness.profiles.sync.request"];
+      expect(statusHandler).toBeDefined();
+      expect(toggleHandler).toBeDefined();
+      expect(clearHandler).toBeDefined();
+      expect(syncHandler).toBeDefined();
+
+      // 0. Resolve initial read cleanly with debugLogs=false and wait for subscribe/read readiness
+      resolveInitialRead!({
+        status: "ready",
+        values: {
+          enabled: true,
+          debugLogs: false,
+          overrideIfDefaultOnly: true,
+          phaseLifecycleEnabled: true,
+          planTurnSoftLimit: 3,
+          autoDowngradePlanOnExec: true,
+          emitTimelineTransitions: true,
+          profilesDir,
+        },
+      });
+      await vi.waitFor(async () => {
+        const s = await statusHandler({ limit: 50 }, {});
+        expect(s.enabled).toBe(false);
+      });
+
+      // 1. When debugLogs=false, running route/open does zero disk I/O
+      await hooks["agent.create.before"]({
+        request: {
+          config: {
+            provider: "claude",
+            cwd: "/tmp/dbg-disabled",
+            model: "flash",
+            title: "fix: typo",
+          },
+        },
+      });
+      const logFilePath = path.join(dataDir, "debug-trace.jsonl");
+      expect(fs.existsSync(logFilePath)).toBe(false);
+
+      const initialStatus = await statusHandler({ limit: 50 }, {});
+      expect(initialStatus.enabled).toBe(false);
+      expect(initialStatus.totalLines).toBe(0);
+      expect(initialStatus.fileSizeBytes).toBe(0);
+      expect(initialStatus.entries).toEqual([]);
+
+      // 2. Toggle debug ON -> logs debug.toggled with force=true, and subscribe pushing same debugLogs=true does NOT duplicate it
+      const toggledOn = await toggleHandler({ enabled: true }, {});
+      expect(toggledOn.enabled).toBe(true);
+      expect(toggledOn.logFilePath).toBe(logFilePath);
+      expect(fs.existsSync(logFilePath)).toBe(true);
+
+      subscriberRef.fn?.({
+        status: "ready",
+        values: {
+          enabled: true,
+          debugLogs: true,
+          profilesDir,
+        },
+      });
+      const afterSubscribe = await statusHandler({ limit: 20 }, {});
+      expect(afterSubscribe.entries.filter((e: any) => e.event === "debug.toggled")).toHaveLength(
+        1,
+      );
+
+      // Conversely, when subscribe flips debugLogs=false and RPC also confirms false, only 1 new debug.toggled is written
+      subscriberRef.fn?.({
+        status: "ready",
+        values: { enabled: true, debugLogs: false, profilesDir },
+      });
+      await toggleHandler({ enabled: false }, {});
+      const afterSubscribeOff = await statusHandler({ limit: 20 }, {});
+      expect(
+        afterSubscribeOff.entries.filter((e: any) => e.event === "debug.toggled"),
+      ).toHaveLength(2);
+      expect(afterSubscribeOff.entries[0]?.detail?.source).toBe("settings");
+
+      // Re-enable for step 3 lifecycle assertions
+      await toggleHandler({ enabled: true }, {});
+
+      // 3. Emit harness.route, agent.create.after, env.inject (with empty mcpServers -> LAZY_TOOL_CONFIG isolation), permission.block, turn.transition, handoff.spawn
+      const created = await hooks["agent.create.before"]({
+        request: {
+          config: {
+            provider: "claude",
+            cwd: "/tmp/dbg-enabled",
+            model: "flash",
+            title: "设计系统架构方案",
+          },
+        },
+      });
+      await hooks["agent.create.after"](
+        {
+          agent: {
+            id: "agt_dbg_1",
+            provider: "claude",
+            title: "设计系统架构方案",
+            metadata: created.metadata,
+          },
+        },
+        {
+          paseo: {
+            agents: {
+              ref: () => ({ timeline: { append: vi.fn().mockResolvedValue({}) } }),
+            },
+          },
+        },
+      );
+
+      await hooks["agent.open.before"]({
+        request: {
+          agentId: "agt_dbg_1",
+          provider: "claude",
+          cwd: "/tmp/dbg-enabled",
+          reason: "create",
+          purpose: "interactive",
+          title: "设计系统架构方案",
+          labels: {},
+          metadata: created.metadata,
+          tools: [],
+          env: {},
+          mcpServers: {},
+        },
+      });
+
+      await hooks["agent.permission.before"](
+        {
+          agent: { id: "agt_dbg_1", provider: "claude", metadata: created.metadata },
+          request: {
+            id: "perm_blk_1",
+            kind: "shell",
+            name: "Bash",
+            input: { command: "rm -rf /tmp/foo" },
+          },
+        },
+        {
+          paseo: {
+            agents: {
+              ref: () => ({ respondToPermission: vi.fn() }),
+            },
+          },
+        },
+      );
+
+      const { context: turn1Ctx } = createMockContext({
+        timelineItems: [{ type: "user_message", text: "设计系统架构方案" }],
+      });
+      await hooks["agent.turn.after"](
+        {
+          agent: { id: "agt_dbg_1", provider: "claude", metadata: created.metadata },
+          outcome: { kind: "completed" },
+        },
+        turn1Ctx,
+      );
+
+      const { context: turnCtx } = createMockContext({
+        timelineItems: [{ type: "user_message", text: "yes, go" }],
+      });
+      await hooks["agent.turn.before"](
+        {
+          agent: {
+            id: "agt_dbg_1",
+            provider: "claude",
+            metadata: created.metadata,
+          },
+        },
+        turnCtx,
+      );
+
+      const handoffHandler = handlers["agent_harness.specialist.handoff.request"];
+      await handoffHandler(
+        { agentId: "agt_dbg_1", targetRole: "ui", summaryOverride: "Build UI" },
+        {
+          paseo: {
+            agents: {
+              ref: () => ({
+                current: () => ({
+                  provider: "claude",
+                  cwd: "/tmp/dbg-enabled",
+                  metadata: created.metadata,
+                }),
+                timeline: { append: vi.fn().mockResolvedValue({}) },
+              }),
+              create: vi.fn().mockResolvedValue({ id: "agt_dbg_child" }),
+            },
+          },
+        },
+      );
+
+      rawCleanup();
+
+      const statusAfter = await statusHandler({ limit: 50 }, {});
+      expect(statusAfter.enabled).toBe(true);
+      const eventNames = statusAfter.entries.map((e: any) => e.event);
+      expect(eventNames).toContain("debug.toggled");
+      expect(eventNames).toContain("harness.route");
+      expect(eventNames).toContain("agent.create.after");
+      expect(eventNames).toContain("env.inject");
+      expect(eventNames).toContain("permission.block");
+      expect(eventNames).toContain("turn.transition");
+      expect(eventNames).toContain("handoff.spawn");
+      expect(eventNames).toContain("plugin.cleanup");
+
+      const envInjectEntry = statusAfter.entries.find((e: any) => e.event === "env.inject");
+      expect(envInjectEntry?.detail?.isolationMode).toBe("lazy_tool_config_only");
+      expect(envInjectEntry?.detail?.relyingOnLazyToolIsolation).toBe(true);
+
+      // 4. Toggle debug OFF -> still records debug.toggled with force=true
+      const toggledOff = await toggleHandler({ enabled: false }, {});
+      expect(toggledOff.enabled).toBe(false);
+      const statusOff = await statusHandler({ limit: 5 }, {});
+      expect(statusOff.enabled).toBe(false);
+      expect(statusOff.entries[0]?.event).toBe("debug.toggled");
+      expect(statusOff.entries[0]?.detail?.enabled).toBe(false);
+
+      // 5. import_from_disk returns imported specialists array so clients can persist via useSettings().save()
+      fs.writeFileSync(
+        path.join(profilesDir, "ui-specialist.json"),
+        JSON.stringify({ name: "ui", description: "Updated UI description from disk" }),
+        "utf8",
+      );
+      const importRes = await syncHandler({ action: "import_from_disk" }, { paseo: {} });
+      expect(importRes.success).toBe(true);
+      expect(importRes.importedCount).toBeGreaterThanOrEqual(1);
+      expect(Array.isArray(importRes.specialists)).toBe(true);
+      expect(importRes.specialists?.find((s: any) => s.id === "ui")?.description).toBe(
+        "Updated UI description from disk",
+      );
+
+      // 6. Clear removes log files and reports removedBytes > 0
+      const cleared = await clearHandler({}, {});
+      expect(cleared.cleared).toBe(true);
+      expect(cleared.removedBytes).toBeGreaterThan(0);
+      expect(fs.existsSync(logFilePath)).toBe(false);
+    });
+
+    it("preserves runtime debug toggle if slow initial settings.read() resolves later with old debugLogs=false", async () => {
+      const dataDir = createIsolatedTestDataDir();
+      const handlers: Record<string, any> = {};
+      let resolveSlowRead: ((state: any) => void) | null = null;
+
+      const mockServer: any = {
+        registerSettings: vi.fn().mockReturnValue({
+          read: vi.fn(
+            () =>
+              new Promise((resolve) => {
+                resolveSlowRead = resolve;
+              }),
+          ),
+          subscribe: vi.fn().mockReturnValue(() => {}),
+        }),
+        handle: vi.fn().mockImplementation((contract: any, handler: any) => {
+          handlers[contract.name] = handler;
+        }),
+        addHook: vi.fn().mockReturnValue(() => {}),
+      };
+
+      const cleanup = contribute(mockServer, { dataDir, disableAutoDiskSync: true });
+      try {
+        const toggleHandler = handlers[harnessDebugToggleRpc.name];
+        const statusHandler = handlers[harnessDebugStatusRpc.name];
+
+        // Toggle ON before initial slow settings.read() completes
+        const toggled = await toggleHandler({ enabled: true }, {});
+        expect(toggled.enabled).toBe(true);
+
+        // Slow read() resolves with stale debugLogs=false
+        resolveSlowRead!({
+          status: "ready",
+          values: { enabled: true, debugLogs: false },
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const status = await statusHandler({ limit: 20 }, {});
+        expect(status.enabled).toBe(true);
+        expect(status.entries.filter((e: any) => e.event === "debug.toggled")).toHaveLength(1);
+      } finally {
+        cleanup();
+      }
     });
   });
 });

@@ -101,10 +101,18 @@ export function expandHomeDir(filepath: string, homeDir?: string): string {
 
 const MATTPOCOCK_SKILLS_PREFIX = "mattpocock-skills:";
 
+const LEGACY_PM_SKILL_MAP: Readonly<Record<string, string>> = {
+  "pm-prd": "deliver-prd",
+  "pm-user-stories": "deliver-user-stories",
+  "pm-edge-cases": "deliver-edge-cases",
+  "pm-problem": "define-problem-statement",
+};
+
 /**
  * Normalizes specialist `primarySkills` into prefix-free bare skill names across all providers:
  * - maps `"superpowers:dispatching-parallel-agents"` -> `"codebase-design"`
  * - maps `"superpowers:verification-before-completion"` -> `"tdd"`, `"diagnosing-bugs"`
+ * - maps legacy `pm-*` names (`pm-prd` -> `deliver-prd`, etc.)
  * - filters out any other `"superpowers:*"` skill
  * - strips leading `"mattpocock-skills:"` prefix
  * - trims and deduplicates while preserving order.
@@ -144,11 +152,14 @@ export function normalizePrimarySkills(skills: readonly string[]): string[] {
     if (s.startsWith("superpowers:")) {
       continue;
     }
-    if (s.startsWith(MATTPOCOCK_SKILLS_PREFIX)) {
-      pushUnique(s.slice(MATTPOCOCK_SKILLS_PREFIX.length));
+    const unprefixed = s.startsWith(MATTPOCOCK_SKILLS_PREFIX)
+      ? s.slice(MATTPOCOCK_SKILLS_PREFIX.length).trim()
+      : s;
+    if (!unprefixed) {
       continue;
     }
-    pushUnique(s);
+    const mappedPm = LEGACY_PM_SKILL_MAP[unprefixed];
+    pushUnique(mappedPm ?? unprefixed);
   }
 
   return normalized;
@@ -593,6 +604,29 @@ function resolveBannerPhase(
   return "exec";
 }
 
+function sanitizeAntigravityPhaseRule(
+  rule: string,
+  options?: { isLeaf?: boolean; isUnattendedWorkflow?: boolean },
+): string {
+  if (!rule) return rule;
+  if (options?.isUnattendedWorkflow) {
+    return rule
+      .replace(/`?harness_handoff`?/gi, "`invoke_subagent`")
+      .replace(/paseo-handoff/gi, "`invoke_subagent`");
+  }
+  const invokeReplacement = options?.isLeaf
+    ? "use `invoke_subagent` only for read-only local lookups (do not spawn recursive agents)."
+    : "delegate in-session via `invoke_subagent` or spawn an independent cross-host specialist via `mcp_paseo_create_agent`.";
+  const handoffPairReplacement = options?.isLeaf
+    ? "`invoke_subagent`"
+    : "`invoke_subagent` (in-session) / `mcp_paseo_create_agent` (cross-host)";
+  return rule
+    .replace(/`?ExitPlanMode`?/g, "`exit_plan_mode`")
+    .replace(/invoke the host tool `?harness_handoff`?[^.]*\./gi, invokeReplacement)
+    .replace(/`?harness_handoff`?\s*\/\s*paseo-handoff/gi, handoffPairReplacement)
+    .replace(/`?(?:harness_handoff|paseo-handoff)`?/gi, "`invoke_subagent`");
+}
+
 export function buildSystemPromptBanner(options: {
   config: EffectiveHarnessConfig;
   specialist: HarnessSpecialistConfig;
@@ -615,6 +649,10 @@ export function buildSystemPromptBanner(options: {
 
   const canonicalProvider = canonicalizeProviderName(provider);
   const isAntigravity = canonicalProvider === "antigravity";
+  const resolvedActiveTarget =
+    targetModel && targetModel !== "default"
+      ? targetModel
+      : resolveTierTarget(config, canonicalProvider || "antigravity", tier).model;
 
   // Federated root session: yield skills/MCP ownership to local synthesized target plugin/agents
   // and emit only the concise 3-line Federation Bridge.
@@ -640,10 +678,12 @@ export function buildSystemPromptBanner(options: {
 
     const bridgeLines = [
       "[Agent Harness — Federation Bridge]",
-      `- Matrix Tier: ${tier} (model: ${targetModel || "default"}${options.thinkingOptionId ? `, thinking: ${options.thinkingOptionId}` : ""}); ${ownerLabel} owns repo skills & MCP.`,
+      `- Matrix Tier: ${tier} (model: ${resolvedActiveTarget || "default"}${options.thinkingOptionId ? `, thinking: ${options.thinkingOptionId}` : ""}); ${ownerLabel} owns repo skills & MCP.`,
       ...(availableHandoffs
         ? [
-            `- Cross-Client Handoff (\`harness_handoff\`): Available workspace specialists: ${availableHandoffs}.`,
+            isAntigravity
+              ? `- Delegation & Handoff: Use \`invoke_subagent\` for in-session module/role delegation; call \`mcp_paseo_create_agent\` only when spawning an independent persistent cross-host/Paseo agent. Available workspace specialists: ${availableHandoffs}.`
+              : `- Cross-Client Handoff (\`harness_handoff\`): Available workspace specialists: ${availableHandoffs}.`,
           ]
         : []),
     ];
@@ -679,7 +719,7 @@ export function buildSystemPromptBanner(options: {
   const phase = resolveBannerPhase(options.phase, tier, specialist.id);
 
   const customRolePrompt = specialist.rolePromptTemplate?.trim();
-  const phaseRule =
+  const rawPhaseRule =
     customRolePrompt ||
     (options.isUnattendedWorkflow && phase === "design"
       ? "- [Phase: Unattended Workflow Design & Spec] Rule: You are running in an automated workflow stage (phase=design). Author concise architectural proposals, design specs, or implementation plans as instructed by the workflow prompt (writing spec/plan Markdown files if requested); DO NOT edit business source files in this design stage, DO NOT invoke interactive ExitPlanMode, and DO NOT spawn subagents."
@@ -687,11 +727,17 @@ export function buildSystemPromptBanner(options: {
         config.phaseRules[phase]?.trim() ||
         config.phaseRules[tier]?.trim() ||
         "");
+  const phaseRule = isAntigravity
+    ? sanitizeAntigravityPhaseRule(rawPhaseRule, {
+        isLeaf: options.isLeaf,
+        isUnattendedWorkflow: options.isUnattendedWorkflow,
+      })
+    : rawPhaseRule;
 
   const lines = [
     "[Capability Harness Active Profile]",
     `- Role: ${specialist.id} (rule: ${roleMatchedRule})${specialist.description ? ` — ${specialist.description}` : ""}`,
-    `- Matrix Tier: ${tier} (model: ${targetModel || "default"}${options.thinkingOptionId ? `, thinking: ${options.thinkingOptionId}` : ""})`,
+    `- Matrix Tier: ${tier} (model: ${resolvedActiveTarget || "default"}${options.thinkingOptionId ? `, thinking: ${options.thinkingOptionId}` : ""})`,
     ...(profilePath ? [`- Profile Spec: ${profilePath}`] : []),
     ...(lazyToolConfigPath ? [`- Lazy-Tool Slice: ${lazyToolConfigPath}`] : []),
     ...(primarySkills.length > 0 ? [`- Primary Skills: ${primarySkills.join(", ")}`] : []),
@@ -724,16 +770,25 @@ export function buildSystemPromptBanner(options: {
   }
 
   if (specialist.mandatorySkillActivation && primarySkills.length > 0) {
+    const rawEffectiveRoot = rawSkillsRoot || rawDefaultSkillsRoot || "~/.agents/skills";
+    const normalizedHome = homeDir?.trim().replace(/\/+$/, "");
+    const effectiveSkillsRoot =
+      normalizedHome && (rawEffectiveRoot.startsWith("~/") || rawEffectiveRoot === "~")
+        ? expandHomeDir(rawEffectiveRoot, normalizedHome)
+        : rawEffectiveRoot;
+    const skillMarkdownPaths = primarySkills.map(
+      (s) => `\`${joinPosixPath(effectiveSkillsRoot, s, "SKILL.md")}\``,
+    );
     if (isAntigravity) {
-      const skillsRootLocation = hasFallbackSkillsRoot
-        ? `from your skills root (\`${rawSkillsRoot}\`, or fallback \`${rawDefaultSkillsRoot}\`)`
-        : "from your skills root";
+      const fallbackNote = hasFallbackSkillsRoot
+        ? ` (or fallback \`${rawDefaultSkillsRoot}\`, e.g. \`${joinPosixPath(rawDefaultSkillsRoot, primarySkills[0], "SKILL.md")}\`)`
+        : "";
       lines.push(
-        `- Mandatory Skill Activation: Before authoring domain deliverables or code, you MUST read the \`SKILL.md\` file via \`read_file\` for at least one of your Primary Skills (${primarySkills.map((s) => `\`${s}\``).join(", ")}) ${skillsRootLocation} so its domain rules govern your implementation.`,
+        `- Mandatory Skill Activation: Before modifying any files or executing commands, you MUST read the corresponding \`SKILL.md\` via \`read_file\` (${skillMarkdownPaths.join(", ")}${fallbackNote}) so its domain rules govern your implementation.`,
       );
     } else {
       lines.push(
-        `- Mandatory Skill Activation: Before authoring domain deliverables or code, you MUST invoke the \`Skill\` tool to load at least one of your Primary Skills (${primarySkills.map((s) => `\`${s}\``).join(", ")}) so its domain rules govern your implementation.`,
+        `- Mandatory Skill Activation: Before modifying any files or executing commands, you MUST invoke the \`Skill\` tool (or read ${skillMarkdownPaths.join(", ")}) to load at least one of your Primary Skills (${primarySkills.map((s) => `\`${s}\``).join(", ")}) so its domain rules govern your implementation.`,
       );
     }
   }
@@ -743,8 +798,10 @@ export function buildSystemPromptBanner(options: {
   }
 
   if (isAntigravity && !options.isLeaf && !options.isUnattendedWorkflow) {
+    const agDeepModel = resolveTierTarget(config, "antigravity", "deep").model;
+    const agStandardModel = resolveTierTarget(config, "antigravity", "standard").model;
     lines.push(
-      `- Antigravity Specialist Handoff (\`mcp_paseo_create_agent\`): Native \`harness_handoff\` is unavailable on Antigravity (\`supportsNativePaseoTools=false\`). To hand off or spawn a Paseo specialist (e.g. \`role=review\`, \`role=backend\`, \`role=ui\`, \`role=qa\`) instead of in-process \`invoke_subagent\`, call \`mcp_paseo_create_agent\` in this workspace with \`provider: "antigravity/<targetModel>"\` (\`review\`/\`architect\`/\`pm\` -> \`gemini-4-carbon\`, \`ui\`/\`backend\`/\`qa\` -> \`gemini-4-argon\`), \`labels: { "role": "<targetRole>", "paseo.harness-leaf": "1" }\`, and a self-contained \`initialPrompt\`.`,
+      `- Antigravity Delegation & Cross-Host Handoff: Use \`invoke_subagent\` for in-session module/role delegation; only call \`mcp_paseo_create_agent\` when spawning an independent persistent cross-host/Paseo agent (with \`provider: "antigravity/${resolvedActiveTarget || agStandardModel}"\`, \`labels: { "role": "<targetRole>", "paseo.harness-leaf": "1" }\`, and a self-contained \`initialPrompt\`; configured tier targets: \`deep\` -> \`${agDeepModel}\`, \`standard\` -> \`${agStandardModel}\`).`,
     );
   }
 

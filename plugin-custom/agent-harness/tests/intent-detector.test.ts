@@ -356,6 +356,8 @@ describe("detectDomainRole", () => {
       "修复 React Native Sheet 滚动折叠与按钮对齐问题",
       "检查本项目的 dark mode 存在的问题，以及优化方案",
       "深色模式与主题切换样式优化",
+      "配置 WorkTree 和 Local 这两个标签的颜色和图标",
+      "调整弹窗 popover modal 卡片间距与色板 typography",
     ];
     for (const text of uiTexts) {
       const result = detectDomainRole({ text });
@@ -389,15 +391,19 @@ describe("detectDomainRole", () => {
     }
   });
 
-  it("detects Backend role from daemon, protocol, RPC, and database keywords", () => {
+  it("detects Backend role from daemon, protocol, RPC, and database keywords without false-positiving on bare worktree/provider", () => {
     const backendTexts = [
       "修复 daemon WebSocket RPC 协议兼容性与 sqlite 存储",
       "优化 terminal-worker 进程通信与后端接口性能",
+      "优化 git worktree 与 provider adapter 状态同步",
     ];
     for (const text of backendTexts) {
       const result = detectDomainRole({ text });
       expect(result.role, `Failed Backend detection for: ${text}`).toBe("backend");
     }
+
+    const nonBackendUiCopy = detectDomainRole({ text: "展示 WorkTree 与 Provider 名称" });
+    expect(nonBackendUiCopy.role).not.toBe("backend");
   });
 
   it("detects Orchestrator role for composite fullstack requirements touching both UI and backend", () => {

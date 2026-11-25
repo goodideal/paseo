@@ -25,7 +25,7 @@ flowchart TD
 
 ### 1. 四档复杂度阶梯与 `Thinking` 映射
 
-设置版本 `SETTINGS_SCHEMA_VERSION = 6` 将模型路由收敛为单一复杂度/成本维度，并由 `providerThinkingMappings` 为每档独立配置推理深度（`thinkingOptionId`）；当模型路由发生跨档位切换时，`thinkingOptionId` 随目标档位同步更新：
+设置版本 `SETTINGS_SCHEMA_VERSION = 8` 将模型路由收敛为单一复杂度/成本维度，并由 `providerThinkingMappings` 为每档独立配置推理深度（`thinkingOptionId`）；当模型路由发生跨档位切换时，`thinkingOptionId` 随目标档位同步更新：
 
 | 档位         | 倍率 | 自动路由 | Antigravity (`Thinking`)       | Claude (`Thinking`) | Codex (`Thinking`) | OpenCode (`Thinking`)     | Pi (`Thinking`)             |
 | :----------- | :--- | :------- | :----------------------------- | :------------------ | :----------------- | :------------------------ | :-------------------------- |
@@ -49,17 +49,19 @@ flowchart TD
 
 未配置工作区 `.agents/agent-team.json` 时启用以下内置专家：
 
-| 角色 ID        | 默认 Provider | 默认档位   | Lazy-Tool 切片 | Popover Handoff | 定位说明                                                         |
-| :------------- | :------------ | :--------- | :------------- | :-------------- | :--------------------------------------------------------------- |
-| `orchestrator` | `claude`      | `fast`     | `pm.yaml`      | 否              | 薄调度中枢，负责意图分流与派发专家子代理，不直接编写业务源码     |
-| `ui`           | `claude`      | `standard` | `ui.yaml`      | 是（优先级 10） | 前端界面、设计系统与交互实现（`ui-ux-pro-max` / `unslop`）       |
-| `backend`      | `codex`       | `standard` | `backend.yaml` | 是（优先级 20） | 服务端、WebSocket/RPC 协议、存储与并发架构                       |
-| `pm`           | `claude`      | `deep`     | `pm.yaml`      | 否              | 痛点挖掘、用户故事与 OpenSpec `proposal.md` 产出                 |
-| `architect`    | `claude`      | `deep`     | `backend.yaml` | 否              | 深模块架构设计与领域建模，产出 OpenSpec `design.md`              |
-| `qa`           | `codex`       | `standard` | `ui.yaml`      | 是（优先级 50） | 回归测试、边界用例与测试资产体检（`test-gardener`）              |
-| `review`       | `antigravity` | `deep`     | `review.yaml`  | 是（优先级 60） | 双轴代码审查（Standards + Spec）与 `agy + ocr delegate` 规则门禁 |
-| `scout`        | `pi`          | `fast`     | `pm.yaml`      | 否              | 轻量探针与快速 Spike 原型验证                                    |
-| `general`      | 继承调用方    | `standard` | `codex.yaml`   | 否              | 通用工程兜底角色（独立磁盘画像 `general.json`）                  |
+| 角色 ID        | 默认 Provider | 默认档位   | Lazy-Tool 切片   | Popover Handoff | 定位说明                                                         |
+| :------------- | :------------ | :--------- | :--------------- | :-------------- | :--------------------------------------------------------------- |
+| `orchestrator` | `claude`      | `fast`     | `pm.yaml`        | 否              | 薄调度中枢，负责意图分流与派发专家子代理，不直接编写业务源码     |
+| `ui`           | `claude`      | `standard` | `ui.yaml`        | 是（优先级 10） | 前端界面、设计系统与交互实现（`ui-ux-pro-max` / `unslop`）       |
+| `backend`      | `codex`       | `standard` | `backend.yaml`   | 是（优先级 20） | 服务端、WebSocket/RPC 协议、存储与并发架构                       |
+| `pm`           | `claude`      | `deep`     | `pm.yaml`        | 否              | 痛点挖掘、用户故事与 OpenSpec `proposal.md` 产出                 |
+| `architect`    | `claude`      | `deep`     | `architect.yaml` | 否              | 深模块架构设计与领域建模，产出 OpenSpec `design.md`              |
+| `qa`           | `codex`       | `standard` | `qa.yaml`        | 是（优先级 50） | 回归测试、边界用例与测试资产体检（`test-gardener`）              |
+| `review`       | `antigravity` | `deep`     | `review.yaml`    | 是（优先级 60） | 双轴代码审查（Standards + Spec）与 `agy + ocr delegate` 规则门禁 |
+| `scout`        | `pi`          | `fast`     | `scout.yaml`     | 否              | 轻量探针与快速 Spike 原型验证                                    |
+| `general`      | 继承调用方    | `standard` | `general.yaml`   | 否              | 通用工程兜底角色（独立磁盘画像 `general.json`）                  |
+
+- **角色独立切片与统一技能根目录**：内置 `LAZY_TOOL_CONFIG` 切片列表已拆分为 8 个角色切片（`general.yaml`、`ui.yaml`、`backend.yaml`、`architect.yaml`、`pm.yaml`、`qa.yaml`、`review.yaml`、`scout.yaml`），彻底移除原共享 `codex.yaml`；内置专家技能根目录统一为 `~/.agents/skills/`。
 
 ### 4. 工作区 `agent-team.json` 动态联邦与可视化编辑
 
@@ -67,20 +69,25 @@ flowchart TD
 - 在活跃 `checkoutRoot` 探测到本地多端编译产物（`.agents/plugins/team-*/mcp_config.json`、`.claude/agents/*.md`、`.opencode/agents/*.md`、`.codex/agents/*.toml`）且命中当前会话 `provider` 时，自动启用 Federation Mode：保留本地 MCP 切片并向根会话注入 3 行 `[Agent Harness — Federation Bridge]`。
 - Worktree 默认只读继承主仓清单（`inherited_from_main`），仅在用户点击 `Materialize & compile in worktree` 时于当前 Worktree 独立物化编译，不修改主仓。
 
+### 5. Debug Trace 持久化追踪与诊断控制
+
+- **快捷与面板双入口**：`HarnessPopover` 底部提供 `Debug: ON` / `Debug: OFF` 实时开关，设置页提供 `Debug Trace & Diagnostics` 区块（开关切换、日志路径与大小/行数/轮转状态展示、最近追踪条目浏览、`Refresh Logs` 与 `Clear Trace`）。开关切换优先经客户端 `useSettings().save()` 持久化 `debugLogs`，再调用 `agent_harness.debug.toggle.request` 同步服务端运行时并写入 `debug.toggled` 留痕。
+- **零 I/O 短路与安全持久化**：开启后将路由、权限拦截、阶段步降与交接事件以 JSONL 写入 `~/.paseo/plugin-data/agent-harness/debug-trace.jsonl`（受 `PASEO_HOME` 环境变量约束）；关闭期间不执行任何磁盘读写。日志目录权限为 `0o700`、文件权限为 `0o600`，单文件达到 `5 MiB` 自动轮转为 `debug-trace.1.jsonl`，并对 Token、Secret、Bearer 与 API Key 字段递归脱敏。
+
 ---
 
 ## 插件扩展点、钩子与 RPC 契约
 
 ### 客户端扩展点（[index.client.tsx](index.client.tsx)）
 
-| 扩展点                 | 注册 ID / 目标                                               | 作用                                                                    |
-| :--------------------- | :----------------------------------------------------------- | :---------------------------------------------------------------------- |
-| `addComposerPill`      | `agent-harness`                                              | 输入框上方双态胶囊（`Standard · UI` / `Next: X · Billed: Y`）与控制面板 |
-| `addTimelineRenderer`  | `harness-transition` (v1)                                    | 渲染换挡、Plan 批准与子代理交接时间线卡片                               |
-| `addWorkspacePanel`    | `agent-team-panel`                                           | 工作区 Agent Team 双栏可视化编辑器                                      |
-| `addFilePanel`         | `agent-team-file-panel` (`agent-team.json`)                  | 打开 `.agents/agent-team.json` 时提供表单与原始 JSON 双视图             |
-| `addSettingsScreen`    | `agent-harness-settings`                                     | 四档 Model + Thinking、旁路规则、专家矩阵、L2 分类器与环境体检设置页    |
-| `addCommandCenterItem` | `Configure Agent Harness` / `Configure workspace agent team` | Command Center 快速入口                                                 |
+| 扩展点                 | 注册 ID / 目标                                               | 作用                                                                                         |
+| :--------------------- | :----------------------------------------------------------- | :------------------------------------------------------------------------------------------- |
+| `addComposerPill`      | `agent-harness`                                              | 输入框上方双态胶囊（`Standard · UI` / `Next: X · Billed: Y`）与控制面板（含 Debug 快捷开关） |
+| `addTimelineRenderer`  | `harness-transition` (v1)                                    | 渲染换挡、Plan 批准与子代理交接时间线卡片                                                    |
+| `addWorkspacePanel`    | `agent-team-panel`                                           | 工作区 Agent Team 双栏可视化编辑器                                                           |
+| `addFilePanel`         | `agent-team-file-panel` (`agent-team.json`)                  | 打开 `.agents/agent-team.json` 时提供表单与原始 JSON 双视图                                  |
+| `addSettingsScreen`    | `agent-harness-settings`                                     | 四档 Model + Thinking、旁路规则、专家矩阵、L2 分类器、环境体检与 Debug Trace 诊断页          |
+| `addCommandCenterItem` | `Configure Agent Harness` / `Configure workspace agent team` | Command Center 快速入口                                                                      |
 
 ### 服务端生命周期钩子与工具（[index.server.ts](index.server.ts)）
 
@@ -91,10 +98,11 @@ flowchart TD
 
 - 会话与配置：`agent_harness.tier.switch.request`、`agent_harness.specialist.handoff.request`（父会话 `status === "running"` 时互斥拦截可写专家、放行只读 `review`，并在缺省 `summaryOverride` 时自动注入 `[Parent Session Context]`）、`agent_harness.environment.inspect.request`、`agent_harness.profiles.sync.request`、`agent_harness.config.effective.request`
 - 工作区团队编排（按已注册 `workspaceId` 鉴权并按 `checkoutRoot` 互斥串行）：`agent_harness.team.inspect.request`、`agent_harness.team.detect.request`、`agent_harness.team.save.request`、`agent_harness.team.doctor.request`、`agent_harness.team.clean.request`
+- 调试追踪与诊断：`agent_harness.debug.status.request`、`agent_harness.debug.toggle.request`、`agent_harness.debug.clear.request`
 
 ---
 
-## 配置迁移（v1–v5 -> v6）
+## 配置迁移（v1–v7 -> v8）
 
 `agentHarnessSettings.migrate` 在加载旧版持久化配置时自动执行无损迁移：
 
@@ -104,8 +112,12 @@ flowchart TD
    - 通过 `normalizeTierAlias`（`lite -> fast`、`flash -> standard`、`plan | review -> deep`）迁移内置与自定义映射；
    - 保留用户自定义模型与自定义档位（如 `ultra`），并清理废弃的 `gemini-3*` 条目。
 3. **v5 -> v6**：
-   - 升级未自定义的 `ui` 主题/暗黑模式正则与 MCP 列表（移除不存在的 `browser-tools`，对齐 `ui.yaml`）、补全 `general` 的 `sequential-thinking`（对齐 `codex.yaml`）；
+   - 升级未自定义的 `ui` 主题/暗黑模式正则与 MCP 列表（移除不存在的 `browser-tools`，对齐 `ui.yaml`）、补全 `general` 的 `sequential-thinking`；
    - 升级未自定义的 `fullstackUiPattern`、`execAction`（覆盖服务启停动作）与 `affirmativeConfirmWords`（补齐 `ok, continue`、`go`），保留用户自定义项。
+4. **v6 -> v7 -> v8**：
+   - 规范化 `primarySkills`（去除遗留 `superpowers:` / `mattpocock-skills:` 前缀，映射遗留 `pm-*` 技能名）；
+   - 将原共享 `codex.yaml` 拆分为 `general.yaml`、`architect.yaml`、`qa.yaml`、`scout.yaml` 角色独立切片；
+   - 统一 `ui` 与 `pm` 的 `skillsRoot` 至 `~/.agents/skills`，并扩展 `ui.matchPatterns` 同时保留用户自定义正则与覆盖项。
 
 ---
 
