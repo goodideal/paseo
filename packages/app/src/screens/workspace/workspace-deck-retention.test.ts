@@ -176,6 +176,19 @@ describe("resolveWorkspaceDeckEntries", () => {
       { selection: workspace("B"), active: false },
     ]);
   });
+
+  it("marks all retained workspaces inactive when the workspace route screen itself is unfocused", () => {
+    expect(
+      resolveWorkspaceDeckEntries({
+        selections: [workspace("A"), workspace("B")],
+        activeSelection: workspace("A"),
+        isScreenFocused: false,
+      }),
+    ).toEqual([
+      { selection: workspace("A"), active: false },
+      { selection: workspace("B"), active: false },
+    ]);
+  });
 });
 
 describe("shouldKeepWorkspaceDeckEntryMounted", () => {

@@ -26,6 +26,25 @@ export const QUICK_PROMPT_COLORS = [
 ] as const;
 export type QuickPromptColor = (typeof QUICK_PROMPT_COLORS)[number];
 
+// Keep synchronized with WORKSPACE_LABEL_COLORS in packages/protocol/src/workspace-labels.ts
+export const WORKSPACE_LABEL_COLORS = [
+  "violet",
+  "sky",
+  "emerald",
+  "orange",
+  "pink",
+  "indigo",
+  "teal",
+  "red",
+  "amber",
+  "blue",
+] as const;
+export const WorkspaceLabelColorSchema = z.enum(WORKSPACE_LABEL_COLORS);
+export type WorkspaceLabelColor = z.infer<typeof WorkspaceLabelColorSchema>;
+
+export const DEFAULT_LOCAL_LABEL_COLOR: WorkspaceLabelColor = "sky";
+export const DEFAULT_WORKTREE_LABEL_COLOR: WorkspaceLabelColor = "violet";
+
 export const QuickPromptItemSchema = z.object({
   id: z.string(),
   label: z.string(),
@@ -192,6 +211,9 @@ export const quickPromptsWorkspaceLabelsSyncRpc = defineRpc({
   input: z
     .object({
       force: z.boolean().optional(),
+      syncColor: z.boolean().optional(),
+      localLabelColor: WorkspaceLabelColorSchema.optional(),
+      worktreeLabelColor: WorkspaceLabelColorSchema.optional(),
     })
     .optional()
     .default({}),
@@ -223,5 +245,7 @@ export const quickPromptsSettings = defineSettings({
   schema: z.object({
     aiSuggestions: z.boolean().default(true),
     autoLabelWorkspaces: z.boolean().default(true),
+    localLabelColor: WorkspaceLabelColorSchema.default(DEFAULT_LOCAL_LABEL_COLOR),
+    worktreeLabelColor: WorkspaceLabelColorSchema.default(DEFAULT_WORKTREE_LABEL_COLOR),
   }),
 });

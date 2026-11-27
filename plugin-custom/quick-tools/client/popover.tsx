@@ -6,12 +6,15 @@ import { Icon, copyText, useToast } from "@getpaseo/plugin/client/ui";
 import { useEffectiveQuickPrompts } from "./use-quick-prompts.js";
 import { resolveActiveAgentProfileIds } from "./quick-prompt-resolver.js";
 import { executeQuickPrompt } from "./prompt-executor.js";
-import { PROMPT_COLOR_PALETTE } from "./color-palette.js";
+import { PROMPT_COLOR_PALETTE, resolveWorkspaceLabelColorTheme } from "./color-palette.js";
 import {
+  DEFAULT_LOCAL_LABEL_COLOR,
+  DEFAULT_WORKTREE_LABEL_COLOR,
   quickPromptsSettings,
   quickPromptsWorkspaceLabelsSyncRpc,
   type QuickPromptItem,
   type QuickPromptAgentStatus,
+  type WorkspaceLabelColor,
 } from "../shared/contracts.js";
 
 export type QuickToolsPopoverProps = PluginButtonContentProps & {
@@ -104,6 +107,14 @@ export const QuickToolsPopover = memo(function QuickToolsPopover({
 
   const settings = useSettings(quickPromptsSettings);
   const aiSuggestions = settings.status === "ready" ? settings.values.aiSuggestions : true;
+  const localLabelColor: WorkspaceLabelColor =
+    settings.status === "ready"
+      ? (settings.values.localLabelColor ?? DEFAULT_LOCAL_LABEL_COLOR)
+      : DEFAULT_LOCAL_LABEL_COLOR;
+  const worktreeLabelColor: WorkspaceLabelColor =
+    settings.status === "ready"
+      ? (settings.values.worktreeLabelColor ?? DEFAULT_WORKTREE_LABEL_COLOR)
+      : DEFAULT_WORKTREE_LABEL_COLOR;
 
   const { effectiveItems, isLoading } = useEffectiveQuickPrompts({
     projectId,
@@ -129,6 +140,12 @@ export const QuickToolsPopover = memo(function QuickToolsPopover({
   const targetDirectory = workspace?.directory || agent?.cwd || "";
   const branchName = workspace?.branch ?? null;
   const kindBadge = formatWorkspaceKindBadge(workspace?.kind);
+  const kindColorKey: WorkspaceLabelColor =
+    workspace?.kind === "worktree" ? worktreeLabelColor : localLabelColor;
+  const kindColorTheme = resolveWorkspaceLabelColorTheme(
+    kindColorKey,
+    theme?.colors?.surface1 ?? theme?.colors?.surface0,
+  );
 
   const handleCopy = useCallback(
     async (value: string, label: string) => {
@@ -371,8 +388,19 @@ export const QuickToolsPopover = memo(function QuickToolsPopover({
       {targetDirectory || branchName ? (
         <View style={styles.infoCard} testID="quick-tools-info-card">
           <View style={styles.infoTopRow}>
-            <View style={styles.kindBadge}>
-              <Text style={styles.kindBadgeText}>{kindBadge}</Text>
+            <View
+              testID="quick-tools-kind-badge"
+              style={[
+                styles.kindBadge,
+                {
+                  backgroundColor: kindColorTheme.tint,
+                  borderColor: kindColorTheme.border,
+                },
+              ]}
+            >
+              <Text style={[styles.kindBadgeText, { color: kindColorTheme.text }]}>
+                {kindBadge}
+              </Text>
             </View>
             {branchName ? (
               <Pressable

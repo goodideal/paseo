@@ -216,6 +216,35 @@ describe("quick-tools plugin end-to-end", () => {
         {},
       )) as { tagged: number; skipped: number };
       expect(syncIdle).toEqual({ tagged: 0, skipped: 2 });
+
+      // 4. Verify default colors in workspace label catalog (Local -> sky, WT -> violet)
+      const initialCatalog = await client.listWorkspaceLabels();
+      expect(initialCatalog.labels).toEqual(
+        expect.arrayContaining([
+          { name: "Local", color: "sky" },
+          { name: "WT", color: "violet" },
+        ]),
+      );
+
+      // 5. Sync with custom colors updates the label colors in the daemon catalog
+      const syncCustomColors = (await client.invokePluginRpc(
+        "quick-tools",
+        "quick_tools.workspace_labels.sync.request",
+        {
+          force: true,
+          localLabelColor: "emerald",
+          worktreeLabelColor: "amber",
+        },
+      )) as { tagged: number; skipped: number };
+      expect(syncCustomColors).toEqual({ tagged: 0, skipped: 2 });
+
+      const updatedCatalog = await client.listWorkspaceLabels();
+      expect(updatedCatalog.labels).toEqual(
+        expect.arrayContaining([
+          { name: "Local", color: "emerald" },
+          { name: "WT", color: "amber" },
+        ]),
+      );
     } finally {
       rmSync(repoDir, { recursive: true, force: true });
     }

@@ -1,4 +1,5 @@
-import { workspaceLabelKey } from "@getpaseo/protocol/workspace-labels";
+import { workspaceLabelKey, type WorkspaceLabelColor } from "@getpaseo/protocol/workspace-labels";
+export type { WorkspaceLabelColor } from "@getpaseo/protocol/workspace-labels";
 export type { TerminalReplayEvent, TerminalStreamEvent } from "./terminal-stream-router.js";
 import type { AgentAddress } from "@getpaseo/protocol/addresses";
 import { parentAddressLabels } from "@getpaseo/protocol/agent-labels";
@@ -199,7 +200,15 @@ export interface PaseoWorkspaceHandle {
   /** Top-level keys replace; `null` removes the key. Needs a host with `entityMetadata`. */
   setMetadata(patch: Record<string, JsonValue>): Promise<void>;
   setPinned(pinned: boolean): Promise<{ pinnedAt: string | null }>;
-  setLabel(name: string, options: { assigned: boolean }): Promise<{ labels: string[] }>;
+  /**
+   * Assigns or unassigns a workspace label. When `assigned` is true and `color` is provided,
+   * creates a missing catalog label with that color or updates the existing catalog label's
+   * color globally across workspaces on the host.
+   */
+  setLabel(
+    name: string,
+    options: { assigned: boolean; color?: WorkspaceLabelColor },
+  ): Promise<{ labels: string[] }>;
   setBaseBranch(options: {
     baseRef: string;
     requestId?: string;
@@ -985,6 +994,7 @@ function createWorkspaceHandleFactory(
           workspaceId: id,
           name,
           assigned: options.assigned,
+          color: options.color,
         }),
       setBaseBranch: (options) =>
         daemonClient.setWorkspaceBaseBranch({ ...options, workspaceId: id }),
@@ -1405,6 +1415,7 @@ interface WorkspaceLabelAssignment {
   workspaceId: string;
   name: string;
   assigned: boolean;
+  color?: WorkspaceLabelColor;
 }
 async function assignWorkspaceLabel(
   input: WorkspaceLabelAssignment,
@@ -1416,11 +1427,17 @@ async function assignWorkspaceLabel(
   const catalog = await input.client.listWorkspaceLabels();
   const key = workspaceLabelKey(input.name);
   const existing = catalog.labels.find((label) => workspaceLabelKey(label.name) === key);
-  const label = existing ?? { name: input.name, color: "violet" as const };
+  const label = existing ?? { name: input.name, color: input.color ?? ("violet" as const) };
   const result = await input.client.setWorkspaceLabel({
     workspaceId: input.workspaceId,
     label,
     assigned: input.assigned,
   });
+  if (input.assigned && input.color && result.label.color !== input.color) {
+    await input.client.updateWorkspaceLabel({
+      name: result.label.name,
+      color: input.color,
+    });
+  }
   return { labels: result.workspaceLabels };
 }

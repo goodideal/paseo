@@ -193,7 +193,10 @@ describe("QuickPromptsStore (Plugin)", () => {
 });
 
 describe("Quick Prompts Server Entrypoint (Auto Workspace Labels)", () => {
-  function createMockServer(autoLabelWorkspaces = true) {
+  function createMockServer(
+    autoLabelWorkspaces = true,
+    colors: { localLabelColor?: string; worktreeLabelColor?: string } = {},
+  ) {
     const handlers = new Map<string, (input: any, ctx: any) => Promise<any>>();
     const hooks = new Map<string, (event: any, ctx: any) => Promise<void>>();
     const removeHook = vi.fn();
@@ -203,7 +206,12 @@ describe("Quick Prompts Server Entrypoint (Auto Workspace Labels)", () => {
         read: vi.fn().mockResolvedValue({
           status: "ready",
           revision: "rev-1",
-          values: { aiSuggestions: true, autoLabelWorkspaces },
+          values: {
+            aiSuggestions: true,
+            autoLabelWorkspaces,
+            localLabelColor: colors.localLabelColor ?? "sky",
+            worktreeLabelColor: colors.worktreeLabelColor ?? "violet",
+          },
         }),
         subscribe: vi.fn(() => () => {}),
       })),
@@ -221,8 +229,10 @@ describe("Quick Prompts Server Entrypoint (Auto Workspace Labels)", () => {
     return { server, handlers, hooks, removeHook };
   }
 
-  it("tags newly created worktree workspace with WT on workspace.create.after", async () => {
-    const { server, hooks, removeHook } = createMockServer(true);
+  it("tags newly created worktree workspace with WT and configured color on workspace.create.after", async () => {
+    const { server, hooks, removeHook } = createMockServer(true, {
+      worktreeLabelColor: "amber",
+    });
     const cleanup = contribute(server);
 
     const setLabel = vi.fn().mockResolvedValue({ labels: ["WT"] });
@@ -257,7 +267,7 @@ describe("Quick Prompts Server Entrypoint (Auto Workspace Labels)", () => {
     );
 
     expect(refresh).toHaveBeenCalledTimes(1);
-    expect(setLabel).toHaveBeenCalledWith("WT", { assigned: true });
+    expect(setLabel).toHaveBeenCalledWith("WT", { assigned: true, color: "amber" });
 
     await cleanup();
     expect(removeHook).toHaveBeenCalledTimes(1);
@@ -293,8 +303,10 @@ describe("Quick Prompts Server Entrypoint (Auto Workspace Labels)", () => {
     expect(refresh).not.toHaveBeenCalled();
   });
 
-  it("syncs existing workspaces via RPC and respects autoLabelWorkspaces unless forced", async () => {
-    const { server, handlers } = createMockServer(false);
+  it("syncs existing workspaces via RPC and applies configured or overridden label colors", async () => {
+    const { server, handlers } = createMockServer(false, {
+      localLabelColor: "emerald",
+    });
     contribute(server);
 
     const setLabel = vi.fn().mockResolvedValue({ labels: ["Local"] });
@@ -317,8 +329,34 @@ describe("Quick Prompts Server Entrypoint (Auto Workspace Labels)", () => {
     expect(await syncHandler!({}, { paseo })).toEqual({ tagged: 0, skipped: 0 });
     expect(list).not.toHaveBeenCalled();
 
-    // Forced sync runs regardless of setting
+    // Forced sync runs regardless of setting and uses settings color
     expect(await syncHandler!({ force: true }, { paseo })).toEqual({ tagged: 1, skipped: 0 });
-    expect(setLabel).toHaveBeenCalledWith("Local", { assigned: true });
+    expect(setLabel).toHaveBeenCalledWith("Local", { assigned: true, color: "emerald" });
+
+    // Explicit color override in RPC input takes precedence
+    expect(await syncHandler!({ force: true, localLabelColor: "teal" }, { paseo })).toEqual({
+      tagged: 1,
+      skipped: 0,
+    });
+    expect(setLabel).toHaveBeenLastCalledWith("Local", { assigned: true, color: "teal" });
+
+    // Color-only sync when autoLabelWorkspaces is false updates existing labels without tagging unlabeled workspaces
+    setLabel.mockClear();
+    list.mockResolvedValueOnce({
+      requestId: "req-2",
+      entries: [
+        { id: "ws-unlabeled", workspaceKind: "local_checkout", labels: [] },
+        { id: "ws-labeled", workspaceKind: "local_checkout", labels: ["Local"] },
+      ],
+      pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+    });
+    expect(
+      await syncHandler!({ force: false, syncColor: true, localLabelColor: "orange" }, { paseo }),
+    ).toEqual({
+      tagged: 0,
+      skipped: 2,
+    });
+    expect(setLabel).toHaveBeenCalledTimes(1);
+    expect(setLabel).toHaveBeenCalledWith("Local", { assigned: true, color: "orange" });
   });
 });

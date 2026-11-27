@@ -36,6 +36,7 @@ interface WorkspaceDeckEntryMountInput {
 interface ResolveWorkspaceDeckEntriesInput {
   selections: ActiveWorkspaceSelection[];
   activeSelection: ActiveWorkspaceSelection | null;
+  isScreenFocused?: boolean;
 }
 
 export function getWorkspaceSelectionKey(selection: ActiveWorkspaceSelection): string {
@@ -148,13 +149,15 @@ export function orderWorkspaceSelectionsForStableRender(
 export function resolveWorkspaceDeckEntries({
   selections,
   activeSelection,
+  isScreenFocused = true,
 }: ResolveWorkspaceDeckEntriesInput): Array<{
   selection: ActiveWorkspaceSelection;
   active: boolean;
 }> {
+  const focusedSelection = isScreenFocused ? activeSelection : null;
   return selections.map((selection) => ({
     selection,
-    active: areWorkspaceSelectionsEqual(selection, activeSelection),
+    active: areWorkspaceSelectionsEqual(selection, focusedSelection),
   }));
 }
 

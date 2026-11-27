@@ -6,7 +6,9 @@ import type { PluginButtonIcon, PluginHostProps } from "@getpaseo/plugin/client"
 import type { PluginTheme } from "@getpaseo/plugin";
 import {
   useCallback,
+  useEffect,
   useMemo,
+  useState,
   useSyncExternalStore,
   type ReactElement,
   type ReactNode,
@@ -58,6 +60,8 @@ interface ButtonView {
 }
 
 const ROOT_PATH: readonly string[] = [];
+/** Tracks which mounted ButtonControl instance opened a given store entry key. */
+const openButtonInstanceByKey = new Map<number, symbol>();
 
 const pluginThemeMapping = (theme: Theme) => ({ theme: toPluginTheme(theme) });
 const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -244,6 +248,8 @@ function buttonPages(
 function ButtonControl({ view }: { view: ButtonView }) {
   const { entry, props } = view;
   const { button } = entry;
+  const [instanceId] = useState(() => Symbol("plugin-button-instance"));
+  const isOpen = entry.open && openButtonInstanceByKey.get(entry.key) === instanceId;
   const composer = entry.placement === "composer";
   const disabled = button.disabled || entry.pending;
   const expanded = button.behavior.kind !== "action";
@@ -256,9 +262,30 @@ function ButtonControl({ view }: { view: ButtonView }) {
   if (composer) label = button.label ?? button.title;
   else if (props.layout.compact) label = undefined;
   const press = useCallback(() => pressButton(view, []), [view]);
+  useEffect(() => {
+    if (!entry.open && openButtonInstanceByKey.get(entry.key) === instanceId) {
+      openButtonInstanceByKey.delete(entry.key);
+    }
+  }, [entry.key, entry.open, instanceId]);
+  useEffect(
+    () => () => {
+      if (openButtonInstanceByKey.get(entry.key) === instanceId) {
+        openButtonInstanceByKey.delete(entry.key);
+        pluginButtonStore.setOpen(entry.key, false);
+      }
+    },
+    [entry.key, instanceId],
+  );
   const setOpen = useCallback(
-    (open: boolean) => pluginButtonStore.setOpen(entry.key, open),
-    [entry.key],
+    (open: boolean) => {
+      if (open) {
+        openButtonInstanceByKey.set(entry.key, instanceId);
+      } else if (openButtonInstanceByKey.get(entry.key) === instanceId) {
+        openButtonInstanceByKey.delete(entry.key);
+      }
+      pluginButtonStore.setOpen(entry.key, open);
+    },
+    [entry.key, instanceId],
   );
   const buttonStyle = useCallback(
     ({ hovered, pressed }: { hovered?: boolean; pressed: boolean }) =>
@@ -266,11 +293,11 @@ function ButtonControl({ view }: { view: ButtonView }) {
         ? [
             composerPillStyles.body,
             styles.button,
-            (hovered || pressed || entry.open) && styles.active,
+            (hovered || pressed || isOpen) && styles.active,
             disabled && styles.disabled,
           ]
-        : headerButtonStyle(props.layout.compact, { hovered, pressed, open: entry.open }, disabled),
-    [composer, disabled, entry.open, props.layout.compact],
+        : headerButtonStyle(props.layout.compact, { hovered, pressed, open: isOpen }, disabled),
+    [composer, disabled, isOpen, props.layout.compact],
   );
   const contents = (
     <>
@@ -327,8 +354,8 @@ function ButtonControl({ view }: { view: ButtonView }) {
     [view, entry.key, button.behavior],
   );
   return (
-    <MenuRoot compactMode="sheet" open={entry.open} onOpenChange={setOpen}>
-      <Tooltip enabledOnMobile={false}>
+    <MenuRoot compactMode="sheet" open={isOpen} onOpenChange={setOpen}>
+      <Tooltip open={isOpen ? false : undefined} enabledOnDesktop={!isOpen} enabledOnMobile={false}>
         <TooltipTrigger asChild>{trigger}</TooltipTrigger>
         <TooltipContent>
           <Text style={styles.tooltipLabel}>{button.title}</Text>

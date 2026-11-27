@@ -2282,3 +2282,105 @@ test("background stop rejects when the host does not advertise the operation", a
   ).rejects.toThrow("Update the host");
   await client.close();
 });
+
+test("workspace handle setLabel creates label with custom color and updates existing label when color differs", async () => {
+  const { client, ws } = await connectClient({ workspaceLabels: true });
+
+  // 1. Create a new label "Local" with custom color "sky"
+  const createPending = client.workspaces.ref("ws-1").setLabel("Local", {
+    assigned: true,
+    color: "sky",
+  });
+  const listReq1 = parseSentSessionMessage(ws.sent.at(-1));
+  expect(listReq1.type).toBe("workspace.label.list.request");
+  ws.message(
+    sessionMessage({
+      type: "workspace.label.list.response",
+      payload: {
+        requestId: listReq1.requestId,
+        labels: [],
+        sync: { mode: "snapshot", generation: "g1", headSeq: 1, removals: [] },
+      },
+    }),
+  );
+
+  await vi.waitFor(() =>
+    expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+      type: "workspace.label.assignment.set.request",
+      workspaceId: "ws-1",
+      label: { name: "Local", color: "sky" },
+      assigned: true,
+    }),
+  );
+  const assignReq1 = parseSentSessionMessage(ws.sent.at(-1));
+  ws.message(
+    sessionMessage({
+      type: "workspace.label.assignment.set.response",
+      payload: {
+        requestId: assignReq1.requestId,
+        label: { name: "Local", color: "sky" },
+        workspaceLabels: ["Local"],
+      },
+    }),
+  );
+  await expect(createPending).resolves.toEqual({ labels: ["Local"] });
+
+  // 2. Existing label "Local" has color "sky", calling setLabel with color "emerald" updates catalog color
+  const updatePending = client.workspaces.ref("ws-1").setLabel("Local", {
+    assigned: true,
+    color: "emerald",
+  });
+  const listReq2 = parseSentSessionMessage(ws.sent.at(-1));
+  ws.message(
+    sessionMessage({
+      type: "workspace.label.list.response",
+      payload: {
+        requestId: listReq2.requestId,
+        labels: [{ name: "Local", color: "sky" }],
+        sync: { mode: "snapshot", generation: "g1", headSeq: 2, removals: [] },
+      },
+    }),
+  );
+
+  await vi.waitFor(() =>
+    expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+      type: "workspace.label.assignment.set.request",
+      workspaceId: "ws-1",
+      label: { name: "Local", color: "sky" },
+      assigned: true,
+    }),
+  );
+  const assignReq2 = parseSentSessionMessage(ws.sent.at(-1));
+  ws.message(
+    sessionMessage({
+      type: "workspace.label.assignment.set.response",
+      payload: {
+        requestId: assignReq2.requestId,
+        label: { name: "Local", color: "sky" },
+        workspaceLabels: ["Local"],
+      },
+    }),
+  );
+
+  await vi.waitFor(() =>
+    expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+      type: "workspace.label.update.request",
+      name: "Local",
+      color: "emerald",
+    }),
+  );
+  const updateReq = parseSentSessionMessage(ws.sent.at(-1));
+  ws.message(
+    sessionMessage({
+      type: "workspace.label.update.response",
+      payload: {
+        requestId: updateReq.requestId,
+        label: { name: "Local", color: "emerald" },
+        affectedWorkspaceCount: 1,
+      },
+    }),
+  );
+  await expect(updatePending).resolves.toEqual({ labels: ["Local"] });
+
+  await client.close();
+});

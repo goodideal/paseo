@@ -53,14 +53,53 @@ describe("workspace-tagger", () => {
   });
 
   describe("resolveTargetLabel", () => {
-    it("maps worktree to WT with opposite Local", () => {
-      expect(resolveTargetLabel("worktree")).toEqual({ target: "WT", opposite: "Local" });
+    it("maps worktree to WT with opposite Local and default violet color", () => {
+      expect(resolveTargetLabel("worktree")).toEqual({
+        target: "WT",
+        opposite: "Local",
+        targetColor: "violet",
+      });
     });
 
-    it("maps local_checkout, checkout, and directory to Local with opposite WT", () => {
-      expect(resolveTargetLabel("local_checkout")).toEqual({ target: "Local", opposite: "WT" });
-      expect(resolveTargetLabel("checkout")).toEqual({ target: "Local", opposite: "WT" });
-      expect(resolveTargetLabel("directory")).toEqual({ target: "Local", opposite: "WT" });
+    it("maps local_checkout, checkout, and directory to Local with opposite WT and default sky color", () => {
+      expect(resolveTargetLabel("local_checkout")).toEqual({
+        target: "Local",
+        opposite: "WT",
+        targetColor: "sky",
+      });
+      expect(resolveTargetLabel("checkout")).toEqual({
+        target: "Local",
+        opposite: "WT",
+        targetColor: "sky",
+      });
+      expect(resolveTargetLabel("directory")).toEqual({
+        target: "Local",
+        opposite: "WT",
+        targetColor: "sky",
+      });
+    });
+
+    it("uses configured custom colors for Local and WT labels", () => {
+      expect(
+        resolveTargetLabel("worktree", {
+          localLabelColor: "emerald",
+          worktreeLabelColor: "amber",
+        }),
+      ).toEqual({
+        target: "WT",
+        opposite: "Local",
+        targetColor: "amber",
+      });
+      expect(
+        resolveTargetLabel("local_checkout", {
+          localLabelColor: "emerald",
+          worktreeLabelColor: "amber",
+        }),
+      ).toEqual({
+        target: "Local",
+        opposite: "WT",
+        targetColor: "emerald",
+      });
     });
 
     it("returns null for unknown or undefined kinds", () => {
@@ -70,32 +109,34 @@ describe("workspace-tagger", () => {
   });
 
   describe("tagWorkspace", () => {
-    it("assigns WT to an unlabeled worktree workspace", async () => {
+    it("assigns WT with default violet color to an unlabeled worktree workspace", async () => {
       const { workspaces, ref, setLabel } = createMockWorkspaces();
       const modified = await tagWorkspace("ws-wt", "worktree", [], workspaces);
 
       expect(modified).toBe(true);
       expect(ref).toHaveBeenCalledWith("ws-wt");
       expect(setLabel).toHaveBeenCalledTimes(1);
-      expect(setLabel).toHaveBeenCalledWith("WT", { assigned: true });
+      expect(setLabel).toHaveBeenCalledWith("WT", { assigned: true, color: "violet" });
     });
 
-    it("assigns Local to an unlabeled local workspace", async () => {
+    it("assigns Local with default sky color to an unlabeled local workspace", async () => {
       const { workspaces, ref, setLabel } = createMockWorkspaces();
       const modified = await tagWorkspace("ws-local", "local_checkout", [], workspaces);
 
       expect(modified).toBe(true);
       expect(ref).toHaveBeenCalledWith("ws-local");
       expect(setLabel).toHaveBeenCalledTimes(1);
-      expect(setLabel).toHaveBeenCalledWith("Local", { assigned: true });
+      expect(setLabel).toHaveBeenCalledWith("Local", { assigned: true, color: "sky" });
     });
 
-    it("assigns Local to a plain directory workspace", async () => {
+    it("assigns Local with custom color when configured", async () => {
       const { workspaces, setLabel } = createMockWorkspaces();
-      const modified = await tagWorkspace("ws-dir", "directory", [], workspaces);
+      const modified = await tagWorkspace("ws-dir", "directory", [], workspaces, {
+        localLabelColor: "emerald",
+      });
 
       expect(modified).toBe(true);
-      expect(setLabel).toHaveBeenCalledWith("Local", { assigned: true });
+      expect(setLabel).toHaveBeenCalledWith("Local", { assigned: true, color: "emerald" });
     });
 
     it("skips when target label is already present (case-insensitive) and opposite is absent", async () => {
@@ -107,6 +148,19 @@ describe("workspace-tagger", () => {
       expect(setLabel).not.toHaveBeenCalled();
     });
 
+    it("syncs catalog color on already-labeled workspace when syncColor is true while returning false", async () => {
+      const { workspaces, ref, setLabel } = createMockWorkspaces();
+      const modified = await tagWorkspace("ws-wt", "worktree", ["WT"], workspaces, {
+        worktreeLabelColor: "orange",
+        syncColor: true,
+      });
+
+      expect(modified).toBe(false);
+      expect(ref).toHaveBeenCalledWith("ws-wt");
+      expect(setLabel).toHaveBeenCalledTimes(1);
+      expect(setLabel).toHaveBeenCalledWith("WT", { assigned: true, color: "orange" });
+    });
+
     it("removes opposite label and adds target label when mismatched", async () => {
       const { workspaces, setLabel } = createMockWorkspaces();
       const modified = await tagWorkspace("ws-wt", "worktree", ["Local", "KeepMe"], workspaces);
@@ -114,7 +168,7 @@ describe("workspace-tagger", () => {
       expect(modified).toBe(true);
       expect(setLabel).toHaveBeenCalledTimes(2);
       expect(setLabel).toHaveBeenNthCalledWith(1, "Local", { assigned: false });
-      expect(setLabel).toHaveBeenNthCalledWith(2, "WT", { assigned: true });
+      expect(setLabel).toHaveBeenNthCalledWith(2, "WT", { assigned: true, color: "violet" });
     });
 
     it("removes opposite label only when both labels exist", async () => {
@@ -141,7 +195,7 @@ describe("workspace-tagger", () => {
       );
 
       expect(modified).toBe(true);
-      expect(setLabel).toHaveBeenCalledWith("WT", { assigned: true });
+      expect(setLabel).toHaveBeenCalledWith("WT", { assigned: true, color: "violet" });
     });
   });
 
@@ -206,6 +260,53 @@ describe("workspace-tagger", () => {
       } finally {
         warnSpy.mockRestore();
       }
+    });
+
+    it("syncs catalog color once per label kind when syncColor is true on already-labeled workspaces", async () => {
+      const { workspaces, setLabel } = createMockWorkspaces([
+        {
+          entries: [
+            { id: "ws-local-1", workspaceKind: "local_checkout", labels: ["Local"] },
+            { id: "ws-local-2", workspaceKind: "directory", labels: ["Local"] },
+            { id: "ws-wt-1", workspaceKind: "worktree", labels: ["WT"] },
+            { id: "ws-wt-2", workspaceKind: "worktree", labels: ["WT"] },
+          ],
+        },
+      ]);
+
+      const result = await syncAllWorkspaces(workspaces, {
+        localLabelColor: "teal",
+        worktreeLabelColor: "pink",
+        syncColor: true,
+      });
+
+      expect(result).toEqual({ tagged: 0, skipped: 4 });
+      expect(setLabel).toHaveBeenCalledTimes(2);
+      expect(setLabel).toHaveBeenNthCalledWith(1, "Local", { assigned: true, color: "teal" });
+      expect(setLabel).toHaveBeenNthCalledWith(2, "WT", { assigned: true, color: "pink" });
+    });
+
+    it("updates only existing labeled workspaces when onlyExisting and syncColor are true", async () => {
+      const { workspaces, setLabel } = createMockWorkspaces([
+        {
+          entries: [
+            { id: "ws-unlabeled-local", workspaceKind: "local_checkout", labels: [] },
+            { id: "ws-labeled-local", workspaceKind: "directory", labels: ["Local"] },
+            { id: "ws-unlabeled-wt", workspaceKind: "worktree", labels: [] },
+          ],
+        },
+      ]);
+
+      const result = await syncAllWorkspaces(workspaces, {
+        localLabelColor: "teal",
+        worktreeLabelColor: "pink",
+        syncColor: true,
+        onlyExisting: true,
+      });
+
+      expect(result).toEqual({ tagged: 0, skipped: 3 });
+      expect(setLabel).toHaveBeenCalledTimes(1);
+      expect(setLabel).toHaveBeenCalledWith("Local", { assigned: true, color: "teal" });
     });
   });
 });

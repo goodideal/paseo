@@ -21,21 +21,52 @@ describe("quick-tools contracts", () => {
     );
   });
 
-  it("defaults autoLabelWorkspaces to true in settings schema", () => {
+  it("defaults autoLabelWorkspaces and label colors in settings schema", () => {
     expect(quickPromptsSettings.schema.parse({})).toEqual({
       aiSuggestions: true,
       autoLabelWorkspaces: true,
+      localLabelColor: "sky",
+      worktreeLabelColor: "violet",
     });
     expect(quickPromptsSettings.schema.parse({ aiSuggestions: false })).toEqual({
       aiSuggestions: false,
       autoLabelWorkspaces: true,
+      localLabelColor: "sky",
+      worktreeLabelColor: "violet",
     });
+    expect(
+      quickPromptsSettings.schema.parse({
+        localLabelColor: "emerald",
+        worktreeLabelColor: "amber",
+      }),
+    ).toEqual({
+      aiSuggestions: true,
+      autoLabelWorkspaces: true,
+      localLabelColor: "emerald",
+      worktreeLabelColor: "amber",
+    });
+    expect(
+      quickPromptsSettings.schema.safeParse({
+        localLabelColor: "invalid-color",
+      }).success,
+    ).toBe(false);
   });
 
-  it("validates workspace labels sync RPC payloads", () => {
+  it("validates workspace labels sync RPC payloads including custom label colors", () => {
     expect(quickPromptsWorkspaceLabelsSyncRpc.input.parse(undefined)).toEqual({});
     expect(quickPromptsWorkspaceLabelsSyncRpc.input.parse({ force: true })).toEqual({
       force: true,
+    });
+    expect(
+      quickPromptsWorkspaceLabelsSyncRpc.input.parse({
+        force: true,
+        localLabelColor: "teal",
+        worktreeLabelColor: "orange",
+      }),
+    ).toEqual({
+      force: true,
+      localLabelColor: "teal",
+      worktreeLabelColor: "orange",
     });
     expect(quickPromptsWorkspaceLabelsSyncRpc.output.parse({ tagged: 2, skipped: 1 })).toEqual({
       tagged: 2,

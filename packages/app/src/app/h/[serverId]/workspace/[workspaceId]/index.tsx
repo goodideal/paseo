@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
-import { useNavigation } from "expo-router/react-navigation";
+import { useIsFocused, useNavigation } from "expo-router/react-navigation";
 import { StyleSheet, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-boundary";
@@ -147,6 +147,7 @@ function HostWorkspaceRouteContent() {
 }
 
 function WorkspaceDeck() {
+  const isScreenFocused = useIsFocused();
   const activeSelection = useActiveWorkspaceSelection();
   const [retainedSelections, setRetainedSelections] = useState<RetainedWorkspaceSelection[]>(() =>
     activeSelection ? [{ selection: activeSelection, inactiveSince: null }] : [],
@@ -176,8 +177,13 @@ function WorkspaceDeck() {
     [nextRetainedSelections],
   );
   const renderedEntries = useMemo(
-    () => resolveWorkspaceDeckEntries({ selections: renderedSelections, activeSelection }),
-    [activeSelection, renderedSelections],
+    () =>
+      resolveWorkspaceDeckEntries({
+        selections: renderedSelections,
+        activeSelection,
+        isScreenFocused,
+      }),
+    [activeSelection, isScreenFocused, renderedSelections],
   );
 
   useLayoutEffect(() => {

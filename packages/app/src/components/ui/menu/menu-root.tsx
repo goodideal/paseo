@@ -9,6 +9,7 @@ import {
 } from "react";
 import {
   Pressable,
+  type GestureResponderEvent,
   type View,
   type PressableProps,
   type PressableStateCallbackType,
@@ -69,7 +70,7 @@ function assignRef<T>(ref: Ref<T> | undefined, value: T | null): void {
 }
 
 export const MenuTrigger = forwardRef<View, MenuTriggerProps>(function MenuTrigger(
-  { children, disabled, style, accessibilityState, ...props },
+  { children, disabled, style, accessibilityState, onPress, ...props },
   forwardedRef,
 ): ReactElement {
   const ctx = useMenuContext("MenuTrigger");
@@ -82,10 +83,14 @@ export const MenuTrigger = forwardRef<View, MenuTriggerProps>(function MenuTrigg
     [ctx.triggerRef, forwardedRef],
   );
 
-  const handlePress = useCallback(() => {
-    if (disabled) return;
-    ctx.setOpen(!ctx.open);
-  }, [disabled, ctx]);
+  const handlePress = useCallback(
+    (event: GestureResponderEvent) => {
+      if (disabled) return;
+      onPress?.(event);
+      ctx.setOpen(!ctx.open);
+    },
+    [disabled, ctx, onPress],
+  );
 
   const pressableStyle = useCallback(
     ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => {
