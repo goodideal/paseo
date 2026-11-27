@@ -3,6 +3,7 @@ import {
   ProviderEventSchema,
   ProviderInputSchema,
   negotiateProviderCapabilities,
+  requireProviderCapabilities,
   type ProviderEvent,
   type ProviderInput,
   type ProviderMetric,
@@ -148,5 +149,40 @@ describe("Provider background work", () => {
     };
     expect(ProviderEventSchema.parse(active)).toEqual(active);
     expect(ProviderEventSchema.parse(cleared)).toEqual(cleared);
+  });
+});
+
+describe("Provider launch wrap", () => {
+  const open = (wrap?: readonly [string, ...string[]]): ProviderInput =>
+    ProviderInputSchema.parse({
+      type: "session.open",
+      requestId: "open",
+      sessionId: "session-1",
+      history: "skip",
+      config: {
+        cwd: "/workspace",
+        env: {},
+        mcpServers: {},
+        settings: {},
+        persist: true,
+        ...(wrap ? { wrap } : {}),
+      },
+    });
+
+  it("requires session.launch_wrap only for an open that carries a wrap", () => {
+    expect(() => requireProviderCapabilities([], open(["/bin/sandbox", "a b"]))).toThrow(
+      "session.launch_wrap",
+    );
+    expect(() =>
+      requireProviderCapabilities(["session.launch_wrap"], open(["/bin/sandbox"])),
+    ).not.toThrow();
+    expect(() => requireProviderCapabilities([], open())).not.toThrow();
+  });
+
+  it("keeps each wrap element whole and rejects an empty wrap", () => {
+    expect(open(["/bin/sandbox", "a b"])).toMatchObject({
+      config: { wrap: ["/bin/sandbox", "a b"] },
+    });
+    expect(() => open([] as unknown as [string])).toThrow();
   });
 });
