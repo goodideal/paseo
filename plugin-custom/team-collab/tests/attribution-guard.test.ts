@@ -429,6 +429,7 @@ describe("AttributionGuard & command classifier", () => {
 
     const agentCreateReq: PluginHookRequests["agent.create.before"] = {
       config: { provider: "claude", cwd: worktreeDir },
+      workspaceId: null,
       metadata: {},
     };
     const inheritedAgentReq = await guard.handleAgentCreateBefore({ request: agentCreateReq }, ctx);
@@ -439,6 +440,7 @@ describe("AttributionGuard & command classifier", () => {
       {
         request: {
           config: { provider: "codex", cwd: path.join(tempRoot, "other-wt") },
+          workspaceId: null,
           labels: {
             "paseo.workflow": "gitea-workflow",
             "paseo.workflow.unattended": "1",
@@ -664,6 +666,7 @@ describe("AttributionGuard & command classifier", () => {
       {
         request: {
           config: { provider: "codex", cwd: worktreeDir },
+          workspaceId: null,
           labels: {
             "paseo.workflow": "gitea-workflow",
             "paseo.workflow.unattended": "1",

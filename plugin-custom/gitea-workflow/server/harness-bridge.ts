@@ -2,7 +2,7 @@ import type { GiteaHarnessMode, WorkflowHarnessExecutionInfo } from "../shared/t
 import type { SettingsManager } from "./settings-manager.js";
 
 export type WorkflowProviderId = "claude" | "codex" | "opencode" | "antigravity" | "pi";
-export type HarnessTier = "fast" | "standard" | "deep" | "max";
+export type HarnessTier = "fast" | "standard" | "plan" | "review" | "deep" | "max";
 export type HarnessPhase = "design" | "exec" | "review";
 
 export interface ProviderTierConfig {
@@ -17,30 +17,40 @@ export const BUILTIN_PROVIDER_TIERS: Record<
   claude: {
     fast: { model: "lite", thinkingOptionId: "low" },
     standard: { model: "flash", thinkingOptionId: "medium" },
+    plan: { model: "pro", thinkingOptionId: "high" },
+    review: { model: "pro", thinkingOptionId: "high" },
     deep: { model: "pro", thinkingOptionId: "high" },
     max: { model: "plan", thinkingOptionId: "high" },
   },
   codex: {
     fast: { model: "lite", thinkingOptionId: "low" },
     standard: { model: "flash", thinkingOptionId: "medium" },
+    plan: { model: "pro", thinkingOptionId: "high" },
+    review: { model: "pro", thinkingOptionId: "high" },
     deep: { model: "pro", thinkingOptionId: "high" },
     max: { model: "plan", thinkingOptionId: "xhigh" },
   },
   antigravity: {
     fast: { model: "gemini-4-hydrogen", thinkingOptionId: "medium" },
-    standard: { model: "gemini-4-argon", thinkingOptionId: "high" },
+    standard: { model: "gemini-4-neon", thinkingOptionId: "high" },
+    plan: { model: "gemini-4-carbon", thinkingOptionId: "high" },
+    review: { model: "gemini-4-argon", thinkingOptionId: "high" },
     deep: { model: "gemini-4-carbon", thinkingOptionId: "high" },
-    max: { model: "gemini-4-neon", thinkingOptionId: "xhigh" },
+    max: { model: "gemini-4-carbon", thinkingOptionId: "high" },
   },
   opencode: {
     fast: { model: "custom/lite", thinkingOptionId: "low" },
     standard: { model: "custom/flash", thinkingOptionId: "medium" },
+    plan: { model: "custom/pro", thinkingOptionId: "high" },
+    review: { model: "custom/pro", thinkingOptionId: "high" },
     deep: { model: "custom/pro", thinkingOptionId: "high" },
     max: { model: "custom/plan", thinkingOptionId: "xhigh" },
   },
   pi: {
     fast: { model: "headroom/lite", thinkingOptionId: "low" },
     standard: { model: "headroom/flash", thinkingOptionId: "medium" },
+    plan: { model: "headroom/pro", thinkingOptionId: "high" },
+    review: { model: "headroom/pro", thinkingOptionId: "high" },
     deep: { model: "headroom/pro", thinkingOptionId: "high" },
     max: { model: "headroom/plan", thinkingOptionId: "xhigh" },
   },
@@ -129,10 +139,26 @@ export function normalizeWorkflowProvider(raw?: string): WorkflowProviderId {
 export function normalizeHarnessTier(
   raw?: string,
   fallback: HarnessTier = "standard",
+  phase?: HarnessPhase,
 ): HarnessTier {
   const value = (raw || "").trim().toLowerCase();
-  if (value === "fast" || value === "standard" || value === "deep" || value === "max") {
+  if (
+    value === "fast" ||
+    value === "standard" ||
+    value === "plan" ||
+    value === "review" ||
+    value === "max"
+  ) {
     return value;
+  }
+  if (value === "deep") {
+    if (phase === "review") {
+      return "review";
+    }
+    if (phase === "design" || phase === "exec") {
+      return "plan";
+    }
+    return "deep";
   }
   return fallback;
 }
@@ -436,7 +462,7 @@ function resolveRoleAndTier(params: {
       }
     }
     const specialist = specialistsMap.get(role);
-    const tier = normalizeHarnessTier(specialist?.preferredTier, "deep");
+    const tier = normalizeHarnessTier(specialist?.preferredTier, "plan", "design");
     return { phase: "design", role, tier, specialist };
   }
 
@@ -461,7 +487,7 @@ function resolveRoleAndTier(params: {
       }
     }
     const specialist = specialistsMap.get(role);
-    const tier = normalizeHarnessTier(specialist?.preferredTier, "deep");
+    const tier = normalizeHarnessTier(specialist?.preferredTier, "plan", "design");
     return { phase: "design", role, tier, specialist };
   }
 
@@ -483,7 +509,7 @@ function resolveRoleAndTier(params: {
       }
     }
     const specialist = specialistsMap.get(role);
-    const tier = normalizeHarnessTier(specialist?.preferredTier, "deep");
+    const tier = normalizeHarnessTier(specialist?.preferredTier, "review", "review");
     return { phase: "review", role, tier, specialist };
   }
 
@@ -536,7 +562,7 @@ function resolveRoleAndTier(params: {
   const isFastTitle = CHORE_DOCS_STYLE_TITLE_REGEX.test(issueTitle);
   const tier: HarnessTier = isFastTitle
     ? "fast"
-    : normalizeHarnessTier(specialist?.preferredTier, "standard");
+    : normalizeHarnessTier(specialist?.preferredTier, "standard", "exec");
 
   return { phase: "exec", role, tier, specialist };
 }

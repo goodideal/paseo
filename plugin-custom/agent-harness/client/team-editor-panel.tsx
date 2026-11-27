@@ -15,12 +15,22 @@ import {
   ScrollView,
   SettingsCard,
   SettingsInput,
+  type SettingsInputHandle,
   SettingsRow,
   SettingsSection,
   SettingsSelect,
   SettingsSwitch,
   useToast,
 } from "@getpaseo/plugin/client/ui";
+import { isModelCompatibleWithProvider, normalizeProviderName } from "../shared/config-resolver.js";
+import {
+  buildInspectedProviderMap,
+  buildOrderedProviderIds,
+  formatProviderDisplayLabel,
+  formatProviderStatusSuffix,
+  resolveActiveHostProviderId,
+  resolveProviderSelectableModels,
+} from "./provider-catalog.js";
 import {
   harnessTeamCleanRpc,
   harnessTeamDetectRpc,
@@ -89,6 +99,13 @@ const TEAM_GROUP_ORDER: ReadonlyArray<{ id: "fe" | "be" | "ops"; label: string }
   { id: "ops", label: "Operations & SRE (Ops)" },
 ];
 
+function resolveDoctorButtonLabel(running: boolean, hasManifest: boolean): string {
+  if (running) {
+    return "Running doctor...";
+  }
+  return hasManifest ? "Run doctor" : "Run doctor (save first)";
+}
+
 export function WorkspaceTeamEditor({
   workspaceId,
   theme,
@@ -129,6 +146,7 @@ export function WorkspaceTeamEditor({
 
   const toastRef = useRef(toast);
   const inspectRpcRef = useRef(inspectRpc);
+  const modelInputRefs = useRef<Record<string, SettingsInputHandle | null>>({});
   useEffect(() => {
     toastRef.current = toast;
     inspectRpcRef.current = inspectRpc;
@@ -864,16 +882,45 @@ export function WorkspaceTeamEditor({
     return computeMissingRecommendedDeps(draftManifest, inspectData.catalog);
   }, [draftManifest, inspectData]);
 
+  const inspectedProviderMap = useMemo(
+    () => buildInspectedProviderMap(inspectData?.availableProviders),
+    [inspectData?.availableProviders],
+  );
+
+  const activeHostProviderId = useMemo(
+    () => resolveActiveHostProviderId(inspectData?.availableProviders),
+    [inspectData?.availableProviders],
+  );
+
   const providerOptions = useMemo(() => {
-    const known = new Set<string>(TEAM_BINDING_PROVIDERS);
-    for (const entry of inspectData?.availableProviders ?? []) {
-      if (entry.provider) known.add(entry.provider);
-    }
+    const orderedIds = buildOrderedProviderIds(
+      inspectData?.availableProviders,
+      TEAM_BINDING_PROVIDERS,
+    );
     return [
-      { label: "Inherit global default", value: "" },
-      ...Array.from(known).map((p) => ({ label: p, value: p })),
+      {
+        label: `Inherit (Active: ${formatProviderDisplayLabel(activeHostProviderId)})`,
+        value: "",
+      },
+      ...orderedIds.map((pid) => {
+        const status = inspectedProviderMap.get(pid);
+        const suffix = formatProviderStatusSuffix(status);
+        return {
+          label: `${formatProviderDisplayLabel(pid)}${suffix}`,
+          value: pid,
+        };
+      }),
     ];
-  }, [inspectData?.availableProviders]);
+  }, [activeHostProviderId, inspectData?.availableProviders, inspectedProviderMap]);
+
+  const getModelsForProvider = useCallback(
+    (providerId: string): string[] =>
+      resolveProviderSelectableModels({
+        providerId,
+        inspectedProviderMap,
+      }),
+    [inspectedProviderMap],
+  );
 
   const sliceOptions = useMemo(() => {
     const slices = inspectData?.lazyToolSlices ?? [];
@@ -927,13 +974,6 @@ export function WorkspaceTeamEditor({
         </View>
       </ScrollView>
     );
-  }
-
-  function resolveDoctorButtonLabel(running: boolean, hasManifest: boolean): string {
-    if (running) {
-      return "Running doctor...";
-    }
-    return hasManifest ? "Run doctor" : "Run doctor (save first)";
   }
 
   const isInherited = inspectData?.manifestState === "inherited_from_main";
@@ -1396,6 +1436,20 @@ export function WorkspaceTeamEditor({
                   draftManifest.roles.map((roleId) => {
                     const roleMeta = inspectData?.catalog.roles.find((r) => r.id === roleId);
                     const binding = draftManifest.bindings[roleId] ?? {};
+                    const effectiveProvider = binding.provider?.trim() || activeHostProviderId;
+                    const providerModels = getModelsForProvider(effectiveProvider);
+                    const roleProviderOptions =
+                      binding.provider &&
+                      !providerOptions.some((opt) => opt.value === binding.provider)
+                        ? [...providerOptions, { label: binding.provider, value: binding.provider }]
+                        : providerOptions;
+                    const modelPresetOptions = [
+                      { label: "Auto from tier", value: "" },
+                      ...providerModels.map((m) => ({ label: m, value: m })),
+                      ...(binding.model && !providerModels.includes(binding.model)
+                        ? [{ label: binding.model, value: binding.model }]
+                        : []),
+                    ];
                     return (
                       <View key={roleId} style={styles.roleCard}>
                         <View style={styles.roleCardHeader}>
@@ -1412,10 +1466,29 @@ export function WorkspaceTeamEditor({
                         <SettingsSelect
                           label={`${roleId} provider`}
                           value={binding.provider ?? ""}
-                          options={providerOptions}
-                          onValueChange={(val) =>
-                            handleUpdateBinding(roleId, { provider: val || undefined })
-                          }
+                          options={roleProviderOptions}
+                          onValueChange={(val) => {
+                            const nextProvider = val || undefined;
+                            const effectiveNextProvider = nextProvider || activeHostProviderId;
+                            const nextHostEntry = inspectedProviderMap.get(
+                              normalizeProviderName(effectiveNextProvider),
+                            )?.hostRuntimeInfo;
+                            const existingModel = binding.model?.trim() ?? "";
+                            const shouldClearModel =
+                              Boolean(existingModel) &&
+                              !isModelCompatibleWithProvider(
+                                effectiveNextProvider,
+                                existingModel,
+                                nextHostEntry,
+                              );
+                            if (shouldClearModel) {
+                              modelInputRefs.current[roleId]?.replaceText("");
+                            }
+                            handleUpdateBinding(roleId, {
+                              provider: nextProvider,
+                              ...(shouldClearModel ? { model: undefined } : {}),
+                            });
+                          }}
                         />
                         <SettingsSelect
                           label={`${roleId} tier`}
@@ -1432,13 +1505,25 @@ export function WorkspaceTeamEditor({
                             handleUpdateBinding(roleId, { tier: val || undefined })
                           }
                         />
+                        <SettingsSelect
+                          label={`${roleId} model preset`}
+                          value={binding.model ?? ""}
+                          options={modelPresetOptions}
+                          onValueChange={(val) => {
+                            modelInputRefs.current[roleId]?.replaceText(val);
+                            handleUpdateBinding(roleId, { model: val || undefined });
+                          }}
+                        />
                         <SettingsInput
+                          ref={(handle) => {
+                            modelInputRefs.current[roleId] = handle;
+                          }}
                           key={`model-${roleId}-${resetSeq}`}
                           label={`${roleId} model override`}
                           initialValue={binding.model ?? ""}
                           placeholder="Optional model identifier"
                           onChangeText={(text) =>
-                            handleUpdateBinding(roleId, { model: text || undefined })
+                            handleUpdateBinding(roleId, { model: text.trim() || undefined })
                           }
                         />
                         <SettingsSelect

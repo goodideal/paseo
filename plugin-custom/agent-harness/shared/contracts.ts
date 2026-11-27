@@ -11,9 +11,7 @@ import type {
   MatrixTier,
 } from "./types.js";
 
-// ============================================================================
-// Pure Wire Schemas (No .transform(), .catch(), or .preprocess())
-// ============================================================================
+/* Pure Wire Schemas (No .transform(), .catch(), or .preprocess()) */
 
 export const MatrixTierSchema = z.string().min(1).max(64);
 export const DomainRoleSchema = z.string().min(1).max(64);
@@ -72,9 +70,7 @@ type AssertMetadataParity =
 const _assertMetadataParity: AssertMetadataParity = true;
 void _assertMetadataParity;
 
-// ============================================================================
-// Timeline Transition Contract
-// ============================================================================
+/* Timeline Transition Contract */
 
 export const HARNESS_TRANSITION_TIMELINE_KIND = "harness-transition" as const;
 export const HARNESS_TRANSITION_TIMELINE_VERSION = 1 as const;
@@ -100,6 +96,7 @@ export type HarnessTransitionPayload = z.infer<typeof HarnessTransitionPayloadSc
  * Strict JsonValue-compatible shape for `handle.timeline.append({ data })`
  * (uses explicit `| null` without `undefined`).
  */
+// oxlint-disable-next-line typescript/consistent-type-definitions -- structural type alias required for JsonValue assignability
 export type HarnessTransitionWireData = {
   transitionKind: HarnessTransitionKind;
   role: DomainRole;
@@ -134,9 +131,7 @@ export function createHarnessTransitionTimelineItem(
   };
 }
 
-// ============================================================================
-// Host Agent Tool Contract (`harness_handoff`)
-// ============================================================================
+/* Host Agent Tool Contract (`harness_handoff`) */
 
 export const HARNESS_HANDOFF_TOOL_NAME = "harness_handoff" as const;
 
@@ -178,9 +173,7 @@ export const HarnessHandoffToolOutputSchema = z.object({
 
 export type HarnessHandoffToolOutput = z.infer<typeof HarnessHandoffToolOutputSchema>;
 
-// ============================================================================
-// Client <-> Server RPC Contracts
-// ============================================================================
+/* Client <-> Server RPC Contracts */
 
 export const harnessSwitchTierRpc = defineRpc({
   name: "agent_harness.tier.switch.request",
@@ -245,7 +238,27 @@ export const harnessInspectEnvironmentRpc = defineRpc({
       z.object({
         provider: z.string(),
         enabled: z.boolean(),
+        status: z.string().optional(),
+        label: z.string().optional(),
+        defaultModel: z.string().optional(),
         models: z.array(z.string()),
+        modelDetails: z
+          .array(
+            z.object({
+              id: z.string(),
+              label: z.string().optional(),
+              isDefault: z.boolean().optional(),
+              thinkingOptions: z
+                .array(
+                  z.object({
+                    id: z.string(),
+                    label: z.string().optional(),
+                  }),
+                )
+                .optional(),
+            }),
+          )
+          .optional(),
       }),
     ),
     diskProfiles: z.array(
@@ -307,6 +320,12 @@ export const harnessSyncProfilesRpc = defineRpc({
 export type HarnessSyncProfilesInput = z.infer<typeof harnessSyncProfilesRpc.input>;
 export type HarnessSyncProfilesOutput = z.infer<typeof harnessSyncProfilesRpc.output>;
 
+/**
+ * Cross-plugin RPC contract consumed by `plugin-custom/gitea-workflow/server/harness-bridge.ts`
+ * (`fetchEffectiveHarnessConfig`), which reads `config` fields (`enabled`, `defaultFallbackRole`,
+ * `honorSpecialistPreferredProvider`, `specialists`, `providerMappings`, `providerThinkingMappings`,
+ * `agentTeam?.preset`, and `agentTeamPreset`). Verify compatibility in `harness-bridge.ts` when changing fields.
+ */
 export const harnessEffectiveConfigRpc = defineRpc({
   name: "agent_harness.config.effective.request",
   input: z.object({
@@ -321,9 +340,7 @@ export const harnessEffectiveConfigRpc = defineRpc({
 export type HarnessEffectiveConfigInput = z.infer<typeof harnessEffectiveConfigRpc.input>;
 export type HarnessEffectiveConfigOutput = z.infer<typeof harnessEffectiveConfigRpc.output>;
 
-// ============================================================================
-// Workspace Agent-Team Visual Editor RPC Contracts
-// ============================================================================
+/* Workspace Agent-Team Visual Editor RPC Contracts */
 
 export const AgentTeamRoleBindingSchema = z.object({
   provider: z.string().optional(),
@@ -427,7 +444,27 @@ export const harnessTeamInspectRpc = defineRpc({
       z.object({
         provider: z.string(),
         enabled: z.boolean(),
+        status: z.string().optional(),
+        label: z.string().optional(),
+        defaultModel: z.string().optional(),
         models: z.array(z.string()),
+        modelDetails: z
+          .array(
+            z.object({
+              id: z.string(),
+              label: z.string().optional(),
+              isDefault: z.boolean().optional(),
+              thinkingOptions: z
+                .array(
+                  z.object({
+                    id: z.string(),
+                    label: z.string().optional(),
+                  }),
+                )
+                .optional(),
+            }),
+          )
+          .optional(),
       }),
     ),
     lazyToolSlices: z.array(z.string()),
@@ -517,9 +554,7 @@ export const harnessTeamCleanRpc = defineRpc({
 export type HarnessTeamCleanInput = z.infer<typeof harnessTeamCleanRpc.input>;
 export type HarnessTeamCleanOutput = z.infer<typeof harnessTeamCleanRpc.output>;
 
-// ============================================================================
-// Debug Trace Engine RPC Contracts
-// ============================================================================
+/* Debug Trace Engine RPC Contracts */
 
 export const HarnessDebugLogLevelSchema = z.enum(["info", "warn", "error"]);
 
@@ -582,9 +617,7 @@ export const harnessDebugClearRpc = defineRpc({
 export type HarnessDebugClearInput = z.infer<typeof harnessDebugClearRpc.input>;
 export type HarnessDebugClearOutput = z.infer<typeof harnessDebugClearRpc.output>;
 
-// ============================================================================
-// Shared Pure Helpers (Provider Plan Mode & Specialist Tier Mapping)
-// ============================================================================
+/* Shared Pure Helpers (Provider Plan Mode & Specialist Tier Mapping) */
 
 export const NATIVE_PLAN_MODE_PROVIDERS = ["claude", "opencode"] as const;
 
@@ -623,17 +656,17 @@ export function resolveSpecialistTargetTier(role: HandoffTargetRole): MatrixTier
   if (norm === "orchestrator" || norm === "scout" || norm === "lead" || norm === "dispatcher") {
     return "fast";
   }
+  if (norm === "review" || norm === "be-reviewer" || norm === "ops-auditor") {
+    return "review";
+  }
   if (
-    norm === "review" ||
-    norm === "be-reviewer" ||
-    norm === "ops-auditor" ||
     norm === "architect" ||
     norm === "fe-architect" ||
     norm === "be-architect" ||
     norm === "pm" ||
     norm === "fe-pm"
   ) {
-    return "deep";
+    return "plan";
   }
   return "standard";
 }

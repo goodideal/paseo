@@ -702,7 +702,7 @@ export async function resolveRegisteredWorkspace(
 
     if (!directory && typeof paseo.workspaces?.list === "function") {
       const listed = await paseo.workspaces.list({ includeBackground: true });
-      const entries = (listed as { entries?: Array<Record<string, any>> })?.entries ?? [];
+      const entries = (listed as { entries?: Array<Record<string, unknown>> })?.entries ?? [];
       const found = entries.find((w) => (w.id ?? w.workspaceId) === workspaceId);
       if (found) {
         const cand = found.workspaceDirectory ?? found.directory ?? found.cwd;
@@ -895,7 +895,7 @@ function detectRepoStackFallback(checkoutRoot: string): {
     devDependencies?: Record<string, string>;
   }>(path.join(checkoutRoot, "package.json"));
   if (pkgJson) {
-    const deps = { ...(pkgJson.dependencies ?? {}), ...(pkgJson.devDependencies ?? {}) };
+    const deps = { ...pkgJson.dependencies, ...pkgJson.devDependencies };
     if (deps.react || deps.next) {
       return {
         presetId: "web-react",
@@ -1141,8 +1141,10 @@ export async function saveWorkspaceTeam(options: {
   });
 }
 
+const ANSI_ESCAPE_RE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
+
 function stripAnsi(input: string): string {
-  return input.replace(/\x1b\[[0-9;]*m/g, "");
+  return input.replace(ANSI_ESCAPE_RE, "");
 }
 
 export async function doctorWorkspaceTeam(options: {

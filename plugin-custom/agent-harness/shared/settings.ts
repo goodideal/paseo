@@ -3,17 +3,10 @@ import { z } from "zod";
 import { canonicalizeProviderName, normalizePrimarySkills } from "./config-resolver.js";
 import {
   BUILTIN_BYPASS_MODELS,
-  BUILTIN_CONVENTIONAL_EXEC_PREFIX,
-  BUILTIN_EXEC_ACTION_PATTERNS,
-  BUILTIN_FAST_ACTION_PATTERNS,
-  BUILTIN_FULLSTACK_BACKEND_PATTERN,
-  BUILTIN_FULLSTACK_UI_PATTERN,
   BUILTIN_PHASE_RULES,
-  BUILTIN_PLAN_PATTERNS,
   BUILTIN_PROVIDER_MAPPINGS,
   BUILTIN_PROVIDER_MODES,
   BUILTIN_PROVIDER_THINKING_MAPPINGS,
-  BUILTIN_REVIEW_PATTERNS,
   BUILTIN_SPECIALISTS,
   BUILTIN_TIERS,
   LEGACY_ORCHESTRATOR_DISPATCHER_RULE,
@@ -35,6 +28,14 @@ import {
   LEGACY_V7_BACKEND_MATCH_PATTERNS,
   LEGACY_V7_PM_PRIMARY_SKILLS,
   LEGACY_V7_UI_MATCH_PATTERNS,
+  LEGACY_V8_DESIGN_PHASE_RULE,
+  LEGACY_V8_EXEC_PHASE_RULE,
+  LEGACY_V8_ORCHESTRATOR_DISPATCHER_RULE,
+  LEGACY_V8_PROVIDER_MAPPINGS,
+  LEGACY_V8_PROVIDER_THINKING_MAPPINGS,
+  LEGACY_V8_REVIEW_PHASE_RULE,
+  LEGACY_V8_SPECIALIST_PRIMARY_SKILLS,
+  LEGACY_V8_SPECIALIST_PROVIDERS,
 } from "./presets.js";
 
 const LEGACY_V5_AFFIRMATIVE_CONFIRM_WORDS: readonly string[] = [
@@ -79,16 +80,6 @@ function cloneBuiltinProviderModes(): Record<string, z.infer<typeof ProviderMode
   return Object.fromEntries(Object.entries(BUILTIN_PROVIDER_MODES).map(([k, v]) => [k, { ...v }]));
 }
 
-function createDefaultTierPatterns() {
-  return {
-    plan: [...BUILTIN_PLAN_PATTERNS],
-    review: [...BUILTIN_REVIEW_PATTERNS],
-    fastAction: [...BUILTIN_FAST_ACTION_PATTERNS],
-    execAction: [...BUILTIN_EXEC_ACTION_PATTERNS],
-    conventionalExecPrefix: BUILTIN_CONVENTIONAL_EXEC_PREFIX,
-  };
-}
-
 function isLegacyOrchestratorPrompt(prompt: string): boolean {
   const trimmed = prompt.trim();
   return (
@@ -98,9 +89,7 @@ function isLegacyOrchestratorPrompt(prompt: string): boolean {
   );
 }
 
-// ============================================================================
-// Schemas for Granular Elements
-// ============================================================================
+/* Schemas for Granular Elements */
 
 export const HarnessTierConfigSchema = z.object({
   id: z.string().min(1).max(40),
@@ -183,16 +172,16 @@ export const HarnessSpecialistConfigSchema = z.object({
 });
 
 export const TierPatternsSchema = z.object({
-  plan: z.array(z.string()).default(() => [...BUILTIN_PLAN_PATTERNS]),
-  review: z.array(z.string()).default(() => [...BUILTIN_REVIEW_PATTERNS]),
-  fastAction: z.array(z.string()).default(() => [...BUILTIN_FAST_ACTION_PATTERNS]),
-  execAction: z.array(z.string()).default(() => [...BUILTIN_EXEC_ACTION_PATTERNS]),
-  conventionalExecPrefix: z.string().default(BUILTIN_CONVENTIONAL_EXEC_PREFIX),
+  plan: z.array(z.string()).default(() => []),
+  review: z.array(z.string()).default(() => []),
+  fastAction: z.array(z.string()).default(() => []),
+  execAction: z.array(z.string()).default(() => []),
+  conventionalExecPrefix: z.string().default(""),
 });
 
-// ============================================================================
-// Top-Level Settings Schema (v2)
-// ============================================================================
+export const RouterEffortSchema = z.enum(["low", "medium", "high"]).default("low");
+
+/* Top-Level Settings Schema (v9) */
 
 export const AgentHarnessSettingsSchema = z.object({
   // Domain 5: Core & Lifecycle Gates
@@ -215,7 +204,7 @@ export const AgentHarnessSettingsSchema = z.object({
   defaultSkillsRoot: z.string().default("~/.agents/skills"),
   autoSyncDiskProfiles: z.boolean().default(true),
   autoSyncDaemonAgentProfiles: z.boolean().default(true),
-  enforceSessionMcpFiltering: z.boolean().default(true),
+  enforceSessionMcpFiltering: z.boolean().default(false),
   mcpServerCatalog: z.record(z.string(), McpServerConfigEntrySchema).default(() => ({})),
 
   // Domain 2: Models & Providers Matrix
@@ -240,13 +229,19 @@ export const AgentHarnessSettingsSchema = z.object({
   defaultFallbackRole: z.string().default("general"),
   defaultFallbackTier: z.string().default("standard"),
 
-  // Domain 4: Routing, Heuristics & LLM Fallback
-  enableFullstackOrchestratorCollision: z.boolean().default(true),
-  fullstackUiPattern: z.string().default(BUILTIN_FULLSTACK_UI_PATTERN),
-  fullstackBackendPattern: z.string().default(BUILTIN_FULLSTACK_BACKEND_PATTERN),
-  tierPatterns: TierPatternsSchema.default(createDefaultTierPatterns),
+  // Domain 4: Semantic Intent Router
+  routerEnabled: z.boolean().default(true),
+  routerProvider: z.string().default(""),
+  routerModel: z.string().default(""),
+  routerEffort: RouterEffortSchema,
+  routerTimeoutMs: z.number().int().min(1000).max(30000).default(10000),
+  routerConfidenceThreshold: z.number().min(0.5).max(1).default(0.85),
 
-  // L2 LLM Fallback Classifier
+  // Deprecated v8 heuristic & HTTP fallback fields (retained as optional for v8 compatibility)
+  enableFullstackOrchestratorCollision: z.boolean().optional(),
+  fullstackUiPattern: z.string().optional(),
+  fullstackBackendPattern: z.string().optional(),
+  tierPatterns: TierPatternsSchema.optional(),
   llmFallbackEnabled: z.boolean().default(false),
   llmFallbackEndpoint: z.string().default(""),
   llmFallbackApiKey: z.string().default(""),
@@ -274,7 +269,7 @@ export type AgentHarnessSettings = z.infer<typeof AgentHarnessSettingsSchema>;
 export const DEFAULT_AGENT_HARNESS_SETTINGS: AgentHarnessSettings =
   AgentHarnessSettingsSchema.parse({});
 
-export const SETTINGS_SCHEMA_VERSION = 8 as const;
+export const SETTINGS_SCHEMA_VERSION = 9 as const;
 
 function migrateCodexSliceToV8(roleId: string, rawSlice: unknown): string | undefined {
   if (typeof rawSlice !== "string") {
@@ -326,7 +321,7 @@ function stripBareTokenFromRegex(pattern: string, token: string): string {
     return "";
   }
   try {
-    new RegExp(out, "i");
+    void new RegExp(out, "i");
     return out;
   } catch {
     return pattern;
@@ -491,7 +486,7 @@ function migrateProviderMapToV5(
   providerId: string,
   rawMap: Record<string, unknown>,
 ): Record<string, string> {
-  const builtin = BUILTIN_PROVIDER_MAPPINGS[providerId];
+  const builtin = LEGACY_V8_PROVIDER_MAPPINGS[providerId] ?? BUILTIN_PROVIDER_MAPPINGS[providerId];
   if (isUntouchedLegacyProviderMap(providerId, rawMap)) {
     return builtin ? { ...builtin } : {};
   }
@@ -533,6 +528,161 @@ function migrateProviderMapToV5(
     }
   }
   return out;
+}
+
+function migrateProviderMappingsToV9(rawMappings: unknown): Record<string, Record<string, string>> {
+  const result = cloneBuiltinProviderMappings();
+  if (!rawMappings || typeof rawMappings !== "object" || Array.isArray(rawMappings)) {
+    return result;
+  }
+
+  for (const [rawProv, rawMap] of Object.entries(rawMappings as Record<string, unknown>)) {
+    const prov = rawProv.trim().toLowerCase();
+    if (!prov || !rawMap || typeof rawMap !== "object" || Array.isArray(rawMap)) {
+      continue;
+    }
+    const builtin = BUILTIN_PROVIDER_MAPPINGS[prov];
+    const cleaned: Record<string, string> = {};
+    for (const [tierKey, val] of Object.entries(rawMap as Record<string, unknown>)) {
+      if (typeof val !== "string") continue;
+      const trimmed = val.trim();
+      if (!trimmed) continue;
+      if (/^gemini-3/i.test(trimmed)) {
+        const fallback = builtin?.[tierKey];
+        if (fallback) {
+          cleaned[tierKey] = fallback;
+        }
+        continue;
+      }
+      cleaned[tierKey] = trimmed;
+    }
+
+    if (prov === "antigravity") {
+      const f = cleaned.fast;
+      const s = cleaned.standard;
+      const d = cleaned.deep;
+      const p = cleaned.plan;
+      const r = cleaned.review;
+      const m = cleaned.max;
+      const isUntouchedV8 =
+        (!f || f === "gemini-4-hydrogen") &&
+        (!s || s === "gemini-4-argon" || s === "gemini-4-neon") &&
+        (!d || d === "gemini-4-carbon" || d === "gemini-4-argon") &&
+        (!p || p === "gemini-4-carbon") &&
+        (!r || r === "gemini-4-argon") &&
+        (!m || m === "gemini-4-neon" || m === "gemini-4-carbon");
+      if (isUntouchedV8) {
+        result[prov] = { ...BUILTIN_PROVIDER_MAPPINGS.antigravity };
+        continue;
+      }
+    }
+
+    const planModel = cleaned.plan || cleaned.deep || builtin?.plan || "";
+    const reviewModel = cleaned.review || cleaned.deep || builtin?.review || "";
+    if (planModel) {
+      cleaned.plan = planModel;
+      cleaned.deep = planModel;
+    }
+    if (reviewModel) {
+      cleaned.review = reviewModel;
+    }
+    if (builtin) {
+      if (!cleaned.fast) cleaned.fast = builtin.fast;
+      if (!cleaned.standard) cleaned.standard = builtin.standard;
+    }
+    result[prov] = cleaned;
+  }
+
+  return result;
+}
+
+function migrateThinkingMappingsToV9(rawMappings: unknown): Record<string, Record<string, string>> {
+  const result = cloneBuiltinProviderThinkingMappings();
+  if (!rawMappings || typeof rawMappings !== "object" || Array.isArray(rawMappings)) {
+    return result;
+  }
+
+  for (const [rawProv, rawMap] of Object.entries(rawMappings as Record<string, unknown>)) {
+    const prov = rawProv.trim().toLowerCase();
+    if (!prov || !rawMap || typeof rawMap !== "object" || Array.isArray(rawMap)) {
+      continue;
+    }
+    const builtin = BUILTIN_PROVIDER_THINKING_MAPPINGS[prov];
+    const cleaned: Record<string, string> = {};
+    for (const [tierKey, val] of Object.entries(rawMap as Record<string, unknown>)) {
+      if (typeof val === "string" && val.trim()) {
+        cleaned[tierKey] = val.trim();
+      }
+    }
+
+    if (prov === "antigravity") {
+      const v8AgThink = LEGACY_V8_PROVIDER_THINKING_MAPPINGS.antigravity;
+      const isUntouchedV8 =
+        (!cleaned.fast || cleaned.fast === v8AgThink.fast) &&
+        (!cleaned.standard || cleaned.standard === v8AgThink.standard) &&
+        (!cleaned.deep || cleaned.deep === v8AgThink.deep) &&
+        (!cleaned.max || cleaned.max === v8AgThink.max || cleaned.max === "high");
+      if (isUntouchedV8) {
+        result[prov] = { ...BUILTIN_PROVIDER_THINKING_MAPPINGS.antigravity };
+        continue;
+      }
+    }
+
+    const planThink = cleaned.plan || cleaned.deep || builtin?.plan || "";
+    const reviewThink = cleaned.review || cleaned.deep || builtin?.review || "";
+    if (planThink) {
+      cleaned.plan = planThink;
+      cleaned.deep = planThink;
+    }
+    if (reviewThink) {
+      cleaned.review = reviewThink;
+    }
+    if (builtin) {
+      if (!cleaned.fast) cleaned.fast = builtin.fast;
+      if (!cleaned.standard) cleaned.standard = builtin.standard;
+      if (!cleaned.max && builtin.max) cleaned.max = builtin.max;
+    }
+    result[prov] = cleaned;
+  }
+
+  return result;
+}
+
+function migrateTiersToV9(rawTiers: unknown): Array<Record<string, unknown>> {
+  const builtinTierIds = new Set(["fast", "standard", "deep", "plan", "review", "max"]);
+  const untouchedOldNames = new Set(["Fast", "Standard", "Deep", "Plan", "Review", "Max"]);
+  const existingById = new Map<string, Record<string, unknown>>();
+  const customTiers: Array<Record<string, unknown>> = [];
+
+  if (Array.isArray(rawTiers)) {
+    for (const entry of rawTiers) {
+      if (!entry || typeof entry !== "object") continue;
+      const obj = entry as Record<string, unknown>;
+      const id = typeof obj.id === "string" ? obj.id.trim() : "";
+      if (!id) continue;
+      if (builtinTierIds.has(id)) {
+        existingById.set(id, obj);
+      } else {
+        customTiers.push({ ...obj });
+      }
+    }
+  }
+
+  const upgradedBuiltins = BUILTIN_TIERS.map((bt) => {
+    const existing = existingById.get(bt.id);
+    if (!existing) {
+      return { ...bt };
+    }
+    const existingName = typeof existing.name === "string" ? existing.name.trim() : "";
+    const customName =
+      existingName && !untouchedOldNames.has(existingName) ? existingName : bt.name;
+    return {
+      ...bt,
+      name: customName,
+    };
+  });
+
+  return [...upgradedBuiltins, ...customTiers];
 }
 
 function migrateLegacySettings(rawInput: Record<string, unknown>, fromVersion: number) {
@@ -663,14 +813,14 @@ function migrateLegacySettings(rawInput: Record<string, unknown>, fromVersion: n
   if (fromVersion < 5) {
     // 1. Upgrade built-in tier list while preserving custom user tiers
     if (Array.isArray(next.tiers)) {
-      const builtinIds = new Set(BUILTIN_TIERS.map((t) => t.id));
+      const v5BuiltinIds = new Set(["fast", "standard", "deep", "max"]);
       const legacyTierIds = new Set(["plan", "flash", "review"]);
       const hasNewBuiltin = next.tiers.some(
         (t) =>
           typeof t === "object" &&
           t !== null &&
           typeof (t as Record<string, unknown>).id === "string" &&
-          builtinIds.has((t as Record<string, unknown>).id as string),
+          v5BuiltinIds.has((t as Record<string, unknown>).id as string),
       );
       if (!hasNewBuiltin) {
         const customTiers = next.tiers.filter(
@@ -679,9 +829,13 @@ function migrateLegacySettings(rawInput: Record<string, unknown>, fromVersion: n
             t !== null &&
             typeof (t as Record<string, unknown>).id === "string" &&
             !legacyTierIds.has((t as Record<string, unknown>).id as string) &&
-            !builtinIds.has((t as Record<string, unknown>).id as string),
+            !v5BuiltinIds.has((t as Record<string, unknown>).id as string),
         );
-        next.tiers = [...BUILTIN_TIERS.map((t) => ({ ...t })), ...customTiers];
+        const upgradedBuiltins: Array<Record<string, unknown>> = [];
+        for (const tier of BUILTIN_TIERS) {
+          upgradedBuiltins.push({ ...tier });
+        }
+        next.tiers = [...upgradedBuiltins, ...customTiers];
       }
     }
 
@@ -730,7 +884,7 @@ function migrateLegacySettings(rawInput: Record<string, unknown>, fromVersion: n
         if (mapVal && typeof mapVal === "object" && !Array.isArray(mapVal)) {
           const normProv = prov.trim().toLowerCase();
           baseThinking[normProv] = {
-            ...(baseThinking[normProv] ?? {}),
+            ...baseThinking[normProv],
             ...Object.fromEntries(
               Object.entries(mapVal as Record<string, unknown>).filter(
                 (entry): entry is [string, string] => typeof entry[1] === "string",
@@ -809,7 +963,7 @@ function migrateLegacySettings(rawInput: Record<string, unknown>, fromVersion: n
     ) {
       const tp = { ...(next.tierPatterns as Record<string, unknown>) };
       if (!Array.isArray(tp.fastAction)) {
-        tp.fastAction = [...BUILTIN_FAST_ACTION_PATTERNS];
+        tp.fastAction = [];
       }
       next.tierPatterns = tp;
     }
@@ -841,7 +995,7 @@ function migrateLegacySettings(rawInput: Record<string, unknown>, fromVersion: n
     }
 
     if (next.fullstackUiPattern === LEGACY_V5_FULLSTACK_UI_PATTERN) {
-      next.fullstackUiPattern = BUILTIN_FULLSTACK_UI_PATTERN;
+      delete next.fullstackUiPattern;
     }
 
     if (
@@ -851,9 +1005,7 @@ function migrateLegacySettings(rawInput: Record<string, unknown>, fromVersion: n
     ) {
       const tp = { ...(next.tierPatterns as Record<string, unknown>) };
       if (Array.isArray(tp.execAction)) {
-        tp.execAction = tp.execAction.map((item) =>
-          item === LEGACY_V5_EXEC_ACTION_PATTERN ? BUILTIN_EXEC_ACTION_PATTERNS[0] : item,
-        );
+        tp.execAction = tp.execAction.filter((item) => item !== LEGACY_V5_EXEC_ACTION_PATTERN);
       }
       next.tierPatterns = tp;
     }
@@ -990,6 +1142,136 @@ function migrateLegacySettings(rawInput: Record<string, unknown>, fromVersion: n
 
         return spec;
       });
+    }
+  }
+
+  if (fromVersion < 9) {
+    next.routerEnabled = typeof next.routerEnabled === "boolean" ? next.routerEnabled : true;
+    next.routerProvider = typeof next.routerProvider === "string" ? next.routerProvider : "";
+    next.routerModel = typeof next.routerModel === "string" ? next.routerModel : "";
+    next.routerEffort =
+      next.routerEffort === "low" || next.routerEffort === "medium" || next.routerEffort === "high"
+        ? next.routerEffort
+        : "low";
+    next.routerTimeoutMs =
+      typeof next.routerTimeoutMs === "number" &&
+      next.routerTimeoutMs >= 1000 &&
+      next.routerTimeoutMs <= 30000
+        ? Math.trunc(next.routerTimeoutMs)
+        : 10000;
+    next.routerConfidenceThreshold =
+      typeof next.routerConfidenceThreshold === "number" &&
+      next.routerConfidenceThreshold >= 0.5 &&
+      next.routerConfidenceThreshold <= 1
+        ? next.routerConfidenceThreshold
+        : 0.85;
+
+    next.enforceSessionMcpFiltering = false;
+    delete next.tierPatterns;
+    delete next.fullstackUiPattern;
+    delete next.fullstackBackendPattern;
+    delete next.enableFullstackOrchestratorCollision;
+
+    if (typeof next.defaultFallbackTier === "string") {
+      const ft = next.defaultFallbackTier.trim().toLowerCase();
+      if (ft === "flash") next.defaultFallbackTier = "standard";
+      else if (ft === "deep") next.defaultFallbackTier = "plan";
+      else if (ft === "lite") next.defaultFallbackTier = "fast";
+    }
+
+    next.tiers = migrateTiersToV9(next.tiers);
+    next.providerMappings = migrateProviderMappingsToV9(next.providerMappings);
+    next.providerThinkingMappings = migrateThinkingMappingsToV9(next.providerThinkingMappings);
+
+    const builtinSpecById = new Map(BUILTIN_SPECIALISTS.map((s) => [s.id, s]));
+    if (Array.isArray(next.specialists)) {
+      next.specialists = next.specialists.map((entry) => {
+        if (!entry || typeof entry !== "object") return entry;
+        const spec = { ...(entry as Record<string, unknown>) };
+        const id = typeof spec.id === "string" ? spec.id : "";
+        const builtin = builtinSpecById.get(id);
+        const isBuiltin = Boolean(builtin && spec.builtIn !== false);
+
+        if (
+          typeof spec.modelOverride === "string" &&
+          /^gemini-3/i.test(spec.modelOverride.trim())
+        ) {
+          spec.modelOverride = "";
+        }
+
+        if (isBuiltin && builtin) {
+          const rawTier =
+            typeof spec.preferredTier === "string" ? spec.preferredTier.trim().toLowerCase() : "";
+          if ((id === "pm" || id === "architect") && rawTier === "deep") {
+            spec.preferredTier = "plan";
+          } else if (id === "review" && rawTier === "deep") {
+            spec.preferredTier = "review";
+          }
+
+          const hasModelOverride =
+            typeof spec.modelOverride === "string" && spec.modelOverride.trim().length > 0;
+          const legacyProvider = LEGACY_V8_SPECIALIST_PROVIDERS[id];
+          const currentProvider =
+            typeof spec.preferredProvider === "string"
+              ? canonicalizeProviderName(spec.preferredProvider)
+              : "";
+          if (
+            !hasModelOverride &&
+            legacyProvider !== undefined &&
+            currentProvider === legacyProvider
+          ) {
+            spec.preferredProvider = "";
+          }
+
+          if (id === "orchestrator" && spec.defaultModeId === "bypassPermissions") {
+            spec.defaultModeId = "full-access";
+          }
+          if (
+            id === "orchestrator" &&
+            typeof spec.rolePromptTemplate === "string" &&
+            spec.rolePromptTemplate.trim() === LEGACY_V8_ORCHESTRATOR_DISPATCHER_RULE
+          ) {
+            spec.rolePromptTemplate = builtin.rolePromptTemplate;
+          }
+
+          spec.matchPatterns = [];
+
+          const rawSkills = Array.isArray(spec.primarySkills)
+            ? spec.primarySkills.filter((item): item is string => typeof item === "string")
+            : null;
+          const v8Skills = LEGACY_V8_SPECIALIST_PRIMARY_SKILLS[id];
+          if (
+            rawSkills !== null &&
+            v8Skills !== undefined &&
+            (areStringArraysEqual(rawSkills, v8Skills) ||
+              areStringArraysEqual(rawSkills, normalizePrimarySkills(v8Skills)))
+          ) {
+            spec.primarySkills = [...builtin.primarySkills];
+          }
+        }
+
+        return spec;
+      });
+    }
+
+    if (next.phaseRules && typeof next.phaseRules === "object" && !Array.isArray(next.phaseRules)) {
+      const rules = { ...(next.phaseRules as Record<string, unknown>) };
+      if (
+        typeof rules.orchestrator === "string" &&
+        rules.orchestrator.trim() === LEGACY_V8_ORCHESTRATOR_DISPATCHER_RULE
+      ) {
+        rules.orchestrator = BUILTIN_PHASE_RULES.orchestrator;
+      }
+      if (rules.design === LEGACY_V8_DESIGN_PHASE_RULE) {
+        rules.design = BUILTIN_PHASE_RULES.design;
+      }
+      if (rules.exec === LEGACY_V8_EXEC_PHASE_RULE) {
+        rules.exec = BUILTIN_PHASE_RULES.exec;
+      }
+      if (rules.review === LEGACY_V8_REVIEW_PHASE_RULE) {
+        rules.review = BUILTIN_PHASE_RULES.review;
+      }
+      next.phaseRules = rules;
     }
   }
 

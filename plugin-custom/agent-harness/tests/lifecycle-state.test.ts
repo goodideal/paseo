@@ -1115,6 +1115,52 @@ describe("lifecycle-state", () => {
       expect(reconciled.meta.currentThinking).toBe("medium");
     });
 
+    it("detects mid-session switch to bypassModels or bypassProviders and upgrades legacy deep+phase", () => {
+      const config = resolveEffectiveHarnessConfig(DEFAULT_AGENT_HARNESS_SETTINGS);
+      const activeMeta = createInitialHarnessMetadata({
+        role: "backend",
+        tier: "standard",
+        phase: "exec",
+        model: "gemini-4-neon",
+        thinkingOptionId: "high",
+        roleMatchedRule: "default_general",
+        tierMatchedRule: "default_empty",
+      });
+
+      const bypassedModelResult = reconcileRuntimeHarnessMetadata({
+        meta: activeMeta,
+        snapshot: {
+          runtimeInfo: { model: "gemini-pro-orchestrator-neon" },
+        },
+        provider: "antigravity",
+        config,
+      });
+      expect(bypassedModelResult.bypassed).toBe(true);
+      expect(bypassedModelResult.changed).toBe(false);
+
+      const legacyReviewMeta = createInitialHarnessMetadata({
+        role: "review",
+        tier: "deep",
+        phase: "review",
+        model: "gemini-4-argon",
+        thinkingOptionId: "high",
+        roleMatchedRule: "label:role",
+        tierMatchedRule: "review",
+      });
+      const upgradedReview = reconcileRuntimeHarnessMetadata({
+        meta: legacyReviewMeta,
+        snapshot: {
+          runtimeInfo: { model: "gemini-4-argon", thinkingOptionId: "high" },
+        },
+        provider: "antigravity",
+        config,
+      });
+      expect(upgradedReview.bypassed).toBe(false);
+      expect(upgradedReview.changed).toBe(true);
+      expect(upgradedReview.meta.currentTier).toBe("review");
+      expect(upgradedReview.meta.initialTier).toBe("review");
+    });
+
     it("downgrades design -> exec on planExitInvoked or writableSubagentInvoked, but stays in design on readonly subagent", () => {
       const designMeta = createInitialHarnessMetadata({
         role: "general",

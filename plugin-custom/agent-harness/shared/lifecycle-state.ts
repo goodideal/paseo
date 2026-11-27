@@ -6,7 +6,11 @@ import {
   resolveTierTarget,
 } from "./config-resolver.js";
 import { supportsNativePlanMode } from "./contracts.js";
-import { CONVENTIONAL_EXEC_PREFIX } from "./intent-detector.js";
+import {
+  CONVENTIONAL_EXEC_PREFIX,
+  isModelBypassed,
+  isProviderBypassed,
+} from "./intent-detector.js";
 import {
   HARNESS_METADATA_KEY,
   HARNESS_METADATA_VERSION,
@@ -55,7 +59,7 @@ const EXPLICIT_EXEC_PATTERNS: RegExp[] = [
   // Service startup / operational commands
   /(?:启动|重启|停止)(?:一下)?(?:开发|本地|前端|后端)?服务|\b(?:start|restart|stop)\s+(?:the\s+)?(?:dev\s+)?server\b/i,
   // English affirmative execution / implementation phrases
-  /\b(?:implement(?:\s+it|\s+this(?:\s+plan)?|\s+now)?|go\s+ahead\s+and\s+implement|start\s+implementing|proceed\s+with\s+implementation|let\'s\s+implement|please\s+implement)\b/i,
+  /\b(?:implement(?:\s+it|\s+this(?:\s+plan)?|\s+now)?|go\s+ahead\s+and\s+implement|start\s+implementing|proceed\s+with\s+implementation|let's\s+implement|please\s+implement)\b/i,
 ];
 
 const SHORT_AFFIRMATIVE_EXEC_WORDS = new Set([
@@ -225,7 +229,9 @@ export function shouldEnforceNativePlanMode(params: {
     ? isNativePlanModeSupported(params.config, params.provider)
     : supportsNativePlanMode(params.provider);
 
-  const isDesignPhase = params.phase ? params.phase === "design" : params.tier === "plan";
+  const isDesignPhase = params.phase
+    ? params.phase === "design"
+    : normalizeTierAlias(params.tier) === "plan";
 
   return (
     params.phaseLifecycleEnabled &&
@@ -245,6 +251,9 @@ export function tierToPhase(
   config?: EffectiveHarnessConfig | null,
   explicitPhase?: HarnessPhase,
 ): HarnessPhase {
+  if (explicitPhase) {
+    return explicitPhase;
+  }
   const normRole = role?.trim().toLowerCase() ?? "";
   if (
     tier === "review" ||
@@ -256,15 +265,13 @@ export function tierToPhase(
   }
   if (
     tier === "plan" ||
+    tier === "deep" ||
     normRole === "pm" ||
     normRole.endsWith("-pm") ||
     normRole === "architect" ||
     normRole.endsWith("-architect")
   ) {
     return "design";
-  }
-  if (explicitPhase) {
-    return explicitPhase;
   }
   if (config) {
     const tierCfg =
@@ -896,32 +903,42 @@ export function extractSnapshotThinking(snapshot: unknown): string | null {
 
 /**
  * Reconciles persisted `agentHarness` metadata against a live runtime snapshot
- * when the user changes models externally or resumes a legacy v4 metadata record.
- * Returns `{ meta, changed: false }` untouched when snapshot model is unavailable.
+ * when the user changes models externally or resumes a legacy metadata record.
+ * Signals `bypassed: true` if provider or live snapshot model matches bypass rules.
+ * Returns `{ meta, changed: false, bypassed: false }` untouched when snapshot model is unavailable.
  */
 export function reconcileRuntimeHarnessMetadata(params: {
   meta: HarnessAgentMetadata;
   snapshot: unknown;
   provider: string;
   config: EffectiveHarnessConfig;
-}): { meta: HarnessAgentMetadata; changed: boolean } {
+}): { meta: HarnessAgentMetadata; changed: boolean; bypassed: boolean } {
   const { meta, snapshot, provider, config } = params;
+  if (isProviderBypassed(provider, config)) {
+    return { meta, changed: false, bypassed: true };
+  }
+
   const snapModel = extractSnapshotModel(snapshot);
+  if (snapModel && isModelBypassed(snapModel, config.bypassModels)) {
+    return { meta, changed: false, bypassed: true };
+  }
+
   if (!snapModel) {
-    return { meta, changed: false };
+    return { meta, changed: false, bypassed: false };
   }
 
   const snapThinking = extractSnapshotThinking(snapshot);
-  const inferred = inferTierFromModel(config, provider, snapModel, meta.currentTier);
-  const canonicalInitialTier = normalizeTierAlias(meta.initialTier);
+  const tierHint = meta.phase === "review" ? "review" : meta.currentTier;
+  const inferred = inferTierFromModel(config, provider, snapModel, tierHint);
+  const canonicalInitialTier = normalizeTierAlias(meta.initialTier, meta.phase);
   const canonicalLastBilledTier = meta.lastBilledTier
-    ? normalizeTierAlias(meta.lastBilledTier)
+    ? normalizeTierAlias(meta.lastBilledTier, meta.phase)
     : null;
 
   if (snapModel !== meta.currentModel) {
     const resolvedThinking =
       snapThinking ??
-      resolveTierTarget(config, provider, inferred.tier).thinkingOptionId ??
+      resolveTierTarget(config, provider, inferred.tier, meta.phase).thinkingOptionId ??
       meta.currentThinking ??
       null;
     return {
@@ -936,10 +953,11 @@ export function reconcileRuntimeHarnessMetadata(params: {
         tierMatchedRule: "runtime_sync:external_model_change",
       },
       changed: true,
+      bypassed: false,
     };
   }
 
-  const canonicalCurrentTier = normalizeTierAlias(meta.currentTier);
+  const canonicalCurrentTier = normalizeTierAlias(meta.currentTier, meta.phase);
   const isLegacyTier = canonicalCurrentTier !== meta.currentTier;
   let nextCurrentTier = meta.currentTier;
   if (isLegacyTier) {
@@ -963,8 +981,9 @@ export function reconcileRuntimeHarnessMetadata(params: {
         lastBilledTier: canonicalLastBilledTier,
       },
       changed: true,
+      bypassed: false,
     };
   }
 
-  return { meta, changed: false };
+  return { meta, changed: false, bypassed: false };
 }

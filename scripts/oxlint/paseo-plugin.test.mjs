@@ -150,3 +150,54 @@ test("sync IO exceptions must be removed when a module stops using the API", () 
   assert.equal(result.failed, true, result.output);
   assert.match(result.output, /Remove the unused sync IO exception for readFileSync/);
 });
+
+for (const filename of [
+  "provider-utils.ts",
+  "src/foo-helpers.tsx",
+  "src/bar-manager.mts",
+  "src/baz-controller.js",
+  "src/foo-utils.test.ts",
+  "src/foo-controller.native.test.tsx",
+  "src/bar-helpers.web.spec.ts",
+]) {
+  test(`vague filename is reported: ${filename}`, () => {
+    const result = lint("export const x = 1;\n", "paseo/no-vague-filename", undefined, filename);
+    assert.equal(result.failed, true, result.output);
+    assert.match(result.output, /no-vague-filename/);
+  });
+}
+
+for (const filename of [
+  "provider-catalog.ts",
+  "src/intent-detector.test.ts",
+  "src/harness-popover.web.tsx",
+]) {
+  test(`domain-named filename is allowed: ${filename}`, () => {
+    const result = lint("export const x = 1;\n", "paseo/no-vague-filename", undefined, filename);
+    assert.equal(result.failed, false, result.output);
+  });
+}
+
+for (const source of [
+  "// ========================================\nexport const a = 1;\n",
+  "// ===== Helpers =====\nexport const a = 1;\n",
+  "/* ===== */\nexport const a = 1;\n",
+  "/**\n * =====\n */\nexport const a = 1;\n",
+]) {
+  test(`decorative divider comment is reported: ${JSON.stringify(source)}`, () => {
+    const result = lint(source, "paseo/no-decorative-divider", undefined, "domain-store.ts");
+    assert.equal(result.failed, true, result.output);
+    assert.match(result.output, /no-decorative-divider/);
+  });
+}
+
+for (const source of [
+  "// Normal comment with ====\nexport const a = 1;\n",
+  "/**\n * Section Title\n * =====\n */\nexport const a = 1;\n",
+  'export const banner = "==========";\n',
+]) {
+  test(`non-divider comments and JSDoc setext headings are allowed: ${JSON.stringify(source)}`, () => {
+    const result = lint(source, "paseo/no-decorative-divider", undefined, "domain-store.ts");
+    assert.equal(result.failed, false, result.output);
+  });
+}

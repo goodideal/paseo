@@ -6,7 +6,7 @@ import {
   normalizeProviderName,
   normalizeTierAlias,
   resolveResumeExecutionMode,
-  resolveTierTarget,
+  resolveTargetAgentAndModel,
 } from "../shared/config-resolver.js";
 import {
   formatSpecialistRolePrefix,
@@ -30,6 +30,7 @@ import type {
   HarnessAgentMetadata,
   HarnessPhase,
   HarnessTransitionKind,
+  HostProviderRuntimeInfo,
   MatrixTier,
 } from "../shared/types.js";
 import type { HarnessDebugLogInput } from "./debug-logger.js";
@@ -59,6 +60,7 @@ export interface SpawnSpecialistParams {
   specPrompt: string;
   waitForCompletion?: boolean;
   config?: EffectiveHarnessConfig | null;
+  hostProviders?: readonly HostProviderRuntimeInfo[] | null;
   getLatestMetadata?: (
     agentId: string,
   ) => Promise<HarnessAgentMetadata | null> | HarnessAgentMetadata | null;
@@ -103,47 +105,48 @@ export async function spawnHarnessSpecialist(
     specPrompt,
     waitForCompletion,
     config,
+    hostProviders,
     getLatestMetadata,
     shouldEmitTimeline,
     emitTimelineEvent,
   } = params;
 
   const specialist = config ? findSpecialist(config, targetRole) : undefined;
+  const phaseHint: HarnessPhase | undefined =
+    specialist?.readonly || targetRole.trim().toLowerCase() === "review" ? "review" : undefined;
 
-  // Resolve target provider: honor specialist's preferredProvider if configured
-  let targetProvider = parentProvider;
-  if (config?.honorSpecialistPreferredProvider && specialist?.preferredProvider?.trim()) {
-    targetProvider = specialist.preferredProvider.trim();
-  }
-
-  const normalizedProvider = normalizeProviderName(targetProvider);
-
-  // Resolve target tier
   const targetTier = normalizeTierAlias(
     specialist?.preferredTier || resolveSpecialistTargetTier(targetRole),
+    phaseHint,
   );
 
-  // Resolve target model & thinking option (only apply modelOverride when compatible with resolved target provider)
-  const preferredSpecProvider = specialist?.preferredProvider?.trim()
-    ? normalizeProviderName(specialist.preferredProvider)
-    : "";
-  const canApplyModelOverride =
-    Boolean(specialist?.modelOverride?.trim()) &&
-    (!preferredSpecProvider || normalizedProvider === preferredSpecProvider);
-
-  const tierResolved = resolveTierTarget(
-    config ?? {
+  const configForResolution: EffectiveHarnessConfig =
+    config ??
+    ({
+      enabled: true,
+      overrideIfDefaultOnly: false,
+      honorSpecialistPreferredProvider: true,
       providerMappings: DEFAULT_PROVIDER_MAPPINGS,
       providerThinkingMappings: BUILTIN_PROVIDER_THINKING_MAPPINGS,
-    },
-    normalizedProvider,
-    targetTier,
-  );
-  const targetModel = canApplyModelOverride
-    ? specialist!.modelOverride!.trim()
-    : tierResolved.model;
+      providerModes: {},
+      specialists: specialist ? [specialist] : [],
+    } as unknown as EffectiveHarnessConfig);
+
+  const resolved = resolveTargetAgentAndModel({
+    config: configForResolution,
+    specialist,
+    requestedProvider: parentProvider,
+    activeSessionProvider: parentProvider,
+    hostProviders,
+    tier: targetTier,
+    phase: phaseHint,
+    allowProviderFallback: true,
+  });
+
+  const normalizedProvider = normalizeProviderName(resolved.provider);
+  const targetModel = resolved.model;
   const effectiveThinkingOptionId =
-    specialist?.thinkingOptionId?.trim() || tierResolved.thinkingOptionId || undefined;
+    specialist?.thinkingOptionId?.trim() || resolved.thinkingOptionId || undefined;
 
   // Resolve default mode id (read-only enforcement takes precedence over custom defaultModeId)
   const supportsPlanMode = config
@@ -152,8 +155,8 @@ export async function spawnHarnessSpecialist(
   let execModeId: string | null = null;
   if (specialist?.readonly && supportsPlanMode) {
     execModeId = "plan";
-  } else if (specialist?.defaultModeId?.trim()) {
-    execModeId = specialist.defaultModeId.trim();
+  } else if (resolved.modeId) {
+    execModeId = resolved.modeId;
   } else if (config) {
     execModeId = resolveResumeExecutionMode(config, normalizedProvider, null);
   } else {
@@ -346,7 +349,11 @@ export async function spawnHarnessSpecialist(
 }
 
 export function createHarnessHandoffTool(options: {
+  cwd?: string;
   getConfig?: (cwd?: string | null) => EffectiveHarnessConfig | null;
+  getHostProviders?: (
+    paseo: PaseoApi,
+  ) => Promise<readonly HostProviderRuntimeInfo[]> | readonly HostProviderRuntimeInfo[];
   getLatestMetadata?: (
     agentId: string,
   ) => Promise<HarnessAgentMetadata | null> | HarnessAgentMetadata | null;
@@ -367,7 +374,7 @@ export function createHarnessHandoffTool(options: {
   ) => Promise<void>;
   onHandoffLog?: (entry: HarnessDebugLogInput) => void;
 }): AgentToolDefinition {
-  const currentConfig = options.getConfig ? options.getConfig() : null;
+  const currentConfig = options.getConfig ? options.getConfig(options.cwd) : null;
   const enabledHandoffIds = currentConfig
     ? currentConfig.specialists.filter((s) => s.enabled && s.handoffEnabled).map((s) => s.id)
     : [];
@@ -382,6 +389,9 @@ export function createHarnessHandoffTool(options: {
     execute: async (input, context) => {
       const { agent, paseo } = context;
       const effectiveConfig = options.getConfig ? options.getConfig(agent.cwd) : null;
+      const hostProviders = options.getHostProviders
+        ? await options.getHostProviders(paseo)
+        : undefined;
       const res = await spawnHarnessSpecialist({
         paseo,
         parentAgentId: agent.id,
@@ -393,6 +403,7 @@ export function createHarnessHandoffTool(options: {
         specPrompt: input.specPrompt,
         waitForCompletion: input.waitForCompletion,
         config: effectiveConfig,
+        hostProviders,
         getLatestMetadata: options.getLatestMetadata,
         shouldEmitTimeline: options.shouldEmitTimeline,
         emitTimelineEvent: options.emitTimelineEvent

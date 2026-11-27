@@ -110,7 +110,11 @@ export default function contribute(client: PluginClientContext) {
   }
 
   // 4. Composer Pill observation & dynamic dual-state label updates
-  type ObservedAgent = { id: string; workspaceId?: string | null; metadata?: unknown };
+  interface ObservedAgent {
+    id: string;
+    workspaceId?: string | null;
+    metadata?: unknown;
+  }
   const pills = new Map<string, PluginButtonRegistration>();
   const pendingPills = new Map<
     string,
@@ -227,7 +231,11 @@ export default function contribute(client: PluginClientContext) {
       .then(({ subscription }) => {
         const sub = subscription as unknown as { close?: () => void; release?: () => void };
         if (stopped) {
-          sub.close?.() ?? void sub.release?.();
+          if (sub.close) {
+            sub.close();
+          } else {
+            sub.release?.();
+          }
           return undefined;
         }
 
@@ -267,7 +275,11 @@ export default function contribute(client: PluginClientContext) {
     lifetime.abort();
     cancelAllPendingPills();
     activeUnsub?.();
-    activeSubscription?.close?.() ?? void activeSubscription?.release?.();
+    if (activeSubscription?.close) {
+      activeSubscription.close();
+    } else {
+      activeSubscription?.release?.();
+    }
     for (const pill of pills.values()) {
       pill.remove();
     }

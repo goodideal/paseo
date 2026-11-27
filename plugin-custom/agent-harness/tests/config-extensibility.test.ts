@@ -6,10 +6,6 @@ import {
   resolveTargetModelForTier,
   resolveTierTarget,
 } from "../shared/config-resolver.js";
-import { importSpecialistsFromDisk, exportSpecialistsToDisk } from "../server/profile-sync.js";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 
 describe("Agent Harness v2 Config & Extensibility", () => {
   it("supports adding and routing custom user-defined specialist roles", () => {
@@ -58,7 +54,7 @@ describe("Agent Harness v2 Config & Extensibility", () => {
     const targetModel = resolveTargetModelForTier(effective, "codex", "plan");
     expect(targetModel).toBe("pro");
     expect(resolveTierTarget(effective, "codex", "deep")).toEqual({
-      canonicalTier: "deep",
+      canonicalTier: "plan",
       model: "pro",
       thinkingOptionId: "high",
     });
@@ -83,6 +79,8 @@ describe("Agent Harness v2 Config & Extensibility", () => {
         claude: {
           fast: "claude-3-5-haiku",
           standard: "claude-sonnet",
+          plan: "claude-opus",
+          review: "claude-opus",
           deep: "claude-opus",
           max: "claude-opus-max",
           pro: "claude-3-7-sonnet-reasoning",
@@ -91,7 +89,7 @@ describe("Agent Harness v2 Config & Extensibility", () => {
     };
 
     const effective = resolveEffectiveHarnessConfig(baseSettings as any);
-    expect(effective.tiers.length).toBe(5);
+    expect(effective.tiers.length).toBe(6);
     expect(effective.tiers.find((t) => t.id === "pro")).toBeDefined();
 
     const target = resolveTargetModelForTier(effective, "claude", "pro");
@@ -116,11 +114,18 @@ function DEFAULT_SETTINGS_FOR_TEST() {
     defaultSkillsRoot: "~/.agents/skills",
     autoSyncDiskProfiles: false,
     autoSyncDaemonAgentProfiles: false,
-    enforceSessionMcpFiltering: true,
+    enforceSessionMcpFiltering: false,
     mcpServerCatalog: {},
     tiers: BUILTIN_TIERS,
     providerMappings: {
-      claude: { fast: "lite", standard: "flash", deep: "pro", max: "plan" },
+      claude: {
+        fast: "lite",
+        standard: "flash",
+        plan: "pro",
+        review: "pro",
+        deep: "pro",
+        max: "plan",
+      },
     },
     providerModes: {},
     bypassProviders: [],
@@ -129,22 +134,12 @@ function DEFAULT_SETTINGS_FOR_TEST() {
     specialists: BUILTIN_SPECIALISTS,
     defaultFallbackRole: "general",
     defaultFallbackTier: "standard",
-    enableFullstackOrchestratorCollision: true,
-    fullstackUiPattern: "ui",
-    fullstackBackendPattern: "db",
-    tierPatterns: {
-      plan: [],
-      review: [],
-      fastAction: [],
-      execAction: [],
-      conventionalExecPrefix: "",
-    },
-    llmFallbackEnabled: false,
-    llmFallbackEndpoint: "",
-    llmFallbackApiKey: "",
-    llmFallbackModel: "lite",
-    llmFallbackTimeoutMs: 450,
-    llmFallbackApplyRole: true,
+    routerEnabled: true,
+    routerProvider: "",
+    routerModel: "",
+    routerEffort: "low" as const,
+    routerTimeoutMs: 10000,
+    routerConfidenceThreshold: 0.85,
     injectSystemPromptBanner: true,
     enforceWorkspaceBoundaryGuardrail: true,
     workspaceBoundaryNotice: "boundary notice",

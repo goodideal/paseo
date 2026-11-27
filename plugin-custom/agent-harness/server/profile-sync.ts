@@ -7,13 +7,14 @@ import {
   normalizePrimarySkills,
   normalizeProviderName,
   normalizeTierAlias,
-  resolveTierTarget,
+  resolveTargetAgentAndModel,
 } from "../shared/config-resolver.js";
 import { DEFAULT_PROVIDER_MAPPINGS } from "../shared/intent-detector.js";
 import { BUILTIN_PROVIDER_THINKING_MAPPINGS } from "../shared/presets.js";
 import type {
   EffectiveHarnessConfig,
   HarnessSpecialistConfig,
+  HostProviderRuntimeInfo,
   RepoHarnessOverride,
 } from "../shared/types.js";
 
@@ -211,7 +212,10 @@ export function importSpecialistsFromDisk(
           : (existing?.preferredProvider ?? ""),
       preferredTier:
         typeof raw.default_model === "string"
-          ? normalizeTierAlias(raw.default_model)
+          ? normalizeTierAlias(
+              raw.default_model,
+              id === "review" || existing?.readonly ? "review" : undefined,
+            )
           : (existing?.preferredTier ?? "standard"),
       modelOverride: existing?.modelOverride ?? "",
       defaultModeId: existing?.defaultModeId ?? "",
@@ -317,41 +321,90 @@ function extractRoleFromNotes(notes: unknown): string | null {
 
 function resolveSyncedTarget(
   specialist: HarnessSpecialistConfig,
-  provider: string,
+  fallbackProvider: string,
   effectiveConfig?: EffectiveHarnessConfig | null,
-): { model: string; thinkingOptionId: string | null } {
-  const tier = normalizeTierAlias(specialist.preferredTier?.trim() || "standard");
-  const normProvider = normalizeProviderName(provider);
-  const resolved = resolveTierTarget(
-    effectiveConfig ?? {
+  hostProviders?: readonly HostProviderRuntimeInfo[] | null,
+): { provider: string; model: string; thinkingOptionId: string | null } {
+  const tier = normalizeTierAlias(
+    specialist.preferredTier?.trim() || "standard",
+    specialist.readonly ? "review" : undefined,
+  );
+  const configForResolution: EffectiveHarnessConfig =
+    effectiveConfig ??
+    ({
+      enabled: true,
+      overrideIfDefaultOnly: false,
+      honorSpecialistPreferredProvider: true,
       providerMappings: DEFAULT_PROVIDER_MAPPINGS,
       providerThinkingMappings: BUILTIN_PROVIDER_THINKING_MAPPINGS,
-    },
-    normProvider,
+      providerModes: {},
+      specialists: [specialist],
+    } as unknown as EffectiveHarnessConfig);
+
+  const resolved = resolveTargetAgentAndModel({
+    config: configForResolution,
+    specialist,
+    requestedProvider: fallbackProvider,
+    hostProviders,
     tier,
-  );
-  const override = specialist.modelOverride?.trim();
-  if (override) {
-    return {
-      model: override,
-      thinkingOptionId: resolved.thinkingOptionId,
-    };
-  }
+    phase: specialist.readonly ? "review" : undefined,
+    allowProviderFallback: true,
+  });
   return {
+    provider: resolved.provider,
     model: resolved.model,
     thinkingOptionId: resolved.thinkingOptionId,
   };
 }
 
+function resolveFallbackSyncProvider(
+  existingMatch: Record<string, unknown> | undefined,
+  hostProviders?: readonly HostProviderRuntimeInfo[] | null,
+): string {
+  const existingProvider =
+    existingMatch?.harnessManaged !== true &&
+    typeof existingMatch?.provider === "string" &&
+    existingMatch.provider.trim()
+      ? existingMatch.provider.trim()
+      : "";
+  if (existingProvider) {
+    if (!hostProviders?.length) {
+      return existingProvider;
+    }
+    const enabled = hostProviders.some(
+      (p) =>
+        p.enabled && normalizeProviderName(p.provider) === normalizeProviderName(existingProvider),
+    );
+    if (enabled) {
+      return existingProvider;
+    }
+  }
+  if (hostProviders?.length) {
+    const ag = hostProviders.find(
+      (p) => p.enabled && normalizeProviderName(p.provider) === "antigravity",
+    );
+    if (ag) return ag.provider;
+    const firstEnabled = hostProviders.find((p) => p.enabled);
+    if (firstEnabled) return firstEnabled.provider;
+  }
+  return "antigravity";
+}
+
 /**
  * Synchronizes enabled specialists to Paseo daemon's native agentProfiles.
- * Resolves real target model IDs via providerMappings/modelOverride, normalizes icons to kebab-case,
- * and merges in-place with existing non-harness profiles matching the same `role: <id>` annotation.
+ * Resolves real target model IDs via two-stage Agent -> Model resolution (`hostProviders` + `providerMappings`),
+ * normalizes icons to kebab-case, and merges in-place with existing non-harness profiles matching `role: <id>`.
  */
+type AgentProfilesPatch = NonNullable<
+  Parameters<NonNullable<PaseoApi["config"]>["patch"]>[0]["agentProfiles"]
+>;
+type AgentProfileEntry = AgentProfilesPatch[number];
+
 export async function syncDaemonAgentProfiles(
   paseo: PaseoApi,
   specialists: HarnessSpecialistConfig[],
   effectiveConfig?: EffectiveHarnessConfig | null,
+  hostProviders?: readonly HostProviderRuntimeInfo[] | null,
 ): Promise<{ syncedCount: number; errors: string[] }> {
   if (!paseo.config?.get || !paseo.config?.patch) {
     return { syncedCount: 0, errors: ["Paseo config API not available"] };
@@ -359,11 +412,9 @@ export async function syncDaemonAgentProfiles(
 
   try {
     const configResp = await paseo.config.get();
-    const existingProfiles = (configResp?.config?.agentProfiles ?? []) as Array<
-      Record<string, unknown>
-    >;
+    const existingProfiles: readonly AgentProfileEntry[] = configResp?.config?.agentProfiles ?? [];
 
-    const existingByRole = new Map<string, Record<string, unknown>>();
+    const existingByRole = new Map<string, AgentProfileEntry>();
     for (const profile of existingProfiles) {
       const id = typeof profile.id === "string" ? profile.id : "";
       if (!id || id.startsWith(MANAGED_PROFILE_PREFIX)) {
@@ -376,7 +427,7 @@ export async function syncDaemonAgentProfiles(
     }
 
     const mergedExistingIds = new Set<string>();
-    const harnessProfiles: Array<Record<string, unknown>> = [];
+    const harnessProfiles: AgentProfileEntry[] = [];
     let syncedCount = 0;
 
     for (const s of specialists) {
@@ -393,11 +444,16 @@ export async function syncDaemonAgentProfiles(
         mergedExistingIds.add(existingMatch.id);
       }
 
-      const provider =
-        s.preferredProvider?.trim() ||
-        (typeof existingMatch?.provider === "string" && existingMatch.provider.trim()
-          ? existingMatch.provider.trim()
-          : "claude");
+      const fallbackProvider = resolveFallbackSyncProvider(
+        existingMatch as Record<string, unknown> | undefined,
+        hostProviders,
+      );
+      const {
+        provider,
+        model: resolvedModel,
+        thinkingOptionId: tierThinking,
+      } = resolveSyncedTarget(s, fallbackProvider, effectiveConfig, hostProviders);
+
       const existingProviderMatches =
         typeof existingMatch?.provider === "string" &&
         normalizeProviderName(existingMatch.provider) === normalizeProviderName(provider);
@@ -407,11 +463,7 @@ export async function syncDaemonAgentProfiles(
       const canInheritThinking =
         existingProviderMatches &&
         (s.thinkingOptionId !== "" || existingMatch?.harnessManaged !== true);
-      const { model: resolvedModel, thinkingOptionId: tierThinking } = resolveSyncedTarget(
-        s,
-        provider,
-        effectiveConfig,
-      );
+
       const resolvedModeId =
         s.defaultModeId?.trim() ||
         (canInheritModeId &&
@@ -446,13 +498,13 @@ export async function syncDaemonAgentProfiles(
     }
 
     // Keep all non-harness-managed profiles that were not merged in-place
-    const preservedProfiles = existingProfiles.filter((p) => {
+    const preservedProfiles: AgentProfileEntry[] = existingProfiles.filter((p) => {
       const id = typeof p.id === "string" ? p.id : "";
       return !id.startsWith(MANAGED_PROFILE_PREFIX) && !mergedExistingIds.has(id);
     });
 
-    const nextProfiles = [...preservedProfiles, ...harnessProfiles];
-    await paseo.config.patch({ agentProfiles: nextProfiles as any });
+    const nextProfiles: AgentProfilesPatch = [...preservedProfiles, ...harnessProfiles];
+    await paseo.config.patch({ agentProfiles: nextProfiles });
 
     return { syncedCount, errors: [] };
   } catch (err) {

@@ -3,6 +3,7 @@ import {
   BUILTIN_PROVIDER_TIERS,
   ensureProviderModelSelection,
   fetchEffectiveHarnessConfig,
+  normalizeHarnessTier,
   normalizeWorkflowProvider,
   resolveWorkflowAgentLaunch,
 } from "../server/harness-bridge.js";
@@ -24,6 +25,12 @@ describe("Harness Bridge", () => {
       expect(ensureProviderModelSelection("codex")).toBe("codex/flash");
       expect(ensureProviderModelSelection("claude", "deep")).toBe("claude/pro");
       expect(ensureProviderModelSelection("antigravity", "standard")).toBe(
+        "antigravity/gemini-4-neon",
+      );
+      expect(ensureProviderModelSelection("antigravity", "plan")).toBe(
+        "antigravity/gemini-4-carbon",
+      );
+      expect(ensureProviderModelSelection("antigravity", "review")).toBe(
         "antigravity/gemini-4-argon",
       );
       expect(ensureProviderModelSelection("opencode", "fast")).toBe("opencode/custom/lite");
@@ -37,34 +44,57 @@ describe("Harness Bridge", () => {
       expect(ensureProviderModelSelection("codex")).not.toContain("gemini-flash[1M]");
     });
 
-    it("matches agent-harness 4-tier builtin model and thinking matrix", () => {
+    it("normalizes v9 5-tier names and maps legacy deep tier by phase", () => {
+      expect(normalizeHarnessTier("fast")).toBe("fast");
+      expect(normalizeHarnessTier("standard")).toBe("standard");
+      expect(normalizeHarnessTier("plan")).toBe("plan");
+      expect(normalizeHarnessTier("review")).toBe("review");
+      expect(normalizeHarnessTier("max")).toBe("max");
+      expect(normalizeHarnessTier("deep")).toBe("deep");
+      expect(normalizeHarnessTier("deep", "standard", "design")).toBe("plan");
+      expect(normalizeHarnessTier("deep", "standard", "exec")).toBe("plan");
+      expect(normalizeHarnessTier("deep", "standard", "review")).toBe("review");
+      expect(normalizeHarnessTier(undefined, "plan", "design")).toBe("plan");
+    });
+
+    it("matches agent-harness v9 5-tier (+ deep compatibility) builtin model and thinking matrix", () => {
       expect(BUILTIN_PROVIDER_TIERS.claude).toEqual({
         fast: { model: "lite", thinkingOptionId: "low" },
         standard: { model: "flash", thinkingOptionId: "medium" },
+        plan: { model: "pro", thinkingOptionId: "high" },
+        review: { model: "pro", thinkingOptionId: "high" },
         deep: { model: "pro", thinkingOptionId: "high" },
         max: { model: "plan", thinkingOptionId: "high" },
       });
       expect(BUILTIN_PROVIDER_TIERS.codex).toEqual({
         fast: { model: "lite", thinkingOptionId: "low" },
         standard: { model: "flash", thinkingOptionId: "medium" },
+        plan: { model: "pro", thinkingOptionId: "high" },
+        review: { model: "pro", thinkingOptionId: "high" },
         deep: { model: "pro", thinkingOptionId: "high" },
         max: { model: "plan", thinkingOptionId: "xhigh" },
       });
       expect(BUILTIN_PROVIDER_TIERS.antigravity).toEqual({
         fast: { model: "gemini-4-hydrogen", thinkingOptionId: "medium" },
-        standard: { model: "gemini-4-argon", thinkingOptionId: "high" },
+        standard: { model: "gemini-4-neon", thinkingOptionId: "high" },
+        plan: { model: "gemini-4-carbon", thinkingOptionId: "high" },
+        review: { model: "gemini-4-argon", thinkingOptionId: "high" },
         deep: { model: "gemini-4-carbon", thinkingOptionId: "high" },
-        max: { model: "gemini-4-neon", thinkingOptionId: "xhigh" },
+        max: { model: "gemini-4-carbon", thinkingOptionId: "high" },
       });
       expect(BUILTIN_PROVIDER_TIERS.opencode).toEqual({
         fast: { model: "custom/lite", thinkingOptionId: "low" },
         standard: { model: "custom/flash", thinkingOptionId: "medium" },
+        plan: { model: "custom/pro", thinkingOptionId: "high" },
+        review: { model: "custom/pro", thinkingOptionId: "high" },
         deep: { model: "custom/pro", thinkingOptionId: "high" },
         max: { model: "custom/plan", thinkingOptionId: "xhigh" },
       });
       expect(BUILTIN_PROVIDER_TIERS.pi).toEqual({
         fast: { model: "headroom/lite", thinkingOptionId: "low" },
         standard: { model: "headroom/flash", thinkingOptionId: "medium" },
+        plan: { model: "headroom/pro", thinkingOptionId: "high" },
+        review: { model: "headroom/pro", thinkingOptionId: "high" },
         deep: { model: "headroom/pro", thinkingOptionId: "high" },
         max: { model: "headroom/plan", thinkingOptionId: "xhigh" },
       });
@@ -155,7 +185,7 @@ describe("Harness Bridge", () => {
         phase: "review",
       });
       expect(reviewLaunch.provider).toBe("antigravity");
-      expect(reviewLaunch.providerSelection).toBe("antigravity/gemini-4-carbon");
+      expect(reviewLaunch.providerSelection).toBe("antigravity/gemini-4-argon");
     });
 
     it("maps workflow phases to design/exec/review roles and tiers in auto mode", async () => {
@@ -206,7 +236,7 @@ describe("Harness Bridge", () => {
         getHasExplicitProviderOverride: vi.fn().mockReturnValue(false),
       };
 
-      // 1. brainstorm -> design / pm / deep
+      // 1. brainstorm -> design / pm / plan (mapped from legacy deep)
       const brainstormRes = await resolveWorkflowAgentLaunch({
         settingsManager: mockSettings,
         phase: "brainstorm",
@@ -218,7 +248,7 @@ describe("Harness Bridge", () => {
         mode: "auto",
         phase: "design",
         role: "pm",
-        tier: "deep",
+        tier: "plan",
         provider: "antigravity",
         model: "gemini-4-carbon",
         thinkingOptionId: "high",
@@ -226,7 +256,7 @@ describe("Harness Bridge", () => {
         agentTeamPreset: "fe-be-team",
       });
 
-      // 2. spec with FE issue -> design / fe-architect / deep
+      // 2. spec with FE issue -> design / fe-architect / plan
       const specRes = await resolveWorkflowAgentLaunch({
         settingsManager: mockSettings,
         phase: "spec",
@@ -236,12 +266,12 @@ describe("Harness Bridge", () => {
       expect(specRes.harnessInfo).toMatchObject({
         phase: "design",
         role: "fe-architect",
-        tier: "deep",
+        tier: "plan",
         provider: "antigravity",
         model: "gemini-4-carbon",
       });
 
-      // 3. plan with BE issue -> design / be-architect / deep
+      // 3. plan with BE issue -> design / be-architect / plan
       const planRes = await resolveWorkflowAgentLaunch({
         settingsManager: mockSettings,
         phase: "plan",
@@ -251,7 +281,7 @@ describe("Harness Bridge", () => {
       expect(planRes.harnessInfo).toMatchObject({
         phase: "design",
         role: "be-architect",
-        tier: "deep",
+        tier: "plan",
         provider: "claude",
         model: "pro",
       });
@@ -377,10 +407,57 @@ describe("Harness Bridge", () => {
         effectiveConfig,
       });
       expect(reviewRes.provider).toBe("antigravity");
-      expect(reviewRes.model).toBe("gemini-4-carbon");
-      expect(reviewRes.providerSelection).toBe("antigravity/gemini-4-carbon");
+      expect(reviewRes.model).toBe("gemini-4-argon");
+      expect(reviewRes.providerSelection).toBe("antigravity/gemini-4-argon");
       expect(reviewRes.labels.role).toBe("review");
       expect(reviewRes.labels["paseo.harness-leaf"]).toBe("1");
+    });
+
+    it("preserves explicit v9 plan and review preferredTier without downgrading to standard", async () => {
+      const effectiveConfig = {
+        enabled: true,
+        honorSpecialistPreferredProvider: true,
+        specialists: {
+          architect: { preferredTier: "plan", preferredProvider: "antigravity" },
+          review: { preferredTier: "review", preferredProvider: "antigravity" },
+        },
+      };
+      const mockSettings = {
+        getHarnessMode: vi.fn().mockReturnValue("auto"),
+        getAgentProvider: vi.fn().mockReturnValue("claude"),
+        getAgentModel: vi.fn().mockReturnValue(""),
+        getHasExplicitProviderOverride: vi.fn().mockReturnValue(false),
+      };
+
+      const planLaunch = await resolveWorkflowAgentLaunch({
+        settingsManager: mockSettings,
+        phase: "plan",
+        issueTitle: "Design service contracts",
+        effectiveConfig,
+      });
+      expect(planLaunch.harnessInfo).toMatchObject({
+        role: "architect",
+        tier: "plan",
+        phase: "design",
+        provider: "antigravity",
+        model: "gemini-4-carbon",
+      });
+      expect(planLaunch.labels["paseo.workflow.tier"]).toBe("plan");
+
+      const reviewLaunch = await resolveWorkflowAgentLaunch({
+        settingsManager: mockSettings,
+        phase: "review",
+        issueTitle: "Review service contracts",
+        effectiveConfig,
+      });
+      expect(reviewLaunch.harnessInfo).toMatchObject({
+        role: "review",
+        tier: "review",
+        phase: "review",
+        provider: "antigravity",
+        model: "gemini-4-argon",
+      });
+      expect(reviewLaunch.labels["paseo.workflow.tier"]).toBe("review");
     });
 
     it("locks provider in provider_locked mode while keeping role and tier routing", async () => {

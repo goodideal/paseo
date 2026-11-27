@@ -5,7 +5,7 @@ import {
   normalizeProviderName,
   resolveEffectiveHarnessConfig,
   resolveResumeExecutionMode,
-  resolveTierTarget,
+  resolveTargetAgentAndModel,
 } from "../shared/config-resolver.js";
 import {
   formatSpecialistRolePrefix,
@@ -24,20 +24,21 @@ import {
   harnessTeamSaveRpc,
   supportsNativePlanMode,
 } from "../shared/contracts.js";
-import { DEFAULT_PROVIDER_MAPPINGS, isModelBypassed } from "../shared/intent-detector.js";
+import { isModelBypassed } from "../shared/intent-detector.js";
 import {
   HARNESS_BYPASSED_META_KEY,
   extractSnapshotModel,
   extractTimelineItems,
   parseHarnessMetadata,
 } from "../shared/lifecycle-state.js";
-import { BUILTIN_PROVIDER_THINKING_MAPPINGS } from "../shared/presets.js";
+import { DEFAULT_AGENT_HARNESS_SETTINGS } from "../shared/settings.js";
 import type {
   EffectiveHarnessConfig,
   HarnessAgentMetadata,
   HarnessPhase,
   HarnessSpecialistConfig,
-  MatrixTier,
+  HostProviderRuntimeInfo,
+  JsonValue,
 } from "../shared/types.js";
 import { applyAgentModeOption, applyAgentThinkingOption } from "./agent-controls.js";
 import type { HarnessDebugLogger } from "./debug-logger.js";
@@ -71,9 +72,12 @@ export interface RpcHandlerDependencies {
   setLatestMetadata: (
     agentId: string,
     meta: HarnessAgentMetadata,
-    handle: { setMetadata: (patch: Record<string, any>) => Promise<void> },
+    handle: { setMetadata: (patch: Record<string, JsonValue>) => Promise<void> },
   ) => Promise<void>;
   getConfig?: (workspaceId?: string | null, cwd?: string | null) => EffectiveHarnessConfig;
+  getHostProviders?: (
+    paseo: PluginHandlerContext["paseo"],
+  ) => Promise<readonly HostProviderRuntimeInfo[]> | readonly HostProviderRuntimeInfo[];
   saveSpecialists?: (specialists: HarnessSpecialistConfig[]) => Promise<void>;
   emitTimelineEvent?: (
     agentId: string,
@@ -89,6 +93,48 @@ export interface RpcHandlerDependencies {
   toggleDebugLogs?: (enabled: boolean) => Promise<void | { enabled: boolean; logFilePath: string }>;
 }
 
+async function resolveLiveHostProviders(
+  deps: RpcHandlerDependencies,
+  paseo: PluginHandlerContext["paseo"],
+): Promise<readonly HostProviderRuntimeInfo[]> {
+  if (deps.getHostProviders) {
+    try {
+      return await deps.getHostProviders(paseo);
+    } catch {
+      return [];
+    }
+  }
+  if (!paseo.providers?.snapshot) {
+    return [];
+  }
+  try {
+    const snap = await paseo.providers.snapshot();
+    return (snap.entries ?? []).map((entry) => {
+      const models = (entry.models ?? []).map((m) => ({
+        id: m.id,
+        label: m.label,
+        isDefault: m.isDefault,
+        thinkingOptions: m.thinkingOptions?.map((opt) => ({
+          id: opt.id,
+          label: opt.label,
+        })),
+      }));
+      const defaultModel =
+        (entry as { defaultModel?: string }).defaultModel ?? models.find((m) => m.isDefault)?.id;
+      return {
+        provider: entry.provider,
+        enabled: entry.enabled,
+        status: entry.status,
+        label: entry.label,
+        defaultModel,
+        models,
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
 function isReadOnlyHandoffRole(role: string, specialist?: { readonly?: boolean } | null): boolean {
   return Boolean(specialist?.readonly || role.trim().toLowerCase() === "review");
 }
@@ -101,12 +147,12 @@ function extractParentTimelineSummary(rawTimeline: unknown): string {
     const item = items[i];
     if (!item || typeof item !== "object") continue;
     const record = item as Record<string, unknown>;
-    const text =
-      typeof record.text === "string"
-        ? record.text.trim()
-        : typeof record.content === "string"
-          ? record.content.trim()
-          : "";
+    let text = "";
+    if (typeof record.text === "string") {
+      text = record.text.trim();
+    } else if (typeof record.content === "string") {
+      text = record.content.trim();
+    }
     if (!text) continue;
     if (
       !lastAssistantText &&
@@ -217,26 +263,32 @@ export function registerHarnessRpcHandlers(
       );
     }
 
-    const provider = agentSnapshot?.provider ?? "claude";
+    const liveHostProviders = await resolveLiveHostProviders(deps, context.paseo);
+    const fallbackEnabledProvider =
+      liveHostProviders.find((p) => p.enabled)?.provider ?? "antigravity";
+    const provider = agentSnapshot?.provider?.trim() || fallbackEnabledProvider;
     const normalizedProvider = normalizeProviderName(provider);
+    const specialist =
+      meta?.role && effectiveConfig ? findSpecialist(effectiveConfig, meta.role) : undefined;
 
-    const resolvedTarget = resolveTierTarget(
-      effectiveConfig ?? {
-        providerMappings: DEFAULT_PROVIDER_MAPPINGS,
-        providerThinkingMappings: BUILTIN_PROVIDER_THINKING_MAPPINGS,
-      },
-      normalizedProvider,
-      targetTier,
-    );
-    const canonicalTier = resolvedTarget.canonicalTier;
+    const resolvedTarget = resolveTargetAgentAndModel({
+      config: effectiveConfig ?? resolveEffectiveHarnessConfig(DEFAULT_AGENT_HARNESS_SETTINGS),
+      specialist,
+      requestedProvider: provider,
+      activeSessionProvider: provider,
+      hostProviders: liveHostProviders,
+      tier: targetTier,
+      phase: targetPhase ?? meta?.phase,
+      allowProviderFallback: false,
+      honorPreferredProvider: false,
+    });
+    const canonicalTier = resolvedTarget.tier;
     const targetModel = resolvedTarget.model;
     const targetThinking = resolvedTarget.thinkingOptionId;
 
     const previousTier = meta?.currentTier ?? null;
     const previousModel: string | null = meta?.currentModel ?? snapshotModel;
     const previousThinking: string | null = meta?.currentThinking ?? null;
-    const specialist =
-      meta?.role && effectiveConfig ? findSpecialist(effectiveConfig, meta.role) : undefined;
     const planModeSupported = effectiveConfig
       ? isNativePlanModeSupported(effectiveConfig, normalizedProvider)
       : supportsNativePlanMode(normalizedProvider);
@@ -278,7 +330,7 @@ export function registerHarnessRpcHandlers(
 
     const nowTurn = meta ? meta.turnCount : 0;
     const isManualStepDown =
-      (meta?.phase === "design" || previousTier === "plan") &&
+      (meta?.phase === "design" || previousTier === "plan" || previousTier === "deep") &&
       (canonicalTier === "fast" || canonicalTier === "standard");
     const nextMeta: HarnessAgentMetadata = {
       version: 1,
@@ -412,6 +464,7 @@ export function registerHarnessRpcHandlers(
     const prefix = specialist?.handoffTitlePrefix?.trim() || formatSpecialistRolePrefix(targetRole);
     const title = `${prefix} Task Execution`;
 
+    const liveHostProviders = await resolveLiveHostProviders(deps, context.paseo);
     const res = await spawnHarnessSpecialist({
       paseo: context.paseo,
       parentAgentId: agentId,
@@ -422,6 +475,7 @@ export function registerHarnessRpcHandlers(
       title,
       specPrompt: promptText,
       config: effectiveConfig,
+      hostProviders: liveHostProviders,
       getLatestMetadata: deps.readLatestMetadata,
       shouldEmitTimeline: deps.emitTimelineTransitionsEnabled,
       onHandoffLog: (entry) => deps.debugLogger?.record(entry),
@@ -502,15 +556,55 @@ export function registerHarnessRpcHandlers(
       }
     }
 
-    const availableProviders: Array<{ provider: string; enabled: boolean; models: string[] }> = [];
+    const availableProviders: Array<{
+      provider: string;
+      enabled: boolean;
+      status?: string;
+      label?: string;
+      defaultModel?: string;
+      models: string[];
+      modelDetails?: Array<{
+        id: string;
+        label?: string;
+        isDefault?: boolean;
+        thinkingOptions?: Array<{ id: string; label?: string }>;
+      }>;
+    }> = [];
     if (context.paseo.providers?.snapshot) {
       try {
         const snap = await context.paseo.providers.snapshot();
         for (const entry of snap.entries ?? []) {
+          const modelDetails: Array<{
+            id: string;
+            label?: string;
+            isDefault?: boolean;
+            thinkingOptions?: Array<{ id: string; label?: string }>;
+          }> = [];
+          for (const m of entry.models ?? []) {
+            modelDetails.push({
+              id: m.id,
+              ...(m.label ? { label: m.label } : {}),
+              ...(m.isDefault !== undefined ? { isDefault: m.isDefault } : {}),
+              ...(m.thinkingOptions
+                ? {
+                    thinkingOptions: m.thinkingOptions.map((opt) =>
+                      opt.label ? { id: opt.id, label: opt.label } : { id: opt.id },
+                    ),
+                  }
+                : {}),
+            });
+          }
+          const defaultModel =
+            (entry as { defaultModel?: string }).defaultModel ??
+            modelDetails.find((m) => m.isDefault)?.id;
           availableProviders.push({
             provider: entry.provider,
             enabled: entry.enabled,
-            models: (entry.models ?? []).map((m) => m.id),
+            ...(entry.status ? { status: entry.status } : {}),
+            ...(entry.label ? { label: entry.label } : {}),
+            ...(defaultModel ? { defaultModel } : {}),
+            models: modelDetails.map((m) => m.id),
+            ...(modelDetails.length > 0 ? { modelDetails } : {}),
           });
         }
       } catch {
@@ -580,10 +674,12 @@ export function registerHarnessRpcHandlers(
     }
 
     if (action === "sync_daemon_profiles") {
+      const liveHostProviders = await resolveLiveHostProviders(deps, context.paseo);
       const { syncedCount, errors } = await syncDaemonAgentProfiles(
         context.paseo,
         specialists,
         effectiveConfig,
+        liveHostProviders,
       );
       return {
         success: errors.length === 0,

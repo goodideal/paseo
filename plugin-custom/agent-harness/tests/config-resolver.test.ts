@@ -4,21 +4,20 @@ import {
   findSpecialist,
   inferTierFromModel,
   isFederatedLocalProvider,
+  isModelCompatibleWithProvider,
   normalizePrimarySkills,
   normalizeTierAlias,
   resolveEffectiveHarnessConfig,
   resolveResumeExecutionMode,
   resolveSessionMcpServers,
   resolveSpecialistEnvironment,
+  resolveTargetAgentAndModel,
   resolveTargetModelForTier,
   resolveTierTarget,
+  stripHarnessBannerFromSystemPrompt,
 } from "../shared/config-resolver.js";
-import {
-  AgentHarnessSettingsSchema,
-  DEFAULT_AGENT_HARNESS_SETTINGS,
-  agentHarnessSettings,
-} from "../shared/settings.js";
-import type { RepoHarnessOverride } from "../shared/types.js";
+import { DEFAULT_AGENT_HARNESS_SETTINGS, agentHarnessSettings } from "../shared/settings.js";
+import type { HostProviderRuntimeInfo, RepoHarnessOverride } from "../shared/types.js";
 import {
   areManifestsEqual,
   computeMissingRecommendedDeps,
@@ -34,18 +33,29 @@ import {
 } from "../shared/team-editor-utils.js";
 
 describe("Agent Harness Config Resolver & Settings v2", () => {
-  it("DEFAULT_AGENT_HARNESS_SETTINGS has all 9 builtin specialists and 4 tiers", () => {
+  it("DEFAULT_AGENT_HARNESS_SETTINGS has all 9 builtin specialists, 5 tiers, and Semantic Router defaults", () => {
     expect(DEFAULT_AGENT_HARNESS_SETTINGS.specialists.length).toBe(9);
-    expect(DEFAULT_AGENT_HARNESS_SETTINGS.tiers.length).toBe(4);
+    expect(DEFAULT_AGENT_HARNESS_SETTINGS.tiers.length).toBe(5);
     expect(DEFAULT_AGENT_HARNESS_SETTINGS.tiers.map((t) => t.id)).toEqual([
       "fast",
       "standard",
-      "deep",
+      "plan",
+      "review",
       "max",
     ]);
     expect(DEFAULT_AGENT_HARNESS_SETTINGS.enabled).toBe(true);
     expect(DEFAULT_AGENT_HARNESS_SETTINGS.profilesDir).toBe("~/.agents/profiles");
     expect(DEFAULT_AGENT_HARNESS_SETTINGS.autoSyncDiskProfiles).toBe(true);
+    expect(DEFAULT_AGENT_HARNESS_SETTINGS.routerEnabled).toBe(true);
+    expect(DEFAULT_AGENT_HARNESS_SETTINGS.routerEffort).toBe("low");
+    expect(DEFAULT_AGENT_HARNESS_SETTINGS.routerTimeoutMs).toBe(10000);
+    expect(DEFAULT_AGENT_HARNESS_SETTINGS.routerConfidenceThreshold).toBe(0.85);
+    expect(DEFAULT_AGENT_HARNESS_SETTINGS.enforceSessionMcpFiltering).toBe(false);
+    for (const s of DEFAULT_AGENT_HARNESS_SETTINGS.specialists) {
+      expect(s.preferredProvider).toBe("");
+      expect(s.matchPatterns).toEqual([]);
+      expect(s.primarySkills.length).toBeLessThanOrEqual(2);
+    }
   });
 
   it("migrates v1 settings cleanly to latest schema", () => {
@@ -70,12 +80,11 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
 
     expect(migrated.overrideIfDefaultOnly).toBe(false);
     expect(migrated.debugLogs).toBe(true);
-    expect(migrated.llmFallbackEndpoint).toBe("https://api.myllm.com/v1");
-    expect(migrated.llmFallbackApiKey).toBe("sk-secret-123");
     expect(migrated.planTurnSoftLimit).toBe(5);
+    expect(migrated.routerEnabled).toBe(true);
     // Schema defaults populated
     expect(migrated.specialists.length).toBe(9);
-    expect(migrated.tiers.length).toBe(4);
+    expect(migrated.tiers.length).toBe(5);
     expect(migrated.autoSyncDiskProfiles).toBe(true);
   });
 
@@ -132,11 +141,13 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
     expect(resolveTargetModelForTier(config, "pi", "fast")).toBe("headroom/lite");
   });
 
-  it("normalizes legacy tier aliases and resolves target thinking with omitted-max fallback", () => {
+  it("normalizes legacy tier aliases and resolves v9 target models and thinking with fallback chains", () => {
     expect(normalizeTierAlias("lite")).toBe("fast");
     expect(normalizeTierAlias("flash")).toBe("standard");
-    expect(normalizeTierAlias("plan")).toBe("deep");
-    expect(normalizeTierAlias("review")).toBe("deep");
+    expect(normalizeTierAlias("plan")).toBe("plan");
+    expect(normalizeTierAlias("review")).toBe("review");
+    expect(normalizeTierAlias("deep")).toBe("plan");
+    expect(normalizeTierAlias("deep", "review")).toBe("review");
     expect(normalizeTierAlias("max")).toBe("max");
     expect(normalizeTierAlias("custom-tier")).toBe("custom-tier");
 
@@ -148,21 +159,31 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
     });
     expect(resolveTierTarget(effective, "antigravity", "standard")).toEqual({
       canonicalTier: "standard",
+      model: "gemini-4-neon",
+      thinkingOptionId: "high",
+    });
+    expect(resolveTierTarget(effective, "antigravity", "plan")).toEqual({
+      canonicalTier: "plan",
+      model: "gemini-4-carbon",
+      thinkingOptionId: "high",
+    });
+    expect(resolveTierTarget(effective, "antigravity", "review")).toEqual({
+      canonicalTier: "review",
       model: "gemini-4-argon",
       thinkingOptionId: "high",
     });
     expect(resolveTierTarget(effective, "antigravity", "deep")).toEqual({
-      canonicalTier: "deep",
+      canonicalTier: "plan",
       model: "gemini-4-carbon",
       thinkingOptionId: "high",
     });
     expect(resolveTierTarget(effective, "antigravity", "max")).toEqual({
       canonicalTier: "max",
-      model: "gemini-4-neon",
-      thinkingOptionId: "xhigh",
+      model: "gemini-4-carbon",
+      thinkingOptionId: "high",
     });
 
-    // Custom 3-model provider omitting max falls back to deep model + xhigh thinking
+    // Custom 3-model provider omitting max falls back to plan/deep model + xhigh thinking
     const customTarget = resolveTierTarget(
       {
         providerMappings: {
@@ -182,38 +203,82 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
     });
   });
 
-  it("resolveResumeExecutionMode resolves correct modes for claude and opencode", () => {
+  it("resolveResumeExecutionMode resolves correct modes for claude, opencode, and antigravity", () => {
     const config = resolveEffectiveHarnessConfig(DEFAULT_AGENT_HARNESS_SETTINGS);
     expect(resolveResumeExecutionMode(config, "claude", null)).toBe("acceptEdits");
     expect(resolveResumeExecutionMode(config, "opencode", null)).toBe("build");
+    expect(resolveResumeExecutionMode(config, "antigravity", null)).toBe("full-access");
     expect(resolveResumeExecutionMode(config, "claude", "custom-mode")).toBe("custom-mode");
   });
 
-  it("buildSystemPromptBanner produces comprehensive markdown bullets", () => {
+  it("buildSystemPromptBanner produces concise bullets, caps required skill reads at 2, and honors includeHandoffToolHint", () => {
     const config = resolveEffectiveHarnessConfig(DEFAULT_AGENT_HARNESS_SETTINGS);
     const specialist = findSpecialist(config, "ui")!;
     const banner = buildSystemPromptBanner({
       config,
       specialist,
-      tier: "flash",
+      tier: "standard",
       targetModel: "flash",
-      roleMatchedRule: "heuristic:ui",
+      roleMatchedRule: "semantic_router:ui",
       homeDir: "/tmp/mock-home",
+      includeHandoffToolHint: true,
     });
 
     expect(banner).toContain("[Capability Harness Active Profile]");
-    expect(banner).toContain("- Role: ui (rule: heuristic:ui)");
+    expect(banner).toContain("- Role: ui (rule: semantic_router:ui)");
     expect(banner).toContain("- Focus Documents: docs/design.md");
-    expect(banner).toContain(
-      "- Primary Skills: ui-ux-pro-max, unslop, visual-verdict, diagnosing-bugs, pr",
-    );
+    expect(banner).toContain("- Primary Skills: ui-ux-pro-max, unslop");
     expect(banner).toContain("- Workspace Boundary Guardrail (CRITICAL):");
     expect(banner).toContain("Mandatory Skill Activation");
+    expect(banner).toContain("harness_handoff");
+
+    // When includeHandoffToolHint=false, omit harness_handoff instructions
+    const leafNoToolBanner = buildSystemPromptBanner({
+      config,
+      specialist: {
+        ...specialist,
+        primarySkills: ["ui-ux-pro-max", "unslop", "visual-verdict", "extra-skill"],
+      },
+      tier: "standard",
+      targetModel: "flash",
+      roleMatchedRule: "label:role",
+      homeDir: "/tmp/mock-home",
+      provider: "claude",
+      includeHandoffToolHint: false,
+    });
+    expect(leafNoToolBanner).not.toContain("harness_handoff");
+    expect(leafNoToolBanner).toContain("ui-ux-pro-max/SKILL.md");
+    expect(leafNoToolBanner).toContain("unslop/SKILL.md");
+    expect(leafNoToolBanner).not.toContain("visual-verdict/SKILL.md");
+    expect(leafNoToolBanner).toContain("optional on-demand");
   });
 
-  it("resolveSessionMcpServers filters excluded servers and injects catalog servers", () => {
+  it("stripHarnessBannerFromSystemPrompt cleanly strips legacy persisted harness banners while keeping base prompt", () => {
+    const config = resolveEffectiveHarnessConfig(DEFAULT_AGENT_HARNESS_SETTINGS);
+    const banner = buildSystemPromptBanner({
+      config,
+      specialist: findSpecialist(config, "backend")!,
+      tier: "standard",
+      targetModel: "flash",
+      roleMatchedRule: "label:role",
+      homeDir: "/tmp/mock-home",
+      provider: "claude",
+    });
+
+    expect(stripHarnessBannerFromSystemPrompt(banner)).toBeUndefined();
+    expect(stripHarnessBannerFromSystemPrompt(`Base prompt rules.\n\n${banner}`)).toBe(
+      "Base prompt rules.",
+    );
+    expect(
+      stripHarnessBannerFromSystemPrompt(`Base prompt.\n\n${banner}\n\nTrailing instruction.`),
+    ).toBe("Base prompt.\n\nTrailing instruction.");
+    expect(stripHarnessBannerFromSystemPrompt("Plain user prompt")).toBe("Plain user prompt");
+  });
+
+  it("resolveSessionMcpServers preserves existing servers non-destructively and injects missing catalog servers", () => {
     const baseSettings = {
       ...DEFAULT_AGENT_HARNESS_SETTINGS,
+      enforceSessionMcpFiltering: true, // even if an old flag was set, v9 never destructively removes MCPs
       mcpServerCatalog: {
         "custom-db": {
           type: "stdio" as const,
@@ -244,21 +309,19 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
       paseo: { type: "http" as const, url: "http://127.0.0.1:6767/mcp/agents" },
     };
 
-    const filtered = resolveSessionMcpServers({
+    const resolved = resolveSessionMcpServers({
       config,
       specialist: ui,
       existingMcpServers: incomingServers,
     });
 
-    // dbx must be excluded
-    expect(filtered.dbx).toBeUndefined();
-    // serena, playwright, and built-in paseo preserved
-    expect(filtered.serena).toBeDefined();
-    expect(filtered.playwright).toBeDefined();
-    expect(filtered.paseo).toBeDefined();
-    // custom-db injected from catalog
-    expect(filtered["custom-db"]).toBeDefined();
-    expect(filtered["custom-db"].command).toBe("custom-db-mcp");
+    // Non-destructive: all incoming MCP servers preserved
+    expect(resolved.dbx).toBeDefined();
+    expect(resolved.serena).toBeDefined();
+    expect(resolved.playwright).toBeDefined();
+    expect(resolved.paseo).toBeDefined();
+    // custom-db injected additively from catalog
+    expect(resolved["custom-db"]).toMatchObject({ type: "stdio", command: "custom-db-mcp" });
   });
 
   it("resolveSpecialistEnvironment populates role, profile, lazy-tool slice and skills root", () => {
@@ -324,15 +387,19 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
     expect(migrated.bypassModels).toEqual(["^gemini-pro-orchestrator"]);
     expect(migrated.providerMappings.antigravity).toEqual({
       fast: "gemini-4-hydrogen",
-      standard: "gemini-4-argon",
+      standard: "gemini-4-neon",
+      plan: "gemini-4-carbon",
+      review: "gemini-4-argon",
       deep: "gemini-4-carbon",
-      max: "gemini-4-neon",
+      max: "gemini-4-carbon",
     });
     expect(migrated.providerThinkingMappings.antigravity).toEqual({
       fast: "medium",
       standard: "high",
+      plan: "high",
+      review: "high",
       deep: "high",
-      max: "xhigh",
+      max: "high",
     });
     expect(migrated.providerModes.antigravity).toEqual({
       supportsNativePlanMode: false,
@@ -355,7 +422,7 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
     expect(orchestrator.preferredTier).toBe("fast");
   });
 
-  it("migrates v4 settings cleanly to v5 while preserving user-customized mappings and custom tiers", () => {
+  it("migrates v4 settings cleanly to latest schema while preserving user-customized mappings and custom tiers", () => {
     const customTier = {
       id: "ultra",
       name: "Ultra Custom",
@@ -379,7 +446,7 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
         customTier,
       ],
       providerMappings: {
-        // User customized claude.flash; untouched codex should upgrade to v5 defaults
+        // User customized claude.flash; untouched codex upgrades to v9 defaults
         claude: {
           plan: "claude-opus-custom",
           flash: "claude-sonnet-custom",
@@ -401,26 +468,38 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
       4,
     ) as typeof DEFAULT_AGENT_HARNESS_SETTINGS;
 
-    expect(migrated.tiers.map((t) => t.id)).toEqual(["fast", "standard", "deep", "max", "ultra"]);
+    expect(migrated.tiers.map((t) => t.id)).toEqual([
+      "fast",
+      "standard",
+      "plan",
+      "review",
+      "max",
+      "ultra",
+    ]);
     expect(migrated.defaultFallbackTier).toBe("standard");
     expect(migrated.providerMappings.claude.standard).toBe("claude-sonnet-custom");
+    expect(migrated.providerMappings.claude.plan).toBe("claude-opus-custom");
     expect(migrated.providerMappings.claude.deep).toBe("claude-opus-custom");
     expect(migrated.providerMappings.codex).toEqual({
       fast: "lite",
       standard: "flash",
+      plan: "pro",
+      review: "pro",
       deep: "pro",
       max: "plan",
     });
     expect(migrated.providerThinkingMappings.codex).toEqual({
       fast: "low",
       standard: "medium",
+      plan: "high",
+      review: "high",
       deep: "high",
       max: "xhigh",
     });
     expect(migrated.specialists.find((s) => s.id === "orchestrator")?.preferredTier).toBe("fast");
     expect(migrated.specialists.find((s) => s.id === "ui")?.preferredTier).toBe("standard");
-    expect(migrated.specialists.find((s) => s.id === "architect")?.preferredTier).toBe("deep");
-    expect(migrated.specialists.find((s) => s.id === "review")?.preferredTier).toBe("deep");
+    expect(migrated.specialists.find((s) => s.id === "architect")?.preferredTier).toBe("plan");
+    expect(migrated.specialists.find((s) => s.id === "review")?.preferredTier).toBe("review");
     expect(migrated.providerMappings.claude.max).toBeUndefined();
     expect(
       resolveTierTarget(
@@ -457,11 +536,15 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
     expect(migratedAg.providerMappings.antigravity).toEqual({
       fast: "gemini-4-hydrogen",
       standard: "custom-ag-standard",
+      plan: "custom-ag-deep",
+      review: "custom-ag-deep",
       deep: "custom-ag-deep",
     });
     expect(migratedAg.providerMappings.custom3).toEqual({
       fast: "c-fast",
       standard: "c-std",
+      plan: "c-deep",
+      review: "c-deep",
       deep: "c-deep",
     });
 
@@ -469,7 +552,7 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
     expect(resolveTierTarget(agConfig, "antigravity", "max")).toEqual({
       canonicalTier: "max",
       model: "custom-ag-deep",
-      thinkingOptionId: "xhigh",
+      thinkingOptionId: "high",
     });
     expect(resolveTierTarget(agConfig, "custom3", "max")).toEqual({
       canonicalTier: "max",
@@ -477,7 +560,7 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
       thinkingOptionId: "xhigh",
     });
 
-    // 2. Legacy v3 review specialist with preferredProvider: "claude-code" migrates cleanly to antigravity
+    // 2. Legacy v3 review specialist with preferredProvider: "claude-code" clears in v9 to inherit active provider
     const v3ClaudeCode = {
       ...DEFAULT_AGENT_HARNESS_SETTINGS,
       specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) =>
@@ -485,14 +568,12 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
       ),
     };
     const migratedV3 = migrate(v3ClaudeCode, 3) as typeof DEFAULT_AGENT_HARNESS_SETTINGS;
-    expect(migratedV3.specialists.find((s) => s.id === "review")?.preferredProvider).toBe(
-      "antigravity",
-    );
+    expect(migratedV3.specialists.find((s) => s.id === "review")?.preferredProvider).toBe("");
 
     // 3. resolveTierTarget("claude-code", ...) falls back to "claude" and honors explicit "claude-code" overrides
     const defaultCfg = resolveEffectiveHarnessConfig(DEFAULT_AGENT_HARNESS_SETTINGS);
     expect(resolveTierTarget(defaultCfg, "claude-code", "deep")).toEqual({
-      canonicalTier: "deep",
+      canonicalTier: "plan",
       model: "pro",
       thinkingOptionId: "high",
     });
@@ -518,7 +599,7 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
     sampleA.bypassProviders.push("mutated-provider");
     sampleA.providerMappings.antigravity.standard = "mutated-model";
     expect(sampleB.bypassProviders).toEqual([]);
-    expect(sampleB.providerMappings.antigravity.standard).toBe("gemini-4-argon");
+    expect(sampleB.providerMappings.antigravity.standard).toBe("gemini-4-neon");
 
     const customOrchestratorPrompt = "Custom company orchestrator protocol — keep verbatim.";
     const v2Values = {
@@ -548,9 +629,11 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
     ) as typeof DEFAULT_AGENT_HARNESS_SETTINGS;
     expect(migrated.providerMappings.antigravity).toEqual({
       fast: "gemini-4-hydrogen",
-      standard: "gemini-4-argon",
+      standard: "gemini-4-neon",
+      plan: "gemini-4-carbon",
+      review: "gemini-4-argon",
       deep: "gemini-4-carbon",
-      max: "gemini-4-neon",
+      max: "gemini-4-carbon",
     });
 
     const ui = migrated.specialists.find((s) => s.id === "ui")!;
@@ -567,8 +650,8 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
     const banner = buildSystemPromptBanner({
       config,
       specialist: backend,
-      tier: "flash",
-      targetModel: "gemini-4-hydrogen-high",
+      tier: "standard",
+      targetModel: "gemini-4-neon",
       roleMatchedRule: "label:role",
       tierMatchedRule: "role_tier:backend",
       homeDir: "/tmp/mock-home",
@@ -577,7 +660,7 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
 
     expect(banner).toContain("read_file");
     expect(banner).not.toContain("invoke the `Skill` tool");
-    expect(banner).toContain("codebase-design, tdd, diagnosing-bugs, test-gardener, pr");
+    expect(banner).toContain("codebase-design, tdd");
     expect(banner).not.toContain("mattpocock-skills:");
   });
 
@@ -610,8 +693,6 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
       "codebase-design",
       "tdd",
       "diagnosing-bugs",
-      "test-gardener",
-      "pr",
       "domain-modeling",
     ]);
 
@@ -626,7 +707,7 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
         provider,
       });
       expect(banner).toContain(
-        "- Primary Skills: codebase-design, tdd, diagnosing-bugs, test-gardener, pr, domain-modeling",
+        "- Primary Skills: codebase-design, tdd, diagnosing-bugs, domain-modeling",
       );
       expect(banner).not.toContain("superpowers:");
       expect(banner).not.toContain("mattpocock-skills:");
@@ -859,23 +940,23 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
       isRouterManagedNonMax: true,
       isDedicatedMax: false,
     });
-    expect(inferTierFromModel(effective, "antigravity", "gemini-4-argon")).toEqual({
+    expect(inferTierFromModel(effective, "antigravity", "gemini-4-neon")).toEqual({
       tier: "standard",
       isKnownTierModel: true,
       isRouterManagedNonMax: true,
       isDedicatedMax: false,
     });
     expect(inferTierFromModel(effective, "antigravity", "gemini-4-carbon")).toEqual({
-      tier: "deep",
+      tier: "plan",
       isKnownTierModel: true,
       isRouterManagedNonMax: true,
       isDedicatedMax: false,
     });
-    expect(inferTierFromModel(effective, "antigravity", "gemini-4-neon")).toEqual({
-      tier: "max",
+    expect(inferTierFromModel(effective, "antigravity", "gemini-4-argon")).toEqual({
+      tier: "review",
       isKnownTierModel: true,
-      isRouterManagedNonMax: false,
-      isDedicatedMax: true,
+      isRouterManagedNonMax: true,
+      isDedicatedMax: false,
     });
     expect(inferTierFromModel(effective, "antigravity", "custom-unknown-model", "flash")).toEqual({
       tier: "standard",
@@ -894,10 +975,24 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
         "large",
       ),
     ).toEqual({
-      tier: "deep",
+      tier: "plan",
       isKnownTierModel: true,
       isRouterManagedNonMax: true,
       isDedicatedMax: false,
+    });
+    // Shared plan/review model ("pro" in claude) honors fallbackTier="review" hint
+    expect(inferTierFromModel(effective, "claude", "pro", "review")).toEqual({
+      tier: "review",
+      isKnownTierModel: true,
+      isRouterManagedNonMax: true,
+      isDedicatedMax: false,
+    });
+    // Dedicated max model (claude "plan") resolves as isDedicatedMax: true
+    expect(inferTierFromModel(effective, "claude", "plan")).toEqual({
+      tier: "max",
+      isKnownTierModel: true,
+      isRouterManagedNonMax: false,
+      isDedicatedMax: true,
     });
   });
 
@@ -909,8 +1004,8 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
       config: effective,
       specialist: uiSpec,
       tier: "standard",
-      targetModel: "gemini-4-argon",
-      roleMatchedRule: "heuristic:ui",
+      targetModel: "gemini-4-neon",
+      roleMatchedRule: "semantic_router:ui",
       homeDir: "/tmp/mock-home",
       provider: "antigravity",
       isLeaf: false,
@@ -922,7 +1017,7 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
       config: effective,
       specialist: uiSpec,
       tier: "standard",
-      targetModel: "gemini-4-argon",
+      targetModel: "gemini-4-neon",
       roleMatchedRule: "label:role",
       homeDir: "/tmp/mock-home",
       provider: "antigravity",
@@ -939,8 +1034,8 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
       config: effective,
       specialist: customVendorUi,
       tier: "standard",
-      targetModel: "gemini-4-argon",
-      roleMatchedRule: "heuristic:ui",
+      targetModel: "gemini-4-neon",
+      roleMatchedRule: "semantic_router:ui",
       homeDir: "/tmp/mock-home",
       provider: "antigravity",
       isLeaf: false,
@@ -954,7 +1049,7 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
       config: effective,
       specialist: backendSpec,
       tier: "standard",
-      targetModel: "gemini-4-argon",
+      targetModel: "gemini-4-neon",
       roleMatchedRule: "label:role",
       homeDir: "/Users/jerry",
       provider: "antigravity",
@@ -971,7 +1066,9 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
         antigravity: {
           fast: "custom-ag-fast",
           standard: "custom-ag-std",
-          deep: "custom-ag-deep",
+          plan: "custom-ag-plan",
+          review: "custom-ag-review",
+          deep: "custom-ag-plan",
           max: "custom-ag-max",
         },
       },
@@ -979,15 +1076,16 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
     const agDesignBanner = buildSystemPromptBanner({
       config: customAgEffective,
       specialist: findSpecialist(customAgEffective, "ui")!,
-      tier: "deep",
-      targetModel: "custom-ag-deep",
+      tier: "plan",
+      targetModel: "custom-ag-plan",
       phase: "design",
-      roleMatchedRule: "heuristic:ui",
+      roleMatchedRule: "semantic_router:ui",
       homeDir: "/Users/jerry",
       provider: "antigravity",
       isLeaf: false,
     });
-    expect(agDesignBanner).toContain("custom-ag-deep");
+    expect(agDesignBanner).toContain("custom-ag-plan");
+    expect(agDesignBanner).toContain("custom-ag-review");
     expect(agDesignBanner).toContain("custom-ag-std");
     expect(agDesignBanner).not.toContain("gemini-4-hydrogen-high");
     expect(agDesignBanner).not.toContain("gemini-4-argon-high");
@@ -1114,7 +1212,7 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
     expect(beReviewerBanner).toContain("[Phase: Review Gate]");
   });
 
-  it("migrates v5 settings cleanly to v6 while preserving user-customized fields", async () => {
+  it("migrates v5 settings cleanly through v9 while preserving user-customized fields", async () => {
     const presets = await import("../shared/presets.js");
     const v5Untouched = {
       ...DEFAULT_AGENT_HARNESS_SETTINGS,
@@ -1138,10 +1236,6 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
         "搞起",
         "干吧",
       ],
-      tierPatterns: {
-        ...DEFAULT_AGENT_HARNESS_SETTINGS.tierPatterns,
-        execAction: [presets.LEGACY_V5_EXEC_ACTION_PATTERN],
-      },
       specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) => {
         if (s.id === "ui") {
           return {
@@ -1167,7 +1261,8 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
     const migratedUi = migrated.specialists.find((s) => s.id === "ui")!;
     const migratedGeneral = migrated.specialists.find((s) => s.id === "general")!;
 
-    expect(migratedUi.matchPatterns[0]).toContain("dark\\s*mode");
+    // v9 clears builtin regex heuristics & legacy MCP filtering
+    expect(migratedUi.matchPatterns).toEqual([]);
     expect(migratedUi.allowedMcpServers).toEqual(["playwright", "serena", "claude-mem"]);
     expect(migratedGeneral.allowedMcpServers).toEqual([
       "serena",
@@ -1175,18 +1270,18 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
       "hub",
       "sequential-thinking",
     ]);
-    expect(migrated.fullstackUiPattern).toContain("dark\\s*mode");
-    expect(migrated.tierPatterns.execAction[0]).toContain("服务");
+    expect(migrated.enforceSessionMcpFiltering).toBe(false);
     expect(migrated.affirmativeConfirmWords).toContain("ok, continue");
     expect(migrated.affirmativeConfirmWords).toContain("go");
 
-    // User-customized arrays and patterns must NOT be overwritten
+    // User-customized arrays must NOT be overwritten
+    const customizedSpecialists = v5Untouched.specialists.map((s) =>
+      s.id === "ui" ? Object.assign({}, s, { allowedMcpServers: ["serena", "custom-ui-mcp"] }) : s,
+    );
     const v5Customized = {
       ...v5Untouched,
       affirmativeConfirmWords: ["ok", "custom-confirm"],
-      specialists: v5Untouched.specialists.map((s) =>
-        s.id === "ui" ? { ...s, allowedMcpServers: ["serena", "custom-ui-mcp"] } : s,
-      ),
+      specialists: customizedSpecialists,
     };
     const migratedCustom = agentHarnessSettings.migrate!(
       v5Customized,
@@ -1199,7 +1294,7 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
     ]);
   });
 
-  it("migrates v6 settings cleanly to v7 for untouched built-in specialists and user-customized primarySkills", async () => {
+  it("migrates v6 and v7 settings cleanly through v9 for schema version and user-customized primarySkills", async () => {
     const presets = await import("../shared/presets.js");
     const v6Values = {
       ...DEFAULT_AGENT_HARNESS_SETTINGS,
@@ -1207,7 +1302,6 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
         ...DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) => {
           const legacySkills = presets.LEGACY_V6_SPECIALIST_PRIMARY_SKILLS[s.id];
           if (s.id === "backend") {
-            // User customized backend primarySkills with a custom skill + legacy prefixed skills
             return {
               ...s,
               primarySkills: [
@@ -1268,37 +1362,28 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
       6,
     ) as typeof DEFAULT_AGENT_HARNESS_SETTINGS;
 
-    // Untouched built-in specialists receive full v7 primarySkills (including new skills like diagnosing-bugs, pr, tdd)
+    // Untouched v6/v8 built-in specialists get upgraded all the way to v9 trimmed primarySkills
     expect(migrated.specialists.find((s) => s.id === "orchestrator")?.primarySkills).toEqual([
       "paseo",
-      "codebase-design",
     ]);
     expect(migrated.specialists.find((s) => s.id === "ui")?.primarySkills).toEqual([
       "ui-ux-pro-max",
       "unslop",
-      "visual-verdict",
-      "diagnosing-bugs",
-      "pr",
     ]);
     expect(migrated.specialists.find((s) => s.id === "qa")?.primarySkills).toEqual([
-      "test-gardener",
-      "tdd",
       "diagnosing-bugs",
-      "deliver-edge-cases",
+      "test-gardener",
     ]);
     expect(migrated.specialists.find((s) => s.id === "general")?.primarySkills).toEqual([
       "codebase-design",
-      "domain-modeling",
       "tdd",
-      "diagnosing-bugs",
     ]);
     expect(migrated.specialists.find((s) => s.id === "review")?.primarySkills).toEqual([
       "code-review",
       "open-code-review-delegate",
-      "gitea",
     ]);
 
-    // User-customized built-in specialist preserves custom skill while migrating superpowers:* and stripping mattpocock-skills:
+    // User-customized built-in specialist preserves custom skill while migrating prefixes
     expect(migrated.specialists.find((s) => s.id === "backend")?.primarySkills).toEqual([
       "codebase-design",
       "tdd",
@@ -1314,185 +1399,286 @@ describe("Agent Harness Config Resolver & Settings v2", () => {
     ]);
   });
 
-  it("splits codex.yaml, unifies skillsRoot/pm skills, and migrates v7 -> v8 losslessly while preserving user overrides", async () => {
+  it("migrates v8 -> v9 losslessly: enables semantic router, clears gemini-3 and legacy preferredProviders, and preserves user overrides", async () => {
+    const presets = await import("../shared/presets.js");
     const { SETTINGS_SCHEMA_VERSION } = await import("../shared/settings.js");
-    expect(SETTINGS_SCHEMA_VERSION).toBe(8);
+    expect(SETTINGS_SCHEMA_VERSION).toBe(9);
 
-    // Built-in presets have zero codex.yaml and unified skillsRoot
-    for (const s of DEFAULT_AGENT_HARNESS_SETTINGS.specialists) {
-      expect(s.lazyToolSlice).not.toBe("codex.yaml");
-    }
-    expect(
-      DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "general")?.lazyToolSlice,
-    ).toBe("general.yaml");
-    expect(
-      DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "architect")?.lazyToolSlice,
-    ).toBe("architect.yaml");
-    expect(
-      DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "qa")?.lazyToolSlice,
-    ).toBe("qa.yaml");
-    expect(
-      DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "scout")?.lazyToolSlice,
-    ).toBe("scout.yaml");
-    expect(
-      DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "scout")?.allowedMcpServers,
-    ).toEqual(["claude-mem"]);
-    expect(DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "ui")?.skillsRoot).toBe(
-      "/Users/jerry/.agents/skills",
-    );
-    expect(DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "pm")?.skillsRoot).toBe(
-      "/Users/jerry/.agents/skills",
-    );
-    expect(
-      DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "pm")?.primarySkills,
-    ).toEqual([
-      "grilling",
-      "deliver-prd",
-      "deliver-user-stories",
-      "deliver-edge-cases",
-      "define-problem-statement",
-    ]);
-
-    expect(
-      normalizePrimarySkills([
-        "pm-prd",
-        "pm-user-stories",
-        "pm-edge-cases",
-        "pm-problem",
-        "pm-prd",
-        "grilling",
-      ]),
-    ).toEqual([
-      "deliver-prd",
-      "deliver-user-stories",
-      "deliver-edge-cases",
-      "define-problem-statement",
-      "grilling",
-    ]);
-
-    const v7Values = {
+    const v8Values = {
       ...DEFAULT_AGENT_HARNESS_SETTINGS,
-      debugLogs: true,
-      providerMappings: {
-        ...DEFAULT_AGENT_HARNESS_SETTINGS.providerMappings,
-        claude: { fast: "claude-haiku-custom", standard: "flash", deep: "pro", max: "plan" },
-      },
-      specialists: [
-        ...DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) => {
-          if (s.id === "general") {
-            return { ...s, lazyToolSlice: "codex.yaml", preferredProvider: "codex" };
-          }
-          if (s.id === "architect") {
-            return { ...s, lazyToolSlice: "backend.yaml", modelOverride: "custom-arch-model" };
-          }
-          if (s.id === "qa") {
-            return {
-              ...s,
-              lazyToolSlice: "ui.yaml",
-              primarySkills: ["test-gardener", "pm-edge-cases"],
-            };
-          }
-          if (s.id === "scout") {
-            return { ...s, lazyToolSlice: "pm.yaml", allowedMcpServers: [] };
-          }
-          if (s.id === "ui") {
-            return {
-              ...s,
-              skillsRoot: "/Users/jerry/.agents/vendor/ui-ux-pro-max-skill/.claude/skills",
-              matchPatterns: [
-                "\\b(?:ui|ux|ui-ux-pro-max|unslop|visual-verdict|unistyles|popover|sheet|pill|hover|tailwind|expo|react\\s*native|playwright|css|scss|sass|dark\\s*mode|light\\s*mode|color[-\\s]*scheme|theming|design[-\\s]*tokens?)\\b",
-                "前端|界面|样式|弹窗|组件|面板|视觉|移动端|手机端|响应式|布局|图标|配色|交互体验|暗黑模式|深色模式|浅色模式|亮色模式|主题切换|主题色",
-                "my-custom-ui-widget",
-              ],
-            };
-          }
-          if (s.id === "pm") {
-            return {
-              ...s,
-              skillsRoot: "/Users/jerry/.agents/vendor/pm-skills/skills",
-              primarySkills: [
-                "pm-prd",
-                "pm-user-stories",
-                "pm-edge-cases",
-                "pm-problem",
-                "grilling",
-              ],
-            };
-          }
-          if (s.id === "backend") {
-            return {
-              ...s,
-              matchPatterns: [
-                "\\b(?:daemon|websocket|rpc|sqlite|dbx|terminal-worker|worktree|protocol|zod-aot|relay|noise\\s*nk|quota|proxy|gateway|scheduler|provider)\\b",
-                "后端|协议兼容|数据库|进程通信|服务端|配额|网关|代理服务|限流|中间件",
-                "my-custom-grpc-service",
-              ],
-            };
-          }
-          return s;
-        }),
-        {
-          ...DEFAULT_AGENT_HARNESS_SETTINGS.specialists[8],
-          id: "legacy-custom",
-          name: "Legacy Custom",
-          shortLabel: "Legacy",
-          builtIn: false,
-          lazyToolSlice: "codex.yaml",
-          primarySkills: ["pm-prd", "custom-skill"],
-        },
+      enforceSessionMcpFiltering: true,
+      defaultFallbackTier: "deep",
+      tiers: [
+        { id: "fast", name: "Fast", icon: "Zap", defaultPhase: "exec", description: "old" },
+        { id: "standard", name: "Standard", icon: "Cpu", defaultPhase: "exec", description: "old" },
+        { id: "deep", name: "Deep", icon: "Brain", defaultPhase: "design", description: "old" },
+        { id: "max", name: "Max", icon: "Flame", defaultPhase: "exec", description: "old" },
       ],
+      providerMappings: {
+        antigravity: { ...presets.LEGACY_V8_PROVIDER_MAPPINGS.antigravity },
+        claude: { fast: "gemini-3-flash", standard: "my-custom-sonnet", deep: "pro", max: "plan" },
+      },
+      providerThinkingMappings: {
+        antigravity: { ...presets.LEGACY_V8_PROVIDER_THINKING_MAPPINGS.antigravity },
+      },
+      specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) => {
+        const v8Prov = presets.LEGACY_V8_SPECIALIST_PROVIDERS[s.id];
+        const v8Skills = presets.LEGACY_V8_SPECIALIST_PRIMARY_SKILLS[s.id];
+        if (s.id === "ui") {
+          return {
+            ...s,
+            preferredProvider: v8Prov,
+            preferredTier: "standard",
+            modelOverride: "gemini-3.5-pro",
+            matchPatterns: ["old-ui-regex"],
+            primarySkills: [...(v8Skills ?? [])],
+          };
+        }
+        if (s.id === "backend") {
+          // User explicitly overrode backend to codex + custom model + custom skills
+          return {
+            ...s,
+            preferredProvider: "codex",
+            modelOverride: "codex-custom-model",
+            primarySkills: ["codebase-design", "my-backend-custom-skill"],
+          };
+        }
+        if (s.id === "orchestrator") {
+          return {
+            ...s,
+            preferredProvider: v8Prov,
+            defaultModeId: "bypassPermissions",
+            rolePromptTemplate: presets.LEGACY_V8_ORCHESTRATOR_DISPATCHER_RULE,
+            primarySkills: [...(v8Skills ?? [])],
+          };
+        }
+        if (s.id === "pm" || s.id === "architect" || s.id === "review") {
+          return {
+            ...s,
+            preferredProvider: v8Prov,
+            preferredTier: "deep",
+            primarySkills: [...(v8Skills ?? [])],
+          };
+        }
+        return s;
+      }),
+      phaseRules: {
+        orchestrator: presets.LEGACY_V8_ORCHESTRATOR_DISPATCHER_RULE,
+        design: presets.LEGACY_V8_DESIGN_PHASE_RULE,
+        exec: presets.LEGACY_V8_EXEC_PHASE_RULE,
+        review: presets.LEGACY_V8_REVIEW_PHASE_RULE,
+      },
     };
 
     const migrated = agentHarnessSettings.migrate!(
-      v7Values,
-      7,
+      v8Values,
+      8,
     ) as typeof DEFAULT_AGENT_HARNESS_SETTINGS;
 
-    expect(migrated.debugLogs).toBe(true);
-    expect(migrated.providerMappings.claude.fast).toBe("claude-haiku-custom");
+    expect(migrated.routerEnabled).toBe(true);
+    expect(migrated.routerConfidenceThreshold).toBe(0.85);
+    expect(migrated.enforceSessionMcpFiltering).toBe(false);
+    expect(migrated.defaultFallbackTier).toBe("plan");
+    expect(migrated.tiers.map((t) => t.id)).toEqual(["fast", "standard", "plan", "review", "max"]);
 
-    const mGeneral = migrated.specialists.find((s) => s.id === "general")!;
-    expect(mGeneral.lazyToolSlice).toBe("general.yaml");
-    expect(mGeneral.preferredProvider).toBe("codex");
-
-    const mArch = migrated.specialists.find((s) => s.id === "architect")!;
-    expect(mArch.lazyToolSlice).toBe("architect.yaml");
-    expect(mArch.modelOverride).toBe("custom-arch-model");
-
-    const mQa = migrated.specialists.find((s) => s.id === "qa")!;
-    expect(mQa.lazyToolSlice).toBe("qa.yaml");
-    expect(mQa.primarySkills).toEqual(["test-gardener", "deliver-edge-cases"]);
-
-    const mScout = migrated.specialists.find((s) => s.id === "scout")!;
-    expect(mScout.lazyToolSlice).toBe("scout.yaml");
-    expect(mScout.allowedMcpServers).toEqual(["claude-mem"]);
+    expect(migrated.providerMappings.antigravity).toEqual({
+      fast: "gemini-4-hydrogen",
+      standard: "gemini-4-neon",
+      plan: "gemini-4-carbon",
+      review: "gemini-4-argon",
+      deep: "gemini-4-carbon",
+      max: "gemini-4-carbon",
+    });
+    expect(migrated.providerMappings.claude.fast).toBe("lite");
+    expect(migrated.providerMappings.claude.standard).toBe("my-custom-sonnet");
+    expect(migrated.providerMappings.claude.plan).toBe("pro");
+    expect(migrated.providerMappings.claude.deep).toBe("pro");
 
     const mUi = migrated.specialists.find((s) => s.id === "ui")!;
-    expect(mUi.skillsRoot).toBe("/Users/jerry/.agents/skills");
-    expect(mUi.matchPatterns).toContain("my-custom-ui-widget");
-    expect(mUi.matchPatterns.join("\n")).toContain("颜色");
-    expect(mUi.matchPatterns.join("\n")).toContain("modal");
+    expect(mUi.preferredProvider).toBe("");
+    expect(mUi.modelOverride).toBe("");
+    expect(mUi.matchPatterns).toEqual([]);
+    expect(mUi.primarySkills).toEqual(["ui-ux-pro-max", "unslop"]);
 
-    const mPm = migrated.specialists.find((s) => s.id === "pm")!;
-    expect(mPm.skillsRoot).toBe("/Users/jerry/.agents/skills");
-    expect(mPm.primarySkills).toEqual([
-      "grilling",
-      "deliver-prd",
-      "deliver-user-stories",
-      "deliver-edge-cases",
-      "define-problem-statement",
-    ]);
-
+    // User's custom modelOverride + custom primarySkills preserved
     const mBackend = migrated.specialists.find((s) => s.id === "backend")!;
-    expect(mBackend.matchPatterns).toContain("my-custom-grpc-service");
-    expect(new RegExp(mBackend.matchPatterns[0], "i").test("WorkTree 标签")).toBe(false);
-    expect(new RegExp(mBackend.matchPatterns[0], "i").test("Provider 名称")).toBe(false);
-    expect(new RegExp(mBackend.matchPatterns[0], "i").test("git worktree status")).toBe(true);
-    expect(new RegExp(mBackend.matchPatterns[0], "i").test("provider adapter config")).toBe(true);
+    expect(mBackend.preferredProvider).toBe("codex");
+    expect(mBackend.modelOverride).toBe("codex-custom-model");
+    expect(mBackend.primarySkills).toEqual(["codebase-design", "my-backend-custom-skill"]);
 
-    const mLegacyCustom = migrated.specialists.find((s) => s.id === "legacy-custom")!;
-    expect(mLegacyCustom.lazyToolSlice).toBe("general.yaml");
-    expect(mLegacyCustom.primarySkills).toEqual(["deliver-prd", "custom-skill"]);
+    const mOrch = migrated.specialists.find((s) => s.id === "orchestrator")!;
+    expect(mOrch.defaultModeId).toBe("full-access");
+    expect(mOrch.preferredProvider).toBe("");
+    expect(mOrch.rolePromptTemplate).toContain("`plan`");
+
+    expect(migrated.specialists.find((s) => s.id === "pm")?.preferredTier).toBe("plan");
+    expect(migrated.specialists.find((s) => s.id === "architect")?.preferredTier).toBe("plan");
+    expect(migrated.specialists.find((s) => s.id === "review")?.preferredTier).toBe("review");
+
+    expect(migrated.phaseRules.design).toContain("`plan`");
+    expect(migrated.phaseRules.review).toContain("`review`");
+    expect(migrated.phaseRules.exec).toContain("invoke_subagent");
+  });
+
+  it("resolveTargetAgentAndModel enforces Agent -> Model two-stage cascade with host provider fallback and model validation", () => {
+    const config = resolveEffectiveHarnessConfig(DEFAULT_AGENT_HARNESS_SETTINGS);
+    const hostProviders: HostProviderRuntimeInfo[] = [
+      {
+        provider: "antigravity",
+        enabled: true,
+        status: "ready",
+        defaultModel: "gemini-4-neon",
+        models: [
+          {
+            id: "gemini-4-hydrogen",
+            thinkingOptions: [{ id: "low" }, { id: "medium" }, { id: "high" }],
+          },
+          {
+            id: "gemini-4-neon",
+            isDefault: true,
+            thinkingOptions: [{ id: "medium" }, { id: "high" }],
+          },
+          {
+            id: "gemini-4-argon",
+            thinkingOptions: [{ id: "medium" }, { id: "high" }],
+          },
+          {
+            id: "gemini-4-carbon",
+            thinkingOptions: [{ id: "high" }],
+          },
+        ],
+      },
+      {
+        provider: "codex",
+        enabled: false,
+        status: "disabled",
+        models: [{ id: "pro" }],
+      },
+    ];
+
+    // 1. Empty preferredProvider inherits active enabled host provider
+    const uiSpec = findSpecialist(config, "ui")!;
+    const inherited = resolveTargetAgentAndModel({
+      config,
+      specialist: uiSpec,
+      activeSessionProvider: "antigravity",
+      hostProviders,
+      tier: "standard",
+      phase: "exec",
+    });
+    expect(inherited.provider).toBe("antigravity");
+    expect(inherited.model).toBe("gemini-4-neon");
+    expect(inherited.thinkingOptionId).toBe("high");
+    expect(inherited.fallbackReason).toBeNull();
+
+    // 2. Disabled preferredProvider falls back cleanly to enabled provider & rejects incompatible modelOverride
+    const disabledCodexSpec = {
+      ...uiSpec,
+      preferredProvider: "codex",
+      modelOverride: "codex-only-model",
+    };
+    const fellBack = resolveTargetAgentAndModel({
+      config,
+      specialist: disabledCodexSpec,
+      activeSessionProvider: "antigravity",
+      hostProviders,
+      tier: "plan",
+      phase: "design",
+    });
+    expect(fellBack.provider).toBe("antigravity");
+    expect(fellBack.model).toBe("gemini-4-carbon");
+    expect(fellBack.fallbackReason).toBeTruthy();
+
+    // 3. Deprecated gemini-3 modelOverride or invalid currentModel is rejected cleanly
+    const deprecatedSpec = {
+      ...uiSpec,
+      modelOverride: "gemini-3-flash",
+    };
+    const cleanTarget = resolveTargetAgentAndModel({
+      config,
+      specialist: deprecatedSpec,
+      activeSessionProvider: "antigravity",
+      hostProviders,
+      tier: "review",
+      phase: "review",
+    });
+    expect(cleanTarget.model).toBe("gemini-4-argon");
+    expect(cleanTarget.fallbackReason).toContain("model");
+  });
+
+  it("clears modelLockedByUser on rejected invalid/cross-provider user models and aligns resolveBannerPhase review precedence", () => {
+    const config = resolveEffectiveHarnessConfig(DEFAULT_AGENT_HARNESS_SETTINGS);
+    const uiSpec = findSpecialist(config, "ui")!;
+    const reviewSpec = findSpecialist(config, "review")!;
+    const hostProviders = [
+      {
+        provider: "antigravity",
+        enabled: true,
+        models: [
+          { id: "gemini-4-hydrogen" },
+          { id: "gemini-4-neon" },
+          { id: "gemini-4-carbon" },
+          { id: "gemini-4-argon" },
+        ],
+      },
+    ];
+
+    // Invalid/deprecated currentModel rejected -> modelLockedByUser MUST be false even if userModelLocked=true
+    const rejectedDeprecated = resolveTargetAgentAndModel({
+      config,
+      specialist: uiSpec,
+      activeSessionProvider: "antigravity",
+      hostProviders,
+      tier: "plan",
+      phase: "design",
+      currentModel: "gemini-3-flash",
+      userModelLocked: true,
+    });
+    expect(rejectedDeprecated.model).toBe("gemini-4-carbon");
+    expect(rejectedDeprecated.modelLockedByUser).toBe(false);
+
+    // Cross-provider requestedModel rejected -> modelLockedByUser MUST be false even if userModelLocked=true
+    const rejectedCrossProvider = resolveTargetAgentAndModel({
+      config,
+      specialist: uiSpec,
+      activeSessionProvider: "antigravity",
+      hostProviders,
+      tier: "standard",
+      phase: "exec",
+      requestedModel: "flash",
+      userModelLocked: true,
+    });
+    expect(rejectedCrossProvider.model).toBe("gemini-4-neon");
+    expect(rejectedCrossProvider.modelLockedByUser).toBe(false);
+
+    // resolveBannerPhase: review / *-reviewer role takes precedence over plan tier unless explicit phase is provided
+    const reviewerRoleSpec = {
+      ...reviewSpec,
+      id: "be-reviewer",
+      rolePromptTemplate: undefined,
+    };
+    const reviewBannerOnPlanTier = buildSystemPromptBanner({
+      config,
+      specialist: reviewerRoleSpec,
+      tier: "plan",
+      targetModel: "gemini-4-argon",
+      roleMatchedRule: "test",
+      provider: "antigravity",
+    });
+    expect(reviewBannerOnPlanTier).toContain("[Phase: Review Gate]");
+    expect(reviewBannerOnPlanTier).toContain("phase=review");
+
+    const explicitDesignOverride = buildSystemPromptBanner({
+      config,
+      specialist: reviewerRoleSpec,
+      tier: "plan",
+      phase: "design",
+      targetModel: "gemini-4-carbon",
+      roleMatchedRule: "test",
+      provider: "antigravity",
+    });
+    expect(explicitDesignOverride).toContain("[Phase: Design & Planning]");
+    expect(explicitDesignOverride).toContain("phase=design");
   });
 });
 
@@ -1640,5 +1826,78 @@ describe("Agent Team Visual Editor Utils", () => {
     });
     expect(areManifestsEqual(sameCopy, modifiedBinding)).toBe(false);
     expect(areManifestsEqual(manifest, { ...manifest })).toBe(true);
+  });
+});
+
+describe("honorPreferredProvider and tightened isModelCompatibleWithProvider", () => {
+  it("skips cross-provider specialist.modelOverride when honorPreferredProvider is false without losing provider context", () => {
+    const config = resolveEffectiveHarnessConfig({
+      ...DEFAULT_AGENT_HARNESS_SETTINGS,
+      honorSpecialistPreferredProvider: true,
+    });
+    const uiSpec = findSpecialist(config, "ui")!;
+    const crossProviderSpec = {
+      ...uiSpec,
+      preferredProvider: "antigravity",
+      modelOverride: "my-custom-antigravity-model",
+    };
+
+    const target = resolveTargetAgentAndModel({
+      config,
+      specialist: crossProviderSpec,
+      requestedProvider: "claude",
+      activeSessionProvider: "claude",
+      tier: "standard",
+      phase: "exec",
+      allowProviderFallback: false,
+      honorPreferredProvider: false,
+    });
+
+    expect(target.provider).toBe("claude");
+    expect(target.model).toBe("flash");
+    expect(target.fallbackReason).toContain(
+      "skipped_cross_provider_override:my-custom-antigravity-model",
+    );
+
+    // Same-provider override (including alias like claude-code) is still applied when honorPreferredProvider is false
+    const sameProviderSpec = {
+      ...uiSpec,
+      preferredProvider: "claude-code",
+      modelOverride: "sonnet",
+    };
+    const sameTarget = resolveTargetAgentAndModel({
+      config,
+      specialist: sameProviderSpec,
+      requestedProvider: "claude",
+      activeSessionProvider: "claude",
+      tier: "standard",
+      phase: "exec",
+      allowProviderFallback: false,
+      honorPreferredProvider: false,
+    });
+    expect(sameTarget.provider).toBe("claude");
+    expect(sameTarget.model).toBe("sonnet");
+  });
+
+  it("rejects incompatible cross-provider prefixes in offline isModelCompatibleWithProvider", () => {
+    expect(isModelCompatibleWithProvider("antigravity", "o4-mini")).toBe(false);
+    expect(isModelCompatibleWithProvider("antigravity", "custom/pro")).toBe(false);
+    expect(isModelCompatibleWithProvider("antigravity", "headroom/pro")).toBe(false);
+    expect(isModelCompatibleWithProvider("antigravity", "gemini-4-neon")).toBe(true);
+
+    expect(isModelCompatibleWithProvider("claude", "gpt-5.4")).toBe(false);
+    expect(isModelCompatibleWithProvider("claude", "o1-preview")).toBe(false);
+    expect(isModelCompatibleWithProvider("claude", "o3-mini")).toBe(false);
+    expect(isModelCompatibleWithProvider("claude", "o4-mini")).toBe(false);
+    expect(isModelCompatibleWithProvider("claude", "custom/pro")).toBe(false);
+    expect(isModelCompatibleWithProvider("claude", "sonnet")).toBe(true);
+
+    expect(isModelCompatibleWithProvider("codex", "custom/pro")).toBe(false);
+    expect(isModelCompatibleWithProvider("codex", "gpt-5.4")).toBe(true);
+
+    expect(isModelCompatibleWithProvider("pi", "claude-sonnet-4")).toBe(false);
+    expect(isModelCompatibleWithProvider("pi", "gpt-5.4")).toBe(false);
+    expect(isModelCompatibleWithProvider("pi", "o4-mini")).toBe(false);
+    expect(isModelCompatibleWithProvider("pi", "headroom/pro")).toBe(true);
   });
 });

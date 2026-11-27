@@ -276,15 +276,15 @@ function isGitReadOnly(args: string[]): boolean {
 
   // Additional check for `git config`: only read is allowed, not --set, --add, etc.
   if (subcmd === "config") {
-    const forbiddenFlags = [
+    const forbiddenFlags = new Set([
       "--replace-all",
       "--add",
       "--unset",
       "--unset-all",
       "--rename-section",
       "--remove-section",
-    ];
-    if (args.some((a) => forbiddenFlags.includes(a))) {
+    ]);
+    if (args.some((a) => forbiddenFlags.has(a))) {
       return false;
     }
   }

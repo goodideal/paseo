@@ -1,8 +1,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
 import contribute from "../index.server.js";
+import { AgentIntentRouter, type CliRunner } from "../server/agent-intent-router.js";
 import { applyAgentModeOption, applyAgentThinkingOption } from "../server/agent-controls.js";
 import {
   detectLocalFederatedTargets,
@@ -11,6 +12,8 @@ import {
 } from "../server/agent-team-loader.js";
 import {
   createInitialHarnessMetadata,
+  HARNESS_BYPASSED_META_KEY,
+  HARNESS_LEAF_LABEL_KEY,
   HARNESS_LEAF_META_KEY,
   HARNESS_WORKFLOW_PHASE_LABEL_KEY,
   HARNESS_WORKFLOW_TIER_LABEL_KEY,
@@ -34,6 +37,18 @@ import { getActiveCheckoutLockCount, withCheckoutLock } from "../server/team-edi
 
 const trackedTestDataDirs = new Set<string>();
 
+function overrideSpecialistInList(
+  specialists: typeof DEFAULT_AGENT_HARNESS_SETTINGS.specialists,
+  id: string,
+  patch: Partial<(typeof DEFAULT_AGENT_HARNESS_SETTINGS.specialists)[number]>,
+) {
+  const next: typeof DEFAULT_AGENT_HARNESS_SETTINGS.specialists = [];
+  for (const s of specialists) {
+    next.push(s.id === id ? { ...s, ...patch } : s);
+  }
+  return next;
+}
+
 function createIsolatedTestDataDir(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-harness-test-data-"));
   trackedTestDataDirs.add(dir);
@@ -42,9 +57,16 @@ function createIsolatedTestDataDir(): string {
 
 function createTestServer(
   settingsOverride?: Record<string, unknown>,
-  contributeOptions?: { dataDir?: string; disableAutoDiskSync?: boolean },
+  contributeOptions?: {
+    dataDir?: string;
+    disableAutoDiskSync?: boolean;
+    routerCliRunner?: Mock<CliRunner>;
+  },
 ) {
   const dataDir = contributeOptions?.dataDir ?? createIsolatedTestDataDir();
+  const routerCliRunner: Mock<CliRunner> =
+    contributeOptions?.routerCliRunner ??
+    vi.fn<CliRunner>().mockResolvedValue({ stdout: "{}", stderr: "" });
   const hooks: Record<string, any> = {};
   const mockServer: any = {
     registerSettings: vi.fn().mockReturnValue({
@@ -72,6 +94,7 @@ function createTestServer(
   const rawCleanup = contribute(mockServer, {
     dataDir,
     disableAutoDiskSync: true,
+    routerCliRunner,
     ...contributeOptions,
   });
   const cleanup = () => {
@@ -79,7 +102,7 @@ function createTestServer(
     trackedTestDataDirs.delete(dataDir);
     fs.rmSync(dataDir, { recursive: true, force: true });
   };
-  return { mockServer, hooks, cleanup, dataDir };
+  return { mockServer, hooks, cleanup, dataDir, routerCliRunner };
 }
 
 function createMockContext(options?: { timelineItems?: unknown[]; throwOnSetModel?: boolean }) {
@@ -164,10 +187,17 @@ describe("agent-harness server contribute", () => {
       fs.rmSync(isolatedProfilesDir, { recursive: true, force: true });
     }
   });
-  it("registers hook on agent.create.before and routes plan intent", async () => {
-    const { mockServer, hooks } = createTestServer();
+  it("registers hook on agent.create.before and routes plan intent via Semantic Router", async () => {
+    const { mockServer, hooks, routerCliRunner } = createTestServer();
     expect(mockServer.addHook).toHaveBeenCalledWith("agent.create.before", expect.any(Function));
     expect(mockServer.addHook).toHaveBeenCalledWith("agent.open.before", expect.any(Function));
+
+    routerCliRunner.mockResolvedValueOnce({
+      stdout: JSON.stringify({
+        structured_output: { role: "architect", tier: "plan", phase: "design", confidence: 0.94 },
+      }),
+      stderr: "",
+    });
 
     const request = {
       config: {
@@ -181,6 +211,7 @@ describe("agent-harness server contribute", () => {
     const transformed = await hooks["agent.create.before"]({ request });
     expect(transformed.config.model).toBe("custom/pro");
     expect(transformed.config.thinkingOptionId).toBe("high");
+    expect(transformed.config.systemPrompt).toBeUndefined();
   });
 
   it("does not override model if execution task", async () => {
@@ -199,8 +230,15 @@ describe("agent-harness server contribute", () => {
     expect(transformed.config.model).toBe("custom/flash");
   });
 
-  it("injects capability harness env in agent.open.before based on role label or title", async () => {
-    const { hooks } = createTestServer();
+  it("injects capability harness env and transient appendSystemPrompt banner in agent.open.before based on Semantic Router or labels", async () => {
+    const { hooks, routerCliRunner } = createTestServer();
+
+    routerCliRunner.mockResolvedValueOnce({
+      stdout: JSON.stringify({
+        structured_output: { role: "ui", tier: "standard", phase: "exec", confidence: 0.93 },
+      }),
+      stderr: "",
+    });
 
     const openRequest = {
       agentId: "agt_ui_1",
@@ -223,6 +261,9 @@ describe("agent-harness server contribute", () => {
     expect(transformed.env.PASEO_HARNESS_ROLE).toBe("ui");
     expect(transformed.env.PASEO_HARNESS_PROFILE).toContain("ui-specialist.json");
     expect(transformed.env.LAZY_TOOL_CONFIG).toContain("profiles/ui.yaml");
+    expect(transformed.appendSystemPrompt?.join("\n")).toContain(
+      "[Capability Harness Active Profile]",
+    );
   });
 
   it("routes model by explicit role label in agent.create.before and propagates label to agent.open.before", async () => {
@@ -261,15 +302,32 @@ describe("agent-harness server contribute", () => {
     expect(opened.env.PASEO_HARNESS_PROFILE).toContain("security-review.json");
   });
 
-  it("arbitrates full-stack composite tasks (UI + backend/storage) to orchestrator Thin Dispatcher role and fast tier", async () => {
-    const { hooks } = createTestServer();
+  it("honors explicit orchestrator label with Thin Dispatcher role and fast tier (while never auto-routing orchestrator)", async () => {
+    const { hooks, routerCliRunner } = createTestServer();
 
+    // Auto-routing composite full-stack prompt without label MUST NOT auto-route to orchestrator
+    routerCliRunner.mockResolvedValueOnce({
+      stdout: JSON.stringify({
+        structured_output: { role: "orchestrator", tier: "fast", phase: "exec", confidence: 0.99 },
+      }),
+      stderr: "",
+    });
+    const autoCreated = await hooks["agent.create.before"]({
+      request: {
+        config: { provider: "claude", cwd: "/tmp/no-auto-orch", model: "flash", title: "" },
+        initialPrompt: "开发前后端全栈功能",
+      },
+    });
+    expect(autoCreated.metadata?.[HARNESS_METADATA_KEY]?.role).not.toBe("orchestrator");
+
+    // Explicit role=orchestrator label activates Thin Dispatcher on fast tier
     const createRequest = {
       config: {
         provider: "claude",
         cwd: "/tmp/snake-test",
         model: "flash",
         title: "",
+        labels: { role: "orchestrator" },
       },
       initialPrompt:
         "开发一个贪吃蛇的游戏，有UI前端、有后台，可以保存游戏结果，玩家输入姓名，可以排名。",
@@ -278,7 +336,7 @@ describe("agent-harness server contribute", () => {
     const createTransformed = await hooks["agent.create.before"]({ request: createRequest });
     expect(createTransformed.config.model).toBe("lite");
     expect(createTransformed.config.thinkingOptionId).toBe("low");
-    expect(createTransformed.config.systemPrompt).toContain("Role: orchestrator");
+    expect(createTransformed.config.systemPrompt).toBeUndefined();
 
     const openRequest = {
       agentId: "agt_snake_fullstack",
@@ -297,10 +355,11 @@ describe("agent-harness server contribute", () => {
     expect(openTransformed.env.PASEO_HARNESS_ROLE).toBe("orchestrator");
     expect(openTransformed.env.LAZY_TOOL_CONFIG).toContain("pm.yaml");
     expect(openTransformed.env.PASEO_HARNESS_PROFILE).toContain("orchestrator.json");
+    expect(openTransformed.appendSystemPrompt?.join("\n")).toContain("Role: orchestrator");
   });
 
   it("does not leak role labels to subsequent agent creations in the same cwd", async () => {
-    const { hooks } = createTestServer();
+    const { hooks, routerCliRunner } = createTestServer();
 
     await hooks["agent.create.before"]({
       request: {
@@ -328,6 +387,13 @@ describe("agent-harness server contribute", () => {
         env: {},
         mcpServers: {},
       },
+    });
+
+    routerCliRunner.mockResolvedValueOnce({
+      stdout: JSON.stringify({
+        structured_output: { role: "backend", tier: "standard", phase: "exec", confidence: 0.92 },
+      }),
+      stderr: "",
     });
 
     // Second agent in same cwd without role label
@@ -430,11 +496,10 @@ describe("agent-harness server contribute", () => {
       },
     });
 
-    // role=ui has preferredTier=standard -> gemini-4-argon (thinking: high); prompt banner uses read_file
-    expect(created.config.model).toBe("gemini-4-argon");
+    // role=ui has preferredTier=standard -> gemini-4-neon (thinking: high); banner moves to appendSystemPrompt
+    expect(created.config.model).toBe("gemini-4-neon");
     expect(created.config.thinkingOptionId).toBe("high");
-    expect(created.config.systemPrompt).toContain("read_file");
-    expect(created.config.systemPrompt).not.toContain("invoke the `Skill` tool");
+    expect(created.config.systemPrompt).toBeUndefined();
     expect(created.metadata?.[HARNESS_METADATA_KEY]?.role).toBe("ui");
 
     const opened = await hooks["agent.open.before"]({
@@ -457,6 +522,9 @@ describe("agent-harness server contribute", () => {
     expect(opened.env.PASEO_HARNESS_ROLE).toBe("ui");
     expect(opened.env.LAZY_TOOL_CONFIG).toContain("profiles/ui.yaml");
     expect(opened.tools.some((t: any) => t.name === "harness_handoff")).toBe(false);
+    const openBanner = opened.appendSystemPrompt?.join("\n") ?? "";
+    expect(openBanner).toContain("read_file");
+    expect(openBanner).not.toContain("invoke the `Skill` tool");
 
     // Pre-existing harness_handoff passed in request.tools must also be stripped for antigravity
     const openedWithPreexistingTool = await hooks["agent.open.before"]({
@@ -497,23 +565,47 @@ describe("agent-harness server contribute", () => {
     }
   });
 
-  describe("Step 1: System Prompt decoupled by phase and tier", () => {
-    it("injects Design & Planning contract for tier=deep, phase=design (and role !== orchestrator)", async () => {
-      const { hooks } = createTestServer();
-      const res = await hooks["agent.create.before"]({
+  describe("Step 1: System Prompt decoupled by phase and tier (injected via transient appendSystemPrompt)", () => {
+    it("injects Design & Planning contract into appendSystemPrompt for tier=plan, phase=design (and role !== orchestrator)", async () => {
+      const { hooks, routerCliRunner } = createTestServer();
+      routerCliRunner.mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          structured_output: { role: "ui", tier: "plan", phase: "design", confidence: 0.93 },
+        }),
+        stderr: "",
+      });
+      const created = await hooks["agent.create.before"]({
         request: {
           config: {
             provider: "claude",
-            cwd: "/dummy",
+            cwd: "/dummy-design-banner",
             title: "有没有更好的ui方案？",
           },
         },
       });
+      expect(created.config.systemPrompt).toBeUndefined();
 
-      const prompt = res.config.systemPrompt;
-      expect(prompt).toContain("- Matrix Tier: deep (model: pro, thinking: high)");
+      const opened = await hooks["agent.open.before"]({
+        request: {
+          agentId: "agt_design_banner",
+          workspaceId: "wks_1",
+          provider: "claude",
+          cwd: "/dummy-design-banner",
+          reason: "create",
+          purpose: "interactive",
+          title: "有没有更好的ui方案？",
+          labels: {},
+          metadata: created.metadata,
+          tools: [],
+          env: {},
+          mcpServers: {},
+        },
+      });
+
+      const prompt = opened.appendSystemPrompt?.join("\n") ?? "";
+      expect(prompt).toContain("- Matrix Tier: plan (model: pro, thinking: high)");
       expect(prompt).toContain(
-        "- [Phase: Design & Planning] Rule: You are running in read-only planning phase (phase=design, typically on `deep` tier).",
+        "- [Phase: Design & Planning] Rule: You are running in read-only planning phase (phase=design, typically on `plan` tier).",
       );
       expect(prompt).toContain(
         "Except for spec/contract docs (openspec/**/*.md, design.md, proposal.md, spec.md, tasks.md, GLOSSARY.md), DO NOT directly edit business source files in this plan session!",
@@ -524,19 +616,37 @@ describe("agent-harness server contribute", () => {
       );
     });
 
-    it("injects Execution contract for tier=standard, phase=exec (and role !== orchestrator)", async () => {
+    it("injects Execution contract into appendSystemPrompt for tier=standard, phase=exec (and role !== orchestrator)", async () => {
       const { hooks } = createTestServer();
-      const res = await hooks["agent.create.before"]({
+      const created = await hooks["agent.create.before"]({
         request: {
           config: {
             provider: "claude",
-            cwd: "/dummy",
+            cwd: "/dummy-exec-banner",
             title: "fix: 修复样式重叠问题",
           },
         },
       });
+      expect(created.config.systemPrompt).toBeUndefined();
 
-      const prompt = res.config.systemPrompt;
+      const opened = await hooks["agent.open.before"]({
+        request: {
+          agentId: "agt_exec_banner",
+          workspaceId: "wks_1",
+          provider: "claude",
+          cwd: "/dummy-exec-banner",
+          reason: "create",
+          purpose: "interactive",
+          title: "fix: 修复样式重叠问题",
+          labels: {},
+          metadata: created.metadata,
+          tools: [],
+          env: {},
+          mcpServers: {},
+        },
+      });
+
+      const prompt = opened.appendSystemPrompt?.join("\n") ?? "";
       expect(prompt).toContain("- Matrix Tier: standard (model: flash, thinking: medium)");
       expect(prompt).toContain(
         "- [Phase: Execution] Rule: You are running in read-write execution phase (phase=exec).",
@@ -546,42 +656,79 @@ describe("agent-harness server contribute", () => {
       );
     });
 
-    it("injects Review Gate contract for role=review (tier=deep, phase=review)", async () => {
+    it("injects Review Gate contract into appendSystemPrompt for role=review (tier=review, phase=review)", async () => {
       const { hooks } = createTestServer();
-      const res = await hooks["agent.create.before"]({
+      const created = await hooks["agent.create.before"]({
         request: {
           config: {
             provider: "claude",
-            cwd: "/dummy",
+            cwd: "/dummy-review-banner",
             title: "审查当前提交",
             labels: { role: "review" },
           },
         },
       });
+      expect(created.config.systemPrompt).toBeUndefined();
 
-      const prompt = res.config.systemPrompt;
-      expect(prompt).toContain("- Matrix Tier: deep (model: pro, thinking: high)");
+      const opened = await hooks["agent.open.before"]({
+        request: {
+          agentId: "agt_review_banner",
+          workspaceId: "wks_1",
+          provider: "claude",
+          cwd: "/dummy-review-banner",
+          reason: "create",
+          purpose: "interactive",
+          title: "审查当前提交",
+          labels: { role: "review" },
+          metadata: created.metadata,
+          tools: [],
+          env: {},
+          mcpServers: {},
+        },
+      });
+
+      const prompt = opened.appendSystemPrompt?.join("\n") ?? "";
+      expect(prompt).toContain("- Matrix Tier: review (model: pro, thinking: high)");
       expect(prompt).toContain(
-        "- [Phase: Review Gate] Rule: You are running in read-only review phase (phase=review, typically on `deep` tier).",
+        "- [Phase: Review Gate] Rule: You are running in read-only review phase (phase=review, typically on `review` tier).",
       );
       expect(prompt).toContain(
         "Perform read-only dual-axis audit (Standards + Spec) and agy + ocr delegate gate verification",
       );
     });
 
-    it("retains Paseo Thin Dispatcher Rule when role=orchestrator", async () => {
+    it("retains Paseo Thin Dispatcher Rule in appendSystemPrompt when role=orchestrator", async () => {
       const { hooks } = createTestServer();
-      const res = await hooks["agent.create.before"]({
+      const created = await hooks["agent.create.before"]({
         request: {
           config: {
             provider: "claude",
             cwd: "/tmp/snake",
             title: "开发贪吃蛇游戏，有UI前端和后端持久化与排名",
+            labels: { role: "orchestrator" },
           },
         },
       });
+      expect(created.config.systemPrompt).toBeUndefined();
 
-      const prompt = res.config.systemPrompt;
+      const opened = await hooks["agent.open.before"]({
+        request: {
+          agentId: "agt_orch_banner",
+          workspaceId: "wks_1",
+          provider: "claude",
+          cwd: "/tmp/snake",
+          reason: "create",
+          purpose: "interactive",
+          title: "开发贪吃蛇游戏，有UI前端和后端持久化与排名",
+          labels: { role: "orchestrator" },
+          metadata: created.metadata,
+          tools: [],
+          env: {},
+          mcpServers: {},
+        },
+      });
+
+      const prompt = opened.appendSystemPrompt?.join("\n") ?? "";
       expect(prompt).toContain("Paseo Thin Dispatcher Rule");
       expect(prompt).not.toContain("[Phase: Execution]");
     });
@@ -589,7 +736,13 @@ describe("agent-harness server contribute", () => {
 
   describe("Step 2: agent.create.before metadata initialization", () => {
     it("initializes metadata under agentHarness key and preserves other metadata keys", async () => {
-      const { hooks } = createTestServer();
+      const { hooks, routerCliRunner } = createTestServer();
+      routerCliRunner.mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          structured_output: { role: "architect", tier: "plan", phase: "design", confidence: 0.94 },
+        }),
+        stderr: "",
+      });
       const res = await hooks["agent.create.before"]({
         request: {
           config: {
@@ -607,7 +760,7 @@ describe("agent-harness server contribute", () => {
       const harnessMeta = res.metadata[HARNESS_METADATA_KEY] as HarnessAgentMetadata;
       expect(harnessMeta).toBeDefined();
       expect(harnessMeta.version).toBe(1);
-      expect(harnessMeta.currentTier).toBe("deep");
+      expect(harnessMeta.currentTier).toBe("plan");
       expect(harnessMeta.currentThinking).toBe("high");
       expect(harnessMeta.phase).toBe("design");
       expect(harnessMeta.turnCount).toBe(0);
@@ -656,7 +809,7 @@ describe("agent-harness server contribute", () => {
             provider: "antigravity",
             cwd: "/dummy-single",
             model: "gemini-4-hydrogen",
-            title: "分析系统架构与设计方案",
+            title: "/opsx-propose 分析系统架构与设计方案",
           },
         },
       });
@@ -664,20 +817,26 @@ describe("agent-harness server contribute", () => {
       expect(singleTierRes.config.model).toBe("gemini-4-carbon");
       expect(singleTierRes.config.thinkingOptionId).toBe("high");
       expect(singleTierRes.metadata?.[HARNESS_METADATA_KEY]).toBeDefined();
-      expect(singleTierRes.metadata?.[HARNESS_METADATA_KEY]?.currentTier).toBe("deep");
+      expect(singleTierRes.metadata?.[HARNESS_METADATA_KEY]?.currentTier).toBe("plan");
     });
   });
 
   describe("Step 2: Hook 4 (agent.turn.before)", () => {
-    it("upgrades model and thinking for empty-title agent and synchronizes metadata", async () => {
-      const { hooks } = createTestServer();
+    it("upgrades model and thinking for empty-title agent (tierMatchedRule=default_empty) and synchronizes metadata", async () => {
+      const { hooks, routerCliRunner } = createTestServer();
+      routerCliRunner.mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          structured_output: { role: "architect", tier: "plan", phase: "design", confidence: 0.94 },
+        }),
+        stderr: "",
+      });
       const initialMeta = createInitialHarnessMetadata({
         role: "general",
         tier: "standard",
         model: "flash",
         thinkingOptionId: "medium",
-        roleMatchedRule: "default",
-        tierMatchedRule: "default",
+        roleMatchedRule: "default_general",
+        tierMatchedRule: "default_empty",
       });
 
       const agent = {
@@ -693,7 +852,7 @@ describe("agent-harness server contribute", () => {
       expect(handle.setModel).toHaveBeenCalledWith("pro");
       expect(handle.setMetadata).toHaveBeenCalledWith({
         [HARNESS_METADATA_KEY]: expect.objectContaining({
-          currentTier: "deep",
+          currentTier: "plan",
           currentModel: "pro",
           currentThinking: "high",
           phase: "design",
@@ -1263,7 +1422,13 @@ describe("agent-harness server contribute", () => {
 
   describe("Step 3: Native Plan Mode Gate & ExitPlanMode Lifecycle", () => {
     it("forces nextConfig.modeId = 'plan' and records resumeModeId for human root agent in design phase", async () => {
-      const { hooks } = createTestServer();
+      const { hooks, routerCliRunner } = createTestServer();
+      routerCliRunner.mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          structured_output: { role: "ui", tier: "plan", phase: "design", confidence: 0.94 },
+        }),
+        stderr: "",
+      });
       const res = await hooks["agent.create.before"]({
         request: {
           config: {
@@ -1278,7 +1443,7 @@ describe("agent-harness server contribute", () => {
       expect(res.config.modeId).toBe("plan");
       const meta = res.metadata[HARNESS_METADATA_KEY];
       expect(meta.resumeModeId).toBe("acceptEdits");
-      expect(meta.currentTier).toBe("deep");
+      expect(meta.currentTier).toBe("plan");
       expect(meta.phase).toBe("design");
     });
 
@@ -1663,7 +1828,7 @@ describe("agent-harness server contribute", () => {
       expect(result.metadata.currentTier).toBe("standard");
       expect(handle.timeline.append).toHaveBeenCalledTimes(1);
 
-      // Manual switch to deep or max unlocks plan mode into writable exec phase for non-readonly roles
+      // Manual switch to deep (normalizes to plan) or max unlocks plan mode into writable exec phase for non-readonly roles
       const deepResult = await switchHandler(
         {
           agentId: "agt_rpc_switch",
@@ -1673,7 +1838,7 @@ describe("agent-harness server contribute", () => {
         },
         context,
       );
-      expect(deepResult.currentTier).toBe("deep");
+      expect(deepResult.currentTier).toBe("plan");
       expect(deepResult.phase).toBe("exec");
       expect(deepResult.recommendedModeId).toBe("acceptEdits");
       expect(deepResult.recommendedThinkingOptionId).toBe("high");
@@ -2141,63 +2306,53 @@ describe("agent-harness server contribute", () => {
       expect(true).toBe(true);
     });
 
-    it("applies L2 LLM role classification when endpoint is configured and avoids duplicate fetch on open", async () => {
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            choices: [{ message: { content: '{"role":"architect","tier":"plan"}' } }],
-          }),
-          { status: 200 },
-        ),
-      );
+    it("applies Semantic Router role classification and avoids duplicate CLI invocation on open", async () => {
+      const { hooks, routerCliRunner } = createTestServer({
+        routerEnabled: true,
+      });
+      routerCliRunner.mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          structured_output: { role: "architect", tier: "plan", phase: "design", confidence: 0.94 },
+        }),
+        stderr: "",
+      });
+      await Promise.resolve();
+      await Promise.resolve();
 
-      try {
-        const { hooks } = createTestServer({
-          llmFallbackEnabled: true,
-          llmFallbackEndpoint: "https://llm.example.com/v1/chat/completions",
-          llmFallbackApiKey: "test-key",
-          llmFallbackApplyRole: true,
-        });
-        await Promise.resolve();
-        await Promise.resolve();
-
-        const created = await hooks["agent.create.before"]({
-          request: {
-            config: {
-              provider: "antigravity",
-              cwd: "/tmp/llm-apply-role-cwd",
-              model: "gemini-4-hydrogen",
-              title: "梳理跨租户状态流向",
-            },
-          },
-        });
-
-        expect(created.config.model).toBe("gemini-4-carbon");
-        expect(created.config.thinkingOptionId).toBe("high");
-        expect(created.metadata?.[HARNESS_METADATA_KEY]?.role).toBe("architect");
-        expect(fetchSpy).toHaveBeenCalledTimes(1);
-
-        const opened = await hooks["agent.open.before"]({
-          request: {
-            agentId: "agt_llm_1",
-            workspaceId: "wks_1",
+      const created = await hooks["agent.create.before"]({
+        request: {
+          config: {
             provider: "antigravity",
             cwd: "/tmp/llm-apply-role-cwd",
-            reason: "create",
-            purpose: "interactive",
+            model: "gemini-4-hydrogen",
             title: "梳理跨租户状态流向",
-            labels: {},
-            tools: [],
-            env: {},
-            mcpServers: {},
           },
-        });
+        },
+      });
 
-        expect(opened.env.PASEO_HARNESS_ROLE).toBe("architect");
-        expect(fetchSpy).toHaveBeenCalledTimes(1);
-      } finally {
-        fetchSpy.mockRestore();
-      }
+      expect(created.config.model).toBe("gemini-4-carbon");
+      expect(created.config.thinkingOptionId).toBe("high");
+      expect(created.metadata?.[HARNESS_METADATA_KEY]?.role).toBe("architect");
+      expect(routerCliRunner).toHaveBeenCalledTimes(1);
+
+      const opened = await hooks["agent.open.before"]({
+        request: {
+          agentId: "agt_llm_1",
+          workspaceId: "wks_1",
+          provider: "antigravity",
+          cwd: "/tmp/llm-apply-role-cwd",
+          reason: "create",
+          purpose: "interactive",
+          title: "梳理跨租户状态流向",
+          labels: {},
+          tools: [],
+          env: {},
+          mcpServers: {},
+        },
+      });
+
+      expect(opened.env.PASEO_HARNESS_ROLE).toBe("architect");
+      expect(routerCliRunner).toHaveBeenCalledTimes(1);
     });
 
     it("auto-syncs daemon agentProfiles on subscription update when paseo API has been captured", async () => {
@@ -2226,7 +2381,10 @@ describe("agent-harness server contribute", () => {
         addHook: vi.fn().mockReturnValue(() => {}),
       };
 
-      contribute(mockServer, { dataDir: createIsolatedTestDataDir() });
+      contribute(mockServer, {
+        dataDir: createIsolatedTestDataDir(),
+        routerCliRunner: vi.fn<CliRunner>().mockResolvedValue({ stdout: "{}", stderr: "" }),
+      });
 
       const inspectHandler = registeredRpcHandlers["agent_harness.environment.inspect.request"];
       expect(inspectHandler).toBeDefined();
@@ -2238,7 +2396,11 @@ describe("agent-harness server contribute", () => {
               {
                 provider: "antigravity",
                 enabled: true,
-                models: [{ id: "gemini-4-hydrogen-high" }, { id: "gemini-4-carbon-high" }],
+                models: [
+                  { id: "gemini-4-hydrogen-high" },
+                  { id: "gemini-4-neon" },
+                  { id: "gemini-4-carbon-high" },
+                ],
               },
             ],
           }),
@@ -2254,21 +2416,27 @@ describe("agent-harness server contribute", () => {
         {
           provider: "antigravity",
           enabled: true,
-          models: ["gemini-4-hydrogen-high", "gemini-4-carbon-high"],
+          models: ["gemini-4-hydrogen-high", "gemini-4-neon", "gemini-4-carbon-high"],
+          modelDetails: [
+            { id: "gemini-4-hydrogen-high" },
+            { id: "gemini-4-neon" },
+            { id: "gemini-4-carbon-high" },
+          ],
         },
       ]);
-      expect(patchMock).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => {
+        expect(patchMock).toHaveBeenCalledTimes(1);
+      });
 
-      const { DEFAULT_AGENT_HARNESS_SETTINGS } = await import("../shared/settings.js");
       subscriber?.({
         status: "ready",
         values: {
           ...DEFAULT_AGENT_HARNESS_SETTINGS,
           autoSyncDiskProfiles: false,
           autoSyncDaemonAgentProfiles: true,
-          specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) =>
-            s.id === "ui" ? { ...s, preferredProvider: "antigravity" } : s,
-          ),
+          specialists: overrideSpecialistInList(DEFAULT_AGENT_HARNESS_SETTINGS.specialists, "ui", {
+            preferredProvider: "antigravity",
+          }),
         },
       });
 
@@ -2278,17 +2446,17 @@ describe("agent-harness server contribute", () => {
       const patchedProfiles = patchMock.mock.calls[1][0].agentProfiles;
       const uiProfile = patchedProfiles.find((p: any) => p.id === "harness-ui");
       expect(uiProfile?.provider).toBe("antigravity");
-      expect(uiProfile?.model).toBe("gemini-4-argon");
+      expect(uiProfile?.model).toBe("gemini-4-neon");
       expect(uiProfile?.thinkingOptionId).toBe("high");
     });
 
     it("bypasses resumed untracked gemini-pro-orchestrator via snapshot and rejects harnessSwitchTierRpc", async () => {
       const registeredRpcHandlers: Record<string, any> = {};
-      const { mockServer, hooks, dataDir } = createTestServer();
+      const { mockServer, hooks, dataDir, routerCliRunner } = createTestServer();
       mockServer.handle.mockImplementation((contract: any, handler: any) => {
         registeredRpcHandlers[contract.name] = handler;
       });
-      contribute(mockServer, { dataDir, disableAutoDiskSync: true });
+      contribute(mockServer, { dataDir, disableAutoDiskSync: true, routerCliRunner });
 
       const switchHandler = registeredRpcHandlers["agent_harness.tier.switch.request"];
       const setModelMock = vi.fn();
@@ -2402,7 +2570,10 @@ describe("agent-harness server contribute", () => {
         }),
       };
 
-      contribute(mockServer, { dataDir: createIsolatedTestDataDir() });
+      contribute(mockServer, {
+        dataDir: createIsolatedTestDataDir(),
+        routerCliRunner: vi.fn<CliRunner>().mockResolvedValue({ stdout: "{}", stderr: "" }),
+      });
 
       const mockPaseo = {
         providers: { snapshot: vi.fn().mockResolvedValue({ entries: [] }) },
@@ -2417,10 +2588,11 @@ describe("agent-harness server contribute", () => {
         {},
         { paseo: mockPaseo },
       );
-      expect(patchMock).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => {
+        expect(patchMock).toHaveBeenCalledTimes(1);
+      });
 
       // Same settings emitted again must retry because signature was not committed on error
-      const { DEFAULT_AGENT_HARNESS_SETTINGS } = await import("../shared/settings.js");
       subscriber?.({
         status: "ready",
         values: {
@@ -2460,19 +2632,344 @@ describe("agent-harness server contribute", () => {
       expect(nextLeafRes.metadata?.[HARNESS_METADATA_KEY]).toBeDefined();
     });
 
+    it("records daemonProfilesSync status in plugin.settings debug logs across skipped, partial, synced, and idle states", async () => {
+      const subscriberRef: { fn: ((state: any) => void) | null } = { fn: null };
+      const patchMock = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("transient daemon write error"))
+        .mockResolvedValueOnce({ requestId: "req-ok", config: {} });
+      const registeredRpcHandlers: Record<string, any> = {};
+
+      const mockServer: any = {
+        registerSettings: vi.fn().mockReturnValue({
+          read: vi.fn().mockResolvedValue({
+            status: "ready",
+            values: {
+              ...DEFAULT_AGENT_HARNESS_SETTINGS,
+              enabled: true,
+              debugLogs: true,
+              autoSyncDiskProfiles: false,
+              autoSyncDaemonAgentProfiles: true,
+            },
+          }),
+          subscribe: vi.fn().mockImplementation((cb) => {
+            subscriberRef.fn = cb;
+            return () => {};
+          }),
+        }),
+        handle: vi.fn().mockImplementation((contract: any, handler: any) => {
+          registeredRpcHandlers[contract.name] = handler;
+        }),
+        addHook: vi.fn().mockReturnValue(() => {}),
+      };
+
+      const dataDir = createIsolatedTestDataDir();
+      const rawCleanup = contribute(mockServer, {
+        dataDir,
+        routerCliRunner: vi.fn<CliRunner>().mockResolvedValue({ stdout: "{}", stderr: "" }),
+      });
+
+      try {
+        const statusHandler = registeredRpcHandlers[harnessDebugStatusRpc.name];
+        await vi.waitFor(async () => {
+          const s = await statusHandler({ limit: 20 }, {});
+          const initialEvent = s.entries.find((e: any) => e.event === "plugin.settings");
+          expect(initialEvent?.detail?.daemonProfilesSync).toEqual({
+            status: "skipped",
+            reason: "paseo_unavailable",
+          });
+        });
+
+        subscriberRef.fn?.({
+          status: "ready",
+          values: {
+            ...DEFAULT_AGENT_HARNESS_SETTINGS,
+            enabled: true,
+            debugLogs: true,
+            autoSyncDiskProfiles: false,
+            autoSyncDaemonAgentProfiles: false,
+          },
+        });
+        await vi.waitFor(async () => {
+          const s = await statusHandler({ limit: 20 }, {});
+          expect(s.entries[0]?.event).toBe("plugin.settings");
+          expect(s.entries[0]?.detail?.daemonProfilesSync).toEqual({
+            status: "skipped",
+            reason: "autoSyncDaemonAgentProfiles_disabled",
+          });
+        });
+
+        const mockPaseo = {
+          providers: { snapshot: vi.fn().mockResolvedValue({ entries: [] }) },
+          config: {
+            get: vi.fn().mockResolvedValue({ requestId: "req-g", config: { agentProfiles: [] } }),
+            patch: patchMock,
+          },
+        };
+        await registeredRpcHandlers["agent_harness.environment.inspect.request"](
+          {},
+          { paseo: mockPaseo },
+        );
+        expect(patchMock).toHaveBeenCalledTimes(0);
+
+        // Re-enabling autoSyncDaemonAgentProfiles triggers sync -> first patch fails -> logs status: "partial"
+        subscriberRef.fn?.({
+          status: "ready",
+          values: {
+            ...DEFAULT_AGENT_HARNESS_SETTINGS,
+            enabled: true,
+            debugLogs: true,
+            autoSyncDiskProfiles: false,
+            autoSyncDaemonAgentProfiles: true,
+          },
+        });
+        await vi.waitFor(async () => {
+          expect(patchMock).toHaveBeenCalledTimes(1);
+          const s = await statusHandler({ limit: 20 }, {});
+          const latest = s.entries.find((e: any) => e.event === "plugin.settings");
+          expect(latest?.detail?.daemonProfilesSync).toMatchObject({
+            status: "partial",
+            syncedCount: 0,
+            errorCount: 1,
+          });
+        });
+
+        // Subscribe triggers retry after partial failure -> succeeds with status: "synced"
+        subscriberRef.fn?.({
+          status: "ready",
+          values: {
+            ...DEFAULT_AGENT_HARNESS_SETTINGS,
+            enabled: true,
+            debugLogs: true,
+            autoSyncDiskProfiles: false,
+            autoSyncDaemonAgentProfiles: true,
+          },
+        });
+        await vi.waitFor(async () => {
+          expect(patchMock).toHaveBeenCalledTimes(2);
+          const s = await statusHandler({ limit: 20 }, {});
+          const latest = s.entries.find((e: any) => e.event === "plugin.settings");
+          expect(latest?.detail?.daemonProfilesSync).toMatchObject({
+            status: "synced",
+            errorCount: 0,
+          });
+          expect(latest?.detail?.daemonProfilesSync?.syncedCount).toBeGreaterThan(0);
+        });
+
+        // Re-emitting unchanged settings yields status: "idle" without patching again
+        subscriberRef.fn?.({
+          status: "ready",
+          values: {
+            ...DEFAULT_AGENT_HARNESS_SETTINGS,
+            enabled: true,
+            debugLogs: true,
+            autoSyncDiskProfiles: false,
+            autoSyncDaemonAgentProfiles: true,
+          },
+        });
+        await vi.waitFor(async () => {
+          const s = await statusHandler({ limit: 20 }, {});
+          const latest = s.entries.find((e: any) => e.event === "plugin.settings");
+          expect(latest?.detail?.daemonProfilesSync).toMatchObject({
+            status: "idle",
+            reason: "signature_unchanged",
+          });
+        });
+        expect(patchMock).toHaveBeenCalledTimes(2);
+      } finally {
+        rawCleanup();
+      }
+    });
+
+    it("gates capturePaseoApi before hydration with awaiting_settings_hydration, guards stale daemonSyncSeq races, and clears intentRouter cache on applySettings", async () => {
+      let resolveInitialRead!: (state: any) => void;
+      const subscriberRef: { fn: ((state: any) => void) | null } = { fn: null };
+      let rejectSlowFirstPatch!: (err: Error) => void;
+      const patchMock = vi
+        .fn()
+        // 1st patch succeeds after hydration completes
+        .mockResolvedValueOnce({ requestId: "req-hydrated", config: {} })
+        // 2nd patch (from subscriber A) stays pending while subscriber B supersedes it
+        .mockImplementationOnce(
+          () =>
+            new Promise((_resolve, reject) => {
+              rejectSlowFirstPatch = reject;
+            }),
+        )
+        // 3rd patch (from subscriber B) resolves immediately
+        .mockResolvedValueOnce({ requestId: "req-b", config: {} });
+
+      const registeredRpcHandlers: Record<string, any> = {};
+      const mockServer: any = {
+        registerSettings: vi.fn().mockReturnValue({
+          read: vi.fn(
+            () =>
+              new Promise((resolve) => {
+                resolveInitialRead = resolve;
+              }),
+          ),
+          subscribe: vi.fn().mockImplementation((cb) => {
+            subscriberRef.fn = cb;
+            return () => {};
+          }),
+        }),
+        handle: vi.fn().mockImplementation((contract: any, handler: any) => {
+          registeredRpcHandlers[contract.name] = handler;
+        }),
+        addHook: vi.fn().mockReturnValue(() => {}),
+      };
+
+      const fakeIntentRouter = new AgentIntentRouter({
+        cliRunner: vi.fn<CliRunner>().mockResolvedValue({ stdout: "{}", stderr: "" }),
+      });
+      const clearCacheSpy = vi.spyOn(fakeIntentRouter, "clearCache");
+      const disposeSpy = vi.spyOn(fakeIntentRouter, "dispose");
+
+      const dataDir = createIsolatedTestDataDir();
+      const rawCleanup = contribute(mockServer, {
+        dataDir,
+        intentRouter: fakeIntentRouter,
+      });
+
+      const mockPaseo = {
+        providers: { snapshot: vi.fn().mockResolvedValue({ entries: [] }) },
+        config: {
+          get: vi.fn().mockResolvedValue({ requestId: "req-g", config: { agentProfiles: [] } }),
+          patch: patchMock,
+        },
+      };
+
+      let cleaned = false;
+      try {
+        const statusHandler = registeredRpcHandlers[harnessDebugStatusRpc.name];
+        const toggleHandler = registeredRpcHandlers[harnessDebugToggleRpc.name];
+
+        // Enable debug logging before hydration finishes so pre-hydration events persist cleanly
+        await toggleHandler({ enabled: true }, {});
+
+        // capturePaseoApi before hydration MUST NOT patch daemon yet; must record awaiting_settings_hydration
+        await registeredRpcHandlers["agent_harness.environment.inspect.request"](
+          {},
+          { paseo: mockPaseo },
+        );
+        expect(patchMock).toHaveBeenCalledTimes(0);
+
+        await vi.waitFor(async () => {
+          const s = await statusHandler({ limit: 20 }, {});
+          const awaitingEvent = s.entries.find(
+            (e: any) =>
+              e.event === "plugin.settings" &&
+              e.detail?.daemonProfilesSync?.reason === "awaiting_settings_hydration",
+          );
+          expect(awaitingEvent).toBeDefined();
+        });
+
+        const clearCallsBeforeHydration = clearCacheSpy.mock.calls.length;
+
+        // Now hydrate settings -> applySettings clears intentRouter cache and triggers deferred daemon sync
+        resolveInitialRead({
+          status: "ready",
+          values: {
+            ...DEFAULT_AGENT_HARNESS_SETTINGS,
+            enabled: true,
+            debugLogs: true,
+            autoSyncDiskProfiles: false,
+            autoSyncDaemonAgentProfiles: true,
+          },
+        });
+
+        await vi.waitFor(async () => {
+          expect(patchMock).toHaveBeenCalledTimes(1);
+          expect(clearCacheSpy.mock.calls.length).toBeGreaterThan(clearCallsBeforeHydration);
+          const s = await statusHandler({ limit: 20 }, {});
+          expect(s.entries[0]?.event).toBe("plugin.settings");
+          expect(s.entries[0]?.detail?.daemonProfilesSync?.status).toBe("synced");
+        });
+
+        // Race guard: emit S1 (slow patch), then supersede with S2 (fast patch)
+        const specsS1 = overrideSpecialistInList(DEFAULT_AGENT_HARNESS_SETTINGS.specialists, "ui", {
+          name: "UI Specialist S1",
+        });
+        const specsS2 = overrideSpecialistInList(DEFAULT_AGENT_HARNESS_SETTINGS.specialists, "ui", {
+          name: "UI Specialist S2",
+        });
+
+        subscriberRef.fn?.({
+          status: "ready",
+          values: {
+            ...DEFAULT_AGENT_HARNESS_SETTINGS,
+            enabled: true,
+            debugLogs: true,
+            autoSyncDiskProfiles: false,
+            autoSyncDaemonAgentProfiles: true,
+            specialists: specsS1,
+          },
+        });
+        await vi.waitFor(() => {
+          expect(patchMock).toHaveBeenCalledTimes(2);
+        });
+
+        subscriberRef.fn?.({
+          status: "ready",
+          values: {
+            ...DEFAULT_AGENT_HARNESS_SETTINGS,
+            enabled: true,
+            debugLogs: true,
+            autoSyncDiskProfiles: false,
+            autoSyncDaemonAgentProfiles: true,
+            specialists: specsS2,
+          },
+        });
+        await vi.waitFor(async () => {
+          expect(patchMock).toHaveBeenCalledTimes(3);
+          const s = await statusHandler({ limit: 20 }, {});
+          expect(s.entries[0]?.detail?.daemonProfilesSync?.status).toBe("synced");
+        });
+
+        // Reject stale S1 sync after S2 already committed -> MUST NOT overwrite status with partial or reset signature
+        rejectSlowFirstPatch(new Error("stale S1 patch failure"));
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const afterStale = await statusHandler({ limit: 20 }, {});
+        expect(afterStale.entries[0]?.detail?.daemonProfilesSync?.status).toBe("synced");
+
+        // Re-emitting S2 should hit idle/signature_unchanged cleanly (signature was NOT clobbered by stale S1)
+        subscriberRef.fn?.({
+          status: "ready",
+          values: {
+            ...DEFAULT_AGENT_HARNESS_SETTINGS,
+            enabled: true,
+            debugLogs: true,
+            autoSyncDiskProfiles: false,
+            autoSyncDaemonAgentProfiles: true,
+            specialists: specsS2,
+          },
+        });
+        await vi.waitFor(async () => {
+          const s = await statusHandler({ limit: 20 }, {});
+          expect(s.entries[0]?.detail?.daemonProfilesSync).toMatchObject({
+            status: "idle",
+            reason: "signature_unchanged",
+          });
+        });
+        expect(patchMock).toHaveBeenCalledTimes(3);
+
+        rawCleanup();
+        cleaned = true;
+        expect(disposeSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        if (!cleaned) rawCleanup();
+      }
+    });
+
     it("skips specialist modelOverride in handoff-tool when honorSpecialistPreferredProvider is false", async () => {
-      const { DEFAULT_AGENT_HARNESS_SETTINGS } = await import("../shared/settings.js");
       const { hooks } = createTestServer({
         honorSpecialistPreferredProvider: false,
-        specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) =>
-          s.id === "ui"
-            ? {
-                ...s,
-                preferredProvider: "antigravity",
-                modelOverride: "gemini-4-neon-high",
-              }
-            : s,
-        ),
+        specialists: overrideSpecialistInList(DEFAULT_AGENT_HARNESS_SETTINGS.specialists, "ui", {
+          preferredProvider: "antigravity",
+          modelOverride: "gemini-4-neon-high",
+        }),
       });
 
       const opened = await hooks["agent.open.before"]({
@@ -2598,11 +3095,11 @@ describe("agent-harness server contribute", () => {
         );
 
         const registeredRpcHandlers: Record<string, any> = {};
-        const { mockServer, hooks, dataDir } = createTestServer();
+        const { mockServer, hooks, dataDir, routerCliRunner } = createTestServer();
         mockServer.handle.mockImplementation((contract: any, handler: any) => {
           registeredRpcHandlers[contract.name] = handler;
         });
-        contribute(mockServer, { dataDir, disableAutoDiskSync: true });
+        contribute(mockServer, { dataDir, disableAutoDiskSync: true, routerCliRunner });
 
         const inspectHandler = registeredRpcHandlers["agent_harness.environment.inspect.request"];
         const effectiveHandler = registeredRpcHandlers["agent_harness.config.effective.request"];
@@ -2625,7 +3122,7 @@ describe("agent-harness server contribute", () => {
         expect(effectiveWt.config.specialists).toHaveLength(5);
         expect(effectiveWt.config.agentTeam?.hasLocalAntigravityPlugin).toBe(false);
 
-        // Main repo antigravity root session receives 3-line Federation Bridge and no LAZY_TOOL_CONFIG
+        // Main repo antigravity root session receives 3-line Federation Bridge via appendSystemPrompt and no LAZY_TOOL_CONFIG
         const agCreated = await hooks["agent.create.before"]({
           request: {
             config: {
@@ -2636,8 +3133,7 @@ describe("agent-harness server contribute", () => {
             },
           },
         });
-        expect(agCreated.config.systemPrompt).toContain("[Agent Harness — Federation Bridge]");
-        expect(agCreated.config.systemPrompt).not.toContain("[Capability Harness Active Profile]");
+        expect(agCreated.config.systemPrompt).toBeUndefined();
 
         const agOpened = await hooks["agent.open.before"]({
           request: {
@@ -2654,6 +3150,12 @@ describe("agent-harness server contribute", () => {
             mcpServers: { serena: { command: "serena" } },
           },
         });
+        expect(agOpened.appendSystemPrompt?.join("\n")).toContain(
+          "[Agent Harness — Federation Bridge]",
+        );
+        expect(agOpened.appendSystemPrompt?.join("\n")).not.toContain(
+          "[Capability Harness Active Profile]",
+        );
         expect(agOpened.env.LAZY_TOOL_CONFIG).toBeUndefined();
         expect(agOpened.mcpServers).toEqual({ serena: { command: "serena" } });
         expect(agOpened.tools.some((t: any) => t.name === "harness_handoff")).toBe(false);
@@ -2755,8 +3257,7 @@ describe("agent-harness server contribute", () => {
             },
           },
         });
-        expect(leafCreated.config.systemPrompt).toContain("Be Developer Custom Soul Body");
-        expect(leafCreated.config.systemPrompt).toContain("Leaf Specialist Boundary");
+        expect(leafCreated.config.systemPrompt).toBeUndefined();
         expect(leafCreated.metadata?.agentHarnessLeaf).toBe(true);
 
         const leafOpened = await hooks["agent.open.before"]({
@@ -2774,6 +3275,10 @@ describe("agent-harness server contribute", () => {
             mcpServers: {},
           },
         });
+        expect(leafOpened.appendSystemPrompt?.join("\n")).toContain(
+          "Be Developer Custom Soul Body",
+        );
+        expect(leafOpened.appendSystemPrompt?.join("\n")).toContain("Leaf Specialist Boundary");
         expect(leafOpened.env.PASEO_HARNESS_LEAF).toBe("1");
         expect(leafOpened.tools.some((t: any) => t.name === "harness_handoff")).toBe(false);
 
@@ -2829,8 +3334,29 @@ describe("agent-harness server contribute", () => {
           },
         });
         expect(reviewerCreated.config.modeId).toBe("plan");
-        expect(reviewerCreated.config.systemPrompt).toContain("Strict Read-Only Reviewer Soul");
-        expect(reviewerCreated.config.systemPrompt).toContain("Read-Only Specialist Enforcement");
+        expect(reviewerCreated.config.systemPrompt).toBeUndefined();
+
+        const reviewerOpened = await hooks["agent.open.before"]({
+          request: {
+            agentId: "child_2",
+            provider: "claude",
+            cwd: mainRepo,
+            reason: "create",
+            purpose: "interactive",
+            title: reviewerSpawnReq.title,
+            labels: reviewerSpawnReq.labels,
+            metadata: reviewerCreated.metadata,
+            tools: [],
+            env: {},
+            mcpServers: {},
+          },
+        });
+        expect(reviewerOpened.appendSystemPrompt?.join("\n")).toContain(
+          "Strict Read-Only Reviewer Soul",
+        );
+        expect(reviewerOpened.appendSystemPrompt?.join("\n")).toContain(
+          "Read-Only Specialist Enforcement",
+        );
       } finally {
         fs.rmSync(tmpBase, { recursive: true, force: true });
       }
@@ -2853,7 +3379,19 @@ describe("agent-harness server contribute", () => {
           JSON.stringify({ mcpServers: {} }),
         );
 
-        const { hooks } = createTestServer({ enforceSessionMcpFiltering: true });
+        const { hooks, routerCliRunner } = createTestServer({ enforceSessionMcpFiltering: true });
+        routerCliRunner.mockResolvedValueOnce({
+          stdout: JSON.stringify({
+            structured_output: {
+              role: "be-impl",
+              tier: "standard",
+              phase: "exec",
+              confidence: 0.92,
+              reason: "Backend workspace role",
+            },
+          }),
+          stderr: "",
+        });
         const prompt = "全栈实现一个带 React UI 前端和 Go 后端存储的看板应用";
 
         const created = await hooks["agent.create.before"]({
@@ -2867,7 +3405,7 @@ describe("agent-harness server contribute", () => {
           },
         });
 
-        expect(created.config.systemPrompt).toContain("[Agent Harness — Federation Bridge]");
+        expect(created.config.systemPrompt).toBeUndefined();
         const meta = created.metadata[HARNESS_METADATA_KEY];
         expect(["be-impl", "be-reviewer"]).toContain(meta.role);
         expect(meta.role).not.toBe("orchestrator");
@@ -2884,6 +3422,9 @@ describe("agent-harness server contribute", () => {
             env: { LAZY_TOOL_CONFIG: "/keep/existing.yaml" },
           },
         });
+        expect(opened.appendSystemPrompt?.join("\n")).toContain(
+          "[Agent Harness — Federation Bridge]",
+        );
         expect(opened.env.LAZY_TOOL_CONFIG).toBe("/keep/existing.yaml");
       } finally {
         fs.rmSync(tmpRepo, { recursive: true, force: true });
@@ -3169,7 +3710,7 @@ describe("agent-harness server contribute", () => {
         expect(first?.summary.hasLocalAntigravityPlugin).toBe(false);
         expect(first?.summary.roles).toEqual(["ops-auditor"]);
         expect(first?.specialists[0]?.readonly).toBe(true);
-        expect(first?.specialists[0]?.matchPatterns.length).toBeGreaterThan(0);
+        expect(first?.specialists[0]?.matchPatterns).toEqual([]);
         expect(first?.specialists[0]?.rolePromptTemplate).toBe(
           `Home=${mockHome} OCR=${path.join(mockHome, ".local", "bin", "ocr")} PW=${path.join(mockHome, ".volta", "bin", "playwright-cli")}`,
         );
@@ -3204,13 +3745,13 @@ describe("agent-harness server contribute", () => {
         const second = loadWorkspaceAgentTeam(repoDir, mockHome);
         expect(second).not.toBeNull();
         expect(second?.specialists[0]?.preferredProvider).toBe("claude");
-        expect(second?.specialists[0]?.preferredTier).toBe("deep");
+        expect(second?.specialists[0]?.preferredTier).toBe("plan");
       } finally {
         fs.rmSync(tmpBase, { recursive: true, force: true });
       }
     });
 
-    it("routes unlabelled natural-language prompts via inferred matchPatterns for workspace roles", async () => {
+    it("leaves workspace role matchPatterns empty and routes via explicit role labels or Semantic Router", async () => {
       const tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), "harness-dynamic-matchpatterns-"));
       try {
         fs.mkdirSync(path.join(tmpRepo, ".agents", "plugins", "team-demo"), { recursive: true });
@@ -3223,11 +3764,16 @@ describe("agent-harness server contribute", () => {
           }),
         );
 
-        const { hooks } = createTestServer();
+        const loadedTeam = loadWorkspaceAgentTeam(tmpRepo);
+        expect(loadedTeam).not.toBeNull();
+        expect(loadedTeam?.specialists.every((s) => s.matchPatterns.length === 0)).toBe(true);
+
+        const { hooks, routerCliRunner } = createTestServer();
 
         const reviewCreated = await hooks["agent.create.before"]({
           request: {
             initialPrompt: "请对变更执行双轴审查与质量门禁检查",
+            labels: { role: "be-reviewer" },
             config: {
               provider: "claude",
               cwd: tmpRepo,
@@ -3236,6 +3782,18 @@ describe("agent-harness server contribute", () => {
         });
         expect(reviewCreated.metadata[HARNESS_METADATA_KEY].role).toBe("be-reviewer");
 
+        routerCliRunner.mockResolvedValueOnce({
+          stdout: JSON.stringify({
+            structured_output: {
+              role: "be-developer",
+              tier: "standard",
+              phase: "exec",
+              confidence: 0.94,
+              reason: "Backend RPC endpoint optimization",
+            },
+          }),
+          stderr: "",
+        });
         const backendCreated = await hooks["agent.create.before"]({
           request: {
             initialPrompt: "优化后端数据库与 RPC 服务端接口",
@@ -3311,7 +3869,19 @@ describe("agent-harness server contribute", () => {
         const loadedWt = loadWorkspaceAgentTeam(worktreeDir);
         expect(loadedWt?.summary.localFederatedTargets).toEqual([]);
 
-        const { hooks } = createTestServer({ enforceSessionMcpFiltering: true });
+        const { hooks, routerCliRunner } = createTestServer({ enforceSessionMcpFiltering: true });
+        routerCliRunner.mockResolvedValue({
+          stdout: JSON.stringify({
+            structured_output: {
+              role: "be-developer",
+              tier: "standard",
+              phase: "exec",
+              confidence: 0.94,
+              reason: "Go backend endpoint",
+            },
+          }),
+          stderr: "",
+        });
 
         // Main repo claude root skips LAZY_TOOL_CONFIG & mcpServers filtering, and gets Federation Bridge
         const claudeCreated = await hooks["agent.create.before"]({
@@ -3320,10 +3890,7 @@ describe("agent-harness server contribute", () => {
             config: { provider: "claude", cwd: mainRepo, title: "Main Claude" },
           },
         });
-        expect(claudeCreated.config.systemPrompt).toContain("[Agent Harness — Federation Bridge]");
-        expect(claudeCreated.config.systemPrompt).not.toContain(
-          "[Capability Harness Active Profile]",
-        );
+        expect(claudeCreated.config.systemPrompt).toBeUndefined();
 
         const claudeOpened = await hooks["agent.open.before"]({
           request: {
@@ -3338,6 +3905,12 @@ describe("agent-harness server contribute", () => {
             mcpServers: { user_only: { command: "echo" }, dbx: { command: "dbx" } },
           },
         });
+        expect(claudeOpened.appendSystemPrompt?.join("\n")).toContain(
+          "[Agent Harness — Federation Bridge]",
+        );
+        expect(claudeOpened.appendSystemPrompt?.join("\n")).not.toContain(
+          "[Capability Harness Active Profile]",
+        );
         expect(claudeOpened.env.LAZY_TOOL_CONFIG).toBe("/existing/user.yaml");
         expect(claudeOpened.mcpServers).toEqual({
           user_only: { command: "echo" },
@@ -3351,7 +3924,7 @@ describe("agent-harness server contribute", () => {
             config: { provider: "claude", cwd: worktreeDir, title: "WT Claude" },
           },
         });
-        expect(wtCreated.config.systemPrompt).toContain("[Capability Harness Active Profile]");
+        expect(wtCreated.config.systemPrompt).toBeUndefined();
 
         const wtOpened = await hooks["agent.open.before"]({
           request: {
@@ -3365,6 +3938,9 @@ describe("agent-harness server contribute", () => {
             env: {},
           },
         });
+        expect(wtOpened.appendSystemPrompt?.join("\n")).toContain(
+          "[Capability Harness Active Profile]",
+        );
         expect(wtOpened.env.LAZY_TOOL_CONFIG).toContain("backend.yaml");
       } finally {
         fs.rmSync(tmpBase, { recursive: true, force: true });
@@ -4017,15 +4593,11 @@ describe("agent-harness server contribute", () => {
   });
 
   describe("agy + ocr delegate review mechanism & v4/v5 migration", () => {
-    it("defaults review specialist to antigravity with open-code-review-delegate skill and routes harness_handoff to gemini-4-carbon (deep)", async () => {
+    it("defaults review specialist to inherit host provider with review tier, open-code-review-delegate skill, and routes harness_handoff accordingly", async () => {
       const reviewSpec = DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "review");
-      expect(reviewSpec?.preferredProvider).toBe("antigravity");
-      expect(reviewSpec?.preferredTier).toBe("deep");
-      expect(reviewSpec?.primarySkills).toEqual([
-        "code-review",
-        "open-code-review-delegate",
-        "gitea",
-      ]);
+      expect(reviewSpec?.preferredProvider).toBe("");
+      expect(reviewSpec?.preferredTier).toBe("review");
+      expect(reviewSpec?.primarySkills).toEqual(["code-review", "open-code-review-delegate"]);
       expect(reviewSpec?.qualityGates).toEqual([
         "dual-axis-semantic-review",
         "open-code-review-delegate-gate",
@@ -4042,10 +4614,27 @@ describe("agent-harness server contribute", () => {
           },
         },
       });
-      expect(created.config.model).toBe("gemini-4-carbon");
+      expect(created.config.model).toBe("gemini-4-argon");
       expect(created.config.thinkingOptionId).toBe("high");
-      expect(created.config.systemPrompt).toContain(
-        "Primary Skills: code-review, open-code-review-delegate, gitea",
+      expect(created.config.systemPrompt).toBeUndefined();
+
+      const reviewOpened = await hooks["agent.open.before"]({
+        request: {
+          agentId: "agt_review_ag",
+          provider: "antigravity",
+          cwd: "/workspace/demo",
+          reason: "create",
+          purpose: "interactive",
+          title: "双轴审查与门禁",
+          labels: { role: "review" },
+          metadata: created.metadata,
+          tools: [],
+          env: {},
+          mcpServers: {},
+        },
+      });
+      expect(reviewOpened.appendSystemPrompt?.join("\n")).toContain(
+        "Primary Skills: code-review, open-code-review-delegate",
       );
 
       const opened = await hooks["agent.open.before"]({
@@ -4103,13 +4692,13 @@ describe("agent-harness server contribute", () => {
 
       expect(createChildMock).toHaveBeenCalledTimes(1);
       const spawnReq = createChildMock.mock.calls[0]?.[0];
-      expect(spawnReq.config.provider).toBe("antigravity/gemini-4-carbon");
+      expect(spawnReq.config.provider).toBe("claude/pro");
       expect(spawnReq.config.thinkingOptionId).toBe("high");
-      expect(handoffRes.structuredContent.targetTier).toBe("deep");
-      expect(handoffRes.structuredContent.targetModel).toBe("gemini-4-carbon");
+      expect(handoffRes.structuredContent.targetTier).toBe("review");
+      expect(handoffRes.structuredContent.targetModel).toBe("pro");
     });
 
-    it("migrates v3 settings cleanly to v4 for review specialist and phaseRules", () => {
+    it("migrates v3 settings cleanly to v9 for review specialist and phaseRules", () => {
       const v3Values = {
         ...DEFAULT_AGENT_HARNESS_SETTINGS,
         specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) =>
@@ -4143,23 +4732,37 @@ describe("agent-harness server contribute", () => {
         3,
       ) as typeof DEFAULT_AGENT_HARNESS_SETTINGS;
       const review = migrated.specialists.find((s) => s.id === "review")!;
-      expect(review.preferredProvider).toBe("antigravity");
-      expect(review.primarySkills).toEqual(["code-review", "open-code-review-delegate", "gitea"]);
+      expect(review.preferredProvider).toBe("");
+      expect(review.preferredTier).toBe("review");
+      expect(review.primarySkills).toEqual(["code-review", "open-code-review-delegate"]);
       expect(review.qualityGates).toEqual([
         "dual-axis-semantic-review",
         "open-code-review-delegate-gate",
       ]);
-      expect(review.matchPatterns[0]).toContain("open-code-review-delegate");
+      expect(review.matchPatterns).toEqual([]);
       expect(migrated.phaseRules.review).toContain("agy + ocr delegate gate verification");
+      expect(migrated.phaseRules.review).toContain("`review` tier");
       expect(migrated.phaseRules.exec).toContain("agy + ocr delegate gate verification");
     });
 
     it("syncs metadata phase=design when implicit architect role starts from exec-classified text, and marks manual max model as currentTier=max", async () => {
-      const { hooks } = createTestServer();
+      const { hooks, routerCliRunner } = createTestServer();
+      routerCliRunner.mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          structured_output: {
+            role: "architect",
+            tier: "standard",
+            phase: "exec",
+            confidence: 0.94,
+            reason: "ADR boundary check",
+          },
+        }),
+        stderr: "",
+      });
       const architectCreate = await hooks["agent.create.before"]({
         request: {
           config: { provider: "claude", model: "flash" },
-          initialPrompt: "fix: update adr module boundary check",
+          initialPrompt: "排查 adr module boundary 检查问题",
           metadata: {},
         },
       });
@@ -4169,18 +4772,32 @@ describe("agent-harness server contribute", () => {
       expect(architectMeta.role).toBe("architect");
       expect(architectMeta.phase).toBe("design");
       expect(architectCreate.config.modeId).toBe("plan");
-      expect(architectCreate.config.systemPrompt).toContain("phase=design");
+      expect(architectCreate.config.systemPrompt).toBeUndefined();
+
+      const architectOpened = await hooks["agent.open.before"]({
+        request: {
+          agentId: "agt_arch_design",
+          provider: "claude",
+          reason: "create",
+          purpose: "interactive",
+          metadata: architectCreate.metadata,
+          tools: [],
+          env: {},
+          mcpServers: {},
+        },
+      });
+      expect(architectOpened.appendSystemPrompt?.join("\n")).toContain("phase=design");
 
       const maxCreate = await hooks["agent.create.before"]({
         request: {
-          config: { provider: "antigravity", model: "gemini-4-neon" },
+          config: { provider: "codex", model: "plan" },
           initialPrompt: "fix: deep race condition in lock manager",
           metadata: {},
         },
       });
       const maxMeta = maxCreate.metadata?.[HARNESS_METADATA_KEY] as HarnessAgentMetadata;
       expect(maxMeta.currentTier).toBe("max");
-      expect(maxMeta.currentModel).toBe("gemini-4-neon");
+      expect(maxMeta.currentModel).toBe("plan");
       expect(maxMeta.currentThinking).toBe("xhigh");
       expect(maxMeta.userModelLocked).toBe(true);
       expect(maxCreate.config.thinkingOptionId).toBe("xhigh");
@@ -4385,9 +5002,21 @@ describe("agent-harness server contribute", () => {
     });
 
     it("upgrades thinkingOptionId when router changes model tier, while preserving explicit thinking on same model", async () => {
-      const { hooks } = createTestServer();
+      const { hooks, routerCliRunner } = createTestServer();
+      routerCliRunner.mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          structured_output: {
+            role: "ui",
+            tier: "plan",
+            phase: "design",
+            confidence: 0.93,
+            reason: "System theme design",
+          },
+        }),
+        stderr: "",
+      });
 
-      // Pre-filled fast model + medium thinking routed to deep plan model -> upgrades thinking to high
+      // Pre-filled fast model + medium thinking routed to plan model -> upgrades thinking to high
       const upgraded = await hooks["agent.create.before"]({
         request: {
           config: {
@@ -4409,13 +5038,13 @@ describe("agent-harness server contribute", () => {
           config: {
             provider: "antigravity",
             cwd: "/tmp/thinking-preserve",
-            model: "gemini-4-argon",
+            model: "gemini-4-neon",
             thinkingOptionId: "medium",
             title: "fix: 微调间距",
           },
         },
       });
-      expect(preserved.config.model).toBe("gemini-4-argon");
+      expect(preserved.config.model).toBe("gemini-4-neon");
       expect(preserved.config.thinkingOptionId).toBe("medium");
     });
 
@@ -4426,7 +5055,7 @@ describe("agent-harness server contribute", () => {
         const meta: HarnessAgentMetadata = {
           ...createInitialHarnessMetadata({
             role: "ui",
-            tier: "deep",
+            tier: "plan",
             phase: "design",
             model: "gemini-4-carbon",
             thinkingOptionId: "high",
@@ -4473,11 +5102,11 @@ describe("agent-harness server contribute", () => {
           context,
         );
 
-        expect(setModelMock).toHaveBeenCalledWith("gemini-4-argon");
+        expect(setModelMock).toHaveBeenCalledWith("gemini-4-neon");
         expect(setMetadataMock).toHaveBeenCalledWith({
           [HARNESS_METADATA_KEY]: expect.objectContaining({
             currentTier: "standard",
-            currentModel: "gemini-4-argon",
+            currentModel: "gemini-4-neon",
             phase: "exec",
             downgradeReason: "explicit_exec_intent",
           }),
@@ -4641,10 +5270,22 @@ describe("agent-harness server contribute", () => {
     });
 
     it("supports unattended workflow contract (paseo.workflow.unattended=1) without forcing native plan mode in design phase while locking role and enforcing review read-only shell auto-approval", async () => {
-      const { hooks } = createTestServer({
+      const { hooks, routerCliRunner } = createTestServer({
         specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) =>
           s.id === "review" ? { ...s, readonly: true } : s,
         ),
+      });
+      routerCliRunner.mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          structured_output: {
+            role: "architect",
+            tier: "plan",
+            phase: "design",
+            confidence: 0.94,
+            reason: "Workflow architecture design",
+          },
+        }),
+        stderr: "",
       });
 
       // 1. Unattended workflow design step (e.g. spec/plan without role label) preserves caller modeId (e.g. bypassPermissions) instead of forcing "plan"
@@ -4665,10 +5306,29 @@ describe("agent-harness server contribute", () => {
 
       expect(unattendedDesign.config.model).toBe("pro");
       expect(unattendedDesign.config.modeId).toBe("bypassPermissions");
-      expect(unattendedDesign.config.systemPrompt).toContain(
+      expect(unattendedDesign.config.systemPrompt).toBeUndefined();
+
+      const unattendedOpened = await hooks["agent.open.before"]({
+        request: {
+          agentId: "agt_unattended_design",
+          provider: "claude",
+          cwd: "/workspace/workflow-demo",
+          reason: "create",
+          purpose: "interactive",
+          title: "[Workflow Spec] 设计无人值守架构规格方案",
+          labels: {
+            [HARNESS_WORKFLOW_UNATTENDED_LABEL_KEY]: "1",
+          },
+          metadata: unattendedDesign.metadata,
+          tools: [],
+          env: {},
+          mcpServers: {},
+        },
+      });
+      expect(unattendedOpened.appendSystemPrompt?.join("\n")).toContain(
         "[Phase: Unattended Workflow Design & Spec]",
       );
-      expect(unattendedDesign.config.systemPrompt).not.toContain("ExitPlanMode tool");
+      expect(unattendedOpened.appendSystemPrompt?.join("\n")).not.toContain("ExitPlanMode tool");
       const unattendedMeta = unattendedDesign.metadata?.[
         HARNESS_METADATA_KEY
       ] as HarnessAgentMetadata;
@@ -4805,12 +5465,32 @@ describe("agent-harness server contribute", () => {
         },
       });
       expect(feArchCreated.config.modeId).toBe("bypassPermissions");
-      expect(feArchCreated.config.systemPrompt).toContain(
+      expect(feArchCreated.config.systemPrompt).toBeUndefined();
+      const feArchOpened = await teamHooks["agent.open.before"]({
+        request: {
+          agentId: "agt_fe_arch_wf",
+          provider: "claude",
+          cwd: "/workspace/team-wf",
+          reason: "create",
+          purpose: "interactive",
+          title: "[Workflow Spec] 前端架构设计",
+          labels: {
+            role: "fe-architect",
+            [HARNESS_WORKFLOW_UNATTENDED_LABEL_KEY]: "1",
+            [HARNESS_WORKFLOW_PHASE_LABEL_KEY]: "design",
+          },
+          metadata: feArchCreated.metadata,
+          tools: [],
+          env: {},
+          mcpServers: {},
+        },
+      });
+      expect(feArchOpened.appendSystemPrompt?.join("\n")).toContain(
         "[Phase: Unattended Workflow Design & Spec]",
       );
-      expect((feArchCreated.metadata?.[HARNESS_METADATA_KEY] as HarnessAgentMetadata).phase).toBe(
-        "design",
-      );
+      expect(
+        (feArchCreated.metadata?.[HARNESS_METADATA_KEY] as HarnessAgentMetadata | undefined)?.phase,
+      ).toBe("design");
 
       // 4b. be-reviewer in unattended workflow resolves phase="review" and enforces native plan mode on claude
       const beRevCreated = await teamHooks["agent.create.before"]({
@@ -4829,9 +5509,9 @@ describe("agent-harness server contribute", () => {
         },
       });
       expect(beRevCreated.config.modeId).toBe("plan");
-      expect((beRevCreated.metadata?.[HARNESS_METADATA_KEY] as HarnessAgentMetadata).phase).toBe(
-        "review",
-      );
+      expect(
+        (beRevCreated.metadata?.[HARNESS_METADATA_KEY] as HarnessAgentMetadata | undefined)?.phase,
+      ).toBe("review");
 
       // 4c. paseo.workflow.tier="fast" overrides specialist preferredTier ("standard") for chore tasks in unattended workflow
       const fastChoreCreated = await teamHooks["agent.create.before"]({
@@ -4909,7 +5589,7 @@ describe("agent-harness server contribute", () => {
         },
         ctx1,
       );
-      expect(handle1.setModel).toHaveBeenCalledWith("gemini-4-argon");
+      expect(handle1.setModel).toHaveBeenCalledWith("gemini-4-neon");
       expect(handle1.setMetadata).toHaveBeenCalledWith({
         [HARNESS_METADATA_KEY]: expect.objectContaining({
           phase: "exec",
@@ -4921,7 +5601,7 @@ describe("agent-harness server contribute", () => {
       // 2. writable invoke_subagent (TypeName="impl-worker") triggers step-down
       const meta2 = createInitialHarnessMetadata({
         role: "general",
-        tier: "deep",
+        tier: "plan",
         phase: "design",
         model: "gemini-4-carbon",
         thinkingOptionId: "high",
@@ -4950,7 +5630,7 @@ describe("agent-harness server contribute", () => {
         },
         ctx2,
       );
-      expect(handle2.setModel).toHaveBeenCalledWith("gemini-4-argon");
+      expect(handle2.setModel).toHaveBeenCalledWith("gemini-4-neon");
       expect(handle2.setMetadata).toHaveBeenCalledWith({
         [HARNESS_METADATA_KEY]: expect.objectContaining({
           phase: "exec",
@@ -4962,7 +5642,7 @@ describe("agent-harness server contribute", () => {
       // 3. readonly invoke_subagent (TypeName="research") stays in design phase
       const meta3 = createInitialHarnessMetadata({
         role: "general",
-        tier: "deep",
+        tier: "plan",
         phase: "design",
         model: "gemini-4-carbon",
         thinkingOptionId: "high",
@@ -4995,7 +5675,7 @@ describe("agent-harness server contribute", () => {
       expect(handle3.setMetadata).toHaveBeenCalledWith({
         [HARNESS_METADATA_KEY]: expect.objectContaining({
           phase: "design",
-          currentTier: "deep",
+          currentTier: "plan",
         }),
       });
     });
@@ -5030,7 +5710,14 @@ describe("agent-harness server contribute", () => {
         }),
       };
 
-      const rawCleanup = contribute(mockServer, { dataDir, disableAutoDiskSync: true });
+      const debugRouterCliRunner = vi
+        .fn<CliRunner>()
+        .mockResolvedValue({ stdout: "{}", stderr: "" });
+      const rawCleanup = contribute(mockServer, {
+        dataDir,
+        disableAutoDiskSync: true,
+        routerCliRunner: debugRouterCliRunner,
+      });
 
       const statusHandler = handlers[harnessDebugStatusRpc.name];
       const toggleHandler = handlers[harnessDebugToggleRpc.name];
@@ -5115,6 +5802,18 @@ describe("agent-harness server contribute", () => {
       await toggleHandler({ enabled: true }, {});
 
       // 3. Emit harness.route, agent.create.after, env.inject (with empty mcpServers -> LAZY_TOOL_CONFIG isolation), permission.block, turn.transition, handoff.spawn
+      debugRouterCliRunner.mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          structured_output: {
+            role: "architect",
+            tier: "plan",
+            phase: "design",
+            confidence: 0.94,
+            reason: "System architecture design",
+          },
+        }),
+        stderr: "",
+      });
       const created = await hooks["agent.create.before"]({
         request: {
           config: {
@@ -5291,7 +5990,11 @@ describe("agent-harness server contribute", () => {
         addHook: vi.fn().mockReturnValue(() => {}),
       };
 
-      const cleanup = contribute(mockServer, { dataDir, disableAutoDiskSync: true });
+      const cleanup = contribute(mockServer, {
+        dataDir,
+        disableAutoDiskSync: true,
+        routerCliRunner: vi.fn<CliRunner>().mockResolvedValue({ stdout: "{}", stderr: "" }),
+      });
       try {
         const toggleHandler = handlers[harnessDebugToggleRpc.name];
         const statusHandler = handlers[harnessDebugStatusRpc.name];
@@ -5313,6 +6016,752 @@ describe("agent-harness server contribute", () => {
         expect(status.entries.filter((e: any) => e.event === "debug.toggled")).toHaveLength(1);
       } finally {
         cleanup();
+      }
+    });
+  });
+
+  describe("v9 P0/P1 lifecycle & Semantic Router regressions", () => {
+    it("P0.1: bypasses history replay, internal, observatory, and router child requests without consuming workspace context", async () => {
+      const { hooks, routerCliRunner, cleanup } = createTestServer();
+      try {
+        const cwd = "/tmp/p01-bypass-order";
+
+        await hooks["workspace.create.before"]({
+          request: {
+            initialDir: cwd,
+            agent: {
+              initialPrompt: "设计核心模块架构方案",
+              config: { provider: "claude", model: "flash", cwd },
+            },
+          },
+        });
+
+        const internalCreate = await hooks["agent.create.before"]({
+          request: {
+            labels: { "paseo.internal": "1" },
+            config: { provider: "claude", model: "flash", cwd, title: "Internal sync" },
+          },
+        });
+        expect(internalCreate.metadata?.[HARNESS_BYPASSED_META_KEY]).toBe(true);
+        expect(internalCreate.metadata?.[HARNESS_METADATA_KEY]).toBeUndefined();
+
+        const observatoryCreate = await hooks["agent.create.before"]({
+          request: {
+            labels: { "observatory.kind": "digest" },
+            config: { provider: "claude", model: "flash", cwd, title: "Observatory digest" },
+          },
+        });
+        expect(observatoryCreate.metadata?.[HARNESS_BYPASSED_META_KEY]).toBe(true);
+        expect(observatoryCreate.metadata?.[HARNESS_METADATA_KEY]).toBeUndefined();
+
+        const routerChildCreate = await hooks["agent.create.before"]({
+          request: {
+            env: { PASEO_HARNESS_INTERNAL_ROUTER: "1" },
+            config: { provider: "antigravity", model: "gemini-4-hydrogen", cwd },
+          },
+        });
+        expect(routerChildCreate.metadata?.[HARNESS_BYPASSED_META_KEY]).toBe(true);
+
+        const historyOpen = await hooks["agent.open.before"]({
+          request: {
+            agentId: "agt_p01_history",
+            purpose: "history",
+            reason: "refresh",
+            provider: "claude",
+            cwd,
+            tools: [],
+            env: {},
+            mcpServers: {},
+          },
+        });
+        expect(historyOpen.env.LAZY_TOOL_CONFIG).toBeUndefined();
+        expect(historyOpen.appendSystemPrompt).toBeUndefined();
+        expect(historyOpen.tools).toEqual([]);
+
+        // Real interactive user session created next must STILL consume the pending workspace prompt
+        routerCliRunner.mockResolvedValueOnce({
+          stdout: JSON.stringify({
+            structured_output: {
+              role: "architect",
+              tier: "plan",
+              phase: "design",
+              confidence: 0.95,
+              reason: "Architecture design from workspace prompt",
+            },
+          }),
+          stderr: "",
+        });
+        const realCreated = await hooks["agent.create.before"]({
+          request: {
+            config: { provider: "claude", model: "flash", cwd },
+          },
+        });
+        expect(realCreated.config.model).toBe("pro");
+        expect(realCreated.metadata?.[HARNESS_METADATA_KEY]?.role).toBe("architect");
+        expect(realCreated.metadata?.[HARNESS_METADATA_KEY]?.phase).toBe("design");
+
+        const realOpened = await hooks["agent.open.before"]({
+          request: {
+            agentId: "agt_p01_real",
+            purpose: "interactive",
+            reason: "create",
+            provider: "claude",
+            cwd,
+            metadata: realCreated.metadata,
+            tools: [],
+            env: {},
+            mcpServers: {},
+          },
+        });
+        expect(realOpened.appendSystemPrompt?.join("\n")).toContain("phase=design");
+      } finally {
+        cleanup();
+      }
+    });
+
+    it("P0.2: detects mid-session switch to bypass model on existing tracked agent and skips banner/routing/step-down", async () => {
+      const { hooks, cleanup } = createTestServer();
+      try {
+        const existingMeta = createInitialHarnessMetadata({
+          role: "ui",
+          tier: "plan",
+          phase: "design",
+          model: "gemini-4-carbon",
+          thinkingOptionId: "high",
+          roleMatchedRule: "semantic_router:ui",
+          tierMatchedRule: "semantic_router:ui",
+        });
+
+        const setMetadataMock = vi.fn().mockResolvedValue(undefined);
+        const setModelMock = vi.fn().mockResolvedValue(undefined);
+        const handle = {
+          current: () => ({
+            id: "agt_p02_mid_switch",
+            provider: "antigravity",
+            runtimeInfo: { provider: "antigravity", model: "gemini-pro-orchestrator-neon" },
+            metadata: { [HARNESS_METADATA_KEY]: existingMeta },
+          }),
+          setMetadata: setMetadataMock,
+          setModel: setModelMock,
+          timeline: {
+            refetch: vi.fn().mockResolvedValue({
+              items: [{ type: "user_message", text: "ok, continue" }],
+            }),
+            append: vi.fn().mockResolvedValue({}),
+          },
+        };
+        const paseo = { agents: { ref: vi.fn().mockReturnValue(handle) } };
+
+        const opened = await hooks["agent.open.before"](
+          {
+            request: {
+              agentId: "agt_p02_mid_switch",
+              purpose: "interactive",
+              reason: "resume",
+              provider: "antigravity",
+              cwd: "/tmp/p02-mid",
+              metadata: { [HARNESS_METADATA_KEY]: existingMeta },
+              tools: [],
+              env: {},
+              mcpServers: {},
+            },
+          },
+          { paseo },
+        );
+        expect(opened.appendSystemPrompt).toBeUndefined();
+        expect(opened.env.LAZY_TOOL_CONFIG).toBeUndefined();
+        expect(setMetadataMock).toHaveBeenCalledWith({ [HARNESS_BYPASSED_META_KEY]: true });
+
+        await hooks["agent.turn.before"](
+          {
+            agent: {
+              id: "agt_p02_mid_switch",
+              provider: "antigravity",
+              metadata: { [HARNESS_METADATA_KEY]: existingMeta },
+            },
+          },
+          { paseo },
+        );
+        await hooks["agent.turn.after"](
+          {
+            agent: {
+              id: "agt_p02_mid_switch",
+              provider: "antigravity",
+              metadata: { [HARNESS_METADATA_KEY]: existingMeta },
+            },
+            turnId: "turn_p02_1",
+            outcome: { kind: "completed" },
+          },
+          { paseo },
+        );
+        expect(setModelMock).not.toHaveBeenCalled();
+      } finally {
+        cleanup();
+      }
+    });
+
+    it("P1.1: restricts first_turn_route to default_empty and never overwrites default_fallback or orchestrator", async () => {
+      const { hooks, routerCliRunner, cleanup } = createTestServer();
+      try {
+        // Case A: Empty title starts with tierMatchedRule=default_empty -> Turn 0 title arrival upgrades via router
+        const emptyCreated = await hooks["agent.create.before"]({
+          request: {
+            config: { provider: "claude", model: "flash", cwd: "/tmp/p11-empty" },
+          },
+        });
+        expect(emptyCreated.metadata?.[HARNESS_METADATA_KEY]?.tierMatchedRule).toBe(
+          "default_empty",
+        );
+
+        routerCliRunner.mockResolvedValueOnce({
+          stdout: JSON.stringify({
+            structured_output: {
+              role: "ui",
+              tier: "plan",
+              phase: "design",
+              confidence: 0.94,
+              reason: "UI table design",
+            },
+          }),
+          stderr: "",
+        });
+        const emptyCtx = createMockContext();
+        await hooks["agent.turn.before"](
+          {
+            agent: {
+              id: "agt_p11_empty",
+              provider: "claude",
+              cwd: "/tmp/p11-empty",
+              title: "设计分页表格组件交互",
+              metadata: emptyCreated.metadata,
+            },
+          },
+          emptyCtx.context,
+        );
+        expect(emptyCtx.handle.setModel).toHaveBeenCalledWith("pro");
+
+        // Case B: Non-empty prompt with low router confidence gets default_fallback -> never overwritten on Turn 0
+        routerCliRunner.mockResolvedValueOnce({
+          stdout: JSON.stringify({
+            structured_output: {
+              role: "general",
+              tier: "standard",
+              phase: "exec",
+              confidence: 0.4,
+              reason: "Ambiguous",
+            },
+          }),
+          stderr: "",
+        });
+        const nonEmptyCreated = await hooks["agent.create.before"]({
+          request: {
+            config: {
+              provider: "claude",
+              model: "flash",
+              cwd: "/tmp/p11-nonempty",
+              title: "继续检查任务",
+            },
+          },
+        });
+        expect(nonEmptyCreated.metadata?.[HARNESS_METADATA_KEY]?.tierMatchedRule).toBe(
+          "default_fallback",
+        );
+
+        const nonEmptyCtx = createMockContext();
+        await hooks["agent.turn.before"](
+          {
+            agent: {
+              id: "agt_p11_nonempty",
+              provider: "claude",
+              cwd: "/tmp/p11-nonempty",
+              title: "设计系统架构方案",
+              metadata: nonEmptyCreated.metadata,
+            },
+          },
+          nonEmptyCtx.context,
+        );
+        expect(nonEmptyCtx.handle.setModel).not.toHaveBeenCalled();
+
+        // Case C: Orchestrator role is never overwritten by first_turn_route
+        const orchMeta = createInitialHarnessMetadata({
+          role: "orchestrator",
+          tier: "fast",
+          phase: "exec",
+          model: "lite",
+          roleMatchedRule: "label:role=orchestrator",
+          tierMatchedRule: "default_empty",
+        });
+        const orchCtx = createMockContext();
+        await hooks["agent.turn.before"](
+          {
+            agent: {
+              id: "agt_p11_orch",
+              provider: "claude",
+              cwd: "/tmp/p11-orch",
+              title: "设计整体方案",
+              metadata: { [HARNESS_METADATA_KEY]: orchMeta },
+            },
+          },
+          orchCtx.context,
+        );
+        expect(orchCtx.handle.setModel).not.toHaveBeenCalled();
+      } finally {
+        cleanup();
+      }
+    });
+
+    it("P1.2: strips legacy banner from persisted systemPrompt, suppresses handoff hints on leaf appendSystemPrompt, and deduplicates env.inject resume logs", async () => {
+      const { mockServer, hooks, cleanup } = createTestServer({ debugLogs: true });
+      try {
+        const statusCall = mockServer.handle.mock.calls.find(
+          ([contract]: any[]) => contract.name === harnessDebugStatusRpc.name,
+        );
+        const statusHandler = statusCall?.[1];
+        expect(statusHandler).toBeDefined();
+
+        // Wait for initial settings.read() so debugLogs=true is active
+        await vi.waitFor(async () => {
+          const st = await statusHandler({ limit: 10 }, {});
+          expect(st.enabled).toBe(true);
+        });
+
+        const legacyPersistedPrompt = [
+          "User custom instruction",
+          "[Capability Harness Active Profile]",
+          "Role: ui | Phase: exec | Tier: standard -> flash",
+          "",
+          "Keep this trailing instruction",
+        ].join("\n");
+
+        const created = await hooks["agent.create.before"]({
+          request: {
+            config: {
+              provider: "claude",
+              cwd: "/tmp/p12-banner",
+              model: "flash",
+              title: "fix: button padding",
+              systemPrompt: legacyPersistedPrompt,
+            },
+          },
+        });
+        expect(created.config.systemPrompt).toContain("User custom instruction");
+        expect(created.config.systemPrompt).toContain("Keep this trailing instruction");
+        expect(created.config.systemPrompt).not.toContain("[Capability Harness Active Profile]");
+
+        // Root interactive open injects transient appendSystemPrompt WITH harness_handoff hint
+        const rootOpened = await hooks["agent.open.before"]({
+          request: {
+            agentId: "agt_p12_root",
+            purpose: "interactive",
+            reason: "create",
+            provider: "claude",
+            cwd: "/tmp/p12-banner",
+            title: "fix: button padding",
+            metadata: created.metadata,
+            tools: [],
+            env: {},
+            mcpServers: {},
+          },
+        });
+        expect(rootOpened.appendSystemPrompt?.join("\n")).toContain(
+          "[Capability Harness Active Profile]",
+        );
+        expect(rootOpened.appendSystemPrompt?.join("\n")).toContain("harness_handoff");
+
+        // Two identical resume opens must NOT emit duplicate env.inject logs
+        for (let i = 0; i < 2; i++) {
+          await hooks["agent.open.before"]({
+            request: {
+              agentId: "agt_p12_root",
+              purpose: "interactive",
+              reason: "resume",
+              provider: "claude",
+              cwd: "/tmp/p12-banner",
+              title: "fix: button padding",
+              metadata: created.metadata,
+              tools: [],
+              env: {},
+              mcpServers: {},
+            },
+          });
+        }
+
+        // Leaf open suppresses harness_handoff hint inside appendSystemPrompt
+        const leafOpened = await hooks["agent.open.before"]({
+          request: {
+            agentId: "agt_p12_leaf",
+            purpose: "interactive",
+            reason: "create",
+            provider: "claude",
+            cwd: "/tmp/p12-banner",
+            title: "fix: leaf task",
+            labels: { [HARNESS_LEAF_LABEL_KEY]: "1", role: "backend" },
+            tools: [],
+            env: {},
+            mcpServers: {},
+          },
+        });
+        const leafBanner = leafOpened.appendSystemPrompt?.join("\n") ?? "";
+        expect(leafBanner).toContain("[Capability Harness Active Profile]");
+        expect(leafBanner).not.toContain("harness_handoff");
+
+        const debugStatus = await statusHandler({ limit: 50 }, {});
+        const rootInjectEvents = debugStatus.entries.filter(
+          (entry: any) => entry.event === "env.inject" && entry.agentId === "agt_p12_root",
+        );
+        expect(rootInjectEvents).toHaveLength(1);
+      } finally {
+        cleanup();
+      }
+    });
+
+    it("keeps root natural-language session on antigravity even when matched specialist prefers codex, including open fallback", async () => {
+      const tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), "harness-cross-provider-root-"));
+      const { hooks, routerCliRunner, cleanup } = createTestServer();
+      try {
+        fs.mkdirSync(path.join(tmpRepo, ".agents", "plugins", "team-codex"), {
+          recursive: true,
+        });
+        fs.writeFileSync(
+          path.join(tmpRepo, ".agents", "agent-team.json"),
+          JSON.stringify({
+            schema_version: "1.0.0",
+            project_slug: "team-codex",
+            preset: "go-api",
+            targets: ["antigravity", "codex"],
+            roles: ["be-developer"],
+            bindings: {
+              "be-developer": { provider: "codex", tier: "standard" },
+            },
+          }),
+          "utf8",
+        );
+
+        const paseo = {
+          providers: {
+            snapshot: vi.fn().mockResolvedValue({
+              entries: [
+                {
+                  provider: "antigravity",
+                  enabled: true,
+                  models: [
+                    { id: "gemini-4-hydrogen" },
+                    { id: "gemini-4-neon" },
+                    { id: "gemini-4-carbon" },
+                  ],
+                },
+                {
+                  provider: "codex",
+                  enabled: true,
+                  models: [{ id: "lite" }, { id: "flash" }, { id: "pro" }],
+                },
+              ],
+            }),
+          },
+        };
+
+        routerCliRunner.mockResolvedValueOnce({
+          stdout: JSON.stringify({
+            structured_output: {
+              role: "be-developer",
+              tier: "standard",
+              phase: "exec",
+              confidence: 0.94,
+              reason: "Backend task in workspace",
+            },
+          }),
+          stderr: "",
+        });
+
+        const created = await hooks["agent.create.before"](
+          {
+            request: {
+              initialPrompt: "重构消息队列消费幂等锁逻辑",
+              config: {
+                provider: "antigravity",
+                cwd: tmpRepo,
+                model: "gemini-4-neon",
+                title: "重构消息队列消费幂等锁逻辑",
+              },
+            },
+          },
+          { paseo },
+        );
+
+        expect(created.config.provider).toBe("antigravity");
+        expect(created.config.model).toBe("gemini-4-neon");
+        expect(created.config.model).not.toBe("flash");
+        expect(created.metadata?.[HARNESS_METADATA_KEY]?.role).toBe("be-developer");
+
+        // agent.open.before with immutable request.provider also strips preferredProvider when resolving banner model
+        const opened = await hooks["agent.open.before"](
+          {
+            request: {
+              agentId: "agt_cross_root_open",
+              purpose: "interactive",
+              reason: "create",
+              provider: "antigravity",
+              cwd: tmpRepo,
+              title: "重构消息队列消费幂等锁逻辑",
+              metadata: {
+                [HARNESS_METADATA_KEY]: {
+                  ...created.metadata?.[HARNESS_METADATA_KEY],
+                  currentModel: null,
+                },
+              },
+              tools: [],
+              env: {},
+              mcpServers: {},
+            },
+          },
+          { paseo },
+        );
+        const banner = opened.appendSystemPrompt?.join("\n") ?? "";
+        expect(banner).toContain("gemini-4-neon");
+        expect(banner).not.toContain("-> flash");
+      } finally {
+        cleanup();
+        fs.rmSync(tmpRepo, { recursive: true, force: true });
+      }
+    });
+
+    it("switches explicit --label role=backend to codex only when codex is enabled in hostProviders, else falls back to antigravity", async () => {
+      // Case A: codex is enabled in hostProviders -> switches provider to codex and normalizes incompatible antigravity modeId
+      const serverEnabled = createTestServer({
+        honorSpecialistPreferredProvider: true,
+        specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) =>
+          s.id === "backend" ? { ...s, preferredProvider: "codex" } : s,
+        ),
+      });
+      try {
+        await Promise.resolve();
+        await Promise.resolve();
+        const paseoCodexEnabled = {
+          providers: {
+            snapshot: vi.fn().mockResolvedValue({
+              entries: [
+                {
+                  provider: "antigravity",
+                  enabled: true,
+                  models: [{ id: "gemini-4-hydrogen" }, { id: "gemini-4-neon" }],
+                },
+                {
+                  provider: "codex",
+                  enabled: true,
+                  models: [{ id: "lite" }, { id: "flash" }, { id: "pro" }],
+                },
+              ],
+            }),
+          },
+        };
+
+        const switched = await serverEnabled.hooks["agent.create.before"](
+          {
+            request: {
+              labels: { role: "backend" },
+              config: {
+                provider: "antigravity",
+                cwd: "/tmp/cross-spawn-enabled",
+                model: "gemini-4-neon",
+                modeId: "full-access",
+                title: "Implement gRPC streaming endpoint",
+              },
+            },
+          },
+          { paseo: paseoCodexEnabled },
+        );
+
+        expect(switched.config.provider).toBe("codex");
+        expect(switched.config.model).toBe("flash");
+        expect(switched.config.modeId).not.toBe("full-access");
+      } finally {
+        serverEnabled.cleanup();
+      }
+
+      // Case B: codex is disabled in hostProviders -> stays on antigravity + gemini-4-neon
+      const serverDisabled = createTestServer({
+        honorSpecialistPreferredProvider: true,
+        specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) =>
+          s.id === "backend" ? { ...s, preferredProvider: "codex" } : s,
+        ),
+      });
+      try {
+        await Promise.resolve();
+        await Promise.resolve();
+        const paseoCodexDisabled = {
+          providers: {
+            snapshot: vi.fn().mockResolvedValue({
+              entries: [
+                {
+                  provider: "antigravity",
+                  enabled: true,
+                  models: [{ id: "gemini-4-hydrogen" }, { id: "gemini-4-neon" }],
+                },
+                {
+                  provider: "codex",
+                  enabled: false,
+                  models: [{ id: "lite" }, { id: "flash" }, { id: "pro" }],
+                },
+              ],
+            }),
+          },
+        };
+
+        const fallbackRes = await serverDisabled.hooks["agent.create.before"](
+          {
+            request: {
+              labels: { role: "backend" },
+              config: {
+                provider: "antigravity",
+                cwd: "/tmp/cross-spawn-disabled",
+                model: "gemini-4-neon",
+                modeId: "full-access",
+                title: "Implement gRPC streaming endpoint",
+              },
+            },
+          },
+          { paseo: paseoCodexDisabled },
+        );
+
+        expect(fallbackRes.config.provider).toBe("antigravity");
+        expect(fallbackRes.config.model).toBe("gemini-4-neon");
+        expect(fallbackRes.config.modeId).toBe("full-access");
+      } finally {
+        serverDisabled.cleanup();
+      }
+    });
+
+    it("first_turn_route on antigravity ignores codex preferredProvider and resolves antigravity model", async () => {
+      const { hooks, routerCliRunner, cleanup } = createTestServer({
+        specialists: overrideSpecialistInList(
+          DEFAULT_AGENT_HARNESS_SETTINGS.specialists,
+          "backend",
+          { preferredProvider: "codex" },
+        ),
+      });
+      try {
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const created = await hooks["agent.create.before"]({
+          request: {
+            config: {
+              provider: "antigravity",
+              model: "gemini-4-neon",
+              cwd: "/tmp/first-turn-cross-prov",
+            },
+          },
+        });
+        expect(created.metadata?.[HARNESS_METADATA_KEY]?.tierMatchedRule).toBe("default_empty");
+
+        routerCliRunner.mockResolvedValueOnce({
+          stdout: JSON.stringify({
+            structured_output: {
+              role: "backend",
+              tier: "plan",
+              phase: "design",
+              confidence: 0.94,
+              reason: "Backend distributed cache design",
+            },
+          }),
+          stderr: "",
+        });
+
+        const turnCtx = createMockContext();
+        await hooks["agent.turn.before"](
+          {
+            agent: {
+              id: "agt_first_turn_ag_cross",
+              provider: "antigravity",
+              cwd: "/tmp/first-turn-cross-prov",
+              title: "设计分布式事务补偿方案",
+              metadata: created.metadata,
+            },
+          },
+          turnCtx.context,
+        );
+
+        expect(turnCtx.handle.setModel).toHaveBeenCalledWith("gemini-4-carbon");
+        expect(turnCtx.handle.setModel).not.toHaveBeenCalledWith("pro");
+        expect(turnCtx.handle.setModel).not.toHaveBeenCalledWith("flash");
+      } finally {
+        cleanup();
+      }
+    });
+
+    it("passes workspace cwd to harness_handoff tool description and uses live hostProviders fallback in harnessSwitchTierRpc", async () => {
+      const tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), "harness-tool-cwd-"));
+      const { mockServer, hooks, cleanup } = createTestServer();
+      try {
+        fs.mkdirSync(path.join(tmpRepo, ".agents", "plugins", "team-cwd"), { recursive: true });
+        fs.writeFileSync(
+          path.join(tmpRepo, ".agents", "agent-team.json"),
+          JSON.stringify({
+            schema_version: 2,
+            preset: "go-api",
+            roles: ["be-developer", "be-reviewer"],
+          }),
+          "utf8",
+        );
+
+        const opened = await hooks["agent.open.before"]({
+          request: {
+            agentId: "agt_tool_cwd",
+            purpose: "interactive",
+            reason: "create",
+            provider: "claude",
+            cwd: tmpRepo,
+            title: "Build backend",
+            tools: [],
+            env: {},
+            mcpServers: {},
+          },
+        });
+        const handoffTool = opened.tools.find((t: any) => t.name === "harness_handoff");
+        expect(handoffTool?.description).toContain("be-developer");
+        expect(handoffTool?.description).toContain("be-reviewer");
+
+        const switchCall = mockServer.handle.mock.calls.find(
+          ([contract]: any[]) => contract.name === "agent_harness.tier.switch.request",
+        );
+        const switchHandler = switchCall?.[1];
+        expect(switchHandler).toBeDefined();
+
+        const setModelMock = vi.fn().mockResolvedValue(undefined);
+        const setMetadataMock = vi.fn().mockResolvedValue(undefined);
+        const handle = {
+          current: () => ({
+            id: "agt_switch_fallback",
+            model: "gemini-4-neon",
+            metadata: {},
+          }),
+          setModel: setModelMock,
+          setMetadata: setMetadataMock,
+        };
+        const switchRes = await switchHandler(
+          { agentId: "agt_switch_fallback", targetTier: "plan" },
+          {
+            paseo: {
+              providers: {
+                snapshot: vi.fn().mockResolvedValue({
+                  entries: [
+                    {
+                      provider: "antigravity",
+                      enabled: true,
+                      models: [{ id: "gemini-4-neon" }, { id: "gemini-4-carbon" }],
+                    },
+                  ],
+                }),
+              },
+              agents: { ref: vi.fn().mockReturnValue(handle) },
+            },
+          },
+        );
+        expect(switchRes.currentModel).toBe("gemini-4-carbon");
+        expect(setModelMock).toHaveBeenCalledWith("gemini-4-carbon");
+      } finally {
+        cleanup();
+        fs.rmSync(tmpRepo, { recursive: true, force: true });
       }
     });
   });

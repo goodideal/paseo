@@ -106,7 +106,9 @@ export const TEAM_TRACKER_OPTIONS: ReadonlyArray<{ label: string; value: AgentTe
 export const TEAM_TIER_OPTIONS: ReadonlyArray<{ label: string; value: string }> = [
   { label: "Fast (Low-cost / Scouting)", value: "fast" },
   { label: "Standard (Daily Coding)", value: "standard" },
-  { label: "Deep (Architecture / Review)", value: "deep" },
+  { label: "Plan (Architecture / Design)", value: "plan" },
+  { label: "Review (Audit / Gate)", value: "review" },
+  { label: "Deep (Legacy -> Plan)", value: "deep" },
   { label: "Max (Manual Peak)", value: "max" },
 ];
 

@@ -323,6 +323,9 @@ describe("UsageLedger (node:sqlite) & full plugin integration", () => {
       registerProvider: () => {},
       registerUsageSource: () => {},
       registerWorktreeManager: () => () => {},
+      notifications: {
+        send: async () => ({ status: "sent", notificationId: "n_test" }),
+      },
     };
 
     const wsMetadata: Record<string, unknown> = {};

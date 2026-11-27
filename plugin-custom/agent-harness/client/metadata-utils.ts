@@ -3,7 +3,6 @@ import {
   type DomainRole,
   type HandoffTargetRole,
   type HarnessAgentMetadata,
-  type MatrixTier,
 } from "../shared/types.js";
 import { normalizeTierAlias } from "../shared/config-resolver.js";
 import { HarnessAgentMetadataSchema, type HarnessTransitionPayload } from "../shared/contracts.js";
@@ -86,10 +85,10 @@ export function formatHarnessPillLabel(meta: HarnessAgentMetadata | null): strin
 
 /**
  * Resolves the Lucide icon for the Composer Pill:
- * - review phase or legacy "review" tier -> "ShieldCheck"
+ * - review phase or "review" tier -> "ShieldCheck"
  * - "fast" (or legacy "flash") -> "Zap"
  * - "standard" -> "Cpu"
- * - "deep" (or legacy "plan") -> "Compass"
+ * - "plan" (or legacy "deep") -> "Compass"
  * - "max" -> "Flame"
  */
 export function resolveHarnessPillIcon(meta: HarnessAgentMetadata | null): string {
@@ -105,14 +104,17 @@ export function resolveHarnessPillIcon(meta: HarnessAgentMetadata | null): strin
   if (meta.currentTier === "flash") {
     return "Zap";
   }
-  const canonical = normalizeTierAlias(meta.currentTier);
+  const canonical = normalizeTierAlias(meta.currentTier, meta.phase);
   switch (canonical) {
     case "fast":
       return "Zap";
     case "standard":
       return "Cpu";
+    case "plan":
     case "deep":
       return "Compass";
+    case "review":
+      return "ShieldCheck";
     case "max":
       return "Flame";
     default:

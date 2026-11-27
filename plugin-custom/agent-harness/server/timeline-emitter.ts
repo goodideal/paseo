@@ -85,7 +85,7 @@ export async function emitHarnessTimelineTransition(
 
   try {
     await handle.timeline.append(item);
-  } catch (error) {
+  } catch {
     // Gracefully ignore timeline append failures (e.g. host doesn't support or agent closed)
   }
 }

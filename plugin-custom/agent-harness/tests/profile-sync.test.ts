@@ -43,13 +43,7 @@ describe("Agent Harness Profile Sync & Repo Override", () => {
 
     const content = JSON.parse(fs.readFileSync(uiFile, "utf8"));
     expect(content.name).toBe("ui");
-    expect(content.primary_skills).toEqual([
-      "ui-ux-pro-max",
-      "unslop",
-      "visual-verdict",
-      "diagnosing-bugs",
-      "pr",
-    ]);
+    expect(content.primary_skills).toEqual(["ui-ux-pro-max", "unslop"]);
     expect(content.docs_focus).toContain("docs/design.md");
   });
 
@@ -221,8 +215,14 @@ describe("Agent Harness Profile Sync & Repo Override", () => {
       preferredProvider: "antigravity",
       preferredTier: "standard",
     };
-    const pmSpec = DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "pm")!;
-    const scoutSpec = DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "scout")!;
+    const pmSpec = {
+      ...DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "pm")!,
+      preferredProvider: "claude",
+    };
+    const scoutSpec = {
+      ...DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "scout")!,
+      preferredProvider: "pi",
+    };
     const qaSpec = DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "qa")!;
 
     const { syncedCount, errors } = await syncDaemonAgentProfiles(
@@ -243,7 +243,7 @@ describe("Agent Harness Profile Sync & Repo Override", () => {
     const mergedUi = profiles.filter((p) => p.id === "profile_ui_specialist");
     expect(mergedUi).toHaveLength(1);
     expect(mergedUi[0]?.provider).toBe("antigravity");
-    expect(mergedUi[0]?.model).toBe("gemini-4-argon");
+    expect(mergedUi[0]?.model).toBe("gemini-4-neon");
     expect(mergedUi[0]?.modeId).toBeUndefined();
     expect(mergedUi[0]?.thinkingOptionId).toBe("high");
     expect(profiles.some((p) => p.id === "harness-ui")).toBe(false);
@@ -253,15 +253,76 @@ describe("Agent Harness Profile Sync & Repo Override", () => {
     expect(syncedPm?.modeId).toBeUndefined();
     expect(syncedPm?.thinkingOptionId).toBe("high");
 
-    // Pi scout must carry headroom/ prefix on fast tier (headroom/lite + low thinking)
+    // Pi scout carries headroom/ prefix on fast tier (headroom/lite + low thinking)
     const scout = profiles.find((p) => p.id === "harness-scout");
     expect(scout?.provider).toBe("pi");
     expect(scout?.model).toBe("headroom/lite");
     expect(scout?.thinkingOptionId).toBe("low");
 
-    // QA icon CheckCircle must be normalized to check-circle
+    // QA with empty preferredProvider inherits enabled default ("antigravity" when no hostProviders passed)
     const qa = profiles.find((p) => p.id === "harness-qa");
     expect(qa?.icon).toBe("check-circle");
+    expect(qa?.provider).toBe("antigravity");
     expect(toKebabCaseIcon("ShieldCheck")).toBe("shield-check");
+  });
+
+  it("uses live hostProviders for empty/disabled preferredProvider and rejects deprecated gemini-3 modelOverride", async () => {
+    let patchedConfig: any = null;
+    const mockPaseo: any = {
+      config: {
+        get: async () => ({
+          requestId: "req-1",
+          config: { agentProfiles: [] },
+        }),
+        patch: async (patch: any) => {
+          patchedConfig = patch;
+          return { requestId: "req-2", config: patch };
+        },
+      },
+    };
+
+    const effective = resolveEffectiveHarnessConfig(DEFAULT_AGENT_HARNESS_SETTINGS);
+    const scoutEmpty = {
+      ...DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "scout")!,
+      preferredProvider: "",
+      modelOverride: "gemini-3-flash",
+    };
+    const backendDisabledPref = {
+      ...DEFAULT_AGENT_HARNESS_SETTINGS.specialists.find((s) => s.id === "backend")!,
+      preferredProvider: "codex",
+      modelOverride: "gpt-5-codex",
+    };
+
+    const hostProviders = [
+      {
+        provider: "codex",
+        enabled: false,
+        models: [{ id: "flash" }],
+      },
+      {
+        provider: "antigravity",
+        enabled: true,
+        defaultModel: "gemini-4-neon",
+        models: [{ id: "gemini-4-hydrogen" }, { id: "gemini-4-neon", isDefault: true }],
+      },
+    ];
+
+    const { syncedCount, errors } = await syncDaemonAgentProfiles(
+      mockPaseo,
+      [scoutEmpty, backendDisabledPref],
+      effective,
+      hostProviders,
+    );
+    expect(errors).toEqual([]);
+    expect(syncedCount).toBe(2);
+
+    const profiles = patchedConfig.agentProfiles as Array<Record<string, any>>;
+    const scout = profiles.find((p) => p.id === "harness-scout");
+    expect(scout?.provider).toBe("antigravity");
+    expect(scout?.model).toBe("gemini-4-hydrogen");
+
+    const backend = profiles.find((p) => p.id === "harness-backend");
+    expect(backend?.provider).toBe("antigravity");
+    expect(backend?.model).toBe("gemini-4-neon");
   });
 });

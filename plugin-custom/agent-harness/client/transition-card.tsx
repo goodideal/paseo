@@ -3,7 +3,7 @@ import { View, Text, Pressable, StyleSheet } from "react-native";
 import type { PluginTimelineItemProps } from "@getpaseo/plugin/client";
 import { Icon } from "@getpaseo/plugin/client/ui";
 import type { HarnessTransitionPayload } from "../shared/contracts.js";
-import { buildTransitionViewModel, type TransitionBadgeCategory } from "./metadata-utils.js";
+import { buildTransitionViewModel } from "./metadata-utils.js";
 
 interface NavigableHostProps {
   serverId?: string;

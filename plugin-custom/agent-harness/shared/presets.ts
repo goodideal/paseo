@@ -6,7 +6,7 @@ export const BUILTIN_TIERS: HarnessTierConfig[] = [
     name: "Fast",
     icon: "Zap",
     defaultPhase: "exec",
-    description: "Lightweight exploration, routing, and low-risk quick edits (0.2x)",
+    description: "Lightweight lookup, routing, and quick edits (0.2x)",
   },
   {
     id: "standard",
@@ -16,18 +16,25 @@ export const BUILTIN_TIERS: HarnessTierConfig[] = [
     description: "Default engineering workhorse for daily features and tests (1x)",
   },
   {
-    id: "deep",
-    name: "Deep",
+    id: "plan",
+    name: "Plan",
     icon: "Compass",
-    defaultPhase: "exec",
-    description: "High-reasoning design, code review, and complex core edits (3x ceiling)",
+    defaultPhase: "design",
+    description: "Architecture design, planning, and specification (3x)",
+  },
+  {
+    id: "review",
+    name: "Review",
+    icon: "ShieldCheck",
+    defaultPhase: "review",
+    description: "Read-only dual-axis code review and security audit (3x)",
   },
   {
     id: "max",
     name: "Max",
     icon: "Flame",
     defaultPhase: "exec",
-    description: "Manual peak reasoning for intractable bugs and critical algorithms (manual only)",
+    description: "Manual peak reasoning for intractable bugs and critical algorithms",
   },
 ];
 
@@ -61,7 +68,7 @@ export const LEGACY_V4_PROVIDER_MAPPINGS: Record<string, Record<string, string>>
   },
 };
 
-export const BUILTIN_PROVIDER_MAPPINGS: Record<string, Record<string, string>> = {
+export const LEGACY_V8_PROVIDER_MAPPINGS: Record<string, Record<string, string>> = {
   antigravity: {
     fast: "gemini-4-hydrogen",
     standard: "gemini-4-argon",
@@ -94,7 +101,7 @@ export const BUILTIN_PROVIDER_MAPPINGS: Record<string, Record<string, string>> =
   },
 };
 
-export const BUILTIN_PROVIDER_THINKING_MAPPINGS: Record<string, Record<string, string>> = {
+export const LEGACY_V8_PROVIDER_THINKING_MAPPINGS: Record<string, Record<string, string>> = {
   antigravity: {
     fast: "medium",
     standard: "high",
@@ -127,6 +134,97 @@ export const BUILTIN_PROVIDER_THINKING_MAPPINGS: Record<string, Record<string, s
   },
 };
 
+/**
+ * Cross-plugin baseline tier->model mapping. `plugin-custom/gitea-workflow/server/harness-bridge.ts`
+ * (`BUILTIN_PROVIDER_TIERS`) mirrors these provider/tier defaults as an offline fallback when
+ * `agent-harness` is unreachable; verify `BUILTIN_PROVIDER_TIERS` when changing model or thinking defaults.
+ */
+export const BUILTIN_PROVIDER_MAPPINGS: Record<string, Record<string, string>> = {
+  antigravity: {
+    fast: "gemini-4-hydrogen",
+    standard: "gemini-4-neon",
+    plan: "gemini-4-carbon",
+    review: "gemini-4-argon",
+    deep: "gemini-4-carbon",
+    max: "gemini-4-carbon",
+  },
+  claude: {
+    fast: "lite",
+    standard: "flash",
+    plan: "pro",
+    review: "pro",
+    deep: "pro",
+    max: "plan",
+  },
+  codex: {
+    fast: "lite",
+    standard: "flash",
+    plan: "pro",
+    review: "pro",
+    deep: "pro",
+    max: "plan",
+  },
+  opencode: {
+    fast: "custom/lite",
+    standard: "custom/flash",
+    plan: "custom/pro",
+    review: "custom/pro",
+    deep: "custom/pro",
+    max: "custom/plan",
+  },
+  pi: {
+    fast: "headroom/lite",
+    standard: "headroom/flash",
+    plan: "headroom/pro",
+    review: "headroom/pro",
+    deep: "headroom/pro",
+    max: "headroom/plan",
+  },
+};
+
+export const BUILTIN_PROVIDER_THINKING_MAPPINGS: Record<string, Record<string, string>> = {
+  antigravity: {
+    fast: "medium",
+    standard: "high",
+    plan: "high",
+    review: "high",
+    deep: "high",
+    max: "high",
+  },
+  claude: {
+    fast: "low",
+    standard: "medium",
+    plan: "high",
+    review: "high",
+    deep: "high",
+    max: "high",
+  },
+  codex: {
+    fast: "low",
+    standard: "medium",
+    plan: "high",
+    review: "high",
+    deep: "high",
+    max: "xhigh",
+  },
+  opencode: {
+    fast: "low",
+    standard: "medium",
+    plan: "high",
+    review: "high",
+    deep: "high",
+    max: "xhigh",
+  },
+  pi: {
+    fast: "low",
+    standard: "medium",
+    plan: "high",
+    review: "high",
+    deep: "high",
+    max: "xhigh",
+  },
+};
+
 export const BUILTIN_PROVIDER_MODES: Record<string, ProviderModeConfig> = {
   antigravity: {
     supportsNativePlanMode: false,
@@ -149,8 +247,11 @@ export const BUILTIN_PROVIDER_MODES: Record<string, ProviderModeConfig> = {
 export const LEGACY_V4_ORCHESTRATOR_DISPATCHER_RULE =
   '- Paseo Thin Dispatcher Rule: As `role=orchestrator` (running on fast `flash` model), DO NOT write complex architecture or business code yourself, and DO NOT use Claude\'s internal `Agent` tool! Instead, act strictly as a fast Thin Dispatcher: 1) Spawn `role=architect` and `role=pm` via `harness_handoff` (or `paseo run --workspace "$PASEO_WORKSPACE_ID" --label role=<architect|pm> --title "<Role Task>" "<Prompt>"`, preserving `PASEO_AGENT_ID` and honoring each specialist\'s configured provider and model) to define `design.md`, shared contracts, and `proposal.md`/`spec.md`; 2) Once contracts are ready, spawn `role=backend` and `role=ui` in parallel (`harness_handoff` or `paseo run --no-wait` + `paseo wait`); 3) Spawn `role=review` for dual-axis gate verification, run final targeted verification, and report the summary.';
 
-export const ORCHESTRATOR_DISPATCHER_RULE =
+export const LEGACY_V8_ORCHESTRATOR_DISPATCHER_RULE =
   '- Paseo Thin Dispatcher Rule: As `role=orchestrator` (running on `fast` tier), DO NOT write complex architecture or business code yourself, and DO NOT use Claude\'s internal `Agent` tool! Instead, act strictly as a fast Thin Dispatcher: 1) Spawn `role=architect` (`deep`) and `role=pm` (`deep`) via `harness_handoff` (or `paseo run --workspace "$PASEO_WORKSPACE_ID" --label role=<architect|pm> --title "<Role Task>" "<Prompt>"`, preserving `PASEO_AGENT_ID` and honoring each specialist\'s configured provider and model) to define `design.md`, shared contracts, and `proposal.md`/`spec.md`; 2) Once contracts are ready, spawn `role=backend` (`standard`) and `role=ui` (`standard`) in parallel (`harness_handoff` or `paseo run --no-wait` + `paseo wait`); 3) Spawn `role=review` (`deep`) for dual-axis gate verification, run final targeted verification, and report the summary.';
+
+export const ORCHESTRATOR_DISPATCHER_RULE =
+  '- Paseo Thin Dispatcher Rule: As `role=orchestrator` (running on `fast` tier), DO NOT write complex architecture or business code yourself, and DO NOT use Claude\'s internal `Agent` tool! Instead, act strictly as a fast Thin Dispatcher: 1) Spawn `role=architect` (`plan`) and `role=pm` (`plan`) via `harness_handoff` (or `paseo run --workspace "$PASEO_WORKSPACE_ID" --label role=<architect|pm> --title "<Role Task>" "<Prompt>"`, preserving `PASEO_AGENT_ID` and honoring each specialist\'s configured provider and model) to define `design.md`, shared contracts, and `proposal.md`/`spec.md`; 2) Once contracts are ready, spawn `role=backend` (`standard`) and `role=ui` (`standard`) in parallel (`harness_handoff` or `paseo run --no-wait` + `paseo wait`); 3) Spawn `role=review` (`review`) for dual-axis gate verification, run final targeted verification, and report the summary.';
 
 export const LEGACY_ORCHESTRATOR_DISPATCHER_RULE =
   '- Paseo Thin Dispatcher Rule: As `role=orchestrator` (running on fast `flash` model), DO NOT write complex architecture or business code yourself, and DO NOT use Claude\'s internal `Agent` tool! Instead, act strictly as a fast Thin Dispatcher: 1) Spawn `role=architect` (`plan` model) and `role=pm` (`plan` model) via `paseo run --workspace "$PASEO_WORKSPACE_ID" --provider claude --mode bypassPermissions --label role=<architect|pm> --title "<Role Task>" "<Prompt>"` (preserving `PASEO_AGENT_ID` so they group cleanly in your Subagents Track pill) to define `design.md`, shared contracts, and `proposal.md`/`spec.md`; 2) Once contracts are ready, spawn `role=backend` (`flash`) and `role=ui` (`flash`) in parallel (`--no-wait` + `paseo wait`); 3) Spawn `role=review` (`review`) for dual-axis gate verification, run final `npm test`, and report the summary.';
@@ -230,6 +331,36 @@ export const LEGACY_V7_PM_PRIMARY_SKILLS: readonly string[] = [
   "grilling",
 ];
 
+export const LEGACY_V8_SPECIALIST_PROVIDERS: Readonly<Record<string, string>> = {
+  orchestrator: "claude",
+  ui: "claude",
+  backend: "codex",
+  pm: "claude",
+  architect: "claude",
+  qa: "codex",
+  review: "antigravity",
+  scout: "pi",
+  general: "",
+};
+
+export const LEGACY_V8_SPECIALIST_PRIMARY_SKILLS: Readonly<Record<string, readonly string[]>> = {
+  orchestrator: ["paseo", "codebase-design"],
+  ui: ["ui-ux-pro-max", "unslop", "visual-verdict", "diagnosing-bugs", "pr"],
+  backend: ["codebase-design", "tdd", "diagnosing-bugs", "test-gardener", "pr"],
+  pm: [
+    "grilling",
+    "deliver-prd",
+    "deliver-user-stories",
+    "deliver-edge-cases",
+    "define-problem-statement",
+  ],
+  architect: ["codebase-design", "domain-modeling", "grilling"],
+  qa: ["test-gardener", "tdd", "diagnosing-bugs", "deliver-edge-cases"],
+  review: ["code-review", "open-code-review-delegate", "gitea"],
+  scout: ["prototype", "scaffold-exercises"],
+  general: ["codebase-design", "domain-modeling", "tdd", "diagnosing-bugs"],
+};
+
 export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
   {
     id: "orchestrator",
@@ -240,17 +371,17 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     color: "blue",
     enabled: true,
     builtIn: true,
-    preferredProvider: "claude",
+    preferredProvider: "",
     preferredTier: "fast",
     modelOverride: "",
-    defaultModeId: "bypassPermissions",
+    defaultModeId: "full-access",
     lockTierOnLabel: true,
     handoffEnabled: false,
     handoffPriority: 99,
     handoffTitlePrefix: "[Orchestrator]",
     handoffDefaultPrompt: "Orchestrate subagents across architecture, PM, backend, and UI.",
     syncToDaemonProfile: true,
-    primarySkills: ["paseo", "codebase-design"],
+    primarySkills: ["paseo"],
     mandatorySkillActivation: true,
     skillsRoot: "/Users/jerry/.agents/skills",
     docsFocus: ["docs/architecture.md", "docs/agent-lifecycle.md"],
@@ -275,7 +406,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     color: "pink",
     enabled: true,
     builtIn: true,
-    preferredProvider: "claude",
+    preferredProvider: "",
     preferredTier: "standard",
     modelOverride: "",
     defaultModeId: "",
@@ -285,7 +416,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     handoffTitlePrefix: "[UI]",
     handoffDefaultPrompt: "Implement responsive and polished frontend UI components per spec.",
     syncToDaemonProfile: true,
-    primarySkills: ["ui-ux-pro-max", "unslop", "visual-verdict", "diagnosing-bugs", "pr"],
+    primarySkills: ["ui-ux-pro-max", "unslop"],
     mandatorySkillActivation: true,
     skillsRoot: "/Users/jerry/.agents/skills",
     docsFocus: ["docs/design.md", "docs/unistyles.md", "docs/hover.md", "docs/mobile-panels.md"],
@@ -298,10 +429,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     injectedMcpServers: [],
     extraEnv: {},
     aliases: ["frontend", "ui-specialist"],
-    matchPatterns: [
-      "\\b(?:ui|ux|ui-ux-pro-max|unslop|visual-verdict|unistyles|popover|modal|sheet|pill|hover|tailwind|expo|react\\s*native|playwright|css|scss|sass|dark\\s*mode|light\\s*mode|color[-\\s]*scheme|color|palette|typography|theme|theming|design[-\\s]*tokens?)\\b",
-      "前端|界面|样式|弹窗|组件|面板|视觉|移动端|手机端|响应式|布局|图标|配色|颜色|色板|标签颜色|按钮|卡片|字号|间距|交互体验|暗黑模式|深色模式|浅色模式|亮色模式|主题切换|主题色",
-    ],
+    matchPatterns: [],
     profileFilename: "ui-specialist.json",
   },
   {
@@ -313,7 +441,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     color: "cyan",
     enabled: true,
     builtIn: true,
-    preferredProvider: "codex",
+    preferredProvider: "",
     preferredTier: "standard",
     modelOverride: "",
     defaultModeId: "",
@@ -323,7 +451,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     handoffTitlePrefix: "[Backend]",
     handoffDefaultPrompt: "Implement backend service APIs, database logic, and protocol handlers.",
     syncToDaemonProfile: true,
-    primarySkills: ["codebase-design", "tdd", "diagnosing-bugs", "test-gardener", "pr"],
+    primarySkills: ["codebase-design", "tdd"],
     mandatorySkillActivation: true,
     skillsRoot: "/Users/jerry/.agents/skills",
     docsFocus: [
@@ -341,10 +469,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     injectedMcpServers: [],
     extraEnv: {},
     aliases: ["server", "backend-specialist"],
-    matchPatterns: [
-      "\\b(?:daemon|websocket|rpc|sqlite|dbx|terminal-worker|(?:git\\s+)?worktree\\s+manager|git\\s+worktree|worktree\\s+(?:sync|lifecycle|isolation|cleanup)|protocol|zod-aot|relay|noise\\s*nk|quota|proxy|gateway|scheduler|provider\\s+(?:adapter|config|registry|routing|snapshot|fallback|quota))\\b",
-      "后端|协议兼容|数据库|进程通信|服务端|配额|网关|代理服务|限流|中间件",
-    ],
+    matchPatterns: [],
     profileFilename: "backend-specialist.json",
   },
   {
@@ -356,8 +481,8 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     color: "amber",
     enabled: true,
     builtIn: true,
-    preferredProvider: "claude",
-    preferredTier: "deep",
+    preferredProvider: "",
+    preferredTier: "plan",
     modelOverride: "",
     defaultModeId: "",
     lockTierOnLabel: true,
@@ -366,13 +491,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     handoffTitlePrefix: "[PM]",
     handoffDefaultPrompt: "Analyze requirements and output user stories and PRD proposal.",
     syncToDaemonProfile: true,
-    primarySkills: [
-      "grilling",
-      "deliver-prd",
-      "deliver-user-stories",
-      "deliver-edge-cases",
-      "define-problem-statement",
-    ],
+    primarySkills: ["grilling", "deliver-prd"],
     mandatorySkillActivation: true,
     skillsRoot: "/Users/jerry/.agents/skills",
     docsFocus: ["docs/product.md", "docs/agent-lifecycle.md", "docs/glossary.md"],
@@ -385,10 +504,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     injectedMcpServers: [],
     extraEnv: {},
     aliases: ["product", "product-specialist"],
-    matchPatterns: [
-      "\\b(?:pm-prd|pm-user-stories|pm-edge-cases|pm-problem|deliver-prd|deliver-user-stories|deliver-edge-cases|define-problem-statement|prd|user\\s*stories|jtbd)\\b",
-      "痛点|用户故事|产品需求|验收条件",
-    ],
+    matchPatterns: [],
     profileFilename: "product-specialist.json",
   },
   {
@@ -400,8 +516,8 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     color: "purple",
     enabled: true,
     builtIn: true,
-    preferredProvider: "claude",
-    preferredTier: "deep",
+    preferredProvider: "",
+    preferredTier: "plan",
     modelOverride: "",
     defaultModeId: "",
     lockTierOnLabel: true,
@@ -410,7 +526,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     handoffTitlePrefix: "[Architect]",
     handoffDefaultPrompt: "Design deep module interfaces, domain models, and ADR specs.",
     syncToDaemonProfile: true,
-    primarySkills: ["codebase-design", "domain-modeling", "grilling"],
+    primarySkills: ["codebase-design", "domain-modeling"],
     mandatorySkillActivation: true,
     skillsRoot: "/Users/jerry/.agents/skills",
     docsFocus: [
@@ -428,10 +544,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     injectedMcpServers: [],
     extraEnv: {},
     aliases: ["system-architect"],
-    matchPatterns: [
-      "\\b(?:codebase-design|domain-modeling|deep\\s*modules?|adr|glossary)\\b",
-      "深模块|领域建模|系统架构|整体架构|架构设计|架构评估|模块划分|架构是否合理",
-    ],
+    matchPatterns: [],
     profileFilename: "architect.json",
   },
   {
@@ -443,7 +556,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     color: "emerald",
     enabled: true,
     builtIn: true,
-    preferredProvider: "codex",
+    preferredProvider: "",
     preferredTier: "standard",
     modelOverride: "",
     defaultModeId: "",
@@ -454,7 +567,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     handoffDefaultPrompt:
       "Add regression tests, verify edge cases, and ensure test suite adequacy.",
     syncToDaemonProfile: true,
-    primarySkills: ["test-gardener", "tdd", "diagnosing-bugs", "deliver-edge-cases"],
+    primarySkills: ["diagnosing-bugs", "test-gardener"],
     mandatorySkillActivation: true,
     skillsRoot: "/Users/jerry/.agents/skills",
     docsFocus: ["docs/qa.md", "docs/testing.md", "docs/mobile-testing.md"],
@@ -471,10 +584,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     injectedMcpServers: [],
     extraEnv: {},
     aliases: ["qa-gatekeeper", "tester"],
-    matchPatterns: [
-      "\\b(?:test-gardener|vitest|e2e|maestro|qa)\\b",
-      "测试健康度|回归测试|边缘用例",
-    ],
+    matchPatterns: [],
     profileFilename: "qa-gatekeeper.json",
   },
   {
@@ -487,8 +597,8 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     color: "orange",
     enabled: true,
     builtIn: true,
-    preferredProvider: "antigravity",
-    preferredTier: "deep",
+    preferredProvider: "",
+    preferredTier: "review",
     modelOverride: "",
     defaultModeId: "",
     lockTierOnLabel: true,
@@ -498,7 +608,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     handoffDefaultPrompt:
       "Perform dual-axis code review (Standards + Spec) and agy + ocr delegate gate audit (ocr delegate preview + ocr delegate rule).",
     syncToDaemonProfile: true,
-    primarySkills: ["code-review", "open-code-review-delegate", "gitea"],
+    primarySkills: ["code-review", "open-code-review-delegate"],
     mandatorySkillActivation: true,
     skillsRoot: "/Users/jerry/.agents/skills",
     docsFocus: [
@@ -516,10 +626,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     injectedMcpServers: [],
     extraEnv: {},
     aliases: ["security-review", "reviewer"],
-    matchPatterns: [
-      "\\b(?:ocr|open-code-review-delegate|code-review|security-review)\\b",
-      "代码审查|安全审计|双轴审查|质量门禁",
-    ],
+    matchPatterns: [],
     profileFilename: "security-review.json",
   },
   {
@@ -531,7 +638,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     color: "amber",
     enabled: true,
     builtIn: true,
-    preferredProvider: "pi",
+    preferredProvider: "",
     preferredTier: "fast",
     modelOverride: "",
     defaultModeId: "",
@@ -541,7 +648,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     handoffTitlePrefix: "[Scout]",
     handoffDefaultPrompt: "Run fast spike experiment and validate throwaway prototype.",
     syncToDaemonProfile: true,
-    primarySkills: ["prototype", "scaffold-exercises"],
+    primarySkills: ["prototype"],
     mandatorySkillActivation: false,
     skillsRoot: "/Users/jerry/.agents/skills",
     docsFocus: ["docs/architecture.md"],
@@ -554,10 +661,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     injectedMcpServers: [],
     extraEnv: {},
     aliases: ["scout-specialist", "spike"],
-    matchPatterns: [
-      "\\b(?:scout|spike|prototype|scaffold-exercises|throwaway)\\b",
-      "敏捷探针|脚手架|快速原型|单点验证",
-    ],
+    matchPatterns: [],
     profileFilename: "scout-specialist.json",
   },
   {
@@ -579,7 +683,7 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
     handoffTitlePrefix: "[General]",
     handoffDefaultPrompt: "Analyze task requirements and implement robust code changes.",
     syncToDaemonProfile: false,
-    primarySkills: ["codebase-design", "domain-modeling", "tdd", "diagnosing-bugs"],
+    primarySkills: ["codebase-design", "tdd"],
     mandatorySkillActivation: false,
     skillsRoot: "/Users/jerry/.agents/skills",
     docsFocus: [
@@ -602,50 +706,72 @@ export const BUILTIN_SPECIALISTS: HarnessSpecialistConfig[] = [
   },
 ];
 
-export const BUILTIN_PLAN_PATTERNS = [
-  "方案|计划|设计|架构|规划|规整|路线图|选型|探讨|重构|策略|演进|评估|调研|对比|考虑如何|如何统一|怎么统一",
-  "\\b(?:plan|design|architecture|proposal|rfc|spec|strategy|roadmap|brainstorm|evaluate|benchmark)\\b",
-  "分析|根本原因|为什么.*(?:bug|故障|少|没有|异常|慢|卡)|排查根因",
-  "\\bcto\\b",
-  "你(?:看|评估|分析|思考)一下.*(?:问题|建议|改进|优化|看法|思路)",
-  "(?:改进点|优化点|建议点|薄弱点|风险点|关键点)",
-  "列出.*(?:top|问题|建议|方案)",
-  "^\\s*\\/(?:opsx-propose|opsx-explore|brainstorming|grilling|make-plan|design-is)\\b",
-  "(?:从[零0]开始|全新|从头)?(?:开发|构建|搭建|实现|写一个)(?:全栈|完整|一套|一个)?(?:系统|应用|平台|游戏|项目|服务)",
-  "全栈|端到端|前后端|排行榜|排名",
+export interface SlashCommandRouteEntry {
+  command: string;
+  subcommands?: readonly string[];
+  phase: "design" | "exec" | "review";
+  tier: "fast" | "standard" | "plan" | "review";
+  role?: string;
+}
+
+export const BUILTIN_SLASH_COMMAND_ROUTES: readonly SlashCommandRouteEntry[] = [
+  { command: "/opsx-propose", phase: "design", tier: "plan", role: "architect" },
+  { command: "/opsx:propose", phase: "design", tier: "plan", role: "architect" },
+  { command: "/opsx-explore", phase: "design", tier: "plan", role: "architect" },
+  { command: "/opsx:explore", phase: "design", tier: "plan", role: "architect" },
+  { command: "/brainstorming", phase: "design", tier: "plan", role: "architect" },
+  { command: "/make-plan", phase: "design", tier: "plan", role: "architect" },
+  { command: "/design-is", phase: "design", tier: "plan", role: "architect" },
+  { command: "/codebase-design", phase: "design", tier: "plan", role: "architect" },
+  { command: "/domain-modeling", phase: "design", tier: "plan", role: "architect" },
+  { command: "/grilling", phase: "design", tier: "plan", role: "pm" },
+  { command: "/deliver-prd", phase: "design", tier: "plan", role: "pm" },
+  { command: "/deliver-user-stories", phase: "design", tier: "plan", role: "pm" },
+  { command: "/define-problem-statement", phase: "design", tier: "plan", role: "pm" },
+  { command: "/ocr", phase: "review", tier: "review", role: "review" },
+  { command: "/review", phase: "review", tier: "review", role: "review" },
+  { command: "/code-review", phase: "review", tier: "review", role: "review" },
+  {
+    command: "/gitea",
+    subcommands: ["dev", "ship", "release"],
+    phase: "exec",
+    tier: "standard",
+  },
+  { command: "/install-local", phase: "exec", tier: "standard" },
+  { command: "/implement", phase: "exec", tier: "standard" },
+  { command: "/tdd", phase: "exec", tier: "standard" },
+  { command: "/fix", phase: "exec", tier: "standard" },
+  { command: "/diagnosing-bugs", phase: "exec", tier: "standard", role: "qa" },
+  { command: "/unslop", phase: "exec", tier: "standard", role: "ui" },
+  { command: "/ui-ux-pro-max", phase: "exec", tier: "standard", role: "ui" },
+  { command: "/prototype", phase: "exec", tier: "fast", role: "scout" },
+  { command: "/commit", phase: "exec", tier: "fast" },
+  { command: "/changelog", phase: "exec", tier: "fast" },
+  { command: "/docs", phase: "exec", tier: "fast" },
 ];
 
-export const BUILTIN_REVIEW_PATTERNS = [
-  "^\\s*(?:(?:review|cr|audit)\\b(?!-)|(?:代码审查|门禁审查|审查|审阅))",
-  "(?:代码审查|全量审查|质量门禁|合流审查|安全审计|pr\\s*review|code\\s*review)",
-  "^\\s*\\/(?:ocr|review|code-review)\\b",
-  "验收检查|核验变更|audit\\s*check",
-];
+export const BUILTIN_CONVENTIONAL_PREFIXES: {
+  fast: readonly string[];
+  standard: readonly string[];
+} = {
+  fast: ["chore", "docs", "style"],
+  standard: ["feat", "fix", "refactor", "perf", "test", "build", "ci"],
+};
 
-export const BUILTIN_CONVENTIONAL_EXEC_PREFIX =
-  "^\\s*(?:(?:fix|feat|chore|refactor|test|docs|style|build|ci|perf)\\s*[:：]|\\/(?:gitea\\s+(?:dev|ship|release)|install-local)\\b)";
+export const LEGACY_V8_DESIGN_PHASE_RULE =
+  "- [Phase: Design & Planning] Rule: You are running in read-only planning phase (phase=design, typically on `deep` tier). Present concise architectural proposals, trade-offs, and specs (for UI tasks, present concise visual concepts, layout wireframes, and UX trade-offs — DO NOT dump long HTML/React code blocks). Except for spec/contract docs (openspec/**/*.md, design.md, proposal.md, spec.md, tasks.md, GLOSSARY.md), DO NOT directly edit business source files in this plan session! Once the plan is confirmed, exit plan mode via `ExitPlanMode` (which automatically steps down to `standard` tier) or invoke the host tool `harness_handoff` (targetRole: ui, backend, qa, or review) to hand off execution to a specialist.";
 
-export const BUILTIN_FAST_ACTION_PATTERNS = [
-  "^\\s*(?:chore|docs|style)\\s*[:：]",
-  "\\b(?:grep|locate|check\\s+(?:status|logs|version)|typo|rename|formatting)\\b",
-  "查一下|找一下|搜一下|看下日志|改个文案|改文案|错别字|重命名|拼写|格式化|更新文档|补充注释",
-];
+export const LEGACY_V8_EXEC_PHASE_RULE =
+  "- [Phase: Execution] Rule: You are running in read-write execution phase (phase=exec). Implement minimal, targeted code changes per spec and verify with targeted tests (npx vitest run <file> --bail=1, NEVER full suite), npm run typecheck, and npm run lint. Review Gate: For non-trivial changes (>3 modified files or core state/protocol/security logic), once green, spawn or hand off via harness_handoff / paseo-handoff to Reviewer (Gate) (--label role=review) for dual-axis review (Standards + Spec) and agy + ocr delegate gate verification (`ocr delegate preview` + `ocr delegate rule`).";
 
-export const BUILTIN_EXEC_ACTION_PATTERNS = [
-  "按(?:这个|这套|上述)?(?:方案|计划)[^，。！？\\n]{0,20}?(?:改|修改|写|实现|落地)|修复|落地|编写代码|直接修改|添加测试|打包|发布|同步到|在[^，。！？\\n]{1,30}?(?:中|里)实现|给[^，。！？\\n]{1,30}?(?:增加|加上)|替换|微调|(?:启动|重启|停止)(?:一下)?(?:开发|本地|前端|后端)?服务|\\b(?:start|restart|stop)\\s+(?:the\\s+)?(?:dev\\s+)?server\\b",
-];
-
-export const BUILTIN_FULLSTACK_UI_PATTERN =
-  "(?:\\b(?:ui|ux|dark\\s*mode|light\\s*mode)\\b|前端|界面|样式|组件|移动端|手机端|页面|暗黑模式|深色模式)";
-
-export const BUILTIN_FULLSTACK_BACKEND_PATTERN =
-  "(?:\\b(?:db|sqlite)\\b|后台|后端|服务|接口|数据|保存|存储|数据库|持久化|排名)";
+export const LEGACY_V8_REVIEW_PHASE_RULE =
+  "- [Phase: Review Gate] Rule: You are running in read-only review phase (phase=review, typically on `deep` tier). Perform read-only dual-axis audit (Standards + Spec) and agy + ocr delegate gate verification (`ocr delegate preview --format json` + `ocr delegate rule --format json <paths...>`, LLM-free on OCR side — do NOT invoke standalone LLM-backed `ocr review`); do not author large feature implementations directly.";
 
 export const BUILTIN_PHASE_RULES: Record<string, string> = {
   orchestrator: ORCHESTRATOR_DISPATCHER_RULE,
   design:
-    "- [Phase: Design & Planning] Rule: You are running in read-only planning phase (phase=design, typically on `deep` tier). Present concise architectural proposals, trade-offs, and specs (for UI tasks, present concise visual concepts, layout wireframes, and UX trade-offs — DO NOT dump long HTML/React code blocks). Except for spec/contract docs (openspec/**/*.md, design.md, proposal.md, spec.md, tasks.md, GLOSSARY.md), DO NOT directly edit business source files in this plan session! Once the plan is confirmed, exit plan mode via `ExitPlanMode` (which automatically steps down to `standard` tier) or invoke the host tool `harness_handoff` (targetRole: ui, backend, qa, or review) to hand off execution to a specialist.",
-  exec: "- [Phase: Execution] Rule: You are running in read-write execution phase (phase=exec). Implement minimal, targeted code changes per spec and verify with targeted tests (npx vitest run <file> --bail=1, NEVER full suite), npm run typecheck, and npm run lint. Review Gate: For non-trivial changes (>3 modified files or core state/protocol/security logic), once green, spawn or hand off via harness_handoff / paseo-handoff to Reviewer (Gate) (--label role=review) for dual-axis review (Standards + Spec) and agy + ocr delegate gate verification (`ocr delegate preview` + `ocr delegate rule`).",
+    "- [Phase: Design & Planning] Rule: You are running in read-only planning phase (phase=design, typically on `plan` tier). Present concise architectural proposals, trade-offs, and specs (for UI tasks, present concise visual concepts, layout wireframes, and UX trade-offs — DO NOT dump long HTML/React code blocks). Except for spec/contract docs (openspec/**/*.md, design.md, proposal.md, spec.md, tasks.md, GLOSSARY.md), DO NOT directly edit business source files in this plan session! Once the plan is confirmed, exit plan mode via `ExitPlanMode` (which automatically steps down to `standard` tier) or invoke the host tool `harness_handoff` (targetRole: ui, backend, qa, or review) to hand off execution to a specialist.",
+  exec: "- [Phase: Execution] Rule: You are running in read-write execution phase (phase=exec). Implement minimal, targeted code changes per spec and verify with targeted tests (npx vitest run <file> --bail=1, NEVER full suite), npm run typecheck, and npm run lint. Review Gate: For non-trivial changes (>3 modified files or core state/protocol/security logic), once green, spawn or hand off via harness_handoff / invoke_subagent to Reviewer (Gate) (--label role=review) for dual-axis review (Standards + Spec) and agy + ocr delegate gate verification (`ocr delegate preview` + `ocr delegate rule`).",
   review:
-    "- [Phase: Review Gate] Rule: You are running in read-only review phase (phase=review, typically on `deep` tier). Perform read-only dual-axis audit (Standards + Spec) and agy + ocr delegate gate verification (`ocr delegate preview --format json` + `ocr delegate rule --format json <paths...>`, LLM-free on OCR side — do NOT invoke standalone LLM-backed `ocr review`); do not author large feature implementations directly.",
+    "- [Phase: Review Gate] Rule: You are running in read-only review phase (phase=review, typically on `review` tier). Perform read-only dual-axis audit (Standards + Spec) and agy + ocr delegate gate verification (`ocr delegate preview --format json` + `ocr delegate rule --format json <paths...>`, LLM-free on OCR side — do NOT invoke standalone LLM-backed `ocr review`); do not author large feature implementations directly.",
 };

@@ -158,6 +158,11 @@ import {
   HARNESS_METADATA_VERSION,
   type HarnessAgentMetadata,
 } from "../shared/types.js";
+import { HARNESS_BYPASSED_META_KEY } from "../shared/lifecycle-state.js";
+import {
+  BUILTIN_PROVIDER_MAPPINGS,
+  BUILTIN_PROVIDER_THINKING_MAPPINGS,
+} from "../shared/presets.js";
 import {
   HARNESS_TRANSITION_TIMELINE_KIND,
   HARNESS_TRANSITION_TIMELINE_VERSION,
@@ -172,6 +177,11 @@ import {
 } from "../client/metadata-utils.js";
 import { HarnessTransitionCard } from "../client/transition-card.js";
 import { HarnessPopover } from "../client/harness-popover.js";
+import {
+  buildOrderedProviderIds,
+  formatProviderDisplayLabel,
+  resolveActiveHostProviderId,
+} from "../client/provider-catalog.js";
 import { BUILTIN_LAZY_TOOL_SLICES, HarnessSettingsScreen } from "../client/settings-screen.js";
 import { AgentTeamFilePanelHost, WorkspaceTeamEditor } from "../client/team-editor-panel.js";
 import { notifyWorkspaceTeamUpdated } from "../client/team-events.js";
@@ -331,12 +341,18 @@ describe("Agent Harness Client - Metadata Utils", () => {
       expect(resolveHarnessPillIcon(null)).toBe("Zap");
     });
 
-    it("returns icons across both legacy and 4-tier names", () => {
+    it("returns icons across legacy and 5-tier names", () => {
       const metaPlan = createSampleMetadata({ currentTier: "plan" });
       expect(resolveHarnessPillIcon(metaPlan)).toBe("Compass");
 
       expect(resolveHarnessPillIcon(createSampleMetadata({ currentTier: "fast" }))).toBe("Zap");
       expect(resolveHarnessPillIcon(createSampleMetadata({ currentTier: "standard" }))).toBe("Cpu");
+      expect(
+        resolveHarnessPillIcon(createSampleMetadata({ currentTier: "plan", phase: "exec" })),
+      ).toBe("Compass");
+      expect(
+        resolveHarnessPillIcon(createSampleMetadata({ currentTier: "review", phase: "exec" })),
+      ).toBe("ShieldCheck");
       expect(resolveHarnessPillIcon(createSampleMetadata({ currentTier: "deep" }))).toBe("Compass");
       expect(resolveHarnessPillIcon(createSampleMetadata({ currentTier: "max" }))).toBe("Flame");
     });
@@ -556,7 +572,7 @@ describe("Agent Harness Client - Extension Contributions", () => {
         } as any,
       };
 
-      const cleanup = contribute(mockClient as PluginClientContext);
+      const disposePlugin = contribute(mockClient as PluginClientContext);
 
       // Verify timeline renderer registration
       expect(timelineRenderers).toHaveLength(1);
@@ -671,7 +687,7 @@ describe("Agent Harness Client - Extension Contributions", () => {
       expect(pills).toHaveLength(0);
 
       // Test cleanup unsubscribes and closes subscription
-      cleanup();
+      disposePlugin();
       expect(timelineRenderers).toHaveLength(0);
       expect(settingsScreens).toHaveLength(0);
       expect(commandCenterItems).toHaveLength(0);
@@ -699,8 +715,8 @@ describe("Agent Harness Client - Extension Contributions", () => {
       } as any,
     };
 
-    const cleanup = contribute(mockClient as PluginClientContext);
-    cleanup();
+    const disposePlugin = contribute(mockClient as PluginClientContext);
+    disposePlugin();
 
     resolveList({
       subscription: {
@@ -867,25 +883,41 @@ describe("HarnessSettingsScreen - Forms Gate & State Handling", () => {
     expect(screen.queryByLabelText("Fast Custom Model ID")).toBeNull();
 
     const standardModelSelect = screen.getByLabelText("Standard Model") as HTMLSelectElement;
-    fireEvent.change(standardModelSelect, { target: { value: "gemini-4-neon" } });
+    fireEvent.change(standardModelSelect, { target: { value: "gemini-4-argon" } });
     expect(mockSave).toHaveBeenCalledWith(
       expect.objectContaining({
         providerMappings: expect.objectContaining({
           antigravity: expect.objectContaining({
-            standard: "gemini-4-neon",
+            standard: "gemini-4-argon",
           }),
         }),
       }),
       "rev-matrix-1",
     );
 
-    const standardThinkingSelect = screen.getByLabelText("Standard Thinking") as HTMLSelectElement;
-    fireEvent.change(standardThinkingSelect, { target: { value: "xhigh" } });
+    // Editing Plan Model syncs `deep` alongside `plan` for lossless gitea-workflow compatibility
+    const planModelSelect = screen.getByLabelText("Plan Model") as HTMLSelectElement;
+    fireEvent.change(planModelSelect, { target: { value: "gemini-4-neon" } });
+    expect(mockSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerMappings: expect.objectContaining({
+          antigravity: expect.objectContaining({
+            plan: "gemini-4-neon",
+            deep: "gemini-4-neon",
+          }),
+        }),
+      }),
+      "rev-matrix-1",
+    );
+
+    const planThinkingSelect = screen.getByLabelText("Plan Thinking") as HTMLSelectElement;
+    fireEvent.change(planThinkingSelect, { target: { value: "xhigh" } });
     expect(mockSave).toHaveBeenCalledWith(
       expect.objectContaining({
         providerThinkingMappings: expect.objectContaining({
           antigravity: expect.objectContaining({
-            standard: "xhigh",
+            plan: "xhigh",
+            deep: "xhigh",
           }),
         }),
       }),
@@ -897,26 +929,16 @@ describe("HarnessSettingsScreen - Forms Gate & State Handling", () => {
     fireEvent.change(fastModelSelect, { target: { value: "__custom__" } });
     expect(screen.getByLabelText("Fast Custom Model ID")).toBeDefined();
 
-    // Reset Provider Mappings restores built-in 4-tier defaults for Antigravity
+    // Reset Provider Mappings restores built-in 5-tier + deep defaults for Antigravity
     const resetProviderBtn = screen.getByRole("button", { name: "Reset defaults" });
     fireEvent.click(resetProviderBtn);
     expect(mockSave).toHaveBeenCalledWith(
       expect.objectContaining({
         providerMappings: expect.objectContaining({
-          antigravity: {
-            fast: "gemini-4-hydrogen",
-            standard: "gemini-4-argon",
-            deep: "gemini-4-carbon",
-            max: "gemini-4-neon",
-          },
+          antigravity: { ...BUILTIN_PROVIDER_MAPPINGS.antigravity },
         }),
         providerThinkingMappings: expect.objectContaining({
-          antigravity: {
-            fast: "medium",
-            standard: "high",
-            deep: "high",
-            max: "xhigh",
-          },
+          antigravity: { ...BUILTIN_PROVIDER_THINKING_MAPPINGS.antigravity },
         }),
       }),
       "rev-matrix-1",
@@ -950,18 +972,18 @@ describe("HarnessSettingsScreen - Forms Gate & State Handling", () => {
         }),
       );
 
-      const endpointInput = screen.getByLabelText("Classifier Endpoint URL") as HTMLInputElement;
-      expect(endpointInput.disabled).toBe(false);
+      const bypassInput = screen.getByLabelText("Bypass Model Patterns") as HTMLInputElement;
+      expect(bypassInput.disabled).toBe(false);
 
-      fireEvent.change(endpointInput, {
-        target: { value: "https://custom.llm.example/v1/chat/completions" },
+      fireEvent.change(bypassInput, {
+        target: { value: "^gemini-pro-orchestrator, ^custom-orch" },
       });
       expect(mockSave).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(350);
       expect(mockSave).toHaveBeenCalledWith(
         expect.objectContaining({
-          llmFallbackEndpoint: "https://custom.llm.example/v1/chat/completions",
+          bypassModels: ["^gemini-pro-orchestrator", "^custom-orch"],
         }),
         "rev-debounce-1",
       );
@@ -971,7 +993,7 @@ describe("HarnessSettingsScreen - Forms Gate & State Handling", () => {
     }
   });
 
-  it("does not echo stored llmFallbackApiKey back into input and supports clearing stored key", () => {
+  it("renders Semantic Intent Router controls, omits deprecated v8 controls, and cascades routerProvider -> routerModel", () => {
     const mockSave = vi.fn().mockResolvedValue(true);
 
     render(
@@ -981,25 +1003,235 @@ describe("HarnessSettingsScreen - Forms Gate & State Handling", () => {
           status: "ready",
           values: {
             ...DEFAULT_AGENT_HARNESS_SETTINGS,
-            llmFallbackApiKey: "secret-key-do-not-echo",
+            routerProvider: "",
+            routerModel: "gemini-4-hydrogen",
           },
-          revision: "rev-secret-1",
+          revision: "rev-router-1",
           saving: false,
           save: mockSave,
         },
       }),
     );
 
-    const apiKeyInput = screen.getByLabelText("Classifier API Key") as HTMLInputElement;
-    expect(apiKeyInput.value).toBe("");
-    expect(apiKeyInput.placeholder).toContain("Configured");
+    expect(screen.getByText("Semantic Intent Router")).toBeDefined();
+    expect(screen.queryByText("L2 LLM Fallback Intent Classifier")).toBeNull();
+    expect(screen.queryByLabelText("Classifier Endpoint URL")).toBeNull();
+    expect(screen.queryByLabelText("Classifier API Key")).toBeNull();
+    expect(screen.queryByLabelText("Enforce Session MCP Filtering")).toBeNull();
 
-    const clearBtn = screen.getByRole("button", { name: "Clear API Key" });
-    fireEvent.click(clearBtn);
+    // Toggle routerEnabled
+    fireEvent.click(screen.getByLabelText("Enable Semantic Intent Router"));
     expect(mockSave).toHaveBeenCalledWith(
-      expect.objectContaining({ llmFallbackApiKey: "" }),
-      "rev-secret-1",
+      expect.objectContaining({ routerEnabled: false }),
+      "rev-router-1",
     );
+
+    // Changing Router Agent from Antigravity (with gemini-4-hydrogen) -> Claude cascades and clears routerModel
+    const routerAgentSelect = screen.getByLabelText("Router Agent") as HTMLSelectElement;
+    fireEvent.change(routerAgentSelect, { target: { value: "claude" } });
+    expect(mockSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        routerProvider: "claude",
+        routerModel: "",
+      }),
+      "rev-router-1",
+    );
+
+    // Router Reasoning Effort, Confidence Threshold, and Timeout
+    fireEvent.change(screen.getByLabelText("Router Reasoning Effort"), {
+      target: { value: "high" },
+    });
+    expect(mockSave).toHaveBeenCalledWith(
+      expect.objectContaining({ routerEffort: "high" }),
+      "rev-router-1",
+    );
+
+    fireEvent.change(screen.getByLabelText("Confidence Threshold"), {
+      target: { value: "0.90" },
+    });
+    expect(mockSave).toHaveBeenCalledWith(
+      expect.objectContaining({ routerConfidenceThreshold: 0.9 }),
+      "rev-router-1",
+    );
+
+    fireEvent.change(screen.getByLabelText("Router Timeout"), {
+      target: { value: "15000" },
+    });
+    expect(mockSave).toHaveBeenCalledWith(
+      expect.objectContaining({ routerTimeoutMs: 15000 }),
+      "rev-router-1",
+    );
+  });
+
+  it("prioritizes enabled host providers, reads modelDetails thinkingOptions, excludes gemini-3, and clears incompatible specialist modelOverride", async () => {
+    const mockSave = vi.fn().mockResolvedValue(true);
+    const inspectEnvMock = vi.fn().mockResolvedValue({
+      availableProviders: [
+        {
+          provider: "claude",
+          enabled: false,
+          status: "disabled",
+          models: ["claude-sonnet-4"],
+        },
+        {
+          provider: "codex",
+          enabled: true,
+          status: "ready",
+          defaultModel: "gpt-5.4",
+          models: ["gpt-5.4", "gpt-5.4-mini", "gemini-3-pro", "gemini-pro-orchestrator"],
+          modelDetails: [
+            {
+              id: "gpt-5.4",
+              label: "GPT 5.4",
+              isDefault: true,
+              thinkingOptions: [
+                { id: "low", label: "Low" },
+                { id: "xhigh", label: "Extra High" },
+              ],
+            },
+            { id: "gpt-5.4-mini", label: "GPT 5.4 Mini" },
+            { id: "gemini-3-pro", label: "Deprecated Gemini 3" },
+            { id: "gemini-pro-orchestrator", label: "Bypassed" },
+          ],
+        },
+      ],
+      diskProfiles: [],
+      lazyToolSlices: [],
+      hasRepoOverride: false,
+      repoOverridePath: null,
+      agentTeam: null,
+      workspaces: [],
+    });
+    mockUseRpc.mockImplementation((contract: any) =>
+      contract?.name === "agent_harness.environment.inspect.request"
+        ? inspectEnvMock
+        : vi.fn().mockResolvedValue({}),
+    );
+
+    render(
+      React.createElement(HarnessSettingsScreen, {
+        ...mockSurfaceProps,
+        settingsOverride: {
+          status: "ready",
+          values: {
+            ...DEFAULT_AGENT_HARNESS_SETTINGS,
+            providerMappings: {
+              ...DEFAULT_AGENT_HARNESS_SETTINGS.providerMappings,
+              codex: {
+                ...DEFAULT_AGENT_HARNESS_SETTINGS.providerMappings.codex,
+                standard: "gpt-5.4",
+              },
+            },
+            providerThinkingMappings: {
+              ...DEFAULT_AGENT_HARNESS_SETTINGS.providerThinkingMappings,
+              codex: {
+                ...DEFAULT_AGENT_HARNESS_SETTINGS.providerThinkingMappings.codex,
+                standard: "low",
+              },
+            },
+            specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) =>
+              s.id === "ui" ? { ...s, preferredProvider: "codex", modelOverride: "gpt-5.4" } : s,
+            ),
+          },
+          revision: "rev-host-1",
+          saving: false,
+          save: mockSave,
+        },
+      }),
+    );
+
+    // Target Provider auto-defaults to first enabled host provider (codex), NOT disabled claude or fallback antigravity
+    const targetProviderSelect = screen.getByLabelText("Target Provider") as HTMLSelectElement;
+    await vi.waitFor(() => {
+      expect(targetProviderSelect.value).toBe("codex");
+    });
+
+    // Enabled provider appears before disabled provider with Active/Disabled suffixes
+    const targetOptionTexts = Array.from(targetProviderSelect.options).map((o) => o.text);
+    expect(targetOptionTexts[0]).toBe("Codex · Active");
+    expect(targetOptionTexts).toContain("Claude · Disabled");
+
+    // Excluded deprecated gemini-3, bypass models, AND unadvertised preset placeholders when live models exist
+    const standardModelSelect = screen.getByLabelText("Standard Model") as HTMLSelectElement;
+    const modelValues = Array.from(standardModelSelect.options).map((o) => o.value);
+    expect(modelValues).toContain("gpt-5.4");
+    expect(modelValues).toContain("gpt-5.4-mini");
+    expect(modelValues).not.toContain("gemini-3-pro");
+    expect(modelValues).not.toContain("gemini-pro-orchestrator");
+    expect(modelValues).not.toContain("lite");
+    expect(modelValues).not.toContain("flash");
+    expect(modelValues).not.toContain("pro");
+
+    // Standard Thinking uses modelDetails.thinkingOptions from inspected codex entry
+    const standardThinkingSelect = screen.getByLabelText("Standard Thinking") as HTMLSelectElement;
+    const thinkingValues = Array.from(standardThinkingSelect.options).map((o) => o.value);
+    expect(thinkingValues).toEqual(["", "low", "xhigh"]);
+
+    // Specialist Roles Matrix inherits Active host provider (Codex) and cascades clearing incompatible modelOverride
+    const preferredProviderSelect = screen.getByLabelText(
+      "Preferred Provider",
+    ) as HTMLSelectElement;
+    expect(Array.from(preferredProviderSelect.options)[0]?.text).toBe("Inherit (Active: Codex)");
+    expect((screen.getByLabelText("Model Override ID") as HTMLInputElement).value).toBe("gpt-5.4");
+
+    fireEvent.change(preferredProviderSelect, { target: { value: "claude" } });
+    const lastCallValues = mockSave.mock.calls[mockSave.mock.calls.length - 1]?.[0];
+    const updatedUi = lastCallValues.specialists.find((s: any) => s.id === "ui");
+    expect(updatedUi?.preferredProvider).toBe("claude");
+    expect(updatedUi?.modelOverride).toBe("");
+    expect((screen.getByLabelText("Model Override ID") as HTMLInputElement).value).toBe("");
+  });
+
+  it("keeps offline Antigravity model fallback free of claude/gpt models and clears fast pending modelOverride on provider switch", async () => {
+    vi.useFakeTimers();
+    const mockSave = vi.fn().mockResolvedValue(true);
+    try {
+      render(
+        React.createElement(HarnessSettingsScreen, {
+          ...mockSurfaceProps,
+          settingsOverride: {
+            status: "ready",
+            values: {
+              ...DEFAULT_AGENT_HARNESS_SETTINGS,
+              specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) =>
+                s.id === "ui" ? { ...s, preferredProvider: "antigravity", modelOverride: "" } : s,
+              ),
+            },
+            revision: "rev-offline-1",
+            saving: false,
+            save: mockSave,
+          },
+        }),
+      );
+
+      // Offline Antigravity fallback must NOT include claude-* or gpt-* models
+      const standardModelSelect = screen.getByLabelText("Standard Model") as HTMLSelectElement;
+      const offlineModels = Array.from(standardModelSelect.options).map((o) => o.value);
+      expect(offlineModels).toContain("gemini-4-hydrogen");
+      expect(offlineModels).toContain("gemini-4-neon");
+      expect(offlineModels).not.toContain("claude-sonnet-5-5");
+      expect(offlineModels).not.toContain("gpt-oss-120b-medium");
+
+      // Fast typing (<300ms debounce) into Model Override ID followed by switching to claude must clear pending override
+      const overrideInput = screen.getByLabelText("Model Override ID") as HTMLInputElement;
+      fireEvent.change(overrideInput, { target: { value: "gemini-4-hydrogen" } });
+      expect(mockSave).not.toHaveBeenCalled();
+
+      fireEvent.change(screen.getByLabelText("Preferred Provider"), {
+        target: { value: "claude" },
+      });
+
+      expect(mockSave).toHaveBeenCalledTimes(1);
+      const savedUi = mockSave.mock.calls[0]?.[0]?.specialists?.find((s: any) => s.id === "ui");
+      expect(savedUi?.preferredProvider).toBe("claude");
+      expect(savedUi?.modelOverride).toBe("");
+      expect((screen.getByLabelText("Model Override ID") as HTMLInputElement).value).toBe("");
+
+      await vi.advanceTimersByTimeAsync(350);
+      expect(mockSave).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -1035,7 +1267,7 @@ describe("HarnessPopover - Native Orchestrator & Dynamic Specialists", () => {
       values: {
         ...DEFAULT_AGENT_HARNESS_SETTINGS,
         specialists: DEFAULT_AGENT_HARNESS_SETTINGS.specialists.map((s) =>
-          s.id === "architect"
+          s.id === "architect" || s.id === "review"
             ? { ...s, handoffEnabled: true, preferredProvider: "antigravity" }
             : s,
         ),
@@ -1059,18 +1291,71 @@ describe("HarnessPopover - Native Orchestrator & Dynamic Specialists", () => {
     ).toBeDefined();
     expect(screen.getByText("Architect Specialist")).toBeDefined();
     expect(screen.getByText("Gate Specialist")).toBeDefined();
-    expect(screen.getAllByText("antigravity · deep")).toHaveLength(2);
+    expect(screen.getByText("antigravity · plan")).toBeDefined();
+    expect(screen.getByText("antigravity · review")).toBeDefined();
 
     expect(screen.getByLabelText("Switch to fast")).toBeDefined();
     expect(screen.getByLabelText("Switch to standard")).toBeDefined();
-    expect(screen.getByLabelText("Switch to deep")).toBeDefined();
+    expect(screen.getByLabelText("Switch to plan")).toBeDefined();
+    expect(screen.getByLabelText("Switch to review")).toBeDefined();
     expect(screen.getByLabelText("Switch to max")).toBeDefined();
 
-    fireEvent.click(screen.getByLabelText("Switch to deep"));
+    fireEvent.click(screen.getByLabelText("Switch to plan"));
     expect(mockSwitchFn).not.toHaveBeenCalled();
   });
 
-  it("renders 4-tier controls, Manual Max warning badge, and dispatches tier switch RPC + composer sync", async () => {
+  it("shows NATIVE ORCHESTRATOR and locks tier buttons on mid-session switch even when stale agentHarness metadata exists", () => {
+    const mockSwitchFn = vi.fn().mockResolvedValue({});
+    const noopRpc = vi.fn().mockResolvedValue({});
+    mockUseRpc.mockImplementation((contract: any) =>
+      contract?.name === "agent_harness.tier.switch.request" ? mockSwitchFn : noopRpc,
+    );
+    mockUseAgent.mockReturnValue({
+      status: "idle",
+      provider: "antigravity",
+      model: "gemini-pro-orchestrator",
+      currentModeId: "full-access",
+      metadata: {
+        [HARNESS_BYPASSED_META_KEY]: true,
+        [HARNESS_METADATA_KEY]: createSampleMetadata({
+          role: "ui",
+          currentTier: "plan",
+          currentModel: "gemini-4-carbon",
+          phase: "design",
+          lastBilledTier: "standard",
+          lastBilledModel: "gemini-4-neon",
+        }),
+      },
+    } as any);
+    mockUseSettings.mockReturnValue({
+      status: "ready",
+      values: DEFAULT_AGENT_HARNESS_SETTINGS,
+    });
+
+    render(
+      React.createElement(HarnessPopover, {
+        workspaceId: "ws-1",
+        agentId: "agt-mid-bypass",
+        theme: popoverTheme,
+        layout: { compact: false, platform: "web" },
+        close: vi.fn(),
+      } as any),
+    );
+
+    expect(screen.getByText("NATIVE ORCHESTRATOR")).toBeDefined();
+    expect(screen.getByText("Native")).toBeDefined();
+    expect(screen.getByText("gemini-pro-orchestrator")).toBeDefined();
+    expect(screen.queryByText("UI · design")).toBeNull();
+    expect(screen.queryByText("Read-only Plan (steps down to Standard)")).toBeNull();
+    expect(
+      screen.getByText("Managed natively by Orchestrator — tier switching disabled."),
+    ).toBeDefined();
+
+    fireEvent.click(screen.getByLabelText("Switch to review"));
+    expect(mockSwitchFn).not.toHaveBeenCalled();
+  });
+
+  it("renders 5-tier controls, Manual Max warning badge, and dispatches tier switch RPC + composer sync", async () => {
     const mockSwitchFn = vi.fn().mockResolvedValue({
       currentModel: "gemini-4-carbon",
       recommendedModeId: "full-access",
@@ -1122,12 +1407,13 @@ describe("HarnessPopover - Native Orchestrator & Dynamic Specialists", () => {
 
     expect(screen.getByText("Manual Max · High quota usage")).toBeDefined();
     expect(screen.getByText("Max · xhigh")).toBeDefined();
+    expect(screen.getByLabelText("Switch to review")).toBeDefined();
 
-    fireEvent.click(screen.getByLabelText("Switch to deep"));
+    fireEvent.click(screen.getByLabelText("Switch to plan"));
     expect(mockSwitchFn).toHaveBeenCalledWith(
       expect.objectContaining({
         agentId: "agt-max",
-        targetTier: "deep",
+        targetTier: "plan",
         currentModeId: "full-access",
       }),
     );
@@ -1136,7 +1422,100 @@ describe("HarnessPopover - Native Orchestrator & Dynamic Specialists", () => {
       expect(mockComposerSetMode).toHaveBeenCalledWith("full-access");
       expect(mockComposerSetThinking).toHaveBeenCalledWith("high");
     });
+
+    fireEvent.click(screen.getByLabelText("Switch to review"));
+    expect(mockSwitchFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: "agt-max",
+        targetTier: "review",
+      }),
+    );
     mockUseComposers.mockReturnValue([]);
+  });
+
+  it("shows read-only gate badges strictly for design/review phases and not for writable exec phase on plan/review tiers", () => {
+    const noopRpc = vi.fn().mockResolvedValue({});
+    mockUseRpc.mockImplementation(() => noopRpc);
+    mockUseSettings.mockReturnValue({
+      status: "ready",
+      values: DEFAULT_AGENT_HARNESS_SETTINGS,
+    });
+
+    // 1. Manually switched to `plan` tier in writable `phase: "exec"` -> must NOT display Read-only Plan badge
+    mockUseAgent.mockReturnValue({
+      status: "idle",
+      provider: "antigravity",
+      model: "gemini-4-carbon",
+      currentModeId: "full-access",
+      metadata: {
+        [HARNESS_METADATA_KEY]: createSampleMetadata({
+          role: "ui",
+          currentTier: "plan",
+          phase: "exec",
+        }),
+      },
+    } as any);
+    const { rerender } = render(
+      React.createElement(HarnessPopover, {
+        workspaceId: "ws-1",
+        agentId: "agt-phase",
+        theme: popoverTheme,
+        layout: { compact: false, platform: "web" },
+        close: vi.fn(),
+      } as any),
+    );
+    expect(screen.queryByText("Read-only Plan (steps down to Standard)")).toBeNull();
+    expect(screen.queryByText("Read-only Review Gate")).toBeNull();
+
+    // 2. Design phase shows Read-only Plan badge
+    mockUseAgent.mockReturnValue({
+      status: "idle",
+      provider: "antigravity",
+      model: "gemini-4-carbon",
+      currentModeId: "full-access",
+      metadata: {
+        [HARNESS_METADATA_KEY]: createSampleMetadata({
+          role: "architect",
+          currentTier: "plan",
+          phase: "design",
+        }),
+      },
+    } as any);
+    rerender(
+      React.createElement(HarnessPopover, {
+        workspaceId: "ws-1",
+        agentId: "agt-phase",
+        theme: popoverTheme,
+        layout: { compact: false, platform: "web" },
+        close: vi.fn(),
+      } as any),
+    );
+    expect(screen.getByText("Read-only Plan (steps down to Standard)")).toBeDefined();
+
+    // 3. Review phase shows Read-only Review Gate badge
+    mockUseAgent.mockReturnValue({
+      status: "idle",
+      provider: "antigravity",
+      model: "gemini-4-argon",
+      currentModeId: "full-access",
+      metadata: {
+        [HARNESS_METADATA_KEY]: createSampleMetadata({
+          role: "review",
+          currentTier: "review",
+          phase: "review",
+        }),
+      },
+    } as any);
+    rerender(
+      React.createElement(HarnessPopover, {
+        workspaceId: "ws-1",
+        agentId: "agt-phase",
+        theme: popoverTheme,
+        layout: { compact: false, platform: "web" },
+        close: vi.fn(),
+      } as any),
+    );
+    expect(screen.getByText("Read-only Review Gate")).toBeDefined();
   });
 
   it("loads N dynamic workspace agent-team specialists via harnessEffectiveConfigRpc with RO tags and bound providers", async () => {
@@ -1583,7 +1962,7 @@ describe("Agent Harness Phase 3 - WorkspaceTeamEditor & Entry Points", () => {
       openSettings: vi.fn(),
     };
 
-    const cleanup = contribute(mockClient as PluginClientContext);
+    const disposePlugin = contribute(mockClient as PluginClientContext);
 
     expect(addHeaderButton).not.toHaveBeenCalled();
     expect(workspacePanels).toHaveLength(1);
@@ -1605,7 +1984,7 @@ describe("Agent Harness Phase 3 - WorkspaceTeamEditor & Entry Points", () => {
     wsCmd.onSelect({ openPanel: cmdOpenPanel });
     expect(cmdOpenPanel).toHaveBeenCalledWith("agent-team-panel");
 
-    cleanup();
+    disposePlugin();
   });
 
   it("handles empty repo Detect & initialize, dirty tab tracking, and Discard reset", async () => {
@@ -1752,6 +2131,133 @@ describe("Agent Harness Phase 3 - WorkspaceTeamEditor & Entry Points", () => {
       model: "claude-opus-4",
     });
     expect(setModified).toHaveBeenLastCalledWith(false);
+  });
+
+  it("cascades WorkspaceTeamEditor role binding provider -> model, exposes plan/review tiers, and excludes gemini-3 models", async () => {
+    const inspectMock = vi.fn().mockResolvedValue({
+      ...baseInspectResponse,
+      manifest: {
+        ...baseInspectResponse.manifest,
+        roles: ["be-developer", "fe-architect"],
+        bindings: {
+          "fe-architect": { provider: "claude", tier: "plan", model: "claude-sonnet-4" },
+        },
+      },
+      availableProviders: [
+        { provider: "codex", enabled: false, models: ["gpt-5.4"] },
+        {
+          provider: "claude",
+          enabled: true,
+          models: ["claude-sonnet-4", "claude-haiku-4", "gemini-3-pro"],
+        },
+        {
+          provider: "antigravity",
+          enabled: true,
+          models: [
+            "gemini-4-hydrogen",
+            "gemini-4-carbon",
+            "gemini-3-flash",
+            "gemini-pro-orchestrator",
+          ],
+        },
+      ],
+    });
+    const saveMock = vi.fn().mockResolvedValue({
+      success: true,
+      compiled: true,
+      checkoutRoot: "/repos/demo",
+      manifestPath: "/repos/demo/.agents/agent-team.json",
+      manifest: {
+        ...baseInspectResponse.manifest,
+        roles: ["be-developer", "fe-architect"],
+        bindings: {
+          "fe-architect": { provider: "antigravity", tier: "review" },
+        },
+      },
+      localFederatedTargets: ["antigravity"],
+      warnings: [],
+      message: "Saved",
+      error: null,
+    });
+    mockUseRpc.mockImplementation((contract: any) => {
+      if (contract?.name === "agent_harness.team.inspect.request") return inspectMock;
+      if (contract?.name === "agent_harness.team.save.request") return saveMock;
+      return vi.fn().mockResolvedValue({});
+    });
+
+    render(
+      React.createElement(WorkspaceTeamEditor, {
+        workspaceId: "ws-team-1",
+        theme: editorTheme,
+        layout: { compact: false, platform: "web" },
+        tab: { setModified: vi.fn(), state: undefined, setState: vi.fn() },
+      }),
+    );
+
+    const providerSelect = (await screen.findByLabelText(
+      "fe-architect provider",
+    )) as HTMLSelectElement;
+    const providerTexts = Array.from(providerSelect.options).map((o) => o.text);
+    // Active providers ordered first and Disabled marked clearly
+    expect(providerTexts[0]).toBe("Inherit (Active: Antigravity)");
+    expect(providerTexts).toContain("Claude · Active");
+    expect(providerTexts).toContain("Antigravity · Active");
+    expect(providerTexts).toContain("Codex · Disabled");
+    expect(providerTexts.indexOf("Claude · Active")).toBeLessThan(
+      providerTexts.indexOf("Codex · Disabled"),
+    );
+
+    // Tier dropdown exposes plan and review options
+    const tierSelect = screen.getByLabelText("fe-architect tier") as HTMLSelectElement;
+    const tierValues = Array.from(tierSelect.options).map((o) => o.value);
+    expect(tierValues).toContain("plan");
+    expect(tierValues).toContain("review");
+
+    // Initial Claude model preset lists claude models and excludes gemini-3
+    const presetSelect = screen.getByLabelText("fe-architect model preset") as HTMLSelectElement;
+    expect(Array.from(presetSelect.options).map((o) => o.value)).toEqual([
+      "",
+      "claude-sonnet-4",
+      "claude-haiku-4",
+    ]);
+    expect((screen.getByLabelText("fe-architect model override") as HTMLInputElement).value).toBe(
+      "claude-sonnet-4",
+    );
+
+    // Switching provider to antigravity clears incompatible claude-sonnet-4 model
+    fireEvent.change(providerSelect, { target: { value: "antigravity" } });
+    expect((screen.getByLabelText("fe-architect model override") as HTMLInputElement).value).toBe(
+      "",
+    );
+    expect((screen.getByLabelText("fe-architect model preset") as HTMLSelectElement).value).toBe(
+      "",
+    );
+
+    // Antigravity model preset excludes gemini-3-flash and gemini-pro-orchestrator
+    expect(Array.from(presetSelect.options).map((o) => o.value)).toEqual([
+      "",
+      "gemini-4-hydrogen",
+      "gemini-4-carbon",
+    ]);
+
+    // Update tier to review and save -> model override stays cleared
+    fireEvent.change(tierSelect, { target: { value: "review" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save & compile" }));
+
+    await vi.waitFor(() => {
+      expect(saveMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          manifest: expect.objectContaining({
+            bindings: expect.objectContaining({
+              "fe-architect": {
+                provider: "antigravity",
+                tier: "review",
+              },
+            }),
+          }),
+        }),
+      );
+    });
   });
 
   it("runs doctor, opens Clean confirmation Modal, and displays worktree inheritance + raw JSON in file panel", async () => {
@@ -2649,5 +3155,23 @@ describe("Agent Harness Debug Trace UI & Role Lazy-Tool Slices", () => {
     expect(
       (screen.getByRole("button", { name: "Clear Trace" }) as HTMLButtonElement).disabled,
     ).toBe(true);
+  });
+
+  it("orders and formats provider catalog entries from host inspection", () => {
+    expect(formatProviderDisplayLabel("antigravity")).toBe("Antigravity");
+    expect(formatProviderDisplayLabel("opencode")).toBe("OpenCode");
+    const providers = [
+      { provider: "codex", enabled: false, models: ["flash"] },
+      { provider: "claude", enabled: true, models: ["pro"] },
+      { provider: "antigravity", enabled: true, models: ["gemini-4-neon"] },
+    ];
+    expect(resolveActiveHostProviderId(providers)).toBe("antigravity");
+    expect(buildOrderedProviderIds(providers)).toEqual([
+      "claude",
+      "antigravity",
+      "opencode",
+      "pi",
+      "codex",
+    ]);
   });
 });

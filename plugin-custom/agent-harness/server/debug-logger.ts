@@ -461,7 +461,7 @@ export class HarnessDebugLogger {
       }
 
       const recentReversed =
-        effectiveLimit > 0 ? parsedEntries.slice(-effectiveLimit).reverse() : [];
+        effectiveLimit > 0 ? parsedEntries.slice(-effectiveLimit).toReversed() : [];
 
       return {
         enabled: this.enabled,

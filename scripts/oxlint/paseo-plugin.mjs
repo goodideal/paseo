@@ -154,10 +154,87 @@ const noSyncIo = {
   },
 };
 
+const VAGUE_FILENAME_PATTERN =
+  /^(.+)-(utils|helpers|manager|controller)(?:\.(?:web|native|electron|ios|android|test|spec))*\.(?:ts|tsx|js|jsx|mts|cts|mjs|cjs)$/;
+const DECORATIVE_DIVIDER_PATTERN = /={5,}/;
+const BLOCK_DIVIDER_LINE_PATTERN = /^\s*(?:\*\s*)?={5,}\s*$/;
+
+function stripCommentLinePrefix(line) {
+  return line.replace(/^\s*(?:\*\s*)?/, "").trim();
+}
+
+function isDecorativeDividerComment(comment) {
+  if (typeof comment?.value !== "string") {
+    return false;
+  }
+  if (comment.type === "Line") {
+    return DECORATIVE_DIVIDER_PATTERN.test(comment.value);
+  }
+  const lines = comment.value.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!BLOCK_DIVIDER_LINE_PATTERN.test(lines[i])) {
+      continue;
+    }
+    const prevContent = i > 0 ? stripCommentLinePrefix(lines[i - 1]) : "";
+    const isSetextUnderline = prevContent.length > 0 && !/^={5,}$/.test(prevContent);
+    if (!isSetextUnderline) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function formatVagueFilenameMessage(filename, suffix) {
+  return `Filename "${filename}" ends with vague suffix "-${suffix}". Rename it to a domain-specific noun such as "-catalog", "-resolver", "-store", or "-policy" (see docs/coding-standards.md).`;
+}
+
+export const NO_DECORATIVE_DIVIDER_MESSAGE =
+  "Decorative divider comments (5+ consecutive '=') are prohibited. Use modules and cohesive functions to organize code instead (see docs/coding-standards.md).";
+
+const noVagueFilename = {
+  create(context) {
+    const filename = (context.filename ?? "").replaceAll("\\", "/");
+    const basename = filename.split("/").pop() ?? "";
+    const match = VAGUE_FILENAME_PATTERN.exec(basename);
+    if (!match) {
+      return {};
+    }
+    const suffix = match[2];
+    return {
+      Program(node) {
+        context.report({
+          node,
+          message: formatVagueFilenameMessage(basename, suffix),
+        });
+      },
+    };
+  },
+};
+
+const noDecorativeDivider = {
+  create(context) {
+    return {
+      Program() {
+        const comments = context.sourceCode?.getAllComments?.() ?? [];
+        for (const comment of comments) {
+          if (isDecorativeDividerComment(comment)) {
+            context.report({
+              loc: comment.loc,
+              message: NO_DECORATIVE_DIVIDER_MESSAGE,
+            });
+          }
+        }
+      },
+    };
+  },
+};
+
 export default {
   meta: { name: "paseo" },
   rules: {
     "no-raw-pressable": noRawPressable,
     "no-sync-io": noSyncIo,
+    "no-vague-filename": noVagueFilename,
+    "no-decorative-divider": noDecorativeDivider,
   },
 };

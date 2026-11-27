@@ -568,15 +568,16 @@ function inferRoleColor(team: "fe" | "be" | "ops", readonly: boolean): string {
 }
 
 function inferDefaultTier(roleId: string, cat?: CatalogRoleEntry): string {
+  if (roleId.includes("reviewer") || roleId.includes("auditor")) {
+    return "review";
+  }
   if (
-    roleId.includes("reviewer") ||
-    roleId.includes("auditor") ||
     roleId.includes("architect") ||
     roleId.endsWith("-pm") ||
     roleId === "pm" ||
     cat?.recommended_model === "pro"
   ) {
-    return "deep";
+    return "plan";
   }
   return "standard";
 }
@@ -726,82 +727,6 @@ function assignCoarseAliases(roles: readonly string[]): Map<string, string[]> {
   return aliasesByRole;
 }
 
-function escapeRegexLiteral(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function inferRoleMatchPatterns(roleId: string, team: "fe" | "be" | "ops"): string[] {
-  const idPattern = `\\b${escapeRegexLiteral(roleId)}\\b`;
-  if (roleId.endsWith("-pm") || roleId === "pm") {
-    return [
-      idPattern,
-      "\\b(?:pm-prd|pm-user-stories|pm-edge-cases|pm-problem|prd|user\\s*stories|jtbd|story\\s*mapping)\\b",
-      "痛点|用户故事|产品需求|验收条件",
-    ];
-  }
-  if (roleId.includes("architect")) {
-    if (team === "fe") {
-      return [
-        idPattern,
-        "\\b(?:frontend\\s*architect|ui\\s*architect|design\\s*system\\s*architect|state\\s*architecture)\\b",
-        "前端架构|组件架构|状态架构",
-      ];
-    }
-    return [
-      idPattern,
-      "\\b(?:codebase-design|domain-modeling|deep\\s*modules?|adr|glossary|system\\s*architecture|schema\\s*design)\\b",
-      "深模块|领域建模|系统架构|整体架构|架构设计|模块划分",
-    ];
-  }
-  if (roleId.includes("reviewer") || roleId.includes("auditor") || roleId === "review") {
-    if (team === "ops") {
-      return [
-        idPattern,
-        "\\b(?:sre\\s*audit|dockerfile\\s*audit|k8s\\s*audit|security\\s*audit|cve)\\b",
-        "容器安全|镜像加固|运维审计|权限审计",
-      ];
-    }
-    return [
-      idPattern,
-      "\\b(?:ocr|code-review|security-review|dual-axis\\s*review|pr\\s*review)\\b",
-      "代码审查|安全审计|双轴审查|质量门禁",
-    ];
-  }
-  if (roleId.includes("qa")) {
-    return [
-      idPattern,
-      "\\b(?:test-gardener|vitest|playwright|e2e|maestro|qa|viewport)\\b",
-      "测试健康度|回归测试|边缘用例|多视口|端到端测试",
-    ];
-  }
-  if (roleId.includes("uiux")) {
-    return [
-      idPattern,
-      "\\b(?:ui-ux-pro-max|design\\s*system|design\\s*tokens?|figma|wireframe|palette|typography)\\b",
-      "设计系统|视觉规范|配色方案|字体排版|交互原型",
-    ];
-  }
-  if (team === "fe") {
-    return [
-      idPattern,
-      "\\b(?:ui|ux|unslop|visual-verdict|unistyles|popover|sheet|pill|hover|tailwind|expo|react\\s*native|css)\\b",
-      "前端|界面|样式|弹窗|组件|面板|视觉|移动端|响应式|布局",
-    ];
-  }
-  if (team === "ops") {
-    return [
-      idPattern,
-      "\\b(?:dockerfile|docker-compose|kubernetes|k8s|helm|prometheus|grafana|gitea\\s*actions|ci\\/cd|pipeline|reviewdog)\\b",
-      "流水线|容器编排|监控告警|持续集成|部署脚本|运维排障",
-    ];
-  }
-  return [
-    idPattern,
-    "\\b(?:backend|daemon|websocket|rpc|sqlite|postgres|redis|dbx|(?:git\\s+)?worktree\\s+manager|git\\s+worktree|protocol|zod-aot|relay|gateway|scheduler|rest\\s*api|endpoint|database|sql)\\b",
-    "后端|协议兼容|数据库|进程通信|服务端|网关|接口实现|数据存储",
-  ];
-}
-
 /**
  * Loads `.agents/agent-team.json` for a workspace (falling back to the main git repo
  * checkout when running inside a git worktree) and maps its enabled roles into
@@ -894,7 +819,12 @@ export function loadWorkspaceAgentTeam(
       : rawProvider;
     const preferredTier =
       typeof binding?.tier === "string" && binding.tier.trim()
-        ? normalizeTierAlias(binding.tier)
+        ? normalizeTierAlias(
+            binding.tier,
+            readonly || roleId.includes("reviewer") || roleId.includes("auditor")
+              ? "review"
+              : undefined,
+          )
         : defaultTier;
     const modelOverride = typeof binding?.model === "string" ? binding.model.trim() : "";
     const defaultModeId = typeof binding?.modeId === "string" ? binding.modeId.trim() : "";
@@ -930,9 +860,9 @@ export function loadWorkspaceAgentTeam(
       ...(cat?.core_skills ?? []),
       ...capRoleSkills,
     ]);
-    const docsFocus = Array.from(new Set([...(builtinSpec?.docsFocus ?? [])]));
-    const qualityGates = Array.from(new Set([...(builtinSpec?.qualityGates ?? [])]));
-    const excludedMcpServers = Array.from(new Set([...(builtinSpec?.excludedMcpServers ?? [])]));
+    const docsFocus = Array.from(new Set(builtinSpec?.docsFocus ?? []));
+    const qualityGates = Array.from(new Set(builtinSpec?.qualityGates ?? []));
+    const excludedMcpServers = Array.from(new Set(builtinSpec?.excludedMcpServers ?? []));
     const excludedSet = new Set(excludedMcpServers.map((s) => s.toLowerCase()));
     const allowedMcpServers = Array.from(
       new Set([
@@ -962,7 +892,11 @@ export function loadWorkspaceAgentTeam(
       preferredTier,
       modelOverride,
       defaultModeId,
-      lockTierOnLabel: readonly || preferredTier === "deep",
+      lockTierOnLabel:
+        readonly ||
+        preferredTier === "plan" ||
+        preferredTier === "review" ||
+        preferredTier === "deep",
       handoffEnabled: true,
       handoffPriority: index * 10 + 10,
       handoffTitlePrefix: `[${roleId}]`,
@@ -979,9 +913,9 @@ export function loadWorkspaceAgentTeam(
       allowedMcpServers,
       excludedMcpServers,
       injectedMcpServers: [...(builtinSpec?.injectedMcpServers ?? [])],
-      extraEnv: { ...(builtinSpec?.extraEnv ?? {}) },
+      extraEnv: { ...builtinSpec?.extraEnv },
       aliases: aliasesByRole.get(roleId) ?? [],
-      matchPatterns: inferRoleMatchPatterns(roleId, team),
+      matchPatterns: [],
       profileFilename: `${roleId}.json`,
     };
   });

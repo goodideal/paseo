@@ -13,3 +13,6 @@ pre-commit:
     - name: typecheck
       glob: "*.{ts,tsx,cts,mts}"
       run: npm run typecheck
+    - name: typecheck-custom-plugins
+      glob: "plugin-custom/**/*.{ts,tsx,cts,mts,json}"
+      run: node scripts/check-custom-plugins.mjs {staged_files}

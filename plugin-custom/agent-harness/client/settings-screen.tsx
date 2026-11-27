@@ -19,14 +19,13 @@ import {
   type AgentHarnessSettings,
 } from "../shared/settings.js";
 import {
-  BUILTIN_BYPASS_MODELS,
   BUILTIN_PROVIDER_MAPPINGS,
   BUILTIN_PROVIDER_THINKING_MAPPINGS,
   BUILTIN_TIERS,
 } from "../shared/presets.js";
-import { isModelBypassed } from "../shared/intent-detector.js";
 import type { HarnessSpecialistConfig } from "../shared/types.js";
 import {
+  isModelCompatibleWithProvider,
   normalizeProviderName,
   resolveTargetModelForTier,
   resolveEffectiveHarnessConfig,
@@ -41,6 +40,15 @@ import {
   type HarnessDebugStatusOutput,
   type HarnessInspectEnvironmentOutput,
 } from "../shared/contracts.js";
+import {
+  buildInspectedProviderMap,
+  buildOrderedProviderIds,
+  DEFAULT_KNOWN_PROVIDERS,
+  formatProviderDisplayLabel,
+  formatProviderStatusSuffix,
+  resolveActiveHostProviderId,
+  resolveProviderSelectableModels,
+} from "./provider-catalog.js";
 import { subscribeWorkspaceTeamUpdated } from "./team-events.js";
 
 type AgentTeamInspectInfo = NonNullable<HarnessInspectEnvironmentOutput["agentTeam"]>;
@@ -64,18 +72,6 @@ function formatAgentTeamLabel(agentTeam: AgentTeamInspectInfo): string {
   return `Active (${parts.join(", ")})`;
 }
 
-const KNOWN_PROVIDERS = ["antigravity", "claude", "codex", "opencode", "pi"] as const;
-
-const ANTIGRAVITY_GEMINI4_MODELS = [
-  "gemini-4-hydrogen",
-  "gemini-4-argon",
-  "gemini-4-carbon",
-  "gemini-4-neon",
-  "claude-sonnet-5-5",
-  "claude-opus-5-5",
-  "gpt-oss-120b-medium",
-] as const;
-
 const CUSTOM_MODEL_OPTION_VALUE = "__custom__";
 
 const THINKING_EFFORT_OPTIONS = [
@@ -89,9 +85,30 @@ const THINKING_EFFORT_OPTIONS = [
 const TIER_BUDGET_HINTS: Record<string, string> = {
   fast: "0.2x routing, lookup, and low-risk quick edits",
   standard: "1x default workhorse for daily features and tests",
-  deep: "3x planning, review, and complex core edits",
-  max: "Manual peak effort (inherits Deep + xhigh when unset)",
+  plan: "3x architecture design, planning, and specification",
+  review: "3x read-only dual-axis code review and security audit",
+  max: "Manual peak effort (inherits Plan + xhigh when unset)",
 };
+
+const ROUTER_EFFORT_OPTIONS = [
+  { label: "Low", value: "low" },
+  { label: "Medium", value: "medium" },
+  { label: "High", value: "high" },
+] as const;
+
+const ROUTER_CONFIDENCE_OPTIONS = [
+  { label: "0.70 (Relaxed)", value: "0.70" },
+  { label: "0.80", value: "0.80" },
+  { label: "0.85 (Recommended)", value: "0.85" },
+  { label: "0.90 (Strict)", value: "0.90" },
+] as const;
+
+const ROUTER_TIMEOUT_OPTIONS = [
+  { label: "5000 ms (5s)", value: "5000" },
+  { label: "10000 ms (10s)", value: "10000" },
+  { label: "15000 ms (15s)", value: "15000" },
+  { label: "20000 ms (20s)", value: "20000" },
+] as const;
 
 export const BUILTIN_LAZY_TOOL_SLICES = [
   "general.yaml",
@@ -231,12 +248,14 @@ function resolveRecentEntriesHint(entryCount: number, debugTraceEnabled: boolean
   return "Debug trace is off";
 }
 
-function formatAvailableProvidersSummary(availableProviders: unknown): string {
+function formatAvailableProvidersSummary(
+  availableProviders?: HarnessInspectEnvironmentOutput["availableProviders"] | null,
+): string {
   if (!Array.isArray(availableProviders) || availableProviders.length === 0) {
     return "Not inspected";
   }
   return availableProviders
-    .map((p: { provider: string; enabled: boolean; models?: string[] }) => {
+    .map((p) => {
       const stateLabel = p.enabled ? "enabled" : "off";
       return `${p.provider} (${stateLabel}, ${p.models?.length ?? 0} models)`;
     })
@@ -250,14 +269,16 @@ function resolveLazySliceHint(lazyToolSlice?: string): string {
   return "MCP capability slice injected via LAZY_TOOL_CONFIG";
 }
 
-function formatRepoOverrideLabel(inspectInfo: any): string {
+function formatRepoOverrideLabel(inspectInfo: HarnessInspectEnvironmentOutput | null): string {
   if (inspectInfo?.hasRepoOverride) {
     return `Active (${inspectInfo.repoOverridePath})`;
   }
   return "None";
 }
 
-function formatWorkspaceAgentTeamLabel(inspectInfo: any): string {
+function formatWorkspaceAgentTeamLabel(
+  inspectInfo: HarnessInspectEnvironmentOutput | null,
+): string {
   if (inspectInfo?.agentTeam) {
     return formatAgentTeamLabel(inspectInfo.agentTeam);
   }
@@ -307,37 +328,6 @@ function normalizeDebugStatusResponse(
   };
 }
 
-function formatProviderDisplayLabel(providerId: string): string {
-  switch (providerId) {
-    case "antigravity":
-      return "Antigravity";
-    case "claude":
-      return "Claude";
-    case "codex":
-      return "Codex";
-    case "opencode":
-      return "OpenCode";
-    case "pi":
-      return "Pi";
-    default:
-      return providerId;
-  }
-}
-
-function isSelectableRoutingModel(
-  providerId: string,
-  modelId: string,
-  bypassModels: readonly string[] = BUILTIN_BYPASS_MODELS,
-): boolean {
-  if (!modelId.trim()) return false;
-  if (normalizeProviderName(providerId) === "antigravity") {
-    if (/^gemini-3/i.test(modelId) || isModelBypassed(modelId, bypassModels)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 const INPUT_SAVE_DEBOUNCE_MS = 300;
 
 function mergeNestedStringMaps(
@@ -349,7 +339,7 @@ function mergeNestedStringMaps(
   const merged = { ...prev };
   for (const [provider, tierMap] of Object.entries(next)) {
     merged[provider] = {
-      ...(merged[provider] ?? {}),
+      ...merged[provider],
       ...tierMap,
     };
   }
@@ -383,8 +373,21 @@ function parseCommaList(raw: string): string[] {
     .filter(Boolean);
 }
 
+export type HarnessSettingsOverride = (
+  | { status: "loading" }
+  | { status: "error"; error?: string }
+  | { status: "invalid"; error?: string; revision?: string }
+  | { status: "ready"; values: AgentHarnessSettings; revision?: string }
+) & {
+  saving?: boolean;
+  saveError?: string | null;
+  save?: (values: AgentHarnessSettings, revision: string) => Promise<boolean>;
+  reset?: () => Promise<boolean>;
+  reload?: () => Promise<void>;
+};
+
 export interface HarnessSettingsScreenProps extends PluginSurfaceProps {
-  settingsOverride?: any;
+  settingsOverride?: HarnessSettingsOverride;
   onOpenWorkspaceTeam?: (workspaceId: string) => void;
 }
 
@@ -395,7 +398,7 @@ export function HarnessSettingsScreen({
   onOpenWorkspaceTeam,
 }: HarnessSettingsScreenProps) {
   const defaultSettings = useSettings(agentHarnessSettings);
-  const settings = settingsOverride ?? defaultSettings;
+  const settings: HarnessSettingsOverride = settingsOverride ?? defaultSettings;
   const toast = useToast();
   const inspectRpc = useRpc(harnessInspectEnvironmentRpc);
   const syncProfilesRpc = useRpc(harnessSyncProfilesRpc);
@@ -405,10 +408,11 @@ export function HarnessSettingsScreen({
   const workspaceRefs = useWorkspaces();
   const paseo = usePaseo();
 
-  const [inspectInfo, setInspectInfo] = useState<any>(null);
+  const [inspectInfo, setInspectInfo] = useState<HarnessInspectEnvironmentOutput | null>(null);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("");
   const [isSyncing, setIsSyncing] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState<string>("antigravity");
+  const hasManualProviderSelectionRef = useRef(false);
   const [selectedSpecialistId, setSelectedSpecialistId] = useState<string>("ui");
   const [customModelOpenByTier, setCustomModelOpenByTier] = useState<Record<string, boolean>>({});
   const [debugStatus, setDebugStatus] = useState<HarnessDebugStatusOutput | null>(null);
@@ -457,7 +461,8 @@ export function HarnessSettingsScreen({
       if (!isMountedRef.current || seq !== debugStatusSeqRef.current) {
         return null;
       }
-      const fallbackEnabled = Boolean(latestSettingsRef.current?.values?.debugLogs);
+      const cur = latestSettingsRef.current;
+      const fallbackEnabled = cur?.status === "ready" ? Boolean(cur.values?.debugLogs) : false;
       const normalized = normalizeDebugStatusResponse(raw, fallbackEnabled);
       if (normalized) {
         setDebugStatus(normalized);
@@ -645,7 +650,7 @@ export function HarnessSettingsScreen({
         : {}),
     };
     try {
-      const ok = await cur.save(nextValues, cur.revision);
+      const ok = await cur.save(nextValues, cur.revision ?? "");
       if (ok === false) {
         toastRef.current.error("Failed to save Agent Harness settings.");
       }
@@ -691,7 +696,7 @@ export function HarnessSettingsScreen({
       try {
         const baseValues: AgentHarnessSettings = cur.values ?? DEFAULT_AGENT_HARNESS_SETTINGS;
         if (typeof cur.save === "function") {
-          const ok = await cur.save({ ...baseValues, debugLogs: nextEnabled }, cur.revision);
+          const ok = await cur.save({ ...baseValues, debugLogs: nextEnabled }, cur.revision ?? "");
           if (ok === false) {
             toastRef.current.error(cur.saveError || "Failed to save debug trace setting");
             return;
@@ -890,9 +895,10 @@ export function HarnessSettingsScreen({
   );
 
   const handleSelect = useCallback(
-    (key: keyof AgentHarnessSettings) => (value: any) => {
-      commitPatch({ [key]: value } as Partial<AgentHarnessSettings>);
-    },
+    <K extends keyof AgentHarnessSettings>(key: K) =>
+      (value: AgentHarnessSettings[K]) => {
+        commitPatch({ [key]: value } as Partial<AgentHarnessSettings>);
+      },
     [commitPatch],
   );
 
@@ -908,7 +914,8 @@ export function HarnessSettingsScreen({
       if (ok) return;
     }
     if (typeof settings.save === "function") {
-      const revision = settings.revision ?? "";
+      const revision =
+        "revision" in settings && typeof settings.revision === "string" ? settings.revision : "";
       await settings.save(DEFAULT_AGENT_HARNESS_SETTINGS, revision);
     }
   }, [settings]);
@@ -916,59 +923,65 @@ export function HarnessSettingsScreen({
   const values: AgentHarnessSettings =
     settings.status === "ready" ? settings.values : DEFAULT_AGENT_HARNESS_SETTINGS;
 
-  const inspectedProviderMap = useMemo(() => {
-    const map = new Map<string, { enabled: boolean; models: string[] }>();
-    const list = Array.isArray(inspectInfo?.availableProviders)
-      ? inspectInfo.availableProviders
-      : [];
-    for (const item of list) {
-      if (item && typeof item.provider === "string") {
-        map.set(normalizeProviderName(item.provider), {
-          enabled: Boolean(item.enabled),
-          models: Array.isArray(item.models) ? item.models : [],
-        });
-      }
-    }
-    return map;
-  }, [inspectInfo]);
+  const inspectedProviderMap = useMemo(
+    () => buildInspectedProviderMap(inspectInfo?.availableProviders),
+    [inspectInfo],
+  );
 
-  const providerIds = useMemo(() => {
-    const ids = new Set<string>(KNOWN_PROVIDERS);
-    for (const key of Object.keys(values.providerMappings ?? {})) {
-      ids.add(normalizeProviderName(key));
-    }
-    for (const key of inspectedProviderMap.keys()) {
-      ids.add(key);
-    }
-    return Array.from(ids).filter(Boolean);
-  }, [values.providerMappings, inspectedProviderMap]);
+  const activeHostProviderId = useMemo(
+    () => resolveActiveHostProviderId(inspectInfo?.availableProviders),
+    [inspectInfo],
+  );
+
+  useEffect(() => {
+    if (hasManualProviderSelectionRef.current) return;
+    const list = inspectInfo?.availableProviders;
+    if (!Array.isArray(list) || list.length === 0) return;
+    setSelectedProvider(activeHostProviderId);
+  }, [activeHostProviderId, inspectInfo]);
+
+  const providerIds = useMemo(
+    () =>
+      buildOrderedProviderIds(inspectInfo?.availableProviders, [
+        ...DEFAULT_KNOWN_PROVIDERS,
+        ...Object.keys(values.providerMappings ?? {}),
+      ]),
+    [inspectInfo, values.providerMappings],
+  );
 
   const getModelsForProvider = useCallback(
-    (providerId: string): string[] => {
-      const norm = normalizeProviderName(providerId);
-      const set = new Set<string>();
-      if (norm === "antigravity") {
-        for (const m of ANTIGRAVITY_GEMINI4_MODELS) {
-          set.add(m);
-        }
-      }
-      const inspected = inspectedProviderMap.get(norm);
-      if (inspected) {
-        for (const m of inspected.models) {
-          if (isSelectableRoutingModel(norm, m, values.bypassModels)) {
-            set.add(m);
-          }
-        }
-      }
-      const mapped = values.providerMappings?.[norm] ?? BUILTIN_PROVIDER_MAPPINGS[norm] ?? {};
-      for (const m of Object.values(mapped)) {
-        if (typeof m === "string" && isSelectableRoutingModel(norm, m, values.bypassModels)) {
-          set.add(m);
-        }
-      }
-      return Array.from(set);
-    },
+    (providerId: string): string[] =>
+      resolveProviderSelectableModels({
+        providerId,
+        inspectedProviderMap,
+        bypassModels: values.bypassModels,
+        configuredMappings: values.providerMappings,
+      }),
     [inspectedProviderMap, values.bypassModels, values.providerMappings],
+  );
+
+  const getThinkingOptionsForModel = useCallback(
+    (providerId: string, modelId: string): ReadonlyArray<{ label: string; value: string }> => {
+      const norm = normalizeProviderName(providerId);
+      const inspected = inspectedProviderMap.get(norm);
+      const trimmedModel = modelId.trim().toLowerCase();
+      if (inspected && trimmedModel) {
+        const matched = inspected.modelDetails.find(
+          (detail) => detail.id.trim().toLowerCase() === trimmedModel,
+        );
+        if (matched?.thinkingOptions && matched.thinkingOptions.length > 0) {
+          return [
+            { label: "Default", value: "" },
+            ...matched.thinkingOptions.map((opt) => ({
+              label: opt.label?.trim() || opt.id,
+              value: opt.id,
+            })),
+          ];
+        }
+      }
+      return THINKING_EFFORT_OPTIONS;
+    },
+    [inspectedProviderMap],
   );
 
   const specialistsList =
@@ -997,17 +1010,19 @@ export function HarnessSettingsScreen({
 
   const updateActiveSpecialist = useCallback(
     (patch: Partial<HarnessSpecialistConfig>, debounce = false) => {
+      const cur = latestSettingsRef.current;
       const currentSpecialists: AgentHarnessSettings["specialists"] =
         pendingPatchRef.current.specialists ??
-        latestSettingsRef.current?.values?.specialists ??
+        (cur?.status === "ready" ? cur.values?.specialists : undefined) ??
         specialistsList;
       const target =
         currentSpecialists.find((s) => s.id === (activeSpecialist?.id ?? selectedSpecialistId)) ??
         activeSpecialist;
       if (!target) return;
-      const nextSpecialists: AgentHarnessSettings["specialists"] = currentSpecialists.map((s) =>
-        s.id === target.id ? { ...s, ...patch } : s,
-      );
+      const nextSpecialists: AgentHarnessSettings["specialists"] = [];
+      for (const s of currentSpecialists) {
+        nextSpecialists.push(s.id === target.id ? { ...s, ...patch } : s);
+      }
       if (debounce) {
         scheduleDebouncedSave({ specialists: nextSpecialists });
       } else {
@@ -1020,13 +1035,18 @@ export function HarnessSettingsScreen({
   const updateProviderTierModel = useCallback(
     (providerId: string, tierId: string, modelId: string, debounce = false) => {
       const norm = normalizeProviderName(providerId);
+      const cur = latestSettingsRef.current;
       const baseMappings =
-        latestSettingsRef.current?.values?.providerMappings ?? values.providerMappings ?? {};
+        (cur?.status === "ready" ? cur.values?.providerMappings : undefined) ??
+        values.providerMappings ??
+        {};
       const pendingProviderMap = pendingPatchRef.current.providerMappings?.[norm];
+      const trimmedModel = modelId.trim();
       const nextProviderMap = {
-        ...(baseMappings[norm] ?? {}),
-        ...(pendingProviderMap ?? {}),
-        [tierId]: modelId.trim(),
+        ...baseMappings[norm],
+        ...pendingProviderMap,
+        [tierId]: trimmedModel,
+        ...(tierId === "plan" ? { deep: trimmedModel } : {}),
       };
       const patch: Partial<AgentHarnessSettings> = {
         providerMappings: {
@@ -1045,15 +1065,18 @@ export function HarnessSettingsScreen({
   const updateProviderTierThinking = useCallback(
     (providerId: string, tierId: string, thinkingOptionId: string) => {
       const norm = normalizeProviderName(providerId);
+      const cur = latestSettingsRef.current;
       const baseThinking =
-        latestSettingsRef.current?.values?.providerThinkingMappings ??
+        (cur?.status === "ready" ? cur.values?.providerThinkingMappings : undefined) ??
         values.providerThinkingMappings ??
         {};
       const pendingProviderMap = pendingPatchRef.current.providerThinkingMappings?.[norm];
+      const trimmedThinking = thinkingOptionId.trim();
       const nextProviderMap = {
-        ...(baseThinking[norm] ?? {}),
-        ...(pendingProviderMap ?? {}),
-        [tierId]: thinkingOptionId.trim(),
+        ...baseThinking[norm],
+        ...pendingProviderMap,
+        [tierId]: trimmedThinking,
+        ...(tierId === "plan" ? { deep: trimmedThinking } : {}),
       };
       commitPatch({
         providerThinkingMappings: {
@@ -1066,19 +1089,13 @@ export function HarnessSettingsScreen({
 
   const resetSelectedProviderMappings = useCallback(() => {
     const norm = normalizeProviderName(selectedProvider);
-    const defaultModels = BUILTIN_PROVIDER_MAPPINGS[norm] ?? {
-      fast: "lite",
-      standard: "flash",
-      deep: "pro",
-      max: "plan",
-    };
-    const defaultThinking = BUILTIN_PROVIDER_THINKING_MAPPINGS[norm] ?? {
-      fast: "low",
-      standard: "medium",
-      deep: "high",
-      max: "xhigh",
-    };
+    const defaultModels = BUILTIN_PROVIDER_MAPPINGS[norm] ?? BUILTIN_PROVIDER_MAPPINGS.claude ?? {};
+    const defaultThinking =
+      BUILTIN_PROVIDER_THINKING_MAPPINGS[norm] ?? BUILTIN_PROVIDER_THINKING_MAPPINGS.claude ?? {};
     setCustomModelOpenByTier({});
+    for (const [tierKey, modelVal] of Object.entries(defaultModels)) {
+      inputRefs.current[`tier-input-${tierKey}`]?.replaceText(modelVal);
+    }
     commitPatch({
       providerMappings: {
         [norm]: { ...defaultModels },
@@ -1088,7 +1105,7 @@ export function HarnessSettingsScreen({
       },
     });
     toastRef.current.show(
-      `Restored recommended 4-tier defaults for ${formatProviderDisplayLabel(selectedProvider)}`,
+      `Restored recommended tier defaults for ${formatProviderDisplayLabel(selectedProvider)}`,
       { variant: "success" },
     );
   }, [commitPatch, selectedProvider]);
@@ -1134,23 +1151,9 @@ export function HarnessSettingsScreen({
     );
   }
 
-  const isSaving = settings.saving;
+  const isSaving = Boolean(settings.saving);
   const tiers = values.tiers?.length ? values.tiers : BUILTIN_TIERS;
   const effectiveConfig = resolveEffectiveHarnessConfig(values);
-
-  const fallbackModelOptions = [
-    { label: "Lite (lite)", value: "lite" },
-    { label: "Standard (flash)", value: "flash" },
-    { label: "Deep (pro)", value: "pro" },
-    { label: "Max (plan)", value: "plan" },
-  ];
-
-  function formatProviderStatusSuffix(status: { enabled?: boolean } | undefined): string {
-    if (!status) {
-      return "";
-    }
-    return status.enabled ? " · Active" : " · Disabled";
-  }
 
   const targetProviderOptions = providerIds.map((pid) => {
     const status = inspectedProviderMap.get(pid);
@@ -1161,6 +1164,49 @@ export function HarnessSettingsScreen({
     };
   });
 
+  const routerProviderOptions = [
+    {
+      label: `Auto (Active: ${formatProviderDisplayLabel(activeHostProviderId)})`,
+      value: "",
+    },
+    ...targetProviderOptions,
+    ...(values.routerProvider && !providerIds.includes(normalizeProviderName(values.routerProvider))
+      ? [{ label: values.routerProvider, value: values.routerProvider }]
+      : []),
+  ];
+
+  const effectiveRouterProvider = values.routerProvider?.trim() || activeHostProviderId;
+  const resolvedFastRouterModel = resolveTargetModelForTier(
+    effectiveConfig,
+    effectiveRouterProvider,
+    "fast",
+  );
+  const routerModels = getModelsForProvider(effectiveRouterProvider);
+  const routerModelOptions = [
+    { label: `Auto (Fast Tier: ${resolvedFastRouterModel})`, value: "" },
+    ...routerModels.map((m) => ({ label: m, value: m })),
+    ...(values.routerModel && !routerModels.includes(values.routerModel)
+      ? [{ label: values.routerModel, value: values.routerModel }]
+      : []),
+  ];
+
+  const routerConfidenceValue = (values.routerConfidenceThreshold ?? 0.85).toFixed(2);
+  const routerConfidenceOptions = ROUTER_CONFIDENCE_OPTIONS.some(
+    (opt) => opt.value === routerConfidenceValue,
+  )
+    ? ROUTER_CONFIDENCE_OPTIONS
+    : [
+        ...ROUTER_CONFIDENCE_OPTIONS,
+        { label: routerConfidenceValue, value: routerConfidenceValue },
+      ];
+
+  const routerTimeoutValue = String(values.routerTimeoutMs ?? 10000);
+  const routerTimeoutOptions = ROUTER_TIMEOUT_OPTIONS.some(
+    (opt) => opt.value === routerTimeoutValue,
+  )
+    ? ROUTER_TIMEOUT_OPTIONS
+    : [...ROUTER_TIMEOUT_OPTIONS, { label: `${routerTimeoutValue} ms`, value: routerTimeoutValue }];
+
   const activeProviderModels = getModelsForProvider(selectedProvider);
 
   const specialistSelectOptions = specialistsList.map((s) => ({
@@ -1169,11 +1215,11 @@ export function HarnessSettingsScreen({
   }));
 
   const specialistProviderOptions = [
-    { label: "Inherit (Caller Default)", value: "" },
-    ...providerIds.map((pid) => ({
-      label: formatProviderDisplayLabel(pid),
-      value: pid,
-    })),
+    {
+      label: `Inherit (Active: ${formatProviderDisplayLabel(activeHostProviderId)})`,
+      value: "",
+    },
+    ...targetProviderOptions,
   ];
 
   const tierSelectOptions = tiers.map((t) => ({
@@ -1181,7 +1227,8 @@ export function HarnessSettingsScreen({
     value: t.id,
   }));
 
-  const activeSpecialistProvider = activeSpecialist?.preferredProvider?.trim() || "claude";
+  const activeSpecialistProvider =
+    activeSpecialist?.preferredProvider?.trim() || activeHostProviderId;
   const resolvedTierModel = activeSpecialist
     ? resolveTargetModelForTier(
         effectiveConfig,
@@ -1292,11 +1339,14 @@ export function HarnessSettingsScreen({
         <SettingsCard>
           <SettingsSelect
             label="Target Provider"
-            hint="Select a provider to configure Fast, Standard, Deep, and Max models"
+            hint="Select a provider to configure Fast, Standard, Plan, Review, and Max models"
             value={selectedProvider}
             options={targetProviderOptions}
             disabled={isSaving}
-            onValueChange={(pid) => setSelectedProvider(pid)}
+            onValueChange={(pid) => {
+              hasManualProviderSelectionRef.current = true;
+              setSelectedProvider(pid);
+            }}
           />
           {tiers.map((tier) => {
             const currentValue = values.providerMappings?.[selectedProvider]?.[tier.id] ?? "";
@@ -1308,12 +1358,22 @@ export function HarnessSettingsScreen({
             const selectValue = isCustomOpen ? CUSTOM_MODEL_OPTION_VALUE : currentValue;
             const presetOptions = [
               {
-                label: tier.id === "max" ? "Inherit Deep (Fallback)" : "Unset / Default",
+                label: tier.id === "max" ? "Inherit Plan (Fallback)" : "Unset / Default",
                 value: "",
               },
               ...activeProviderModels.map((m) => ({ label: m, value: m })),
               { label: "Custom Model ID...", value: CUSTOM_MODEL_OPTION_VALUE },
             ];
+            const modelForThinking =
+              currentValue || resolveTargetModelForTier(effectiveConfig, selectedProvider, tier.id);
+            const baseThinkingOptions = getThinkingOptionsForModel(
+              selectedProvider,
+              modelForThinking,
+            );
+            const thinkingOptions =
+              currentThinking && !baseThinkingOptions.some((opt) => opt.value === currentThinking)
+                ? [...baseThinkingOptions, { label: currentThinking, value: currentThinking }]
+                : baseThinkingOptions;
 
             return (
               <React.Fragment key={tierKey}>
@@ -1336,7 +1396,7 @@ export function HarnessSettingsScreen({
                 {isCustomOpen ? (
                   <SettingsInput
                     ref={setInputRef(`tier-input-${tier.id}`)}
-                    key={`tier-input-${tier.id}`}
+                    key={`tier-input-${selectedProvider}-${tier.id}`}
                     label={`${tier.name} Custom Model ID`}
                     hint={`Custom model identifier for ${selectedProvider} (${tier.id})`}
                     initialValue={currentValue}
@@ -1350,7 +1410,7 @@ export function HarnessSettingsScreen({
                   label={`${tier.name} Thinking`}
                   hint={`Reasoning effort for ${tier.name} tier`}
                   value={currentThinking}
-                  options={THINKING_EFFORT_OPTIONS}
+                  options={thinkingOptions}
                   disabled={isSaving}
                   onValueChange={(nextThinking) =>
                     updateProviderTierThinking(selectedProvider, tier.id, nextThinking)
@@ -1361,7 +1421,7 @@ export function HarnessSettingsScreen({
           })}
           <SettingsAction
             label="Reset Provider Mappings"
-            hint={`Restore recommended 4-tier defaults for ${formatProviderDisplayLabel(selectedProvider)}`}
+            hint={`Restore recommended tier defaults for ${formatProviderDisplayLabel(selectedProvider)}`}
             actionLabel="Reset defaults"
             disabled={isSaving}
             onPress={resetSelectedProviderMappings}
@@ -1413,7 +1473,33 @@ export function HarnessSettingsScreen({
               value={activeSpecialist.preferredProvider ?? ""}
               options={specialistProviderOptions}
               disabled={isSaving}
-              onValueChange={(preferredProvider) => updateActiveSpecialist({ preferredProvider })}
+              onValueChange={(preferredProvider) => {
+                const resolvedTarget = preferredProvider.trim() || activeHostProviderId;
+                const targetHostEntry = inspectedProviderMap.get(
+                  normalizeProviderName(resolvedTarget),
+                )?.hostRuntimeInfo;
+                const pendingOverride = pendingPatchRef.current.specialists?.find(
+                  (s) => s.id === activeSpecialist.id,
+                )?.modelOverride;
+                const existingOverride = (
+                  pendingOverride ??
+                  activeSpecialist.modelOverride ??
+                  ""
+                ).trim();
+                const shouldClearOverride =
+                  Boolean(existingOverride) &&
+                  !isModelCompatibleWithProvider(resolvedTarget, existingOverride, targetHostEntry);
+                if (shouldClearOverride) {
+                  inputRefs.current["spec-model-override"]?.replaceText("");
+                }
+                updateActiveSpecialist(
+                  {
+                    preferredProvider,
+                    ...(shouldClearOverride ? { modelOverride: "" } : {}),
+                  },
+                  false,
+                );
+              }}
             />
             <SettingsSelect
               label="Preferred Tier"
@@ -1436,7 +1522,7 @@ export function HarnessSettingsScreen({
             />
             <SettingsInput
               ref={setInputRef("spec-model-override")}
-              key="spec-model-override"
+              key={`spec-model-override-${activeSpecialist.id}`}
               label="Model Override ID"
               hint="Leave empty to follow Preferred Tier mapping"
               initialValue={activeSpecialist.modelOverride ?? ""}
@@ -1489,7 +1575,7 @@ export function HarnessSettingsScreen({
           />
           <SettingsSwitch
             label="Auto Step Down Plan to Standard"
-            hint="Automatically step down from Deep Plan to Standard when modification tools or execution intents occur"
+            hint="Automatically step down from Plan phase to Standard when modification tools or execution intents occur"
             value={values.autoDowngradePlanOnExec}
             disabled={isSaving}
             onValueChange={handleToggle("autoDowngradePlanOnExec")}
@@ -1517,71 +1603,72 @@ export function HarnessSettingsScreen({
         </SettingsCard>
       </SettingsSection>
 
-      <SettingsSection title="L2 LLM Fallback Intent Classifier">
+      <SettingsSection title="Semantic Intent Router">
         <SettingsCard>
           <SettingsSwitch
-            label="Enable LLM Fallback Classifier"
-            hint="Use configured OpenAI-compatible endpoint when regex heuristics miss"
-            value={values.llmFallbackEnabled}
+            label="Enable Semantic Intent Router"
+            hint="Classify user prompts with a fast LLM call instead of regex heuristics"
+            value={values.routerEnabled}
             disabled={isSaving}
-            onValueChange={handleToggle("llmFallbackEnabled")}
-          />
-          <SettingsSwitch
-            label="Apply Role from Classifier"
-            hint="Update specialist domain role when L2 classifier returns a specific role"
-            value={values.llmFallbackApplyRole}
-            disabled={isSaving}
-            onValueChange={handleToggle("llmFallbackApplyRole")}
+            onValueChange={handleToggle("routerEnabled")}
           />
           <SettingsSelect
-            label="LLM Fallback Model"
-            value={values.llmFallbackModel}
-            options={fallbackModelOptions}
+            label="Router Agent"
+            hint="Coding agent used for prompt intent classification"
+            value={values.routerProvider ?? ""}
+            options={routerProviderOptions}
             disabled={isSaving}
-            onValueChange={handleSelect("llmFallbackModel")}
-          />
-          <SettingsInput
-            ref={setInputRef("llm-fallback-endpoint")}
-            key="llm-fallback-endpoint"
-            label="Classifier Endpoint URL"
-            hint="OpenAI-compatible /v1/chat/completions endpoint; required for L2 fallback"
-            initialValue={values.llmFallbackEndpoint ?? ""}
-            placeholder="https://your-llm.example.com/v1/chat/completions"
-            onChangeText={(text) => scheduleDebouncedSave({ llmFallbackEndpoint: text.trim() })}
-          />
-          <SettingsInput
-            ref={setInputRef("llm-fallback-apikey")}
-            key="llm-fallback-apikey"
-            label="Classifier API Key"
-            hint={
-              values.llmFallbackApiKey
-                ? "Bearer token stored securely; enter a new key to replace or clear below"
-                : "Bearer token sent to the classifier endpoint"
-            }
-            initialValue=""
-            placeholder={
-              values.llmFallbackApiKey ? "Configured (enter new key to replace)" : "sk-..."
-            }
-            secureTextEntry
-            onChangeText={(text) => {
-              const trimmed = text.trim();
-              if (trimmed.length > 0) {
-                scheduleDebouncedSave({ llmFallbackApiKey: trimmed });
-              }
+            onValueChange={(nextProvider) => {
+              const resolvedTarget = nextProvider.trim() || activeHostProviderId;
+              const targetHostEntry = inspectedProviderMap.get(
+                normalizeProviderName(resolvedTarget),
+              )?.hostRuntimeInfo;
+              const existingRouterModel = values.routerModel?.trim() ?? "";
+              const shouldResetModel =
+                Boolean(existingRouterModel) &&
+                !isModelCompatibleWithProvider(
+                  resolvedTarget,
+                  existingRouterModel,
+                  targetHostEntry,
+                );
+              commitPatch({
+                routerProvider: nextProvider,
+                ...(shouldResetModel ? { routerModel: "" } : {}),
+              });
             }}
           />
-          {values.llmFallbackApiKey ? (
-            <SettingsAction
-              label="Clear Classifier API Key"
-              hint="Remove the stored bearer token"
-              actionLabel="Clear API Key"
-              disabled={isSaving}
-              onPress={() => {
-                inputRefs.current["llm-fallback-apikey"]?.replaceText("");
-                commitPatch({ llmFallbackApiKey: "" });
-              }}
-            />
-          ) : null}
+          <SettingsSelect
+            label="Router Model"
+            hint="Model used by the router agent (defaults to Fast tier)"
+            value={values.routerModel ?? ""}
+            options={routerModelOptions}
+            disabled={isSaving}
+            onValueChange={handleSelect("routerModel")}
+          />
+          <SettingsSelect
+            label="Router Reasoning Effort"
+            hint="Reasoning depth for semantic intent classification"
+            value={values.routerEffort ?? "low"}
+            options={ROUTER_EFFORT_OPTIONS}
+            disabled={isSaving}
+            onValueChange={handleSelect("routerEffort")}
+          />
+          <SettingsSelect
+            label="Confidence Threshold"
+            hint="Minimum confidence required before overriding default role and tier"
+            value={routerConfidenceValue}
+            options={routerConfidenceOptions}
+            disabled={isSaving}
+            onValueChange={(v) => handleSelect("routerConfidenceThreshold")(Number(v))}
+          />
+          <SettingsSelect
+            label="Router Timeout"
+            hint="Maximum wait time before falling back to safe defaults"
+            value={routerTimeoutValue}
+            options={routerTimeoutOptions}
+            disabled={isSaving}
+            onValueChange={(v) => handleSelect("routerTimeoutMs")(Number(v))}
+          />
         </SettingsCard>
       </SettingsSection>
 
@@ -1600,13 +1687,6 @@ export function HarnessSettingsScreen({
             value={values.autoSyncDaemonAgentProfiles}
             disabled={isSaving}
             onValueChange={handleToggle("autoSyncDaemonAgentProfiles")}
-          />
-          <SettingsSwitch
-            label="Enforce Session MCP Filtering"
-            hint="Filter allowed/excluded MCP servers per specialist role in agent.open.before"
-            value={values.enforceSessionMcpFiltering}
-            disabled={isSaving}
-            onValueChange={handleToggle("enforceSessionMcpFiltering")}
           />
           <SettingsAction
             label="Import Profiles from Disk"

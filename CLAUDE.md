@@ -21,59 +21,60 @@ This is an npm workspace monorepo:
 
 At the start of non-trivial work, list `docs/` and skim anything relevant to the task.
 
-| Doc                                                                  | What's in it                                                                                                                   |
-| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| [docs/product.md](docs/product.md)                                   | What Paseo is, who it's for, where it's going                                                                                  |
-| [docs/architecture.md](docs/architecture.md)                         | System design, package layering, WebSocket protocol, agent lifecycle, data flow                                                |
-| [docs/agent-lifecycle.md](docs/agent-lifecycle.md)                   | Agent states, parent/child relationships, archive semantics, tabs vs archive, subagents track                                  |
-| [docs/data-model.md](docs/data-model.md)                             | File-based JSON persistence, Zod schemas, atomic writes, no migrations                                                         |
-| [docs/glossary.md](docs/glossary.md)                                 | Authoritative terminology — UI label wins, no synonyms                                                                         |
-| [docs/coding-standards.md](docs/coding-standards.md)                 | Type hygiene, error handling, state design, React patterns, file organization                                                  |
-| [docs/design.md](docs/design.md)                                     | Design system — tokens, buttons, hierarchy, density, alignment rails, states, what's forbidden                                 |
-| [docs/forms.md](docs/forms.md)                                       | Form architecture — non-React form model, form kit, load-state gating; the schedule form is the golden example                 |
-| [docs/hover.md](docs/hover.md)                                       | Hover — the canonical pattern (plain View + onPointerEnter/Leave, separate inner Pressable) and the three ways agents break it |
-| [docs/unistyles.md](docs/unistyles.md)                               | Unistyles gotchas — `useUnistyles()` is forbidden, alternatives in order                                                       |
-| [docs/floating-panels.md](docs/floating-panels.md)                   | Anchored popovers — Portal/Modal escape for Android, lifecycle gates, keyboard-shared-value, status-bar offset, the flash      |
-| [docs/keyboard-shortcuts.md](docs/keyboard-shortcuts.md)             | The binding table, per-platform key sources, badges vs routing, iOS `UIKeyCommand` limits                                      |
-| [docs/menus.md](docs/menus.md)                                       | The menu engine — popover vs sheet, submenu pages, hover intent, when a decision earns a submenu                               |
-| [docs/drag-reorder.md](docs/drag-reorder.md)                         | Drag to reorder — `DraggableList` and its handle, the scroll view that must host the drag, grip placement, testing on a phone  |
-| [docs/expo-router.md](docs/expo-router.md)                           | Expo Router route ownership, startup restore, and native blank-screen gotchas                                                  |
-| [docs/notifications.md](docs/notifications.md)                       | Notification tap ownership, native replay and acknowledgement, startup handoff, and payload QA                                 |
-| [docs/file-icons.md](docs/file-icons.md)                             | Material icon theme integration for the file explorer                                                                          |
-| [docs/providers.md](docs/providers.md)                               | Adding a new agent provider end-to-end                                                                                         |
-| [docs/forge-providers.md](docs/forge-providers.md)                   | Adding a git forge: registry/manifest, drop-in checklist, self-host/GHES, the two facts tiers                                  |
-| [docs/custom-providers.md](docs/custom-providers.md)                 | Custom provider config: Z.AI, Alibaba/Qwen, ACP agents, profiles, custom binaries                                              |
-| [docs/plugins.md](docs/plugins.md)                                   | Local plugin manifest, directory source config, RPCs, native surfaces, and attachment sources                                  |
-| [docs/website-i18n.md](docs/website-i18n.md)                         | Website languages: locale URLs, translated Markdown pairs, `{#id}` anchors, Chinese style                                      |
-| [docs/service-proxy.md](docs/service-proxy.md)                       | Service proxy: exposing workspace scripts at public URLs, DNS setup, reverse proxy config                                      |
-| [docs/relay-endpoint-security.md](docs/relay-endpoint-security.md)   | Relay E2EE modes: Noise NK mapping, record framing, negotiation, the `requireProtectedSecurity` flag, close codes              |
-| [docs/development.md](docs/development.md)                           | Dev server, build sync gotchas, CLI reference, agent state, Playwright MCP                                                     |
-| [docs/rpc-namespacing.md](docs/rpc-namespacing.md)                   | WebSocket RPC naming convention — dotted namespaces and `.request`/`.response` pairs                                           |
-| [docs/protocol-compatibility.md](docs/protocol-compatibility.md)     | Why app/daemon versions drift, protocol vs feature contract, capability gating, COMPAT tagging                                 |
-| [docs/protocol-validation.md](docs/protocol-validation.md)           | zod-aot generated inbound WebSocket validation, patched compiler regressions, schema-purity rules                              |
-| [docs/connected-hosts.md](docs/connected-hosts.md)                   | Daemon-owned host registrations, routed SDK scopes, identity and authority boundaries                                          |
-| [docs/permissions.md](docs/permissions.md)                           | Semantic daemon permissions, principals, credentials, pairing invitations, and Hub authority                                   |
-| [docs/terminal-performance.md](docs/terminal-performance.md)         | Terminal latency pipeline, coalescing/backpressure invariants, benchmark + perf spec usage                                     |
-| [docs/terminal-rendering.md](docs/terminal-rendering.md)             | Native terminal view: xterm owns the grid, cluster placement, emoji widths, mixed-direction limits, render regression          |
-| [docs/agent-stream-performance.md](docs/agent-stream-performance.md) | Assistant text pipeline — coalescing window, paced reveal, why arrival lumps are smoothed at render                            |
-| [docs/agent-stream-disclosure.md](docs/agent-stream-disclosure.md)   | Expand/collapse in the chat timeline — hold contract, native anchor sequence, frame spacing, render-window cost                |
-| [docs/markdown-renderer.md](docs/markdown-renderer.md)               | Shared Markdown engine, the vendored library fork, native selection, links, images and library constraints                     |
-| [docs/native-text-selection.md](docs/native-text-selection.md)       | Native diagram grouping, selection boundaries and leading inline image limitations                                             |
-| [docs/file-observation.md](docs/file-observation.md)                 | Recursive watcher ownership, Linux constraints, teardown invariants, and Parcel comparison                                     |
-| [docs/testing.md](docs/testing.md)                                   | TDD workflow, determinism, real dependencies over mocks, test organization                                                     |
-| [docs/qa.md](docs/qa.md)                                             | QA evidence bar for pull requests — platform matrix, version drift, performance, UI proof                                      |
-| [docs/mobile-testing.md](docs/mobile-testing.md)                     | Maestro and mobile test workflows                                                                                              |
-| [docs/mobile-panels.md](docs/mobile-panels.md)                       | Compact left/center/right panel ownership, worklet motion, gesture revisions, and Fabric constraints                           |
-| [docs/explorer-sidebar.md](docs/explorer-sidebar.md)                 | Explorer sidebar, side-pane, and compact workspace sheet host contracts, lifecycle, placement, routing preferences             |
-| [docs/ad-hoc-daemon-testing.md](docs/ad-hoc-daemon-testing.md)       | Isolated in-process daemon test harness                                                                                        |
-| [docs/browser-capture-harness.md](docs/browser-capture-harness.md)   | Real-Electron browser screenshot harness and compositor-surface gotcha                                                         |
-| [docs/android.md](docs/android.md)                                   | App variants, local/cloud builds, EAS workflows, version codes, F-Droid source builds and store metadata                       |
-| [docs/docker.md](docs/docker.md)                                     | Running the daemon and bundled web UI in Docker, volumes, agent images, security                                               |
-| [docs/release.md](docs/release.md)                                   | Release playbook, draft releases, completion checklist                                                                         |
-| [docs/terminal-worker.md](docs/terminal-worker.md)                   | Terminal worker process model, socket/record/secret, protocol-bump rule and draining, the worker's file copy, Windows desktop  |
-| [docs/terminal-activity.md](docs/terminal-activity.md)               | Terminal activity indicators — source-agnostic tracker, agent hook reporting, adding a new hook provider                       |
-| [SECURITY.md](SECURITY.md)                                           | Relay threat model, E2E encryption, DNS rebinding, agent auth                                                                  |
-| [public-docs/hub/security.md](public-docs/hub/security.md)           | Public Hub guide — trust boundaries, untrusted triggers, provider controls, and output authority                               |
+| Doc                                                                  | What's in it                                                                                                                                         |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [docs/product.md](docs/product.md)                                   | What Paseo is, who it's for, where it's going                                                                                                        |
+| [docs/architecture.md](docs/architecture.md)                         | System design, package layering, WebSocket protocol, agent lifecycle, data flow                                                                      |
+| [docs/agent-lifecycle.md](docs/agent-lifecycle.md)                   | Agent states, parent/child relationships, archive semantics, tabs vs archive, subagents track                                                        |
+| [docs/data-model.md](docs/data-model.md)                             | File-based JSON persistence, Zod schemas, atomic writes, no migrations                                                                               |
+| [docs/glossary.md](docs/glossary.md)                                 | Authoritative terminology — UI label wins, no synonyms                                                                                               |
+| [docs/coding-standards.md](docs/coding-standards.md)                 | Type hygiene, error handling, state design, React patterns, file organization                                                                        |
+| [docs/design.md](docs/design.md)                                     | Design system — tokens, buttons, hierarchy, density, alignment rails, states, what's forbidden                                                       |
+| [docs/forms.md](docs/forms.md)                                       | Form architecture — non-React form model, form kit, load-state gating; the schedule form is the golden example                                       |
+| [docs/hover.md](docs/hover.md)                                       | Hover — the canonical pattern (plain View + onPointerEnter/Leave, separate inner Pressable) and the three ways agents break it                       |
+| [docs/unistyles.md](docs/unistyles.md)                               | Unistyles gotchas — `useUnistyles()` is forbidden, alternatives in order                                                                             |
+| [docs/platform-gating.md](docs/platform-gating.md)                   | Cross-platform gates (`isWeb`, `isNative`, `getIsElectron()`, `useIsCompactFormFactor()`), `.web`/`.native`/`.electron` suffixes, and hover fallback |
+| [docs/floating-panels.md](docs/floating-panels.md)                   | Anchored popovers — Portal/Modal escape for Android, lifecycle gates, keyboard-shared-value, status-bar offset, the flash                            |
+| [docs/keyboard-shortcuts.md](docs/keyboard-shortcuts.md)             | The binding table, per-platform key sources, badges vs routing, iOS `UIKeyCommand` limits                                                            |
+| [docs/menus.md](docs/menus.md)                                       | The menu engine — popover vs sheet, submenu pages, hover intent, when a decision earns a submenu                                                     |
+| [docs/drag-reorder.md](docs/drag-reorder.md)                         | Drag to reorder — `DraggableList` and its handle, the scroll view that must host the drag, grip placement, testing on a phone                        |
+| [docs/expo-router.md](docs/expo-router.md)                           | Expo Router route ownership, startup restore, and native blank-screen gotchas                                                                        |
+| [docs/notifications.md](docs/notifications.md)                       | Notification tap ownership, native replay and acknowledgement, startup handoff, and payload QA                                                       |
+| [docs/file-icons.md](docs/file-icons.md)                             | Material icon theme integration for the file explorer                                                                                                |
+| [docs/providers.md](docs/providers.md)                               | Adding a new agent provider end-to-end                                                                                                               |
+| [docs/forge-providers.md](docs/forge-providers.md)                   | Adding a git forge: registry/manifest, drop-in checklist, self-host/GHES, the two facts tiers                                                        |
+| [docs/custom-providers.md](docs/custom-providers.md)                 | Custom provider config: Z.AI, Alibaba/Qwen, ACP agents, profiles, custom binaries                                                                    |
+| [docs/plugins.md](docs/plugins.md)                                   | Local plugin manifest, directory source config, RPCs, native surfaces, and attachment sources                                                        |
+| [docs/website-i18n.md](docs/website-i18n.md)                         | Website languages: locale URLs, translated Markdown pairs, `{#id}` anchors, Chinese style                                                            |
+| [docs/service-proxy.md](docs/service-proxy.md)                       | Service proxy: exposing workspace scripts at public URLs, DNS setup, reverse proxy config                                                            |
+| [docs/relay-endpoint-security.md](docs/relay-endpoint-security.md)   | Relay E2EE modes: Noise NK mapping, record framing, negotiation, the `requireProtectedSecurity` flag, close codes                                    |
+| [docs/development.md](docs/development.md)                           | Dev server, build sync gotchas, CLI reference, agent state, Playwright MCP                                                                           |
+| [docs/rpc-namespacing.md](docs/rpc-namespacing.md)                   | WebSocket RPC naming convention — dotted namespaces and `.request`/`.response` pairs                                                                 |
+| [docs/protocol-compatibility.md](docs/protocol-compatibility.md)     | Why app/daemon versions drift, protocol vs feature contract, capability gating, COMPAT tagging                                                       |
+| [docs/protocol-validation.md](docs/protocol-validation.md)           | zod-aot generated inbound WebSocket validation, patched compiler regressions, schema-purity rules                                                    |
+| [docs/connected-hosts.md](docs/connected-hosts.md)                   | Daemon-owned host registrations, routed SDK scopes, identity and authority boundaries                                                                |
+| [docs/permissions.md](docs/permissions.md)                           | Semantic daemon permissions, principals, credentials, pairing invitations, and Hub authority                                                         |
+| [docs/terminal-performance.md](docs/terminal-performance.md)         | Terminal latency pipeline, coalescing/backpressure invariants, benchmark + perf spec usage                                                           |
+| [docs/terminal-rendering.md](docs/terminal-rendering.md)             | Native terminal view: xterm owns the grid, cluster placement, emoji widths, mixed-direction limits, render regression                                |
+| [docs/agent-stream-performance.md](docs/agent-stream-performance.md) | Assistant text pipeline — coalescing window, paced reveal, why arrival lumps are smoothed at render                                                  |
+| [docs/agent-stream-disclosure.md](docs/agent-stream-disclosure.md)   | Expand/collapse in the chat timeline — hold contract, native anchor sequence, frame spacing, render-window cost                                      |
+| [docs/markdown-renderer.md](docs/markdown-renderer.md)               | Shared Markdown engine, the vendored library fork, native selection, links, images and library constraints                                           |
+| [docs/native-text-selection.md](docs/native-text-selection.md)       | Native diagram grouping, selection boundaries and leading inline image limitations                                                                   |
+| [docs/file-observation.md](docs/file-observation.md)                 | Recursive watcher ownership, Linux constraints, teardown invariants, and Parcel comparison                                                           |
+| [docs/testing.md](docs/testing.md)                                   | TDD workflow, determinism, real dependencies over mocks, test organization                                                                           |
+| [docs/qa.md](docs/qa.md)                                             | QA evidence bar for pull requests — platform matrix, version drift, performance, UI proof                                                            |
+| [docs/mobile-testing.md](docs/mobile-testing.md)                     | Maestro and mobile test workflows                                                                                                                    |
+| [docs/mobile-panels.md](docs/mobile-panels.md)                       | Compact left/center/right panel ownership, worklet motion, gesture revisions, and Fabric constraints                                                 |
+| [docs/explorer-sidebar.md](docs/explorer-sidebar.md)                 | Explorer sidebar, side-pane, and compact workspace sheet host contracts, lifecycle, placement, routing preferences                                   |
+| [docs/ad-hoc-daemon-testing.md](docs/ad-hoc-daemon-testing.md)       | Isolated in-process daemon test harness                                                                                                              |
+| [docs/browser-capture-harness.md](docs/browser-capture-harness.md)   | Real-Electron browser screenshot harness and compositor-surface gotcha                                                                               |
+| [docs/android.md](docs/android.md)                                   | App variants, local/cloud builds, EAS workflows, version codes, F-Droid source builds and store metadata                                             |
+| [docs/docker.md](docs/docker.md)                                     | Running the daemon and bundled web UI in Docker, volumes, agent images, security                                                                     |
+| [docs/release.md](docs/release.md)                                   | Release playbook, draft releases, completion checklist                                                                                               |
+| [docs/terminal-worker.md](docs/terminal-worker.md)                   | Terminal worker process model, socket/record/secret, protocol-bump rule and draining, the worker's file copy, Windows desktop                        |
+| [docs/terminal-activity.md](docs/terminal-activity.md)               | Terminal activity indicators — source-agnostic tracker, agent hook reporting, adding a new hook provider                                             |
+| [SECURITY.md](SECURITY.md)                                           | Relay threat model, E2E encryption, DNS rebinding, agent auth                                                                                        |
+| [public-docs/hub/security.md](public-docs/hub/security.md)           | Public Hub guide — trust boundaries, untrusted triggers, provider controls, and output authority                                                     |
 
 ### Writing docs
 
@@ -108,8 +109,9 @@ npm run dev:desktop                  # Start Electron desktop dev
 npm run cli -- ls -a -g              # List all agents
 npm run cli -- daemon status         # Check daemon status
 npm run typecheck                    # Always run after changes
+npm run typecheck:custom-plugins     # Typecheck custom plugins separately
 npm run lint                         # Always run after changes
-npm run format                       # Auto-format with Biome
+npm run format                       # Auto-format with oxfmt
 npm run format:check                 # Check formatting without writing
 ```
 
@@ -138,12 +140,12 @@ release builds in a short-lived release workspace from `origin/main` or a releas
   - Never re-run a test suite that another agent already ran and reported green — trust the result.
   - For full suite verification, push to CI and check GitHub Actions instead.
 - Add tests to existing suites and reuse their npm scripts and CI jobs instead of creating feature-specific ones.
-- **Always run typecheck and lint after every change.**
+- **Always run typecheck and lint after every change.** Workspace `npm run typecheck` excludes `plugin-custom/`; run `npm run typecheck:custom-plugins` separately when touching custom plugins.
 - **Build workspace packages before diagnosing cross-package type errors.** This repo consumes generated declarations across workspaces. If typecheck fails in a package that depends on another workspace, rebuild the owning stack first so `dist` declarations are current:
   - `npm run build:client` — rebuild protocol and client declarations.
   - `npm run build:server` — rebuild highlight, relay, protocol, client, server, and CLI when server/CLI types may be stale.
   - Do not patch inferred callback parameters or add local duplicate types just to silence stale declaration errors.
-- **Run `npm run format` before committing.** This repo uses Biome for formatting. Do not manually fix formatting — let the formatter handle it.
+- **Run `npm run format` before committing.** This repo uses oxfmt for formatting. Do not manually fix formatting — let the formatter handle it.
 - **Always use npm scripts for linting and formatting.** Do not run tools directly with `npx eslint`, `npx oxfmt`, `npx oxlint`, or package-local binaries. For targeted checks, pass file paths through the npm script:
   - `npm run lint -- packages/app/src/components/message.tsx`
   - `npm run format:files -- CLAUDE.md packages/app/src/components/message.tsx`
@@ -160,51 +162,7 @@ release builds in a short-lived release workspace from `origin/main` or a releas
 
 ## Platform gating
 
-The app runs on iOS, Android, web (browser), and web (Electron desktop). Code is cross-platform by default. Gate only when you must. Import gates from `@/constants/platform`.
-
-### The four gates
-
-| Gate                       | Type      | When to use                                                                                                                 |
-| -------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `isWeb`                    | constant  | DOM APIs — `document`, `window`, `<div>`, `addEventListener`, `ResizeObserver`. This is the **exception**, not the default. |
-| `isNative`                 | constant  | Native-only APIs — Haptics, `StatusBar.currentHeight`, push tokens, camera/scanner, `expo-av`.                              |
-| `getIsElectron()`          | cached fn | Desktop wrapper features — file dialogs, titlebar drag region, daemon management, app updates, dock badges.                 |
-| `useIsCompactFormFactor()` | hook      | Layout decisions — sidebar overlay vs pinned, modal vs full screen, single-panel vs split. From `@/constants/layout`.       |
-
-### Decision matrix
-
-| I need to...                                                   | Use                                                                       |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| Access DOM (`document`, `window`, `<div>`, `addEventListener`) | `if (isWeb)`                                                              |
-| Use a native-only API (Haptics, push tokens, camera)           | `if (isNative)`                                                           |
-| Use an Electron bridge (file dialog, titlebar, updates)        | `if (getIsElectron())`                                                    |
-| Switch layout between phone and tablet/desktop                 | `useIsCompactFormFactor()`                                                |
-| Show something on hover, always-visible on native              | `isHovered \|\| isNative \|\| isCompact` (hover only works on web)        |
-| Gate to iOS or Android specifically                            | `Platform.OS === "ios"` / `Platform.OS === "android"` (rare, keep inline) |
-
-### Rules
-
-- **Default is cross-platform.** Don't gate unless you have a specific reason.
-- **Prefer Metro file extensions over `if` statements.** When a module has fundamentally different implementations per platform, use `.web.ts` / `.native.ts` file extensions instead of runtime `if (isWeb)` branches. Metro resolves the correct file at build time — the unused platform code is never bundled. Reserve `if (isWeb)` for small, inline checks (a single line or a few props). If you find yourself writing a large `if (isWeb) { ... } else { ... }` block, split into separate files instead.
-  ```
-  hooks/
-    use-audio-recorder.web.ts    ← uses Web Audio API
-    use-audio-recorder.native.ts ← uses expo-audio
-  ```
-  Import as `@/hooks/use-audio-recorder` — Metro picks the right file automatically.
-- **Use `.electron.ts` / `.electron.tsx` for Electron-only web modules.** Electron is still the Metro `web` platform, but desktop dev/build sets `PASEO_WEB_PLATFORM=electron`, so Metro first looks for `.electron.*` files and falls back to normal `.web.*` files. Use this when the implementation depends on Electron-only behavior such as `webviewTag`, desktop preload APIs, or the Electron bridge. Keep plain browser web in `.web.*`, and keep native fallbacks in the base file or `.native.*`.
-  ```
-  desktop/browser/pane/
-    index.electron.tsx ← Electron <webview> implementation
-    index.web.tsx      ← plain web fallback
-    index.tsx          ← native fallback
-  ```
-  Import as `@/desktop/browser/pane` — Electron desktop gets the `.electron.tsx` file, browser web gets `.web.tsx`, and native gets the native/base implementation.
-- **NEVER use raw DOM APIs without `isWeb` guard.** DOM APIs crash native. Casting a RN ref to `HTMLElement` is a red flag — ensure the block is web-only.
-- **NEVER use `onPointerEnter`/`onPointerLeave`.** They don't fire on native iOS.
-- **Hover only works on web.** React Native's `onHoverIn`/`onHoverOut` on `Pressable` does NOT fire on native iOS/iPad — the underlying W3C pointer events are behind disabled experimental flags. For hover-to-show UI (kebab menus, action buttons), use `isHovered || isNative || isCompact` so the controls are always visible on native and hover-to-show on web.
-- **Don't use Platform.OS as a proxy for layout capabilities.** Use breakpoints for layout decisions, not platform checks.
-- **Import `isWeb`/`isNative` from `@/constants/platform`.** Never write `const isWeb = Platform.OS === "web"` locally.
+Code is cross-platform by default; gate only when platform APIs or layout breakpoints require it. Import `isWeb`, `isNative`, and `getIsElectron()` from `@/constants/platform`, and `useIsCompactFormFactor()` from `@/constants/layout`. Prefer Metro `.web.*` / `.native.*` / `.electron.*` files over large `if` blocks. Track hover on a plain outer `<View onPointerEnter/onPointerLeave>` with a separate inner `<Pressable>`, and reveal hover controls with `isHovered || isNative || isCompact`. See [docs/platform-gating.md](docs/platform-gating.md) and [docs/hover.md](docs/hover.md).
 
 ## Debugging
 

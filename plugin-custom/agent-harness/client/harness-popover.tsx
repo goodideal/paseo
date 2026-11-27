@@ -28,7 +28,19 @@ import {
 } from "./metadata-utils.js";
 import { subscribeWorkspaceTeamUpdated } from "./team-events.js";
 
+function incrementTick(prev: number): number {
+  return prev + 1;
+}
+
 const IOS_SHEET_CLOSE_DELAY_MS = 250;
+
+const TIER_BUTTONS = [
+  { id: "fast", label: "Fast", icon: "Zap" },
+  { id: "standard", label: "Standard", icon: "Cpu" },
+  { id: "plan", label: "Plan", icon: "Compass" },
+  { id: "review", label: "Review", icon: "ShieldCheck" },
+  { id: "max", label: "Max", icon: "Flame" },
+] as const;
 
 function resolveSpecialistDisplayName(
   specialist: HarnessSpecialistConfig,
@@ -60,21 +72,31 @@ function resolvePhaseBadgeText(
   meta: ReturnType<typeof extractAgentHarnessMetadata>,
   isBypassedSession: boolean,
 ): string {
+  if (isBypassedSession) {
+    return "NATIVE ORCHESTRATOR";
+  }
   if (meta) {
     return `${formatRoleDisplayName(meta.role)} · ${meta.phase}`;
   }
-  return isBypassedSession ? "NATIVE ORCHESTRATOR" : "UNTRACKED";
+  return "UNTRACKED";
 }
 
 function resolveModeGateBadgeLabel(
   isPlanMode: boolean,
   isBypassedSession: boolean,
   currentTier: MatrixTier,
+  phase?: string | null,
 ): string | null {
-  if (isPlanMode) {
+  if (isBypassedSession) {
+    return null;
+  }
+  if (isPlanMode || phase === "design") {
     return "Read-only Plan (steps down to Standard)";
   }
-  if (!isBypassedSession && currentTier === "max") {
+  if (phase === "review") {
+    return "Read-only Review Gate";
+  }
+  if (currentTier === "max") {
     return "Manual Max · High quota usage";
   }
   return null;
@@ -165,15 +187,16 @@ export const HarnessPopover = memo(function HarnessPopover({
 
   useEffect(() => {
     return subscribeWorkspaceTeamUpdated(workspaceId, () => {
-      setTeamRefreshTick((prev) => prev + 1);
+      setTeamRefreshTick(incrementTick);
     });
   }, [workspaceId]);
 
   useEffect(() => {
     let cancelled = false;
     if (!effectiveConfigRpc) return;
-    Promise.resolve(effectiveConfigRpc({ workspaceId, cwd: agent?.cwd ?? null }))
-      .then((res) => {
+    async function loadEffectiveConfig() {
+      try {
+        const res = await effectiveConfigRpc({ workspaceId, cwd: agent?.cwd ?? null });
         if (cancelled || !res || typeof res !== "object") return;
         const cfg = (res as { config?: unknown }).config as
           | { specialists?: unknown; agentTeam?: AgentTeamSummary | null }
@@ -184,10 +207,11 @@ export const HarnessPopover = memo(function HarnessPopover({
         if (cfg && "agentTeam" in cfg) {
           setWorkspaceAgentTeam(cfg.agentTeam ?? null);
         }
-      })
-      .catch(() => {
+      } catch {
         // Keep fallback specialists from host settings
-      });
+      }
+    }
+    void loadEffectiveConfig();
     return () => {
       cancelled = true;
     };
@@ -195,17 +219,19 @@ export const HarnessPopover = memo(function HarnessPopover({
 
   const meta = useMemo(() => extractAgentHarnessMetadata(agent?.metadata), [agent?.metadata]);
   const isBypassedSession = useMemo(() => {
-    if (meta) return false;
     const rawMeta = agent?.metadata as Record<string, unknown> | undefined;
-    if (Boolean(rawMeta?.[HARNESS_BYPASSED_META_KEY])) {
+    if (rawMeta?.[HARNESS_BYPASSED_META_KEY]) {
       return true;
     }
     const configuredBypassModels =
       settings.status === "ready" && Array.isArray(settings.values.bypassModels)
         ? settings.values.bypassModels
         : BUILTIN_BYPASS_MODELS;
-    return isModelBypassed(agent?.model, configuredBypassModels);
-  }, [agent?.metadata, agent?.model, meta, settings]);
+    if (isModelBypassed(agent?.model, configuredBypassModels)) {
+      return true;
+    }
+    return false;
+  }, [agent?.metadata, agent?.model, settings]);
 
   const handoffSpecialists = useMemo(() => {
     const isDynamicWorkspaceTeam = Boolean(workspaceAgentTeam);
@@ -213,9 +239,13 @@ export const HarnessPopover = memo(function HarnessPopover({
       const displayName = resolveSpecialistDisplayName(s, isDynamicWorkspaceTeam);
       const targetProvider =
         s.preferredProvider?.trim() || (isDynamicWorkspaceTeam ? "inherit" : "");
+      const rolePhaseHint =
+        s.id === "review" || s.id.endsWith("-reviewer") || s.id.endsWith("-auditor")
+          ? "review"
+          : undefined;
       const targetModel =
         s.modelOverride?.trim() ||
-        (s.preferredTier ? normalizeTierAlias(s.preferredTier) : "standard");
+        (s.preferredTier ? normalizeTierAlias(s.preferredTier, rolePhaseHint) : "standard");
       return {
         role: s.id as HandoffTargetRole,
         name: displayName,
@@ -260,11 +290,12 @@ export const HarnessPopover = memo(function HarnessPopover({
   }, [settings.status, settingsDebugEnabled]);
 
   const rawTier: MatrixTier = meta?.currentTier ?? "standard";
-  const currentTier: MatrixTier = normalizeTierAlias(rawTier);
+  const currentTier: MatrixTier = normalizeTierAlias(rawTier, meta?.phase);
   const lastBilledTier: MatrixTier | null = meta?.lastBilledTier
-    ? normalizeTierAlias(meta.lastBilledTier)
+    ? normalizeTierAlias(meta.lastBilledTier, meta?.phase)
     : null;
-  const isDualStateMismatched = lastBilledTier !== null && lastBilledTier !== currentTier;
+  const isDualStateMismatched =
+    !isBypassedSession && lastBilledTier !== null && lastBilledTier !== currentTier;
 
   // Handle manual model tier switch
   const handleSwitchTier = useCallback(
@@ -547,17 +578,20 @@ export const HarnessPopover = memo(function HarnessPopover({
         },
         tierGrid: {
           flexDirection: "row",
-          gap: 5,
+          flexWrap: "wrap",
+          gap: 8,
         },
         tierButton: {
-          flex: 1,
-          minWidth: 0,
-          minHeight: layout.compact ? 38 : 32,
+          flexGrow: 1,
+          flexBasis: "30%",
+          minWidth: 84,
+          minHeight: layout.compact ? 44 : 32,
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "center",
-          gap: 3,
-          paddingHorizontal: 4,
+          gap: 4,
+          paddingHorizontal: 8,
+          paddingVertical: 4,
           backgroundColor: theme.colors.surface1,
           borderWidth: 1,
           borderColor: theme.colors.border,
@@ -728,17 +762,33 @@ export const HarnessPopover = memo(function HarnessPopover({
 
   const isPlanMode = agent?.currentModeId === "plan";
   const isParentRunning = agent?.status === "running";
-  const isDesignPhase = meta?.phase === "design";
+  const isDesignPhase = !isBypassedSession && meta?.phase === "design";
   const phaseBadgeText = resolvePhaseBadgeText(meta, isBypassedSession);
-  const modeGateLabel = resolveModeGateBadgeLabel(isPlanMode, isBypassedSession, currentTier);
+  const modeGateLabel = resolveModeGateBadgeLabel(
+    isPlanMode,
+    isBypassedSession,
+    currentTier,
+    meta?.phase,
+  );
   const nextTurnDisplay = resolveNextTurnDisplay(
     isBypassedSession,
     currentTier,
     meta?.currentThinking,
   );
+  const nextTurnModelDisplay = isBypassedSession
+    ? (agent?.model ?? meta?.currentModel ?? "—")
+    : (meta?.currentModel ?? agent?.model ?? "—");
   const lastBilledDisplay = resolveLastBilledDisplay(lastBilledTier, meta?.lastBilledThinking);
   const isDebugButtonDisabled =
     settings.status !== "ready" || Boolean(settings.saving) || isDebugToggling;
+  const debugAccessibilityState = useMemo(
+    () => ({
+      checked: localDebugEnabled,
+      disabled: isDebugButtonDisabled,
+      busy: isDebugToggling,
+    }),
+    [localDebugEnabled, isDebugButtonDisabled, isDebugToggling],
+  );
   const headerSettingsIconSize = layout.compact ? 15 : 12;
 
   return (
@@ -785,7 +835,7 @@ export const HarnessPopover = memo(function HarnessPopover({
               <Text style={styles.metricTier}>{nextTurnDisplay}</Text>
             </View>
             <Text style={styles.metricModel} numberOfLines={1}>
-              {meta?.currentModel ?? agent?.model ?? "—"}
+              {nextTurnModelDisplay}
             </Text>
             {modeGateLabel ? (
               <View style={styles.modeGateBadge}>
@@ -837,14 +887,7 @@ export const HarnessPopover = memo(function HarnessPopover({
         </View>
       ) : null}
       <View style={styles.tierGrid}>
-        {(
-          [
-            { id: "fast", label: "Fast", icon: "Zap" },
-            { id: "standard", label: "Standard", icon: "Cpu" },
-            { id: "deep", label: "Deep", icon: "Compass" },
-            { id: "max", label: "Max", icon: "Flame" },
-          ] as const
-        ).map(({ id: tier, label, icon: tierIcon }) => {
+        {TIER_BUTTONS.map(({ id: tier, label, icon: tierIcon }) => {
           const isActive = !isBypassedSession && currentTier === tier;
 
           return (
@@ -863,7 +906,7 @@ export const HarnessPopover = memo(function HarnessPopover({
             >
               <Icon
                 name={tierIcon}
-                size={11}
+                size={12}
                 color={isActive ? theme.colors.accent : theme.colors.foregroundMuted}
               />
               <Text
@@ -890,7 +933,7 @@ export const HarnessPopover = memo(function HarnessPopover({
 
       {isDesignPhase ? (
         <View style={styles.handoffRecommendation}>
-          <Icon name="Sparkles" size={11} color={theme.colors.accent} />
+          <Icon name="Compass" size={11} color={theme.colors.accent} />
           <Text style={styles.handoffRecommendationText}>
             Design ready: Handoff to Standard Specialist recommended
           </Text>
@@ -900,9 +943,9 @@ export const HarnessPopover = memo(function HarnessPopover({
       <View style={styles.specialistGrid}>
         {specialistRows.map(([left, right]) => (
           <View key={`${left.role}-${right ? right.role : "empty"}`} style={styles.specialistRow}>
-            {[left, right].map((spec, colIdx) => {
+            {[left, right].map((spec) => {
               if (!spec) {
-                return <View key={`spacer-${colIdx}`} style={styles.specialistSpacer} />;
+                return <View key={`spacer-${left.role}`} style={styles.specialistSpacer} />;
               }
               const isHighlight = isDesignPhase && (spec.role === "ui" || spec.role === "backend");
               const isWritableBlocked = isParentRunning && !spec.readonly;
@@ -1001,11 +1044,7 @@ export const HarnessPopover = memo(function HarnessPopover({
             accessibilityRole="button"
             accessibilityLabel={localDebugEnabled ? "Debug: ON" : "Debug: OFF"}
             accessibilityHint="Toggle persistent agent harness debug trace"
-            accessibilityState={{
-              checked: localDebugEnabled,
-              disabled: isDebugButtonDisabled,
-              busy: isDebugToggling,
-            }}
+            accessibilityState={debugAccessibilityState}
             disabled={isDebugButtonDisabled}
             onPress={() => void handleToggleDebug()}
             style={({ pressed }) => [

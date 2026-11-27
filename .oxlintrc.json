@@ -7,7 +7,9 @@
     ".dev/**",
     "packages/react-native-enriched-markdown/**",
     "plugin-examples/**",
-    "plugin-custom/**",
+    "plugin-custom/gitea-workflow/**",
+    "plugin-custom/quick-tools/**",
+    "plugin-custom/team-collab/**",
     "plugins/**"
   ],
   "plugins": ["react", "react-perf", "unicorn", "typescript", "oxc", "import", "promise"],
@@ -88,7 +90,10 @@
 
     "complexity": ["error", { "max": 20 }],
     "max-depth": ["error", { "max": 4 }],
-    "max-nested-callbacks": ["error", { "max": 3 }]
+    "max-nested-callbacks": ["error", { "max": 3 }],
+
+    "paseo/no-vague-filename": "error",
+    "paseo/no-decorative-divider": "error"
   },
   "overrides": [
     // Exceptions name individual APIs in individual modules; new APIs still fail in these files.
@@ -638,6 +643,190 @@
       "files": ["**/e2e/**/fixtures.ts"],
       "rules": {
         "no-empty-pattern": "off"
+      }
+    },
+    // Grandfathered vague filenames from pre-existing modules. They may only leave this burn-down list.
+    {
+      "files": [
+        "packages/app/src/agent-stream/bottom-anchor-controller.test.ts",
+        "packages/app/src/agent-stream/bottom-anchor-controller.ts",
+        "packages/app/src/attachments/workspace-attachment-utils.test.ts",
+        "packages/app/src/attachments/workspace-attachment-utils.ts",
+        "packages/app/src/components/ui/autocomplete-utils.test.ts",
+        "packages/app/src/components/ui/autocomplete-utils.ts",
+        "packages/app/src/hooks/hardware-keyboard-submit-controller.test.ts",
+        "packages/app/src/hooks/hardware-keyboard-submit-controller.ts",
+        "packages/app/src/terminal/native-renderer/terminal-selection-controller.test.ts",
+        "packages/app/src/terminal/native-renderer/terminal-selection-controller.ts",
+        "packages/app/src/terminal/runtime/terminal-stream-controller.test.ts",
+        "packages/app/src/terminal/runtime/terminal-stream-controller.ts",
+        "packages/cli/tests/19-errors-utils.test.ts",
+        "packages/client/src/daemon-client-transport-utils.ts",
+        "packages/desktop/src/daemon/daemon-manager.test.ts",
+        "packages/desktop/src/daemon/daemon-manager.ts",
+        "packages/desktop/src/features/browser-proxy/internal/proxy-manager.test.ts",
+        "packages/desktop/src/features/browser-proxy/internal/proxy-manager.ts",
+        "packages/desktop/src/features/editor-targets/targets/file-manager.ts",
+        "packages/desktop/src/window/window-manager.test.ts",
+        "packages/desktop/src/window/window-manager.ts",
+        "packages/protocol/src/error-utils.ts",
+        "packages/protocol/src/path-utils.ts",
+        "packages/server/src/server/agent/agent-manager.test.ts",
+        "packages/server/src/server/agent/agent-manager.ts",
+        "packages/server/src/server/agent/audio-utils.ts",
+        "packages/server/src/server/agent/provider-snapshot-manager.test.ts",
+        "packages/server/src/server/agent/provider-snapshot-manager.ts",
+        "packages/server/src/server/agent/providers/diagnostic-utils.test.ts",
+        "packages/server/src/server/agent/providers/diagnostic-utils.ts",
+        "packages/server/src/server/agent/providers/opencode-server-manager.test.ts",
+        "packages/server/src/server/agent/providers/opencode/server-manager.ts",
+        "packages/server/src/server/agent/providers/opencode/test-server-manager.ts",
+        "packages/server/src/server/agent/providers/opencode/test-utils/v2-local-e2e-helpers.ts",
+        "packages/server/src/server/agent/providers/tool-call-mapper-utils.ts",
+        "packages/server/src/server/agent/stt-manager.test.ts",
+        "packages/server/src/server/agent/stt-manager.ts",
+        "packages/server/src/server/agent/tts-manager.test.ts",
+        "packages/server/src/server/agent/tts-manager.ts",
+        "packages/server/src/server/checkout-diff-manager.test.ts",
+        "packages/server/src/server/checkout-diff-manager.ts",
+        "packages/server/src/server/checkout-git-utils.ts",
+        "packages/server/src/server/daemon-e2e/send-while-running-stuck-test-utils.test.ts",
+        "packages/server/src/server/daemon-e2e/send-while-running-stuck-test-utils.ts",
+        "packages/server/src/server/daemon-e2e/test-utils/rewind-helpers.ts",
+        "packages/server/src/server/dictation/dictation-stream-manager.test.ts",
+        "packages/server/src/server/dictation/dictation-stream-manager.ts",
+        "packages/server/src/server/hub/execution-controller.test.ts",
+        "packages/server/src/server/hub/execution-controller.ts",
+        "packages/server/src/server/hub/relationship-controller.test.ts",
+        "packages/server/src/server/hub/relationship-controller.ts",
+        "packages/server/src/server/json-utils.ts",
+        "packages/server/src/server/path-utils.ts",
+        "packages/server/src/server/session/daemon/daemon-self-update-session-controller.test.ts",
+        "packages/server/src/server/session/daemon/daemon-self-update-session-controller.ts",
+        "packages/server/src/server/session/voice/voice-turn-controller.test.ts",
+        "packages/server/src/server/session/voice/voice-turn-controller.ts",
+        "packages/server/src/terminal/terminal-manager.test.ts",
+        "packages/server/src/terminal/terminal-manager.ts",
+        "packages/server/src/terminal/terminal-session-controller.test.ts",
+        "packages/server/src/terminal/terminal-session-controller.ts",
+        "packages/server/src/terminal/worker-terminal-manager.test.ts",
+        "packages/server/src/terminal/worker-terminal-manager.ts",
+        "plugin-custom/agent-harness/client/metadata-utils.ts",
+        "plugin-custom/agent-harness/shared/team-editor-utils.ts",
+        "scripts/changelog-utils.mjs",
+        "scripts/changelog-utils.test.mjs",
+        "scripts/release-version-utils.mjs",
+        "scripts/release-version-utils.test.mjs"
+      ],
+      "rules": {
+        "paseo/no-vague-filename": "off"
+      }
+    },
+    // Grandfathered decorative section dividers in legacy files. They may only leave this burn-down list.
+    {
+      "files": [
+        "packages/client/src/daemon-client.ts",
+        "packages/protocol/src/messages.ts",
+        "packages/server/src/server/client-activity.e2e.test.ts"
+      ],
+      "rules": {
+        "paseo/no-decorative-divider": "off"
+      }
+    },
+    // TODO: agent-harness complexity burn-down (18 pre-existing modules; extract sub-functions rather than adding new files here).
+    {
+      "files": [
+        "plugin-custom/agent-harness/client/harness-popover.tsx",
+        "plugin-custom/agent-harness/client/settings-screen.tsx",
+        "plugin-custom/agent-harness/client/team-editor-panel.tsx",
+        "plugin-custom/agent-harness/index.server.ts",
+        "plugin-custom/agent-harness/server/agent-intent-router.ts",
+        "plugin-custom/agent-harness/server/agent-team-loader.ts",
+        "plugin-custom/agent-harness/server/debug-logger.ts",
+        "plugin-custom/agent-harness/server/handoff-tool.ts",
+        "plugin-custom/agent-harness/server/profile-sync.ts",
+        "plugin-custom/agent-harness/server/repo-fingerprint.ts",
+        "plugin-custom/agent-harness/server/rpc-handlers.ts",
+        "plugin-custom/agent-harness/server/team-editor-service.ts",
+        "plugin-custom/agent-harness/shared/config-resolver.ts",
+        "plugin-custom/agent-harness/shared/intent-detector.ts",
+        "plugin-custom/agent-harness/shared/lifecycle-state.ts",
+        "plugin-custom/agent-harness/shared/plan-shell-policy.ts",
+        "plugin-custom/agent-harness/shared/settings.ts",
+        "plugin-custom/agent-harness/shared/team-editor-utils.ts"
+      ],
+      "rules": {
+        "complexity": "off"
+      }
+    },
+    // TODO: agent-harness max-depth burn-down (4 pre-existing modules).
+    {
+      "files": [
+        "plugin-custom/agent-harness/index.server.ts",
+        "plugin-custom/agent-harness/server/agent-team-loader.ts",
+        "plugin-custom/agent-harness/server/repo-fingerprint.ts",
+        "plugin-custom/agent-harness/shared/settings.ts"
+      ],
+      "rules": {
+        "max-depth": "off"
+      }
+    },
+    // TODO: agent-harness JSX inline-callback burn-down (5 pre-existing React surfaces).
+    {
+      "files": [
+        "plugin-custom/agent-harness/client/harness-popover.tsx",
+        "plugin-custom/agent-harness/client/settings-screen.tsx",
+        "plugin-custom/agent-harness/client/team-editor-panel.tsx",
+        "plugin-custom/agent-harness/client/transition-card.tsx",
+        "plugin-custom/agent-harness/index.client.tsx"
+      ],
+      "rules": {
+        "react-perf/jsx-no-new-function-as-prop": "off"
+      }
+    },
+    // TODO: agent-harness JSX inline-array burn-down (3 pre-existing React surfaces; Pressable style arrays use RN state).
+    {
+      "files": [
+        "plugin-custom/agent-harness/client/harness-popover.tsx",
+        "plugin-custom/agent-harness/client/settings-screen.tsx",
+        "plugin-custom/agent-harness/client/team-editor-panel.tsx"
+      ],
+      "rules": {
+        "react-perf/jsx-no-new-array-as-prop": "off"
+      }
+    },
+    // TODO: agent-harness JSX depth burn-down (2 pre-existing panel/popover surfaces).
+    {
+      "files": [
+        "plugin-custom/agent-harness/client/harness-popover.tsx",
+        "plugin-custom/agent-harness/client/team-editor-panel.tsx"
+      ],
+      "rules": {
+        "react/jsx-max-depth": "off"
+      }
+    },
+    // TODO: agent-harness test callback-nesting burn-down (2 pre-existing test suites).
+    {
+      "files": [
+        "plugin-custom/agent-harness/tests/client.test.ts",
+        "plugin-custom/agent-harness/tests/server.test.ts"
+      ],
+      "rules": {
+        "max-nested-callbacks": "off"
+      }
+    },
+    // TODO: agent-harness test `any` burn-down (6 pre-existing test suites using dynamic mock harnesses).
+    {
+      "files": [
+        "plugin-custom/agent-harness/tests/client.test.ts",
+        "plugin-custom/agent-harness/tests/config-extensibility.test.ts",
+        "plugin-custom/agent-harness/tests/intent-detector.test.ts",
+        "plugin-custom/agent-harness/tests/profile-sync.test.ts",
+        "plugin-custom/agent-harness/tests/server.test.ts",
+        "plugin-custom/agent-harness/tests/workspace-create.test.ts"
+      ],
+      "rules": {
+        "typescript/no-explicit-any": "off"
       }
     }
   ]

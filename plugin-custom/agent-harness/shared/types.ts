@@ -1,10 +1,37 @@
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
 /**
  * Built-in matrix tiers supported out of the box.
- * MatrixTier is widened to allow user-defined custom tiers.
+ * MatrixTier is widened to allow user-defined custom tiers and legacy aliases.
  */
-export type BuiltInMatrixTier = "fast" | "standard" | "deep" | "max";
-export type LegacyMatrixTier = "flash" | "plan" | "review";
+export type BuiltInMatrixTier = "fast" | "standard" | "plan" | "review" | "max";
+export type LegacyMatrixTier = "flash" | "deep";
+export type ModelTierId = "fast" | "standard" | "plan" | "review" | "deep" | "max" | "auto";
 export type MatrixTier = BuiltInMatrixTier | (string & {});
+
+/** Live model descriptor returned by Paseo `providers.snapshot()`. */
+export interface HostProviderModelInfo {
+  id: string;
+  label?: string;
+  isDefault?: boolean;
+  thinkingOptions?: Array<{ id: string; label?: string }>;
+}
+
+/** Live provider runtime entry normalized from Paseo `providers.snapshot()`. */
+export interface HostProviderRuntimeInfo {
+  provider: string;
+  enabled: boolean;
+  status?: string;
+  label?: string;
+  defaultModel?: string;
+  models: HostProviderModelInfo[];
+}
 
 /**
  * Built-in domain roles supported out of the box.
@@ -37,12 +64,14 @@ export type ProviderModelMapping = Record<string, string>;
 
 export interface RouterDecision {
   tier: MatrixTier;
+  targetProvider?: string;
   targetModel: string;
   targetThinking?: string | null;
   phase?: HarnessPhase;
   reason: string;
   matchedRule: string;
   previousModel?: string;
+  fallbackReason?: string | null;
 }
 
 export interface DomainRoleDecision {
@@ -89,6 +118,7 @@ export type HarnessTransitionKind =
  * - `currentTier` / `currentModel`: pending configuration that will execute the NEXT turn.
  * - `lastBilledTier` / `lastBilledModel`: actual configuration that billed the LAST completed turn.
  */
+// oxlint-disable-next-line typescript/consistent-type-definitions -- structural type alias required for JsonValue assignability
 export type HarnessAgentMetadata = {
   version: number;
   role: DomainRole;
@@ -114,9 +144,7 @@ export type HarnessAgentMetadata = {
   lastBilledThinking?: string | null;
 };
 
-// ============================================================================
-// Granular Specialist & Harness Configuration Types (v2)
-// ============================================================================
+/* Granular Specialist & Harness Configuration Types (v2) */
 
 export interface HarnessTierConfig {
   id: string;
@@ -231,7 +259,8 @@ export interface EffectiveHarnessConfig {
   defaultSkillsRoot: string;
   autoSyncDiskProfiles: boolean;
   autoSyncDaemonAgentProfiles: boolean;
-  enforceSessionMcpFiltering: boolean;
+  /** @deprecated Legacy MCP session filtering flag retained for v8 settings compatibility. */
+  enforceSessionMcpFiltering?: boolean;
   mcpServerCatalog: Record<string, McpServerConfigEntry>;
   tiers: HarnessTierConfig[];
   providerMappings: Record<string, Record<string, string>>;
@@ -243,22 +272,38 @@ export interface EffectiveHarnessConfig {
   specialists: HarnessSpecialistConfig[];
   defaultFallbackRole: string;
   defaultFallbackTier: string;
-  enableFullstackOrchestratorCollision: boolean;
-  fullstackUiPattern: string;
-  fullstackBackendPattern: string;
-  tierPatterns: {
+  routerEnabled: boolean;
+  routerProvider: string;
+  routerModel: string;
+  routerEffort: "low" | "medium" | "high";
+  routerTimeoutMs: number;
+  routerConfidenceThreshold: number;
+  /** @deprecated Legacy heuristic collision flag retained for v8 settings compatibility. */
+  enableFullstackOrchestratorCollision?: boolean;
+  /** @deprecated Legacy heuristic pattern retained for v8 settings compatibility. */
+  fullstackUiPattern?: string;
+  /** @deprecated Legacy heuristic pattern retained for v8 settings compatibility. */
+  fullstackBackendPattern?: string;
+  /** @deprecated Legacy heuristic tier regex patterns retained for v8 settings compatibility. */
+  tierPatterns?: {
     plan: string[];
     review: string[];
     fastAction?: string[];
     execAction: string[];
     conventionalExecPrefix: string;
   };
-  llmFallbackEnabled: boolean;
-  llmFallbackEndpoint: string;
-  llmFallbackApiKey: string;
-  llmFallbackModel: string;
-  llmFallbackTimeoutMs: number;
-  llmFallbackApplyRole: boolean;
+  /** @deprecated Legacy HTTP LLM fallback flag retained for v8 settings compatibility. */
+  llmFallbackEnabled?: boolean;
+  /** @deprecated Legacy HTTP LLM fallback endpoint retained for v8 settings compatibility. */
+  llmFallbackEndpoint?: string;
+  /** @deprecated Legacy HTTP LLM fallback API key retained for v8 settings compatibility. */
+  llmFallbackApiKey?: string;
+  /** @deprecated Legacy HTTP LLM fallback model retained for v8 settings compatibility. */
+  llmFallbackModel?: string;
+  /** @deprecated Legacy HTTP LLM fallback timeout retained for v8 settings compatibility. */
+  llmFallbackTimeoutMs?: number;
+  /** @deprecated Legacy HTTP LLM fallback role flag retained for v8 settings compatibility. */
+  llmFallbackApplyRole?: boolean;
   injectSystemPromptBanner: boolean;
   enforceWorkspaceBoundaryGuardrail: boolean;
   workspaceBoundaryNotice: string;
