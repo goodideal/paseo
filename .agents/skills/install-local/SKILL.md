@@ -171,15 +171,17 @@ git remote set-url origin https://github.com/goodideal/paseo.git
 
 ---
 
-### 特性 E：插件跨调用能力与本地插件目录隔离 (`packages/client` & `plugins/` & `plugin-custom/`)
+### 特性 E：插件跨调用能力与 4 插件收敛架构 (`packages/client` & `plugin-custom/`)
 
 - **核心意图**：
-  1. **通用插件跨调用能力 (`PaseoApi.plugins.invoke`)**：在 `packages/client/src/index.ts` 暴露通用 `paseo.plugins.invoke(pluginId, method, input)`（直接复用官方 `DaemonClient.invokePluginRpc`，0 新增核心协议），Workflow 引擎已完整下沉至独立插件 `plugin-custom/workflow-runs/`，彻底移除 `packages/plugin`、`plugin-process*`、`runtime.ts`、`plugins/index.ts`、`bootstrap.ts`、`session.ts`、`websocket-server.ts` 中的所有 Workflow 侵入代码；
-  2. **内置插件与外部扩展插件隔离**：官方将 `plugins` 纳入 monorepo workspaces，本地定制插件统一存放在 `plugin-custom/` 下并通过 `~/.paseo/config.json` 以 directory source 挂载，避免污染官方 `plugins/` 目录。
+  1. **通用插件跨调用能力 (`PaseoApi.plugins.invoke`)**：在 `packages/client/src/index.ts` 暴露通用 `paseo.plugins.invoke(pluginId, method, input)`（直接复用官方 `DaemonClient.invokePluginRpc`，0 新增核心协议），彻底移除核心服务中的 Workflow 侵入代码；
+  2. **4 个核心定制插件 (`plugin-custom/`)**：本地定制扩展收敛为 `agent-harness`、`gitea-workflow`（内聚原 `workflow-runs` 运行时与 `harness-bridge`）、`quick-tools` 与 `team-collab`（多开发者 Git Worktree 身份隔离、凭据路由与成员用量台账），通过 `~/.paseo/config.json` 以 directory source 挂载，保持官方 `plugins/` 目录纯净。
 - **涉及核心文件**：
   - `packages/client/src/index.ts`（暴露通用 `PaseoPluginActions.invoke`）
-  - `plugin-custom/workflow-runs/`（独立 DAG Workflow 引擎与前端面板，提供标准插件 RPC）
-  - `plugin-custom/gitea-workflow/` & `plugin-custom/visual-crawler-auto-fix/`（通过 `paseo.plugins.invoke("workflow-runs", ...)` 注册预设与调度步骤）
+  - `plugin-custom/agent-harness/`（Capability Harness 动态装配、层级模型路由与 Plan 模式策略）
+  - `plugin-custom/gitea-workflow/`（自动化 Gitea Workflow 引擎与前端面板）
+  - `plugin-custom/quick-tools/`（快捷工具与 Prompt 面板）
+  - `plugin-custom/team-collab/`（多开发者 Git 身份/SSH/Token 隔离与用量审计）
   - `plugins/tsconfig.json`（与 `upstream/main` 保持一致）
 
 ---
@@ -188,10 +190,10 @@ git remote set-url origin https://github.com/goodideal/paseo.git
 
 - **核心意图**：
   1. **自动化官方更新简述 (Upstream Updates Summary)**：每次同步上游更新（或执行 `--check-upstream` / `--changelog`）时，自动提取并分类归纳最新提交（流式渲染性能、新模型/Provider 支持、移动端与交互体验、问题修复与工程规范），让开发者对官方演进一目了然；
-  2. **本地 Custom 插件生态兼容性巡检 (Plugin Compatibility Check)**：Paseo 拥有丰富的本地定制插件生态（如 `agent-radar`、`audio-brief`、`desktop-pet`、`gateway-workspace-tagger`、`gitea-workflow`、`quick-prompts`、`visual-crawler-auto-fix`、`web-inspector` 等）。在升级合流与执行门禁（`--verify` 或 `--check-plugins`）时，全自动扫描插件清单完整性（`paseo-plugin.json`）、入口有效性，并批量运行各插件的单元/契约测试，阻断任何上游 API 变更对本地插件的破坏。
+  2. **本地 Custom 插件生态兼容性巡检 (Plugin Compatibility Check)**：在升级合流与执行门禁（`--verify` 或 `--check-plugins`）时，自动扫描 `plugin-custom/{agent-harness,gitea-workflow,quick-tools,team-collab}` 的清单完整性（`paseo-plugin.json`）、入口有效性，并批量运行各插件的单元/契约测试，阻断上游 API 变更对定制插件的破坏。
 - **涉及核心文件**：
   - `scripts/install-local.mjs`（内置 `generateUpdatesSummary` 与 `verifyCustomPlugins` 自动化流水线）
-  - `plugin-custom/*` 与 `plugins/` 目录下的全部定制插件
+  - `plugin-custom/*` 下的全部定制插件
 
 ---
 
@@ -202,7 +204,9 @@ git remote set-url origin https://github.com/goodideal/paseo.git
 | 操作目标                         | 推荐命令                                              | 核心动作说明                                                                                         |
 | :------------------------------- | :---------------------------------------------------- | :--------------------------------------------------------------------------------------------------- |
 | **一键全量编译并部署到本机**     | `npm run install:local`                               | 编译 Server + Web UI + Desktop，同步至全局 Volta/npm 路径                                            |
-| **一键同步官方更新并编译安装**   | `npm run install:local -- --sync-upstream`            | 自动 fetch 上游、合并最新提交、维护 `-custom` 后缀、输出更新简述、校验插件兼容性、刷新依赖并构建安装 |
+| **同步官方更新并编译安装**       | `npm run install:local -- --sync-upstream`            | 自动 fetch 上游、合并最新提交、维护 `-custom` 后缀、输出更新简述、校验插件兼容性、刷新依赖并构建安装 |
+| **增量同步到远端 Linux 节点**    | `npm run install:local -- --sync-remote <hosts>`      | 自动比对版本（同版本仅打包 4 定制插件 + `~/.paseo/plugins` 托管社区插件，跳过 Volta 运行时）并重启   |
+| **强制仅同步插件 / 强制全量**    | `--sync-plugins-only` / `--force-runtime`             | 配合 `--sync-remote` 使用：强制跳过运行时传输，或即使版本相同仍覆盖 Volta 运行时                     |
 | **输出官方上游最新更新简述**     | `npm run install:local -- --changelog`                | 分类归纳展示官方最新提交（性能优化、新特性/Provider、UI 交互、修复等）                               |
 | **检测本地自定义插件兼容性**     | `npm run install:local -- --check-plugins`            | 扫描 `plugin-custom/` 与 `plugins/`，校验清单规范并执行插件单元/契约测试                             |
 | **同步官方更新时使用 rebase**    | `npm run install:local -- --sync-upstream --rebase`   | 采用变基方式保持线性的自定义提交历史                                                                 |
@@ -213,7 +217,7 @@ git remote set-url origin https://github.com/goodideal/paseo.git
 | **仅检查官方是否有新版本**       | `npm run install:local -- --check-upstream`           | 获取并对比官方 upstream/main 最新提交与版本号，输出更新简述，不修改代码                              |
 | **快速构建后端与 CLI (跳过 UI)** | `npm run install:local -- --skip-ui`                  | 修改后端/CLI 逻辑时极速编译，跳过耗时的 Web UI 打包                                                  |
 | **强制重新全量打包 Web UI**      | `npm run install:local -- --force-ui`                 | 默认在 packages/app 无修改且产物就绪时自动跳过，加此参数强制重新打包 Metro Web UI                    |
-| **刷新构建时刻时间戳版本**       | `npm run install:local -- --bump`                     | 将版本更新为当前时刻标识 `-custom.<DDhhmm>` 并级联重写所有子包 package.json                          |
+| **刷新构建时刻时间戳版本**       | `npm run install:local -- --bump`                     | 强制重新打包 Web UI 并在全局安装产物中刷新 `-custom.d<DDhhmm>`，不修改源码 `package.json`            |
 | **仅在本地编译 (不安装到全局)**  | `npm run install:local -- --build-only`               | 仅验证打包输出，不覆盖本机全局 `@getpaseo/cli`                                                       |
 | **仅同步依赖与代码 (不编译)**    | `npm run install:local -- --sync-upstream --no-build` | 仅执行上游同步与依赖安装，不执行后续编译步骤                                                         |
 
@@ -265,27 +269,15 @@ git merge upstream/main -m "merge: sync official upstream updates"
 # 或者使用 rebase: git rebase main
 ```
 
-#### 🌟 核心技巧：秒级解决 `package.json` 的批量版本冲突
-
-因定制分支版本带有 `-custom` 后缀，在上游切新版本后变基或合并时，所有子包的 `package.json` 会因为版本号和内部依赖版本产生冲突。**严禁手动逐个编辑十几个文件**，使用以下步骤秒级解决：
-
-```bash
-# 1. 在根目录 package.json 中仅将 version 冲突修改为最新上游版本加上 -custom（如 "0.10.1-custom.<DDhhmm>"）并保存
-# 2. 对所有子包 package.json 使用 ours 丢弃冲突标记：
-git checkout --ours packages/*/package.json plugins/package.json
-
-# 3. 运行官方同步脚本，自动精准级联重写所有子包版本及内部依赖引用：
-node scripts/sync-workspace-versions.mjs
-
-# 4. 标记解决并继续：
-git add package.json packages/*/package.json plugins/package.json
-```
-
 > [!NOTE]
-> 若冲突涉及业务代码（如 `plugin-process.ts`、`websocket-server.ts` 或 `terminal-pane.tsx`）：
 >
-> - 仔细阅读并保留本地定制逻辑（如 `workflowPresets`），适配上游新架构（如 `createPluginWorker` 工厂函数与 `usageSources`）；
-> - `git add <file>` 解决全部冲突后执行 `git commit`。
+> - **源码 `package.json` 保持纯净版本**：Git 中的 13 个 `package.json` 严格与 `upstream/main` 保持一致（不再维护源码 `-custom` 后缀，`-custom.d<DDhhmm>` 仅在 `install:local` 构建与全局安装阶段动态注入）。若合流时遇到业务代码冲突，解决冲突并执行 `npm run format:files` 后继续下一步。
+> - **`lefthook pre-commit` 前置构建链**：本仓库在 `git commit` 时会自动触发全库 `npm run typecheck`。若合流中断后手动解决冲突，**必须先在提交前刷新依赖与跨包类型声明并清理锁文件漂移**，再执行 `git commit --no-edit`：
+>   ```bash
+>   npm install && npm run build:server
+>   git checkout -- package-lock.json
+>   git add <resolved-files> && git commit --no-edit
+>   ```
 
 #### Step 4: 安装与依赖同步
 
@@ -332,20 +324,13 @@ npx vitest run \
 npm run install:local -- --check-plugins
 ```
 
-#### Step 6: 维护 -custom 构建版本标识与提交推送
+#### Step 6: 推送同步与全量构建部署
 
-在完成合流与依赖刷新后，更新并提交版本标识：
+完成合并提交与验证后，推送个人远端分支并执行本地构建安装（`-custom.d<DDhhmm>` 会在构建期自动注入，无需提交版本变更）：
 
 ```bash
-# 1. 依据 DDhhmm 时间戳生成并同步全库版本
-node scripts/sync-workspace-versions.mjs
-
-# 2. 提交版本变更与合流
-git add -A
-git commit -m "chore: bump version to <version>-custom.<DDhhmm>"
-
-# 3. 推送更新到个人远端 Fork
-git push origin custom-features
+git push origin main custom-features
+npm run install:local -- --verify --force-ui
 ```
 
 #### Step 7: 本地编译部署与服务重启提示
@@ -383,15 +368,56 @@ paseo restart
 
 ## 6. 常见问题排查手册 (Troubleshooting FAQ)
 
-| 问题现象                                                                                                         | 根因分析                                                                                                      | 解决方案                                                                                                                                         |
-| :--------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------ | :----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Cannot find module '@getpaseo/protocol/messages'` 或缺少 response 类型                                          | Monorepo 子包未构建，缺少 generated validators 或 dist declarations                                           | 先执行 `npm run build:protocol && npm run build:client`                                                                                          |
-| `error TS17004: Cannot use JSX unless the '--jsx' flag is provided` in `plugins/*`                               | 官方新增 `plugins` workspace 后，`plugins/tsconfig.json` 的 include 误扫了本地软链接挂载的自定义外部 JSX 插件 | 将 `plugins/tsconfig.json` 的 `include` 限制为 `["*-usage-source/**/*.ts"]`，杜绝扫入外部插件                                                    |
-| `error TS2741: Property 'registerUsageSource' is missing in type ... but required in type 'PluginServerContext'` | 官方在 `PluginServerContext` 引入了 `registerUsageSource`，导致自定义插件单元测试的 mock 对象属性缺失         | 在测试的 `fakeServer: PluginServerContext` mock 中补齐 `registerUsageSource: vi.fn()`                                                            |
-| `Property 'terminalAppearance' is missing in type ... in ja.ts/ar.ts`                                            | `TranslationResources` 严格校验所有语言 key                                                                   | 检查 `en.ts` 中 `TranslationResources` 是否已对新字段配置了可选映射（见特性 A）                                                                  |
-| 变基或合并时所有 `package.json` 报冲突                                                                           | 上游版本迭代与本地 `-custom` 后缀冲突                                                                         | 见 SOP Step 3：改根目录版本后运行 `git checkout --ours packages/*/package.json plugins/package.json && node scripts/sync-workspace-versions.mjs` |
-| 客户端与服务端连接后提示 `Version Mismatch`                                                                      | 本地安装了 `-custom` 但判断逻辑未放行                                                                         | 检查 `desktop-updates.ts` 与 `settings-screen.tsx` 中的版本比对是否已剔除 `-custom`                                                              |
-| `oxlint: private async method has a complexity of 22 (Max 20)`                                                   | `transcribeAudioInternal` 分支过多                                                                            | 将多条件判断与 logprob 分析抽离为顶层纯函数（见特性 B）                                                                                          |
-| `oxfmt: Format issues found in above 1 files`                                                                    | 文件存在格式缩进/尾逗号不符合规范                                                                             | 严格运行 `npm run format` 自动修正，切勿手动硬改                                                                                                 |
-| `git push: deploy key permission denied`                                                                         | SSH 默认尝试了其他项目的 deploy key                                                                           | 运行 `gh auth setup-git`，改用已授权的个人 HTTPS 协议推送                                                                                        |
-| `git fetch upstream` 权限报错或失败                                                                              | 远端未配置或沙盒限制                                                                                          | 脚本已内置 `ensureUpstreamRemote()`，若网络受限可先在宿主终端执行一次 `git fetch upstream`                                                       |
+| 问题现象                                                                                                         | 根因分析                                                                                                      | 解决方案                                                                                                                                              |
+| :--------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------ | :---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Cannot find module '@getpaseo/protocol/messages'` 或缺少 response 类型                                          | Monorepo 子包未构建，缺少 generated validators 或 dist declarations                                           | 先执行 `npm run build:protocol && npm run build:client`                                                                                               |
+| `error TS17004: Cannot use JSX unless the '--jsx' flag is provided` in `plugins/*`                               | 官方新增 `plugins` workspace 后，`plugins/tsconfig.json` 的 include 误扫了本地软链接挂载的自定义外部 JSX 插件 | 将 `plugins/tsconfig.json` 的 `include` 限制为 `["*-usage-source/**/*.ts"]`，杜绝扫入外部插件                                                         |
+| `error TS2741: Property 'registerUsageSource' is missing in type ... but required in type 'PluginServerContext'` | 官方在 `PluginServerContext` 引入了 `registerUsageSource`，导致自定义插件单元测试的 mock 对象属性缺失         | 在测试的 `fakeServer: PluginServerContext` mock 中补齐 `registerUsageSource: vi.fn()`                                                                 |
+| `Property 'terminalAppearance' is missing in type ... in ja.ts/ar.ts`                                            | `TranslationResources` 严格校验所有语言 key                                                                   | 检查 `en.ts` 中 `TranslationResources` 是否已对新字段配置了可选映射（见特性 A）                                                                       |
+| 变基或合并时所有 `package.json` 报冲突                                                                           | 误向 Git 提交了带 `-custom` 后缀的版本号                                                                      | 源码中 13 个 `package.json` 应保持与 `upstream/main` 一致（`-custom` 仅在 `install:local` 构建期注入）；直接 `git checkout --theirs` 恢复上游版本即可 |
+| 客户端与服务端连接后提示 `Version Mismatch`                                                                      | 本地安装了 `-custom` 但判断逻辑未放行                                                                         | 检查 `desktop-updates.ts` 与 `settings-screen.tsx` 中的版本比对是否已剔除 `-custom`                                                                   |
+| `oxlint: private async method has a complexity of 22 (Max 20)`                                                   | `transcribeAudioInternal` 分支过多                                                                            | 将多条件判断与 logprob 分析抽离为顶层纯函数（见特性 B）                                                                                               |
+| `oxfmt: Format issues found in above 1 files`                                                                    | 文件存在格式缩进/尾逗号不符合规范                                                                             | 严格运行 `npm run format` 自动修正，切勿手动硬改                                                                                                      |
+| `git push: deploy key permission denied`                                                                         | SSH 默认尝试了其他项目的 deploy key                                                                           | 运行 `gh auth setup-git`，改用已授权的个人 HTTPS 协议推送                                                                                             |
+| `git fetch upstream` 权限报错或失败                                                                              | 远端未配置或沙盒限制                                                                                          | 脚本已内置 `ensureUpstreamRemote()`，若网络受限可先在宿主终端执行一次 `git fetch upstream`                                                            |
+
+---
+
+## 7. 远端 Linux 节点（`ez-nuc1` / `ez-nuc2`）同构部署与增量同步 SOP
+
+> 若需向全新 Linux 主机部署全套 AI 开发环境，直接遵循 [`/ai-env-deploy`](/Users/jerry/.agents/skills/ai-env-deploy/SKILL.md)；若需将本机更新后的 Paseo 运行时、4 个定制插件及 `~/.paseo/plugins` 托管社区插件增量推送至现有节点，直接执行 `npm run install:local -- --sync-remote nuc1-ezpro,nuc2-ezpro`（运行时版本一致时自动仅同步插件）。
+
+手工排查或编排跨系统部署时，必须遵守以下陷阱防护准则：
+
+1. **macOS 跨端打包防属主污染与 xattr 扩展属性噪音**：
+   - macOS 本地执行 `tar` 打包传给 Linux 时，除设置 `COPYFILE_DISABLE=1` 排除 `._*` 文件外，必须传入 `--no-xattrs --no-mac-metadata` 禁止写入 `LIBARCHIVE.xattr.com.apple.provenance` 扩展头；Linux 端解压附加 `--warning=no-unknown-keyword`；
+   - 切忌以 `root` 执行 `tar -xzf ... -C /home/ezpro` 时包含 `.` 顶层目录条目（会把 `/home/ezpro` 属主改成 macOS UID `502:root`，导致 `serena` 等工具报 `PermissionError`）；解压后务必核验并修正 `chown ezpro:ezpro /home/ezpro`。
+2. **原生二进制保留与纯 JS 产物覆盖**：
+   - 先在远端使用对应用户的 Volta 安装官方同基线版本（如 `volta install @getpaseo/cli@0.17.3`）以获取 Linux x64 原生二进制（`node-pty`、`esbuild`、`sharp`）；
+   - 再用本机 `~/.volta/tools/image/packages/@getpaseo/cli` 中的纯 JS `dist/` 与带 `-custom` 戳的 `package.json` 覆盖，并补齐本地定制新增的第三方运行时依赖（如 `smol-toml`、`@modelcontextprotocol/*`、`@hono/node-server`、`hono`）。
+3. **脱离 Monorepo 的 `custom-plugins` 与托管插件依赖解析**：
+   - `plugin-custom/` 脱离源码仓库后，需在 `~/.paseo/custom-plugins/node_modules/` 中软链 `$VOLTA_CLI/node_modules/@getpaseo` 与 `zod`；
+   - 同步 `~/.paseo/plugins` Registry 托管插件时，需保留 `checkout/.git`（供 `ManagedPluginSources` 读取 `currentRevision`），并过滤 `node_modules/{.bin,fsevents,react-native,@react-native,react-devtools-core,typescript,@babel,@esbuild,esbuild,@playwright,playwright,playwright-core}` 剔除 macOS 原生二进制与构建期依赖。
+4. **节点身份隔离、Provider 启用时序与无头插件 RPC 调用范式**：
+   - 不复制本机 `server-id` 与 `daemon-keypair.json`（保留远端独立身份）；
+   - 先完成 `claude`/`codex`/`opencode`/`pi` CLI 安装再启服务，或安装后显式将 `~/.paseo/config.json` 中 `agents.providers.<id>.enabled` 置为 `true` 并重启 `systemctl --user restart paseo.service`，防止首次启动把未就绪 Provider 持久化为禁用；
+   - **远端插件 RPC 自动化调用范式**：在节点本地通过 Node 连接运行中的守护进程（如配置 `team-collab` 成员、凭据、工作区归属或读写插件 Host Settings），直接导入全局 Volta 中的 `@getpaseo/client/dist/node/index.js`（无需额外引入 `@getpaseo/server` 内部路径）：
+     ```javascript
+     const { createHostClient } = await import(
+       `${process.env.HOME}/.volta/tools/image/packages/@getpaseo/cli/lib/node_modules/@getpaseo/cli/node_modules/@getpaseo/client/dist/node/index.js`
+     );
+     const client = createHostClient("127.0.0.1:6767", {
+       clientId: `cli_rpc_${process.pid}`,
+       clientType: "cli",
+       appVersion: "0.17.3",
+       password: process.env.PASEO_PASSWORD,
+       reconnect: { enabled: false },
+     });
+     await client.connect();
+     await client.invokePluginRpc("team-collab", "team_collab.roster.status.request", {});
+     await client.close();
+     ```
+5. **远端 SSH 进程清理与嵌套 SSH 规则**：
+   - 在 `ssh host "..."` 中使用 `pkill -f` 时必须对模式首字符加方括号转义（如 `pkill -f "[p]attern"`），禁止裸字符串匹配自身 `bash -c` 命令行导致 SSH 会话中断（退出码 `255`）。
+   - 在 `ssh -T <host> 'bash -s' <<'EOF'` 内调用 `ssh` 访问第三台主机时，内层必须显式加 `ssh -n`，防止内层 `ssh` 吞掉外层 heredoc 标准输入造成静默提前退出。
+   - 通过 Tailscale 连接算力节点一律使用非 root 别名（`nuc1-ezpro` / `nuc2-ezpro`），避免 `root@` 触发 Tailscale SSH Check Mode 网页二次认证拦截。

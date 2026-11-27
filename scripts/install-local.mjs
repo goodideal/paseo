@@ -113,7 +113,10 @@ Options:
   --rebase            与 --sync-upstream 配合使用，使用 rebase 替代默认的 merge
   --stash             与 --sync-upstream 配合使用，如果有未提交的更改则自动 stash 并恢复
   --verify            运行核心质量门禁验证 (typecheck:server 与 5 个核心定制特性单测回归，失败即停)
-  --bump, --stamp     强制重新打包 Web UI 并在全局安装产物中刷新当前时刻标识 (-custom.<DDhhmm>)，不修改源码 package.json
+  --sync-remote <hosts> 同步本机插件与按需增量同步 Volta 运行时到远端节点并重启服务 (逗号分隔，如 nuc1-ezpro,nuc2-ezpro)
+  --sync-plugins-only 配合 --sync-remote 使用，强制仅同步定制与托管插件及配置，跳过 Volta 运行时
+  --force-runtime     配合 --sync-remote 使用，即使远端版本一致仍强制覆盖 Volta 运行时
+  --bump, --stamp     强制重新打包 Web UI 并在全局安装产物中刷新当前时刻标识 (-custom.d<DDhhmm>)，不修改源码 package.json
   --force-ui          强制重新打包编译 Web UI (默认在 packages/app 无改动且产物就绪时自动跳过)
   --skip-ui           跳过 Web UI 编译打包 (仅构建服务端和桌面端，大幅提升快速调试效率)
   --skip-desktop      跳过 Electron 桌面端主进程编译
@@ -124,6 +127,7 @@ Options:
 Examples:
   npm run install:local                     # 一键全量编译并部署到本机
   npm run install:local -- --skip-ui        # 快速更新 CLI 和后端，跳过 Web UI 打包
+  npm run install:local -- --sync-remote nuc1-ezpro,nuc2-ezpro # 增量同步 Volta 运行时与定制插件至远端节点
   npm run install:local -- --upstream-version # 查看官方 upstream 最新版本与发布信息
   npm run install:local -- --status         # 查看当前代码与上游、全局运行环境状态
   npm run install:local -- --check-upstream # 仅检查官方是否有新版本发布
@@ -132,7 +136,42 @@ Examples:
 `);
 }
 
-const args = new Set(process.argv.slice(2));
+function parseRemoteSyncHosts(argv) {
+  const hosts = [];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--sync-remote" && argv[i + 1] && !argv[i + 1].startsWith("-")) {
+      hosts.push(
+        ...argv[++i]
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
+      );
+    } else if (arg.startsWith("--sync-remote=")) {
+      hosts.push(
+        ...arg
+          .slice("--sync-remote=".length)
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
+      );
+    }
+  }
+  return [...new Set(hosts)];
+}
+
+const rawArgv = process.argv.slice(2);
+const args = new Set(rawArgv);
+const remoteHosts = parseRemoteSyncHosts(rawArgv);
+if (
+  (args.has("--sync-remote") || rawArgv.some((a) => a.startsWith("--sync-remote="))) &&
+  remoteHosts.length === 0
+) {
+  console.error(
+    "❌ --sync-remote 需要至少一个目标 SSH 主机名 (例如: --sync-remote nuc1-ezpro,nuc2-ezpro)",
+  );
+  process.exit(1);
+}
 
 if (args.has("-h") || args.has("--help")) {
   printHelp();
@@ -154,6 +193,8 @@ const shouldBump = args.has("--bump") || args.has("--stamp");
 const skipDesktop = args.has("--skip-desktop");
 const buildOnly = args.has("--build-only");
 const noBuild = args.has("--no-build");
+const syncPluginsOnly = args.has("--sync-plugins-only");
+const forceRuntime = args.has("--force-runtime");
 
 function ensureUpstreamRemote() {
   const remotes = runCapture("git", ["remote", "-v"]) ?? "";
@@ -177,9 +218,13 @@ function getUpstreamVersionInfo(options = { fetchNpm: false }) {
 
   let latestTag = null;
   try {
-    const tag = runCapture("git", ["describe", "--tags", "--abbrev=0", "upstream/main"]);
-    if (tag) {
-      latestTag = tag.trim();
+    const semverTags = runCapture("git", ["tag", "--list", "v*", "--sort=-version:refname"]);
+    const latestReleaseTag = semverTags?.split("\n")[0]?.trim() || null;
+    const ancestorTag = runCapture("git", ["describe", "--tags", "--abbrev=0", "upstream/main"]);
+    if (latestReleaseTag && ancestorTag && latestReleaseTag !== ancestorTag) {
+      latestTag = `${latestReleaseTag} (main 祖先链: ${ancestorTag})`;
+    } else {
+      latestTag = latestReleaseTag || ancestorTag || null;
     }
   } catch {
     // ignore
@@ -558,6 +603,9 @@ function syncUpstream() {
       console.error(
         useRebase ? "   解决冲突后执行: git rebase --continue" : "   解决冲突后执行: git commit",
       );
+      console.error(
+        "   💡 提示: 解决冲突后，若上游包含跨包协议或新子包变更，请先执行 npm install && npm run build:server 并用 git checkout -- package-lock.json 还原锁文件漂移，再执行 git commit 以通过 lefthook pre-commit 类型检查。",
+      );
       process.exit(1);
     } finally {
       if (stashed) {
@@ -572,6 +620,12 @@ function syncUpstream() {
 
     console.log("📦 刷新安装依赖 (npm install)...");
     run("npm", ["install"]);
+    if (
+      runCapture("git", ["diff", "--name-only", "--", "package-lock.json"]) === "package-lock.json"
+    ) {
+      console.log("🧹 还原 npm install 引起的 package-lock.json 格式漂移...");
+      run("git", ["checkout", "--", "package-lock.json"]);
+    }
 
     if (prevHead) {
       generateUpdatesSummary(`${prevHead}..HEAD`);
@@ -996,6 +1050,479 @@ if (showChangelog) {
   process.exit(0);
 }
 
+function validateSshHost(host) {
+  if (!host || host.startsWith("-") || /\s/.test(host) || host.includes("\0")) {
+    throw new Error(`非法 SSH 主机参数: ${JSON.stringify(host)}`);
+  }
+}
+
+function copyDirFiltered(src, dest) {
+  cpSync(src, dest, {
+    recursive: true,
+    filter: (itemPath) => !/(^|[/\\])(node_modules|\.git|\.DS_Store)$/.test(itemPath),
+  });
+}
+
+const EXCLUDED_MANAGED_NODE_MODULE_PATTERN =
+  /[/\\]node_modules[/\\](?:\.bin|fsevents|react-native|@react-native|react-devtools-core|typescript|@babel|@esbuild|esbuild|@playwright|playwright|playwright-core)(?:$|[/\\])/;
+
+function copyManagedPluginDirFiltered(src, dest) {
+  cpSync(src, dest, {
+    recursive: true,
+    filter: (itemPath) =>
+      !/(^|[/\\])\.DS_Store$/.test(itemPath) &&
+      !EXCLUDED_MANAGED_NODE_MODULE_PATTERN.test(itemPath),
+  });
+}
+
+function collectRuntimeDependencies(voltaCliDir) {
+  const subpackages = ["server", "client", "protocol", "highlight", "plugin", "relay"];
+  const roots = [
+    voltaCliDir,
+    ...subpackages.map((pkg) => path.join(voltaCliDir, "node_modules", "@getpaseo", pkg)),
+  ];
+  const { toCopy } = computeMissingDependencies({
+    roots,
+    targetNodeModules: path.join(os.tmpdir(), `__paseo_nonexistent_${process.pid}__`),
+    workspaceNodeModules: path.join(voltaCliDir, "node_modules"),
+  });
+  return toCopy.filter((dep) => !dep.startsWith("@getpaseo/"));
+}
+
+function stageVoltaOverlay(voltaCliDir, stageDir, extraDeps = []) {
+  const cliOut = path.join(stageDir, "volta-overlay", "cli");
+  mkdirSync(cliOut, { recursive: true });
+  cpSync(path.join(voltaCliDir, "dist"), path.join(cliOut, "dist"), { recursive: true });
+  cpSync(path.join(voltaCliDir, "package.json"), path.join(cliOut, "package.json"));
+
+  const subpackages = ["server", "client", "protocol", "highlight", "plugin", "relay"];
+  for (const pkg of subpackages) {
+    const src = path.join(voltaCliDir, "node_modules", "@getpaseo", pkg);
+    const dst = path.join(stageDir, "volta-overlay", "node_modules", "@getpaseo", pkg);
+    if (!existsSync(src)) continue;
+    mkdirSync(dst, { recursive: true });
+    cpSync(path.join(src, "dist"), path.join(dst, "dist"), { recursive: true });
+    cpSync(path.join(src, "package.json"), path.join(dst, "package.json"));
+  }
+
+  for (const dep of extraDeps) {
+    if (dep === "fsevents") continue;
+    const voltaDep = path.join(voltaCliDir, "node_modules", dep);
+    const repoDep = path.join(repoRoot, "node_modules", dep);
+    const src = existsSync(voltaDep) ? voltaDep : repoDep;
+    if (!existsSync(src)) continue;
+    const dst = path.join(stageDir, "volta-overlay", "extra-node_modules", dep);
+    mkdirSync(path.dirname(dst), { recursive: true });
+    cpSync(realpathSync(src), dst, { recursive: true });
+  }
+}
+
+function stagePluginsAndSettings(stageDir) {
+  const plugins = ["agent-harness", "gitea-workflow", "quick-tools", "team-collab"];
+  const pluginsStage = path.join(stageDir, "custom-plugins");
+  mkdirSync(pluginsStage, { recursive: true });
+  for (const plg of plugins) {
+    const src = path.join(repoRoot, "plugin-custom", plg);
+    if (existsSync(src)) {
+      copyDirFiltered(src, path.join(pluginsStage, plg));
+    }
+  }
+
+  const homeDir = os.homedir();
+  const settingsRoot = path.join(homeDir, ".paseo", "plugin-settings");
+  const ahSrc = path.join(settingsRoot, "agent-harness", "agent-harness-settings.json");
+  if (existsSync(ahSrc)) {
+    const ahDest = path.join(
+      stageDir,
+      "plugin-settings",
+      "agent-harness",
+      "agent-harness-settings.json",
+    );
+    mkdirSync(path.dirname(ahDest), { recursive: true });
+    const raw = readFileSync(ahSrc, "utf8").replaceAll(homeDir, "__PASEO_TARGET_HOME__");
+    writeFileSync(ahDest, raw);
+  }
+
+  const gwSrc = path.join(settingsRoot, "gitea-workflow", "config.json");
+  if (existsSync(gwSrc)) {
+    const gwDest = path.join(stageDir, "plugin-settings", "gitea-workflow", "config.json");
+    mkdirSync(path.dirname(gwDest), { recursive: true });
+    const gw = JSON.parse(readFileSync(gwSrc, "utf8"));
+    if (gw.values && typeof gw.values === "object") {
+      gw.values.projects = {};
+    }
+    writeFileSync(gwDest, `${JSON.stringify(gw, null, 2)}\n`);
+  }
+
+  const qtDataSrc = path.join(
+    homeDir,
+    ".paseo",
+    "plugin-data",
+    "quick-tools",
+    "quick-prompts.json",
+  );
+  if (existsSync(qtDataSrc)) {
+    const qtDataDest = path.join(stageDir, "plugin-data", "quick-tools", "quick-prompts.json");
+    mkdirSync(path.dirname(qtDataDest), { recursive: true });
+    cpSync(qtDataSrc, qtDataDest);
+  }
+
+  for (const managedSettingsId of ["agent-observatory", "paseo-playbooks"]) {
+    const srcDir = path.join(settingsRoot, managedSettingsId);
+    if (!existsSync(srcDir)) continue;
+    const destDir = path.join(stageDir, "plugin-settings", managedSettingsId);
+    copyManagedPluginDirFiltered(srcDir, destDir);
+  }
+
+  const managedRoot = path.join(homeDir, ".paseo", "plugins");
+  const sourcesJsonSrc = path.join(managedRoot, "sources.json");
+  if (existsSync(sourcesJsonSrc)) {
+    const managedStage = path.join(stageDir, "managed-plugins");
+    mkdirSync(managedStage, { recursive: true });
+    cpSync(sourcesJsonSrc, path.join(managedStage, "sources.json"));
+    const sources = JSON.parse(readFileSync(sourcesJsonSrc, "utf8"));
+    for (const pluginId of Object.keys(sources)) {
+      const pluginDir = path.join(managedRoot, pluginId);
+      if (existsSync(pluginDir)) {
+        copyManagedPluginDirFiltered(pluginDir, path.join(managedStage, pluginId));
+      }
+    }
+  }
+
+  const localCfgPath = path.join(homeDir, ".paseo", "config.json");
+  let managedCount = 0;
+  if (existsSync(localCfgPath)) {
+    const localCfg = JSON.parse(readFileSync(localCfgPath, "utf8"));
+    const managedPrefix = managedRoot + path.sep;
+    const managedEntries = {};
+    for (const [pluginId, entry] of Object.entries(localCfg.plugins ?? {})) {
+      if (
+        entry &&
+        typeof entry === "object" &&
+        typeof entry.path === "string" &&
+        entry.path.startsWith(managedPrefix)
+      ) {
+        managedEntries[pluginId] = {
+          ...entry,
+          path: entry.path.replaceAll(homeDir, "__PASEO_TARGET_HOME__"),
+        };
+        managedCount += 1;
+      }
+    }
+    writeFileSync(
+      path.join(stageDir, "managed-plugins-config.json"),
+      `${JSON.stringify(managedEntries, null, 2)}\n`,
+    );
+  }
+  return { customCount: plugins.length, managedCount };
+}
+
+function buildRemoteSyncBundle({ includeRuntime = true, extraDeps = [] } = {}) {
+  const targets = getGlobalInstallTargets();
+  const voltaTarget = targets.find((t) => t.type === "volta") || targets[0];
+  if (!voltaTarget) {
+    throw new Error("未找到本机全局 @getpaseo/cli 安装目录，请先执行 npm run install:local");
+  }
+
+  const tag = includeRuntime ? "full" : "plugins";
+  const stageDir = path.join(os.tmpdir(), `paseo-remote-sync-${tag}-${process.pid}`);
+  const tarballPath = path.join(os.tmpdir(), `paseo-remote-sync-${tag}-${process.pid}.tar.gz`);
+  rmSync(stageDir, { recursive: true, force: true });
+  rmSync(tarballPath, { force: true });
+  mkdirSync(stageDir, { recursive: true });
+
+  if (includeRuntime) {
+    stageVoltaOverlay(voltaTarget.cliDir, stageDir, extraDeps);
+  }
+  const counts = stagePluginsAndSettings(stageDir);
+
+  const tarArgs = [
+    ...(process.platform === "darwin" ? ["--no-xattrs", "--no-mac-metadata"] : []),
+    "-czf",
+    tarballPath,
+    "-C",
+    stageDir,
+    ".",
+  ];
+  execFileSync("tar", tarArgs, {
+    stdio: "inherit",
+    env: { ...process.env, COPYFILE_DISABLE: "1" },
+  });
+  rmSync(stageDir, { recursive: true, force: true });
+  return { tarballPath, version: voltaTarget.version, ...counts };
+}
+
+const REMOTE_DEPLOY_SCRIPT = String.raw`set -euo pipefail
+export PATH="$HOME/.local/bin:$HOME/.volta/bin:$PATH"
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+
+STAGE="/tmp/paseo-remote-sync-extract-$$"
+CLI_PKG="$HOME/.volta/tools/image/packages/@getpaseo/cli/lib/node_modules/@getpaseo/cli"
+
+rm -rf "$STAGE"
+mkdir -p "$STAGE"
+tar --warning=no-unknown-keyword -xzf /tmp/paseo-remote-sync.tar.gz -C "$STAGE"
+
+if [ -d "$STAGE/volta-overlay" ]; then
+  rm -rf "$CLI_PKG/dist"
+  cp -R "$STAGE/volta-overlay/cli/dist" "$CLI_PKG/dist"
+  cp "$STAGE/volta-overlay/cli/package.json" "$CLI_PKG/package.json"
+
+  for pkg in server client protocol highlight plugin relay; do
+    if [ -d "$STAGE/volta-overlay/node_modules/@getpaseo/$pkg" ]; then
+      rm -rf "$CLI_PKG/node_modules/@getpaseo/$pkg/dist"
+      cp -R "$STAGE/volta-overlay/node_modules/@getpaseo/$pkg/dist" "$CLI_PKG/node_modules/@getpaseo/$pkg/dist"
+      cp "$STAGE/volta-overlay/node_modules/@getpaseo/$pkg/package.json" "$CLI_PKG/node_modules/@getpaseo/$pkg/package.json"
+    fi
+  done
+
+  if [ -d "$STAGE/volta-overlay/extra-node_modules" ]; then
+    for entry in "$STAGE"/volta-overlay/extra-node_modules/*; do
+      [ -e "$entry" ] || continue
+      base="$(basename "$entry")"
+      if [[ "$base" == @* ]]; then
+        mkdir -p "$CLI_PKG/node_modules/$base"
+        for sub in "$entry"/*; do
+          [ -e "$sub" ] || continue
+          subname="$(basename "$sub")"
+          rm -rf "$CLI_PKG/node_modules/$base/$subname"
+          cp -R "$sub" "$CLI_PKG/node_modules/$base/$subname"
+        done
+      else
+        rm -rf "$CLI_PKG/node_modules/$base"
+        cp -R "$entry" "$CLI_PKG/node_modules/$base"
+      fi
+    done
+  fi
+fi
+
+mkdir -p "$HOME/.paseo/custom-plugins"
+for entry in "$HOME"/.paseo/custom-plugins/*; do
+  [ -e "$entry" ] || continue
+  [ "$(basename "$entry")" = "node_modules" ] || rm -rf "$entry"
+done
+cp -R "$STAGE/custom-plugins/"* "$HOME/.paseo/custom-plugins/"
+
+if [ -f "$STAGE/plugin-settings/agent-harness/agent-harness-settings.json" ]; then
+  mkdir -p "$HOME/.paseo/plugin-settings/agent-harness"
+  node -e 'const fs=require("fs");const s=fs.readFileSync(process.argv[1],"utf8").replaceAll("__PASEO_TARGET_HOME__",process.env.HOME);fs.writeFileSync(process.argv[2],s,{mode:0o600});' \
+    "$STAGE/plugin-settings/agent-harness/agent-harness-settings.json" \
+    "$HOME/.paseo/plugin-settings/agent-harness/agent-harness-settings.json"
+fi
+
+if [ -f "$STAGE/plugin-settings/gitea-workflow/config.json" ]; then
+  mkdir -p "$HOME/.paseo/plugin-settings/gitea-workflow"
+  cp "$STAGE/plugin-settings/gitea-workflow/config.json" "$HOME/.paseo/plugin-settings/gitea-workflow/config.json"
+  chmod 600 "$HOME/.paseo/plugin-settings/gitea-workflow/config.json"
+fi
+
+if [ -f "$STAGE/plugin-data/quick-tools/quick-prompts.json" ]; then
+  mkdir -p "$HOME/.paseo/plugin-data/quick-tools"
+  chmod 700 "$HOME/.paseo/plugin-data" "$HOME/.paseo/plugin-data/quick-tools"
+  cp "$STAGE/plugin-data/quick-tools/quick-prompts.json" "$HOME/.paseo/plugin-data/quick-tools/quick-prompts.json.tmp"
+  chmod 600 "$HOME/.paseo/plugin-data/quick-tools/quick-prompts.json.tmp"
+  mv "$HOME/.paseo/plugin-data/quick-tools/quick-prompts.json.tmp" "$HOME/.paseo/plugin-data/quick-tools/quick-prompts.json"
+fi
+
+if [ -d "$STAGE/managed-plugins" ]; then
+  mkdir -p "$HOME/.paseo/plugins"
+  chmod 700 "$HOME/.paseo/plugins"
+  for entry in "$STAGE"/managed-plugins/*; do
+    [ -e "$entry" ] || continue
+    base="$(basename "$entry")"
+    if [ "$base" = "sources.json" ]; then
+      cp "$entry" "$HOME/.paseo/plugins/sources.json.tmp"
+      chmod 600 "$HOME/.paseo/plugins/sources.json.tmp"
+      mv "$HOME/.paseo/plugins/sources.json.tmp" "$HOME/.paseo/plugins/sources.json"
+    else
+      rm -rf "$HOME/.paseo/plugins/$base"
+      cp -R "$entry" "$HOME/.paseo/plugins/$base"
+      chmod 700 "$HOME/.paseo/plugins/$base"
+    fi
+  done
+fi
+
+for sdir in agent-observatory paseo-playbooks; do
+  if [ -d "$STAGE/plugin-settings/$sdir" ]; then
+    mkdir -p "$HOME/.paseo/plugin-settings/$sdir"
+    cp -R "$STAGE/plugin-settings/$sdir/." "$HOME/.paseo/plugin-settings/$sdir/"
+    chmod 600 "$HOME/.paseo/plugin-settings/$sdir/"*.json 2>/dev/null || true
+  fi
+done
+
+STAGE_DIR="$STAGE" node -e '
+const fs = require("fs");
+const path = require("path");
+const cfgPath = process.env.HOME + "/.paseo/config.json";
+const cfg = fs.existsSync(cfgPath) ? JSON.parse(fs.readFileSync(cfgPath, "utf8")) : { version: 1 };
+const managedCfgPath = path.join(process.env.STAGE_DIR, "managed-plugins-config.json");
+let managedPlugins = {};
+if (fs.existsSync(managedCfgPath)) {
+  const raw = fs.readFileSync(managedCfgPath, "utf8").replaceAll("__PASEO_TARGET_HOME__", process.env.HOME);
+  managedPlugins = JSON.parse(raw);
+}
+cfg.pluginsEnabled = true;
+cfg.plugins = {
+  ...(cfg.plugins && typeof cfg.plugins === "object" ? cfg.plugins : {}),
+  "gitea-workflow": { source: "directory", path: process.env.HOME + "/.paseo/custom-plugins/gitea-workflow", enabled: true },
+  "agent-harness": { source: "directory", path: process.env.HOME + "/.paseo/custom-plugins/agent-harness", enabled: true },
+  "quick-tools": { source: "directory", path: process.env.HOME + "/.paseo/custom-plugins/quick-tools", enabled: true },
+  "team-collab": { source: "directory", path: process.env.HOME + "/.paseo/custom-plugins/team-collab", enabled: true },
+  ...managedPlugins
+};
+const tmp = cfgPath + ".tmp." + process.pid;
+fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2) + "\n", { mode: 0o600 });
+fs.renameSync(tmp, cfgPath);
+'
+
+systemctl --user restart paseo.service
+for _ in $(seq 1 15); do
+  paseo daemon status 2>/dev/null | grep -q "running" && break
+  sleep 1
+done
+
+rm -rf "$STAGE" /tmp/paseo-remote-sync.tar.gz
+paseo --version
+paseo plugin ls
+`;
+
+function normalizeComparableModVersion(version) {
+  return formatModDisplayVersion(version).replace(/\[mod-d/i, "[mod-");
+}
+
+function probeRemoteHostState(host, requiredDeps) {
+  const probeScript = [
+    'export PATH="$HOME/.local/bin:$HOME/.volta/bin:$PATH"',
+    `PASEO_REQ_DEPS=${JSON.stringify(JSON.stringify(requiredDeps))} node - <<'__PASEO_PROBE__'`,
+    'const fs = require("node:fs");',
+    'const path = require("node:path");',
+    'const { execFileSync } = require("node:child_process");',
+    'const required = JSON.parse(process.env.PASEO_REQ_DEPS || "[]");',
+    'const cliNm = path.join(process.env.HOME, ".volta/tools/image/packages/@getpaseo/cli/lib/node_modules/@getpaseo/cli/node_modules");',
+    'const runCmd = (cmd, args) => { try { return execFileSync(cmd, args, { encoding: "utf8" }).trim(); } catch { return ""; } };',
+    'const version = runCmd("paseo", ["--version"]).split("\\n")[0].trim() || null;',
+    'const statusOut = runCmd("paseo", ["daemon", "status"]);',
+    "const daemonRunning = /\\brunning\\b/i.test(statusOut);",
+    "const missingDeps = required.filter((dep) => !fs.existsSync(path.join(cliNm, dep)));",
+    "process.stdout.write(JSON.stringify({ version, daemonRunning, missingDeps }));",
+    "__PASEO_PROBE__",
+  ].join("\n");
+  try {
+    const out = execFileSync("ssh", ["-T", "-o", "ConnectTimeout=5", host, "bash", "-s"], {
+      input: `${probeScript}\n`,
+      encoding: "utf8",
+      cwd: repoRoot,
+    }).trim();
+    return JSON.parse(out);
+  } catch {
+    return { version: null, daemonRunning: false, missingDeps: requiredDeps };
+  }
+}
+
+function decideHostSyncPlan(host, localDisplayVersion, requiredDeps) {
+  if (syncPluginsOnly) {
+    return { includeRuntime: false, missingDeps: [], reason: "仅同步插件" };
+  }
+  const state = probeRemoteHostState(host, requiredDeps);
+  if (forceRuntime) {
+    return { includeRuntime: true, missingDeps: state.missingDeps, reason: "强制全量运行时" };
+  }
+  const versionDiffers =
+    !state.version ||
+    normalizeComparableModVersion(state.version) !==
+      normalizeComparableModVersion(localDisplayVersion);
+  if (versionDiffers) {
+    return {
+      includeRuntime: true,
+      missingDeps: state.missingDeps,
+      reason: state.version
+        ? `版本升级 ${state.version} -> ${localDisplayVersion}`
+        : "未检测到版本",
+    };
+  }
+  if (!state.daemonRunning || state.missingDeps.length > 0) {
+    const details = [
+      !state.daemonRunning ? "daemon 未运行" : null,
+      state.missingDeps.length > 0 ? `补齐依赖: ${state.missingDeps.join(", ")}` : null,
+    ]
+      .filter(Boolean)
+      .join(" + ");
+    return {
+      includeRuntime: true,
+      missingDeps: state.missingDeps,
+      reason: `运行时自愈 (${details})`,
+    };
+  }
+  return { includeRuntime: false, missingDeps: [], reason: "跳过同版本运行时" };
+}
+
+function syncToRemoteHosts(hosts) {
+  for (const host of hosts) {
+    validateSshHost(host);
+  }
+  const targets = getGlobalInstallTargets();
+  const voltaTarget = targets.find((t) => t.type === "volta") || targets[0];
+  if (!voltaTarget) {
+    throw new Error("未找到本机全局 @getpaseo/cli 安装目录，请先执行 npm run install:local");
+  }
+  const localDisplayVersion = formatModDisplayVersion(voltaTarget.version);
+  console.log(`\n=== [Remote Sync] 检查远端运行时版本与同步插件 (${localDisplayVersion}) ===`);
+
+  const requiredDeps = collectRuntimeDependencies(voltaTarget.cliDir);
+  const plans = hosts.map((host) => ({
+    host,
+    ...decideHostSyncPlan(host, localDisplayVersion, requiredDeps),
+  }));
+  const allMissingDeps = [
+    ...new Set(plans.flatMap((p) => (p.includeRuntime ? p.missingDeps : []))),
+  ];
+
+  const bundles = new Map();
+  const getBundle = (includeRuntime) => {
+    if (!bundles.has(includeRuntime)) {
+      bundles.set(
+        includeRuntime,
+        buildRemoteSyncBundle({ includeRuntime, extraDeps: includeRuntime ? allMissingDeps : [] }),
+      );
+    }
+    return bundles.get(includeRuntime);
+  };
+
+  try {
+    for (const plan of plans) {
+      const bundle = getBundle(plan.includeRuntime);
+      const modeLabel = plan.includeRuntime
+        ? `全量 (Volta 运行时 + ${bundle.customCount} 定制 + ${bundle.managedCount} 托管插件；${plan.reason})`
+        : `⚡ 轻量插件同步 (${bundle.customCount} 定制 + ${bundle.managedCount} 托管插件，${plan.reason})`;
+      console.log(`\n🚀 同步至远端节点: ${plan.host} — ${modeLabel}`);
+      run("scp", ["-q", bundle.tarballPath, `${plan.host}:/tmp/paseo-remote-sync.tar.gz`]);
+      execFileSync("ssh", ["-T", plan.host, "bash", "-s"], {
+        input: REMOTE_DEPLOY_SCRIPT,
+        stdio: ["pipe", "inherit", "inherit"],
+        cwd: repoRoot,
+      });
+    }
+    console.log("\n✅ 全部远端节点同步并重启完成！");
+  } finally {
+    for (const bundle of bundles.values()) {
+      rmSync(bundle.tarballPath, { force: true });
+    }
+  }
+}
+
+const isSyncRemoteOnly =
+  remoteHosts.length > 0 &&
+  !shouldSyncUpstream &&
+  !shouldBump &&
+  !forceUi &&
+  !shouldVerify &&
+  !buildOnly;
+
+if (isSyncRemoteOnly) {
+  syncToRemoteHosts(remoteHosts);
+  process.exit(0);
+}
+
 if (checkPluginsOnly) {
   const ok = verifyCustomPlugins();
   process.exit(ok ? 0 : 1);
@@ -1149,6 +1676,10 @@ if (!buildOnly) {
   }
 } else {
   console.log("⏩ 已跳过全局安装拷贝 (--build-only)");
+}
+
+if (remoteHosts.length > 0 && !buildOnly) {
+  syncToRemoteHosts(remoteHosts);
 }
 
 console.log("\n=======================================================");
